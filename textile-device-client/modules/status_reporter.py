@@ -6,6 +6,8 @@ import threading
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Callable
+
+# noqa: E501
 from .api_client import ApiClient
 from .progress_reader import ProgressReader
 from .metrics_collector import MetricsCollector
@@ -73,8 +75,9 @@ class StatusReporter:
     def _report(self):
         """执行单次上报"""
         device_status = self._determine_status()
-        task_id = self._generate_task_id()
-        task_name = "AI显微镜检测"
+        latest_folder_name = self.progress_reader.get_latest_folder_name()
+        task_id = self._generate_task_id(latest_folder_name)
+        task_name = latest_folder_name or "AI显微镜检测"
         task_progress = self._get_task_progress()
         metrics = self.metrics_collector.collect_metrics()
 
@@ -88,7 +91,7 @@ class StatusReporter:
         )
 
         if response:
-            queue_count = response.data.get("queue_count", 0)
+            queue_count = response.data.get("queue_count", 0) if response.data else 0
             self.logger.info(
                 f"上报成功 - 状态: {device_status}, "
                 f"进度: {task_progress}%, 排队: {queue_count}, "
@@ -113,14 +116,15 @@ class StatusReporter:
         else:
             return "idle"
 
-    def _generate_task_id(self) -> str:
+    def _generate_task_id(self, folder_name: Optional[str]) -> str:
         """生成任务 ID
 
         Returns:
             str: 任务 ID
         """
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return f"TASK_{now}"
+        suffix = f"_{folder_name}" if folder_name else ""
+        return f"TASK_{now}{suffix}"
 
     def _get_task_progress(self) -> Optional[int]:
         """获取任务进度

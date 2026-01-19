@@ -87,6 +87,13 @@ class ProgressReader:
             self.logger.error(f"获取最新文件夹失败: {e}")
             return None
 
+    def get_latest_folder_name(self) -> Optional[str]:
+        """获取最新文件夹名称"""
+        latest_folder = self._get_latest_modified_folder(self.working_path)
+        if not latest_folder:
+            return None
+        return os.path.basename(latest_folder)
+
     def _check_progress(self, folder_path: str) -> int:
         """根据文件夹结构判断进度"""
         result_folder = os.path.join(folder_path, "result")
