@@ -13,7 +13,6 @@ from modules.api_client import ApiClient
 from modules.device_manager import DeviceManager
 from modules.progress_reader import ProgressReader
 from modules.metrics_collector import MetricsCollector
-from modules.config_window import ConfigWindow
 
 # Windows 控制台控制
 try:
@@ -327,6 +326,7 @@ class TextileDeviceClient:
         """打开配置窗口"""
         self.logger.info("打开配置窗口")
         from PyQt6.QtWidgets import QApplication
+        from modules.config_window import ConfigWindow
 
         if not QApplication.instance():
             app = QApplication(sys.argv)
@@ -362,11 +362,6 @@ class TextileDeviceClient:
 
             else:
                 self.logger.info("配置未更改")
-
-                if self.tray_icon:
-                    self.tray_icon.show_notification(
-                        "配置已更新", f"设备: {self.config.get_device_name()}"
-                    )
 
         except Exception as e:
             self.logger.error(f"配置更新失败: {e}")
