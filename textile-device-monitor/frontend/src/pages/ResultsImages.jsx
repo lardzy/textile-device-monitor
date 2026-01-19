@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Card, Spin, message } from 'antd';
+import { Button, Card, Input, Modal, Spin, message } from 'antd';
+
 import { FixedSizeGrid as Grid } from 'react-window';
 import { resultsApi } from '../api/results';
 
@@ -23,13 +24,21 @@ function ResultsImages() {
   const [cacheTick, setCacheTick] = useState(0);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
+  const [searchText, setSearchText] = useState('');
+  const [previewItem, setPreviewItem] = useState(null);
+  const [zoom, setZoom] = useState(1);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [folder, setFolder] = useState(null);
+
   const [containerWidth, setContainerWidth] = useState(window.innerWidth);
   const [columns, setColumns] = useState(Math.max(1, Math.floor(window.innerWidth / COLUMN_WIDTH)));
 
-  const rows = Math.ceil(items.length / columns);
+  const filteredItems = searchText
+    ? items.filter(item => item.name.toLowerCase().includes(searchText.trim().toLowerCase()))
+    : items;
+  const rows = Math.ceil(filteredItems.length / columns);
+
 
   const processQueue = () => {
     while (activeRef.current < MAX_CONCURRENT && queueRef.current.length > 0) {
@@ -116,6 +125,8 @@ function ResultsImages() {
     setItems([]);
     setTotal(0);
     setPage(1);
+    setPreviewItem(null);
+    setZoom(1);
     cacheRef.current.forEach(url => URL.revokeObjectURL(url));
     cacheRef.current.clear();
     pendingRef.current.clear();
@@ -123,6 +134,7 @@ function ResultsImages() {
     queueRef.current = [];
     activeRef.current = 0;
     loadPage(1, true);
+
   }, [deviceId]);
 
   useEffect(() => {
@@ -145,7 +157,8 @@ function ResultsImages() {
 
   const Cell = ({ columnIndex, rowIndex, style }) => {
     const index = rowIndex * columns + columnIndex;
-    const item = items[index];
+    const item = filteredItems[index];
+
     if (!item) return <div style={style} />;
     const cachedUrl = cacheRef.current.get(item.cacheKey);
     if (!cachedUrl) {
@@ -153,7 +166,10 @@ function ResultsImages() {
     }
     return (
       <div style={{ ...style, padding: 6, boxSizing: 'border-box' }}>
-        <div style={{ border: '1px solid #eee', padding: 6, borderRadius: 6 }}>
+        <div
+          style={{ border: '1px solid #eee', padding: 6, borderRadius: 6, cursor: 'pointer' }}
+          onClick={() => setPreviewItem(item)}
+        >
           <img
             src={cachedUrl || EMPTY_IMAGE}
             alt={item.name}
@@ -162,6 +178,7 @@ function ResultsImages() {
           <div style={{ fontSize: 12, marginTop: 4, color: '#555', wordBreak: 'break-all' }}>{item.name}</div>
         </div>
       </div>
+
     );
   };
 
@@ -179,9 +196,39 @@ function ResultsImages() {
     };
   }, []);
 
+  const previewUrl = previewItem ? cacheRef.current.get(previewItem.cacheKey) || previewItem.url : null;
+
+  const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 3));
+  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.4));
+  const handleZoomReset = () => setZoom(1);
+  const handleWheelZoom = (event) => {
+    event.preventDefault();
+    const direction = event.deltaY > 0 ? -0.1 : 0.1;
+    setZoom(prev => {
+      const next = prev + direction;
+      return Math.min(Math.max(next, 0.4), 3);
+    });
+  };
+
+
   return (
     <div style={{ padding: 24 }}>
-      <Card title="结果图片" extra={<Button onClick={() => loadPage(1, true)}>刷新</Button>}>
+      <Card
+        title="结果图片"
+        extra={(
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Input
+              allowClear
+              placeholder="模糊搜索文件名"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              style={{ width: 220 }}
+            />
+            <span style={{ fontSize: 12, color: '#999' }}>请将滚动条拉到底端后再进行搜索！</span>
+            <Button onClick={() => loadPage(1, true)}>刷新</Button>
+          </div>
+        )}
+      >
         {loading && items.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
@@ -201,7 +248,45 @@ function ResultsImages() {
             </Grid>
           </div>
         )}
+        <Modal
+          open={Boolean(previewItem)}
+          title={previewItem?.name}
+          footer={null}
+          onCancel={() => {
+            setPreviewItem(null);
+            setZoom(1);
+          }}
+          width="80vw"
+          style={{ top: 20 }}
+          bodyStyle={{ textAlign: 'center', padding: 16 }}
+          destroyOnClose
+        >
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+            <Button onClick={handleZoomOut}>缩小</Button>
+            <Button onClick={handleZoomReset}>复位</Button>
+            <Button onClick={handleZoomIn}>放大</Button>
+          </div>
+          {previewUrl ? (
+            <div style={{ overflow: 'auto', maxHeight: '70vh' }} onWheel={handleWheelZoom}>
+              <img
+                src={previewUrl}
+                alt={previewItem?.name || 'preview'}
+                style={{
+                  transform: `scale(${zoom})`,
+                  transformOrigin: 'center center',
+                  maxWidth: '100%',
+                  maxHeight: '70vh',
+                  objectFit: 'contain',
+                  display: 'inline-block',
+                }}
+              />
+            </div>
+          ) : (
+            <div style={{ padding: 24, color: '#999' }}>图片加载中...</div>
+          )}
+        </Modal>
       </Card>
+
     </div>
   );
 }
