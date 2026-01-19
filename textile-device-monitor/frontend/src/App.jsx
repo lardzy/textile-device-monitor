@@ -5,6 +5,8 @@ import DeviceMonitor from './pages/DeviceMonitor';
 import HistoryQuery from './pages/HistoryQuery';
 import Statistics from './pages/Statistics';
 import DeviceManagement from './pages/DeviceManagement';
+import ResultsTable from './pages/ResultsTable';
+import ResultsImages from './pages/ResultsImages';
 import wsClient from './websocket/client';
 import { useState, useEffect } from 'react';
 
@@ -17,12 +19,24 @@ const menuItems = [
   { key: 'management', icon: <SettingOutlined />, label: '设备管理', path: '/management' },
 ];
 
+const appRoutes = (
+  <Routes>
+    <Route path="/" element={<DeviceMonitor />} />
+    <Route path="/history" element={<HistoryQuery />} />
+    <Route path="/statistics" element={<Statistics />} />
+    <Route path="/management" element={<DeviceManagement />} />
+    <Route path="/results/table" element={<ResultsTable />} />
+    <Route path="/results/images" element={<ResultsImages />} />
+  </Routes>
+);
+
 function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   const selectedKey = menuItems.find(item => item.path === location.pathname)?.key || 'monitor';
+  const isResults = location.pathname.startsWith('/results');
 
   useEffect(() => {
     const baseUrl = import.meta.env.VITE_WS_URL;
@@ -41,6 +55,16 @@ function AppLayout() {
       navigate(target.path);
     }
   };
+
+  if (isResults) {
+    return (
+      <Layout style={{ minHeight: '100vh' }}>
+        <Content style={{ margin: '16px', padding: 16, background: '#fff', borderRadius: '8px' }}>
+          {appRoutes}
+        </Content>
+      </Layout>
+    );
+  }
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -61,12 +85,7 @@ function AppLayout() {
           <h2 style={{ margin: 0 }}>{menuItems.find(item => item.key === selectedKey)?.label}</h2>
         </Header>
         <Content style={{ margin: '24px 16px', padding: 24, background: '#fff', borderRadius: '8px' }}>
-          <Routes>
-            <Route path="/" element={<DeviceMonitor />} />
-            <Route path="/history" element={<HistoryQuery />} />
-            <Route path="/statistics" element={<Statistics />} />
-            <Route path="/management" element={<DeviceManagement />} />
-          </Routes>
+          {appRoutes}
         </Content>
       </Layout>
     </Layout>

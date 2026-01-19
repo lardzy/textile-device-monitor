@@ -23,6 +23,7 @@ class DeviceBase(BaseModel):
     model: Optional[str] = Field(None, max_length=100)
     location: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
+    client_base_url: Optional[str] = Field(None, max_length=200)
 
 
 class DeviceCreate(DeviceBase):
@@ -35,6 +36,7 @@ class DeviceUpdate(BaseModel):
     location: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
     status: Optional[DeviceStatus] = None
+    client_base_url: Optional[str] = Field(None, max_length=200)
 
 
 class Device(DeviceBase):
@@ -60,6 +62,7 @@ class StatusReport(BaseModel):
     task_name: Optional[str] = Field(None, max_length=200)
     task_progress: Optional[int] = Field(None, ge=0, le=100)
     metrics: Optional[Dict[str, Any]] = None
+    client_base_url: Optional[str] = Field(None, max_length=200)
 
 
 class DeviceStatusHistory(BaseModel):

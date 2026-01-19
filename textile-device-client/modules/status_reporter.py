@@ -6,8 +6,6 @@ import threading
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Callable
-
-# noqa: E501
 from .api_client import ApiClient
 from .progress_reader import ProgressReader
 from .metrics_collector import MetricsCollector

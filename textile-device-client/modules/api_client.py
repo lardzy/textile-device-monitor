@@ -137,6 +137,7 @@ class ApiClient:
         model: Optional[str] = None,
         location: Optional[str] = None,
         description: Optional[str] = None,
+        client_base_url: Optional[str] = None,
     ) -> Optional[Device]:
         """创建新设备
 
@@ -156,6 +157,7 @@ class ApiClient:
             "model": model,
             "location": location,
             "description": description,
+            "client_base_url": client_base_url,
         }
 
         response = self._request("POST", "/devices", data=data)
@@ -187,6 +189,7 @@ class ApiClient:
         task_name: Optional[str] = None,
         task_progress: Optional[int] = None,
         metrics: Optional[Dict[str, Any]] = None,
+        client_base_url: Optional[str] = None,
     ) -> Optional[MessageResponse]:
         """上报设备状态
 
@@ -207,6 +210,7 @@ class ApiClient:
             "task_name": task_name,
             "task_progress": task_progress,
             "metrics": metrics,
+            "client_base_url": client_base_url,
         }
 
         endpoint = f"/devices/{device_code}/status"

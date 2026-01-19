@@ -8,9 +8,10 @@ from .logger import Logger
 
 
 class ProgressReader:
-    def __init__(self, working_path: str, logger: Logger):
+    def __init__(self, working_path: str, logger: Logger, results_port: int = 9100):
         self.working_path = working_path
         self.logger = logger
+        self.results_port = results_port
 
     def read_progress(self) -> int:
         """读取设备进度
@@ -117,3 +118,25 @@ class ProgressReader:
             return 20
 
         return 0
+
+    def get_client_base_url(self) -> Optional[str]:
+        """构建客户端结果服务地址"""
+        try:
+            import socket
+
+            host = None
+            hostname = socket.gethostname()
+            candidates = socket.gethostbyname_ex(hostname)[2]
+            for candidate in candidates:
+                if not candidate.startswith("127."):
+                    host = candidate
+                    break
+            if not host:
+                host = socket.gethostbyname(hostname)
+
+            port = getattr(self, "results_port", None)
+            if not port:
+                port = 9100
+            return f"http://{host}:{port}"
+        except Exception:
+            return None

@@ -47,6 +47,7 @@ class Device(Base):
     task_started_at = Column(DateTime(timezone=True))
     task_elapsed_seconds = Column(Integer)
     metrics = Column(JSONB)
+    client_base_url = Column(String(200))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

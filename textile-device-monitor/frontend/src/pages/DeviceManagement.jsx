@@ -66,6 +66,7 @@ function DeviceManagement() {
     { title: '设备名称', dataIndex: 'name' },
     { title: '型号', dataIndex: 'model' },
     { title: '位置', dataIndex: 'location' },
+    { title: '客户端地址', dataIndex: 'client_base_url', width: 180 },
     { title: '状态', dataIndex: 'status' },
     {
       title: '操作',
@@ -142,6 +143,9 @@ function DeviceManagement() {
           </Form.Item>
           <Form.Item name="description" label="设备描述">
             <Input.TextArea rows={4} placeholder="设备描述" />
+          </Form.Item>
+          <Form.Item name="client_base_url" label="客户端地址">
+            <Input placeholder="http://设备IP:9100" />
           </Form.Item>
         </Form>
       </Modal>

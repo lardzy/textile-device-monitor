@@ -22,6 +22,7 @@ class DeviceManager:
         model: Optional[str] = None,
         location: Optional[str] = None,
         description: Optional[str] = None,
+        client_base_url: Optional[str] = None,
     ) -> bool:
         """注册设备（如果不存在）
 
@@ -52,6 +53,7 @@ class DeviceManager:
             model=model,
             location=location,
             description=description,
+            client_base_url=client_base_url,
         )
 
         if new_device:
