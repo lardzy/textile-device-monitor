@@ -1,0 +1,5 @@
+/textile-device-client/.venv/
+/textile-device-client/build/
+/textile-device-client/dist/
+/textile-device-client/logs/
+/.venv/

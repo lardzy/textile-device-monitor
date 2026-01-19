@@ -1,0 +1,11 @@
+{
+  "device_code": "1号",
+  "device_name": "物理法1号机",
+  "server_url": "http://127.0.0.1:8000",
+  "progress_file_path": "F:\\tmp\\test\\1号\\result.txt",
+  "report_interval": 5,
+  "log_level": "INFO",
+  "manual_status": null,
+  "is_first_run": false,
+  "device_registered": true
+}

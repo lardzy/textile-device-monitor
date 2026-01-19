@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: textile-monitor-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: textile_monitor
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - textile-net
+
+  backend:
+    build: ./backend
+    container_name: textile-monitor-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://admin:password123@postgres:5432/textile_monitor
+      SECRET_KEY: your-secret-key-change-in-production
+      HEARTBEAT_TIMEOUT: 30
+      DATA_RETENTION_DAYS: 30
+      CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    networks:
+      - textile-net
+
+  frontend:
+    build: ./frontend
+    container_name: textile-monitor-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - textile-net
+
+volumes:
+  postgres_data:
+
+networks:
+  textile-net:
+    driver: bridge
