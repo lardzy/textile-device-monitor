@@ -1,0 +1,93 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy.orm import Session
+import requests
+from urllib.parse import quote
+from app.database import get_db
+from app.crud import devices as device_crud
+
+router = APIRouter(prefix="/results", tags=["results"])
+
+
+def _get_client_base_url(db: Session, device_id: int) -> str:
+    device = device_crud.get_device(db, device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    base_url = device.client_base_url
+    if base_url is None:
+        raise HTTPException(status_code=404, detail="Client base URL not configured")
+    if not str(base_url).strip():  # type: ignore[arg-type]
+        raise HTTPException(status_code=404, detail="Client base URL not configured")
+    return base_url.rstrip("/")
+
+
+@router.get("/latest")
+def get_latest(device_id: int = Query(...), db: Session = Depends(get_db)):
+    base_url = _get_client_base_url(db, device_id)
+    try:
+        resp = requests.get(f"{base_url}/client/results/latest", timeout=10)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Client error")
+    return resp.json()
+
+
+@router.get("/table")
+def get_table(device_id: int = Query(...), db: Session = Depends(get_db)):
+    base_url = _get_client_base_url(db, device_id)
+    try:
+        resp = requests.get(f"{base_url}/client/results/table", timeout=20)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Client error")
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("Content-Type", "application/octet-stream"),
+    )
+
+
+@router.get("/images")
+def get_images(
+    device_id: int = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    base_url = _get_client_base_url(db, device_id)
+    try:
+        resp = requests.get(
+            f"{base_url}/client/results/images?page={page}&page_size={page_size}",
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Client error")
+    return resp.json()
+
+
+@router.get("/image/{filename}")
+def get_image(
+    filename: str,
+    device_id: int = Query(...),
+    folder: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    base_url = _get_client_base_url(db, device_id)
+    safe_filename = quote(filename, safe="")
+    params = {"folder": folder} if folder else None
+    try:
+        resp = requests.get(
+            f"{base_url}/client/results/image/{safe_filename}",
+            params=params,
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Client error")
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("Content-Type", "image/png"),
+    )

@@ -1,9 +1,10 @@
 {
-  "device_code": "1号",
-  "device_name": "1号机器",
+  "device_code": "2号",
+  "device_name": "2号机器",
   "server_url": "http://127.0.0.1:8000",
   "working_path": "F:\\tmp\\test\\bak",
   "report_interval": 5,
+  "results_port": 9100,
   "log_level": "INFO",
   "manual_status": null,
   "is_first_run": false,

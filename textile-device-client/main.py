@@ -6,6 +6,7 @@ import sys
 import time
 import os
 import ctypes
+import threading
 from typing import Optional
 from modules.config import Config
 from modules.logger import Logger
@@ -13,6 +14,7 @@ from modules.api_client import ApiClient
 from modules.device_manager import DeviceManager
 from modules.progress_reader import ProgressReader
 from modules.metrics_collector import MetricsCollector
+from modules.results_server import ResultsServer
 
 # Windows 控制台控制
 try:
@@ -75,6 +77,7 @@ class TextileDeviceClient:
         self.progress_reader = None
         self.metrics_collector = None
         self.status_reporter = None
+        self.results_server = None
         self.tray_icon = None
 
     def initialize(self):
@@ -90,10 +93,18 @@ class TextileDeviceClient:
         )
 
         self.progress_reader = ProgressReader(
-            working_path=config["working_path"], logger=self.logger
+            working_path=config["working_path"],
+            logger=self.logger,
+            results_port=self.config.get_results_port(),
         )
 
         self.metrics_collector = MetricsCollector(logger=self.logger)
+
+        self.results_server = ResultsServer(
+            reader=self.progress_reader,
+            logger=self.logger,
+            port=self.config.get_results_port(),
+        )
 
         if StatusReporter:
             self.status_reporter = StatusReporter(
@@ -144,6 +155,12 @@ class TextileDeviceClient:
                 self.status_reporter.set_manual_status(self.config.get_manual_status())
                 self.status_reporter.start()
 
+            if self.results_server:
+                server_thread = threading.Thread(
+                    target=self.results_server.start, daemon=True
+                )
+                server_thread.start()
+
             if self.tray_icon:
                 self.tray_icon.start()
 
@@ -155,6 +172,7 @@ class TextileDeviceClient:
             )
             print(f"服务器: {self.config.get_server_url()}")
             print(f"上报间隔: {self.config.get_report_interval()} 秒")
+            print(f"结果服务端口: {self.config.get_results_port()}")
             print("=" * 60)
             print("\n命令列表:")
             print("  c - 修改配置")
@@ -264,6 +282,7 @@ class TextileDeviceClient:
                 "server_url": server_url,
                 "working_path": working_path,
                 "report_interval": interval,
+                "results_port": config.get("results_port", 9100),
                 "manual_status": None,
                 "is_first_run": False,
                 "device_registered": False,
@@ -277,6 +296,7 @@ class TextileDeviceClient:
             print(f"服务器地址: {new_config['server_url']}")
             print(f"工作路径: {new_config['working_path']}")
             print(f"上报间隔: {new_config['report_interval']} 秒")
+            print(f"结果服务端口: {new_config['results_port']}")
             print("=" * 60)
 
             confirm = input("\n确认配置并启动? (Y/n): ").strip().lower()
@@ -313,6 +333,9 @@ class TextileDeviceClient:
             success = self.device_manager.register_device(
                 device_code=self.config.get_device_code(),
                 device_name=self.config.get_device_name(),
+                client_base_url=self.progress_reader.get_client_base_url()
+                if self.progress_reader
+                else None,
             )
 
         if success:
@@ -346,6 +369,8 @@ class TextileDeviceClient:
                     old_device_code != new_config["device_code"]
                     or old_server_url != new_config["server_url"]
                     or old_working_path != new_config["working_path"]
+                    or self.config.get_results_port()
+                    != new_config.get("results_port", 9100)
                 ):
                     self.logger.info("配置已更改，需要重新初始化")
                     if self.status_reporter:
@@ -420,6 +445,9 @@ class TextileDeviceClient:
 
         if self.tray_icon:
             self.tray_icon.stop()
+
+        if self.results_server:
+            self.results_server.stop()
 
         self.logger.info("程序已退出")
         os._exit(0)

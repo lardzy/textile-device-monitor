@@ -13,6 +13,7 @@ DEFAULT_CONFIG = {
     "server_url": "http://127.0.0.1:8000",
     "working_path": "",
     "report_interval": 5,
+    "results_port": 9100,
     "log_level": "INFO",
     "manual_status": None,
     "is_first_run": True,
@@ -104,6 +105,10 @@ class Config:
     def get_report_interval(self) -> int:
         """获取上报间隔（秒）"""
         return self.config.get("report_interval", 5)
+
+    def get_results_port(self) -> int:
+        """获取结果服务端口"""
+        return int(self.config.get("results_port", 9100))
 
     def get_manual_status(self) -> Optional[str]:
         """获取手动设置的状态"""

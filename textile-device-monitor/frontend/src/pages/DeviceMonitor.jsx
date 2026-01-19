@@ -3,9 +3,11 @@ import { Card, Row, Col, Badge, Tag, Progress, Form, Input, Button, Table, List,
 import { CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
+import ResultsModal from '../components/ResultsModal';
 import wsClient from '../websocket/client';
 import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHelper';
 import { getInspectorName, saveInspectorName } from '../utils/localStorage';
+
 
 const statusConfig = {
   idle: { color: 'success', icon: <CheckCircleOutlined />, text: '空闲' },
@@ -21,7 +23,10 @@ function DeviceMonitor() {
   const [queue, setQueue] = useState([]);
   const [queueLogs, setQueueLogs] = useState([]);
   const [inspectorName, setInspectorName] = useState(getInspectorName());
+  const [tableModalOpen, setTableModalOpen] = useState(false);
+  const [imagesModalOpen, setImagesModalOpen] = useState(false);
   const [form] = Form.useForm();
+
 
   const selectedDevice = useMemo(() => {
     return devices.find(device => device.id === selectedDeviceId) || null;
@@ -164,7 +169,10 @@ function DeviceMonitor() {
     if (selectedDeviceId) {
       fetchQueue(selectedDeviceId);
     }
+    setTableModalOpen(false);
+    setImagesModalOpen(false);
   }, [selectedDeviceId]);
+
 
   const handleJoinQueue = async (values) => {
     try {
@@ -329,7 +337,7 @@ function DeviceMonitor() {
                 </Form>
 
                 <Row gutter={[16, 16]}>
-                  <Col span={16}>
+                  <Col span={14}>
                     <Table 
                       dataSource={queue}
                       columns={queueColumns}
@@ -338,7 +346,39 @@ function DeviceMonitor() {
                       size="small"
                     />
                   </Col>
-                  <Col span={8}>
+                  <Col span={10}>
+                    <Card title="结果查看" size="small" style={{ marginBottom: 16 }}>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                        <Button
+                          type="primary"
+                          disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
+                          onClick={() => setTableModalOpen(true)}
+                        >
+                          查看表格
+                        </Button>
+                        <Button
+                          disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
+                          onClick={() => setImagesModalOpen(true)}
+                        >
+                          查看图片
+                        </Button>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
+                        仅在检测完成（进度100%）后可查看结果
+                      </div>
+                      <ResultsModal
+                        open={tableModalOpen}
+                        title="结果表格"
+                        url={`/results/table?device_id=${selectedDevice?.id}`}
+                        onClose={() => setTableModalOpen(false)}
+                      />
+                      <ResultsModal
+                        open={imagesModalOpen}
+                        title="结果图片"
+                        url={`/results/images?device_id=${selectedDevice?.id}`}
+                        onClose={() => setImagesModalOpen(false)}
+                      />
+                    </Card>
                     <Card title="修改历史（今日）" size="small" style={{ height: '100%' }}>
                       <List
                         dataSource={queueLogs}
@@ -357,10 +397,9 @@ function DeviceMonitor() {
                         )}
                       />
                     </Card>
-
-
                   </Col>
                 </Row>
+
               </>
             ) : (
               <div style={{ color: '#999' }}>请选择设备查看排队信息</div>
