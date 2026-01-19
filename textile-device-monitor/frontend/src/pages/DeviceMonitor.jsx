@@ -282,12 +282,14 @@ function DeviceMonitor() {
 
                 <div style={{ fontSize: '13px', color: '#666' }}>
                   <div>心跳: {device.last_heartbeat ? formatRelativeTime(device.last_heartbeat) : '-'}</div>
-                  {device.metrics && (
-                    <div>
-                      {device.metrics.temperature && <span>温度: {device.metrics.temperature}°C | </span>}
-                      {device.metrics.runtime && <span>运行: {Math.floor(device.metrics.runtime / 60)}分钟</span>}
-                    </div>
-                  )}
+                  <div>
+                    {device.metrics?.temperature && <span>温度: {device.metrics.temperature}°C</span>}
+                    {device.metrics?.temperature && device.task_elapsed_seconds != null && <span> | </span>}
+                    {device.task_elapsed_seconds != null && (
+                      <span>当前任务耗时: {Math.floor(device.task_elapsed_seconds / 60)}分钟</span>
+                    )}
+                  </div>
+
                 </div>
               </Card>
             </Col>

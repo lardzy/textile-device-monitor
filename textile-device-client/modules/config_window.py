@@ -53,32 +53,24 @@ class ConfigWindow(QDialog):
         self.device_name_edit = QLineEdit()
         layout.addWidget(self.device_name_edit)
 
-    def _browse_progress_file(self):
-        """浏览进度文件"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择进度文件", "", "Text Files (*.txt);;All Files (*.*)"
-        )
-        if file_path:
-            self.progress_file_edit.setText(file_path)
-
         server_url_label = QLabel("服务器地址:")
         layout.addWidget(server_url_label)
 
         self.server_url_edit = QLineEdit()
         layout.addWidget(self.server_url_edit)
 
-        progress_file_label = QLabel("进度文件路径:")
-        layout.addWidget(progress_file_label)
+        working_path_label = QLabel("工作路径:")
+        layout.addWidget(working_path_label)
 
-        progress_file_layout = QHBoxLayout()
-        self.progress_file_edit = QLineEdit()
-        progress_file_layout.addWidget(self.progress_file_edit)
+        working_path_layout = QHBoxLayout()
+        self.working_path_edit = QLineEdit()
+        working_path_layout.addWidget(self.working_path_edit)
 
         self.browse_button = QPushButton("浏览...")
-        self.browse_button.clicked.connect(self._browse_progress_file)
-        progress_file_layout.addWidget(self.browse_button)
+        self.browse_button.clicked.connect(self._browse_working_path)
+        working_path_layout.addWidget(self.browse_button)
 
-        layout.addLayout(progress_file_layout)
+        layout.addLayout(working_path_layout)
 
         interval_label = QLabel("上报间隔（秒）:")
         layout.addWidget(interval_label)
@@ -102,6 +94,12 @@ class ConfigWindow(QDialog):
         layout.addLayout(button_layout)
         self.setLayout(layout)
 
+    def _browse_working_path(self):
+        """浏览工作路径"""
+        folder_path = QFileDialog.getExistingDirectory(self, "选择工作路径", "")
+        if folder_path:
+            self.working_path_edit.setText(folder_path)
+
     def _load_current_config(self):
         """加载当前配置"""
         device_code = self.current_config.get("device_code", "1号")
@@ -116,9 +114,7 @@ class ConfigWindow(QDialog):
         self.server_url_edit.setText(
             self.current_config.get("server_url", "http://192.168.1.100:8000")
         )
-        self.progress_file_edit.setText(
-            self.current_config.get("progress_file_path", "")
-        )
+        self.working_path_edit.setText(self.current_config.get("working_path", ""))
         self.interval_spin.setValue(self.current_config.get("report_interval", 5))
 
     def _on_device_code_changed(self, text: str):
@@ -133,7 +129,7 @@ class ConfigWindow(QDialog):
         device_code = self.device_code_combo.currentText().strip()
         device_name = self.device_name_edit.text().strip()
         server_url = self.server_url_edit.text().strip()
-        progress_file_path = self.progress_file_edit.text().strip()
+        working_path = self.working_path_edit.text().strip()
         interval = self.interval_spin.value()
 
         if not device_code:
@@ -148,15 +144,15 @@ class ConfigWindow(QDialog):
             QMessageBox.warning(self, "错误", "服务器地址不能为空")
             return
 
-        if not progress_file_path:
-            QMessageBox.warning(self, "错误", "进度文件路径不能为空")
+        if not working_path:
+            QMessageBox.warning(self, "错误", "工作路径不能为空")
             return
 
         self.config_data = {
             "device_code": device_code,
             "device_name": device_name,
             "server_url": server_url,
-            "progress_file_path": progress_file_path,
+            "working_path": working_path,
             "report_interval": interval,
             "manual_status": None,
             "is_first_run": False,

@@ -11,6 +11,7 @@ from app.models import (
 )
 
 # SQLAlchemy assignments are runtime-correct; static type checkers may warn.
+# noqa: E501
 from app.schemas import DeviceCreate, DeviceUpdate
 from datetime import datetime, timezone
 
@@ -83,12 +84,51 @@ def update_device_status(
     task_progress: Optional[int] = None,
     metrics: Optional[dict] = None,
 ) -> Device:
+    now = datetime.now(timezone.utc)
+    new_task = False
+
+    if status == DeviceStatus.BUSY and device.task_started_at is None:
+        device.task_started_at = now
+        device.task_elapsed_seconds = 0
+
+    if task_id and device.task_id and task_id != device.task_id:
+        if (
+            device.task_progress is None
+            or task_progress is None
+            or device.task_progress == 100
+            or (task_progress is not None and task_progress < device.task_progress)
+        ):
+            new_task = True
+    elif (
+        device.task_progress == 100
+        and task_progress is not None
+        and task_progress < 100
+    ):
+        new_task = True
+    elif device.status != DeviceStatus.BUSY and status == DeviceStatus.BUSY:
+        new_task = True
+
+    if new_task:
+        device.task_started_at = now
+        device.task_elapsed_seconds = 0
+
     device.status = status
     device.task_id = task_id
     device.task_name = task_name
     device.task_progress = task_progress
     device.metrics = metrics
-    device.last_heartbeat = datetime.now(timezone.utc)
+
+    if device.task_started_at:
+        if status == DeviceStatus.BUSY:
+            device.task_elapsed_seconds = int(
+                (now - device.task_started_at).total_seconds()
+            )
+        else:
+            device.task_elapsed_seconds = int(
+                (now - device.task_started_at).total_seconds()
+            )
+
+    device.last_heartbeat = now
     db.commit()
     db.refresh(device)
     return device

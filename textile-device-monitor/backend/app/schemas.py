@@ -43,6 +43,8 @@ class Device(DeviceBase):
     task_id: Optional[str]
     task_name: Optional[str]
     task_progress: Optional[int]
+    task_started_at: Optional[datetime]
+    task_elapsed_seconds: Optional[int]
     metrics: Optional[Dict[str, Any]]
     last_heartbeat: Optional[datetime]
     created_at: datetime
@@ -67,6 +69,7 @@ class DeviceStatusHistory(BaseModel):
     task_id: Optional[str]
     task_name: Optional[str]
     task_progress: Optional[int]
+    task_duration_seconds: Optional[int]
     device_metrics: Optional[Dict[str, Any]]
     reported_at: datetime
 

@@ -11,7 +11,7 @@ DEFAULT_CONFIG = {
     "device_code": "1号",
     "device_name": "1号",
     "server_url": "http://127.0.0.1:8000",
-    "progress_file_path": "",
+    "working_path": "",
     "report_interval": 5,
     "log_level": "INFO",
     "manual_status": None,
@@ -97,9 +97,9 @@ class Config:
         """获取服务器地址"""
         return self.config.get("server_url", "http://192.168.1.100:8000")
 
-    def get_progress_file_path(self) -> str:
-        """获取进度文件路径"""
-        return self.config.get("progress_file_path", "")
+    def get_working_path(self) -> str:
+        """获取工作路径"""
+        return self.config.get("working_path", "")
 
     def get_report_interval(self) -> int:
         """获取上报间隔（秒）"""

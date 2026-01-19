@@ -74,13 +74,13 @@ def test_progress_reader():
     reader = ProgressReader(base_path, logger)
 
     if reader.check_path_accessible():
-        print("进度文件路径可访问")
-        progress = reader.read_progress("1号", True)
-        print(f"1号设备进度: {progress}%")
+        print("工作路径可访问")
+        progress = reader.read_progress()
+        print(f"设备进度: {progress}%")
     else:
-        print("进度文件路径不可访问（这是正常的，因为没有网络连接）")
-        progress = reader.read_progress("自定义设备", False)
-        print(f"自定义设备进度: {progress}% (固定值)")
+        print("工作路径不可访问（这是正常的，因为没有网络连接）")
+        progress = reader.read_progress()
+        print(f"设备进度: {progress}% (默认值)")
 
 
 def test_api_client():

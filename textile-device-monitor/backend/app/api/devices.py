@@ -14,6 +14,7 @@ from app.schemas import (
 # noqa: E501
 from app.crud import devices as device_crud
 from app.websocket.manager import websocket_manager
+from app.models import DeviceStatus as ModelDeviceStatus
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -124,7 +125,7 @@ async def report_device_status(
     device_crud.update_device_status(
         db,
         device,
-        status_report.status,
+        ModelDeviceStatus(status_report.status),
         status_report.task_id,
         status_report.task_name,
         status_report.task_progress,
@@ -132,23 +133,30 @@ async def report_device_status(
     )
 
     completed_record = None
+    device_id = int(device.id)  # type: ignore[arg-type]
     if (
-        status_report.task_progress == 100
+        status_report.task_progress is not None
+        and status_report.task_progress == 100
         and previous_progress != 100
-        and status_report.task_progress is not None
-    ):
+    ):  # type: ignore[truthy-bool]
+        task_duration_seconds = (
+            int(device.task_elapsed_seconds)  # type: ignore[arg-type]
+            if device.task_elapsed_seconds is not None
+            else 0
+        )
         history_crud.create_status_history(
             db,
-            device.id,
+            device_id,
             status_report.status,
             status_report.task_id,
             status_report.task_name,
             status_report.task_progress,
             status_report.metrics,
+            task_duration_seconds,
         )
-        completed_record = queue_crud.complete_first_in_queue(db, device.id)
+        completed_record = queue_crud.complete_first_in_queue(db, device_id)
 
-    queue_count = queue_crud.get_queue_count(db, device.id)
+    queue_count = queue_crud.get_queue_count(db, device_id)
 
     if completed_record:
         await websocket_manager.broadcast(
@@ -174,6 +182,8 @@ async def report_device_status(
                 "task_id": status_report.task_id,
                 "task_name": status_report.task_name,
                 "task_progress": status_report.task_progress,
+                "task_started_at": device.task_started_at,
+                "task_elapsed_seconds": device.task_elapsed_seconds,
                 "metrics": status_report.metrics,
                 "last_heartbeat": device.last_heartbeat,
                 "queue_count": queue_count,

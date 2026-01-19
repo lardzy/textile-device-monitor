@@ -44,6 +44,8 @@ class Device(Base):
     task_id = Column(String(100))
     task_name = Column(String(200))
     task_progress = Column(Integer)
+    task_started_at = Column(DateTime(timezone=True))
+    task_elapsed_seconds = Column(Integer)
     metrics = Column(JSONB)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
@@ -64,6 +66,7 @@ class DeviceStatusHistory(Base):
     task_id = Column(String(100))
     task_name = Column(String(200))
     task_progress = Column(Integer)
+    task_duration_seconds = Column(Integer)
     device_metrics = Column(JSONB)
     reported_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 

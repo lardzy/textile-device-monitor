@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.database import engine, get_db
 from app.models import Base
+from sqlalchemy.exc import OperationalError
 from app.config import settings
 from app.api import devices, history, queue, stats
 from app.websocket.manager import websocket_manager
@@ -14,7 +15,24 @@ from app.tasks.device_monitor import start_heartbeat_monitor
 from app.tasks.data_cleanup import start_cleanup_scheduler
 import asyncio
 
-Base.metadata.create_all(bind=engine)
+
+def init_db(max_attempts: int = 5) -> None:
+    delay = 2
+    for attempt in range(1, max_attempts + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return
+        except OperationalError as exc:
+            if attempt == max_attempts:
+                raise
+            print(f"Database not ready (attempt {attempt}/{max_attempts}): {exc}")
+            import time
+
+            time.sleep(delay)
+            delay = min(delay * 2, 10)
+
+
+init_db()
 
 app = FastAPI(
     title="纺织品检测设备监控系统",

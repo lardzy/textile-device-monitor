@@ -15,6 +15,7 @@ def create_status_history(
     task_name: Optional[str] = None,
     task_progress: Optional[int] = None,
     device_metrics: Optional[dict] = None,
+    task_duration_seconds: Optional[int] = None,
 ) -> DeviceStatusHistory:
     history = DeviceStatusHistory(
         device_id=device_id,
@@ -22,6 +23,7 @@ def create_status_history(
         task_id=task_id,
         task_name=task_name,
         task_progress=task_progress,
+        task_duration_seconds=task_duration_seconds,
         device_metrics=device_metrics,
     )
     db.add(history)

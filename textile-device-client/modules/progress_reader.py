@@ -8,8 +8,8 @@ from .logger import Logger
 
 
 class ProgressReader:
-    def __init__(self, progress_file_path: str, logger: Logger):
-        self.progress_file_path = progress_file_path
+    def __init__(self, working_path: str, logger: Logger):
+        self.working_path = working_path
         self.logger = logger
 
     def read_progress(self) -> int:
@@ -18,73 +18,95 @@ class ProgressReader:
         Returns:
             int: 进度值 (0-100)
         """
-        if not self.progress_file_path:
-            self.logger.warning("进度文件路径未配置，进度设为 0")
+        if not self.working_path:
+            self.logger.warning("工作路径未配置，进度设为 0")
             return 0
 
-        self.logger.debug(f"尝试读取进度文件: {self.progress_file_path}")
+        self.logger.debug(f"尝试读取工作路径: {self.working_path}")
 
         try:
-            if not os.path.exists(self.progress_file_path):
-                self.logger.warning(
-                    f"进度文件不存在: {self.progress_file_path}，进度设为 0"
-                )
+            if not os.path.exists(self.working_path):
+                self.logger.warning(f"工作路径不存在: {self.working_path}，进度设为 0")
                 return 0
 
-            with open(self.progress_file_path, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-
-            if not content:
-                self.logger.warning(
-                    f"进度文件为空: {self.progress_file_path}，进度设为 0"
-                )
+            latest_folder = self._get_latest_modified_folder(self.working_path)
+            if not latest_folder:
+                self.logger.warning("未找到可用的子文件夹，进度设为 0")
                 return 0
 
-            try:
-                progress = int(content)
-                if progress < 0:
-                    self.logger.warning(f"进度值小于0: {progress}，修正为 0")
-                    return 0
-                elif progress > 100:
-                    self.logger.warning(f"进度值大于100: {progress}，修正为 100")
-                    return 100
-                else:
-                    self.logger.debug(f"读取到进度: {progress}")
-                    return progress
-
-            except ValueError as e:
-                self.logger.error(f"进度值格式错误: {content}，错误: {e}，进度设为 0")
-                return 0
+            progress = self._check_progress(latest_folder)
+            self.logger.debug(f"当前最新文件夹: {latest_folder}，进度: {progress}%")
+            return progress
 
         except PermissionError:
-            self.logger.error(f"无权限访问进度文件: {self.progress_file_path}")
+            self.logger.error(f"无权限访问工作路径: {self.working_path}")
             return 0
         except Exception as e:
-            self.logger.error(f"读取进度文件失败: {e}，进度设为 0")
+            self.logger.error(f"读取工作路径失败: {e}，进度设为 0")
             return 0
 
-    def check_file_accessible(self) -> bool:
-        """检查进度文件是否可访问
+    def check_path_accessible(self) -> bool:
+        """检查工作路径是否可访问
 
         Returns:
             bool: 是否可访问
         """
-        if not self.progress_file_path:
-            self.logger.warning("进度文件路径未配置")
+        if not self.working_path:
+            self.logger.warning("工作路径未配置")
             return False
 
         try:
-            if not os.path.exists(self.progress_file_path):
-                self.logger.warning(f"进度文件不存在: {self.progress_file_path}")
+            if not os.path.exists(self.working_path):
+                self.logger.warning(f"工作路径不存在: {self.working_path}")
                 return False
 
-            if not os.path.isfile(self.progress_file_path):
-                self.logger.error(f"进度文件不是文件: {self.progress_file_path}")
+            if not os.path.isdir(self.working_path):
+                self.logger.error(f"工作路径不是文件夹: {self.working_path}")
                 return False
 
-            self.logger.debug(f"进度文件可访问: {self.progress_file_path}")
+            self.logger.debug(f"工作路径可访问: {self.working_path}")
             return True
 
         except Exception as e:
-            self.logger.error(f"检查进度文件失败: {e}")
+            self.logger.error(f"检查工作路径失败: {e}")
             return False
+
+    def _get_latest_modified_folder(self, base_path: str) -> Optional[str]:
+        """获取指定路径下最近修改的子文件夹"""
+        try:
+            entries = [
+                os.path.join(base_path, name)
+                for name in os.listdir(base_path)
+                if os.path.isdir(os.path.join(base_path, name))
+            ]
+            if not entries:
+                return None
+            entries.sort(key=lambda p: os.path.getmtime(p))
+            return entries[-1]
+        except Exception as e:
+            self.logger.error(f"获取最新文件夹失败: {e}")
+            return None
+
+    def _check_progress(self, folder_path: str) -> int:
+        """根据文件夹结构判断进度"""
+        result_folder = os.path.join(folder_path, "result")
+        original_image = os.path.join(folder_path, "original_image")
+        mask = os.path.join(folder_path, "mask")
+        cut_pic = os.path.join(folder_path, "cut_pic")
+
+        if os.path.exists(result_folder) and os.listdir(result_folder):
+            return 100
+
+        if (
+            os.path.exists(original_image)
+            and os.path.exists(mask)
+            and os.path.exists(cut_pic)
+            and os.path.exists(result_folder)
+            and not os.listdir(result_folder)
+        ):
+            return 80
+
+        if os.path.exists(original_image) and os.path.exists(cut_pic):
+            return 20
+
+        return 0

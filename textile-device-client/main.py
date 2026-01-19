@@ -6,12 +6,14 @@ import sys
 import time
 import os
 import ctypes
+from typing import Optional
 from modules.config import Config
 from modules.logger import Logger
 from modules.api_client import ApiClient
 from modules.device_manager import DeviceManager
 from modules.progress_reader import ProgressReader
 from modules.metrics_collector import MetricsCollector
+from modules.config_window import ConfigWindow
 
 # Windows 控制台控制
 try:
@@ -89,7 +91,7 @@ class TextileDeviceClient:
         )
 
         self.progress_reader = ProgressReader(
-            progress_file_path=config["progress_file_path"], logger=self.logger
+            working_path=config["working_path"], logger=self.logger
         )
 
         self.metrics_collector = MetricsCollector(logger=self.logger)
@@ -242,10 +244,10 @@ class TextileDeviceClient:
             if not server_url:
                 server_url = config["server_url"]
 
-            print(f"\n默认进度文件路径: {config['progress_file_path']}")
-            progress_file = input("请输入进度文件路径（直接回车使用默认）: ").strip()
-            if not progress_file:
-                progress_file = config["progress_file_path"]
+            print(f"\n默认工作路径: {config['working_path']}")
+            working_path = input("请输入工作路径（直接回车使用默认）: ").strip()
+            if not working_path:
+                working_path = config["working_path"]
 
             print(f"\n默认上报间隔: {config['report_interval']} 秒")
             interval_input = input("请输入上报间隔（直接回车使用默认）: ").strip()
@@ -261,7 +263,7 @@ class TextileDeviceClient:
                 "device_code": device_code,
                 "device_name": device_name,
                 "server_url": server_url,
-                "progress_file_path": progress_file,
+                "working_path": working_path,
                 "report_interval": interval,
                 "manual_status": None,
                 "is_first_run": False,
@@ -274,7 +276,7 @@ class TextileDeviceClient:
             print(f"设备编码: {new_config['device_code']}")
             print(f"设备名称: {new_config['device_name']}")
             print(f"服务器地址: {new_config['server_url']}")
-            print(f"进度文件路径: {new_config['progress_file_path']}")
+            print(f"工作路径: {new_config['working_path']}")
             print(f"上报间隔: {new_config['report_interval']} 秒")
             print("=" * 60)
 
@@ -307,10 +309,12 @@ class TextileDeviceClient:
 
         self.logger.info("开始注册设备...")
 
-        success = self.device_manager.register_device(
-            device_code=self.config.get_device_code(),
-            device_name=self.config.get_device_name(),
-        )
+        success = False
+        if self.device_manager:
+            success = self.device_manager.register_device(
+                device_code=self.config.get_device_code(),
+                device_name=self.config.get_device_name(),
+            )
 
         if success:
             self.config.mark_device_registered()
@@ -334,14 +338,14 @@ class TextileDeviceClient:
             if new_config:
                 old_device_code = self.config.get_device_code()
                 old_server_url = self.config.get_server_url()
-                old_progress_file = self.config.get_progress_file_path()
+                old_working_path = self.config.get_working_path()
 
                 self.config.update(new_config)
 
                 if (
                     old_device_code != new_config["device_code"]
                     or old_server_url != new_config["server_url"]
-                    or old_progress_file != new_config["progress_file_path"]
+                    or old_working_path != new_config["working_path"]
                 ):
                     self.logger.info("配置已更改，需要重新初始化")
                     if self.status_reporter:
@@ -356,6 +360,9 @@ class TextileDeviceClient:
                 else:
                     self.logger.info("配置已更新")
 
+            else:
+                self.logger.info("配置未更改")
+
                 if self.tray_icon:
                     self.tray_icon.show_notification(
                         "配置已更新", f"设备: {self.config.get_device_name()}"
@@ -366,7 +373,7 @@ class TextileDeviceClient:
             if self.tray_icon:
                 self.tray_icon.show_notification("配置更新失败", str(e))
 
-    def _toggle_maintenance(self, status: str):
+    def _toggle_maintenance(self, status: Optional[str]):
         """切换维护模式
 
         Args:
@@ -374,7 +381,8 @@ class TextileDeviceClient:
         """
         self.logger.info(f"切换到 {status or '正常'} 模式")
         self.config.set_manual_status(status)
-        self.status_reporter.set_manual_status(status)
+        if self.status_reporter:
+            self.status_reporter.set_manual_status(status)
 
     def _view_logs(self):
         """查看日志（命令行）"""
@@ -395,7 +403,7 @@ class TextileDeviceClient:
         """重新连接服务器"""
         self.logger.info("重新连接服务器...")
 
-        if self.api_client.health_check():
+        if self.api_client and self.api_client.health_check():
             self.logger.info("服务器连接正常")
             if self.status_reporter:
                 self.status_reporter.report_once()

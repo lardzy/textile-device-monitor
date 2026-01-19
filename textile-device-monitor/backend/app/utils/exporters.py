@@ -18,6 +18,7 @@ def export_history_to_excel(history: Sequence[Any]) -> Response:
                 "任务ID": record.task_id or "",
                 "任务名称": record.task_name or "",
                 "进度": record.task_progress or 0,
+                "耗时(秒)": record.task_duration_seconds or 0,
                 "设备指标": str(record.device_metrics) if record.device_metrics else "",
                 "上报时间": record.reported_at.strftime("%Y-%m-%d %H:%M:%S"),
             }
