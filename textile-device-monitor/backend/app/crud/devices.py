@@ -112,17 +112,21 @@ def update_device_status(  # 更新设备状态
         device.task_started_at = now
         device.task_elapsed_seconds = 0
 
+    previous_progress = device.task_progress
+
     device.status = status
     device.task_id = task_id
     device.task_name = task_name
     device.task_progress = task_progress
     device.metrics = metrics
 
+    next_progress = task_progress if task_progress is not None else previous_progress
     if device.task_started_at:
-        if status == DeviceStatus.BUSY:
-            device.task_elapsed_seconds = int(
-                (now - device.task_started_at).total_seconds()
-            )
+        if next_progress == 100:
+            if previous_progress != 100 or device.task_elapsed_seconds is None:
+                device.task_elapsed_seconds = int(
+                    (now - device.task_started_at).total_seconds()
+                )
         else:
             device.task_elapsed_seconds = int(
                 (now - device.task_started_at).total_seconds()

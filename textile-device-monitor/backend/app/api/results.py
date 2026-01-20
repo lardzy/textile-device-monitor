@@ -33,10 +33,19 @@ def get_latest(device_id: int = Query(...), db: Session = Depends(get_db)):
 
 
 @router.get("/table")
-def get_table(device_id: int = Query(...), db: Session = Depends(get_db)):
+def get_table(
+    device_id: int = Query(...),
+    folder: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
     base_url = _get_client_base_url(db, device_id)
     try:
-        resp = requests.get(f"{base_url}/client/results/table", timeout=20)
+        params = {"folder": folder} if folder else None
+        resp = requests.get(
+            f"{base_url}/client/results/table",
+            params=params,
+            timeout=20,
+        )
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail="Client unreachable") from exc
     if resp.status_code != 200:
@@ -52,13 +61,38 @@ def get_images(
     device_id: int = Query(...),
     page: int = Query(1, ge=1),
     page_size: int = Query(200, ge=1, le=500),
+    folder: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    base_url = _get_client_base_url(db, device_id)
+    try:
+        params: dict[str, int | str] = {"page": page, "page_size": page_size}
+        if folder:
+            params["folder"] = folder
+        resp = requests.get(
+            f"{base_url}/client/results/images",
+            params=params,
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Client error")
+    return resp.json()
+
+
+@router.get("/recent")
+def get_recent(
+    device_id: int = Query(...),
+    limit: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
 ):
     base_url = _get_client_base_url(db, device_id)
     try:
         resp = requests.get(
-            f"{base_url}/client/results/images?page={page}&page_size={page_size}",
-            timeout=15,
+            f"{base_url}/client/results/recent",
+            params={"limit": limit},
+            timeout=10,
         )
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail="Client unreachable") from exc

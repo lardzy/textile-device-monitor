@@ -14,6 +14,7 @@ const EMPTY_IMAGE =
 function ResultsImages() {
   const params = new URLSearchParams(window.location.search);
   const deviceId = params.get('device_id');
+  const requestedFolder = params.get('folder');
 
   const containerRef = useRef(null);
   const cacheRef = useRef(new Map());
@@ -94,8 +95,12 @@ function ResultsImages() {
     if (!deviceId) return;
     setLoading(true);
     try {
-      const data = await resultsApi.getImages(deviceId, { page: pageToLoad, page_size: PAGE_SIZE });
-      const nextFolder = data.folder || folder;
+      const data = await resultsApi.getImages(deviceId, {
+        page: pageToLoad,
+        page_size: PAGE_SIZE,
+        folder: requestedFolder || undefined,
+      });
+      const nextFolder = data.folder || requestedFolder || folder;
       const newItems = (data.items || []).map(item => {
         const cacheKey = `${nextFolder || 'latest'}/${item.name}`;
         return {
@@ -135,7 +140,7 @@ function ResultsImages() {
     activeRef.current = 0;
     loadPage(1, true);
 
-  }, [deviceId]);
+  }, [deviceId, requestedFolder]);
 
   useEffect(() => {
     const updateSize = () => {

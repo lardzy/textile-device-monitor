@@ -4,6 +4,7 @@
 
 import os
 from typing import Optional, List, Dict
+from datetime import datetime
 from http.server import HTTPServer
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote, quote
@@ -14,6 +15,69 @@ from .logger import Logger
 class ResultsHandler(BaseHTTPRequestHandler):
     reader: Optional[ProgressReader] = None
     logger: Optional[Logger] = None
+
+    def _get_recent_results(self, limit: int) -> List[Dict]:
+        if not self.reader:
+            return []
+        try:
+            entries = [
+                os.path.join(self.reader.working_path, name)
+                for name in os.listdir(self.reader.working_path)
+                if os.path.isdir(os.path.join(self.reader.working_path, name))
+            ]
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"读取结果列表失败: {exc}")
+            return []
+
+        latest_folder = self.reader._get_latest_modified_folder(
+            self.reader.working_path
+        )
+        latest_name = os.path.basename(latest_folder) if latest_folder else None
+        today = datetime.now().date()
+        candidates = []
+        for folder_path in entries:
+            folder_name = os.path.basename(folder_path)
+            if latest_name and folder_name == latest_name:
+                continue
+            try:
+                mtime = os.path.getmtime(folder_path)
+            except Exception:
+                continue
+            if datetime.fromtimestamp(mtime).date() != today:
+                continue
+
+            result_dir = os.path.join(folder_path, "result")
+            if not os.path.exists(result_dir):
+                continue
+            files = [f for f in os.listdir(result_dir) if f.lower().endswith(".xlsx")]
+            if not files:
+                continue
+            files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
+            xlsx_name = files[-1]
+
+            cut_pic_dir = os.path.join(folder_path, "cut_pic", "1")
+            image_count = 0
+            if os.path.exists(cut_pic_dir):
+                image_count = len(
+                    [f for f in os.listdir(cut_pic_dir) if f.lower().endswith(".png")]
+                )
+
+            candidates.append(
+                (
+                    mtime,
+                    {
+                        "folder": folder_name,
+                        "task_name": folder_name,
+                        "xlsx_name": xlsx_name,
+                        "image_count": image_count,
+                        "updated_at": datetime.fromtimestamp(mtime).isoformat(),
+                    },
+                )
+            )
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return [item for _, item in candidates[:limit]]
 
     def _send_json(self, status: int, payload: Dict):
         import json
@@ -94,6 +158,18 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "no_latest_folder"})
                 return
 
+            folder_name = None
+            if "folder" in query and query.get("folder"):
+                folders = query.get("folder")
+                if folders:
+                    folder_name = unquote(folders[0])
+                    candidate = os.path.join(self.reader.working_path, folder_name)
+                    if os.path.isdir(candidate):
+                        latest_folder = candidate
+                    else:
+                        self._send_json(404, {"error": "folder_not_found"})
+                        return
+
             result_dir = os.path.join(latest_folder, "result")
             if not os.path.exists(result_dir):
                 self._send_json(404, {"error": "result_dir_missing"})
@@ -122,6 +198,18 @@ class ResultsHandler(BaseHTTPRequestHandler):
                     {"items": [], "total": 0, "page": 1, "folder": None},
                 )
                 return
+
+            folder_name = None
+            if "folder" in query and query.get("folder"):
+                folders = query.get("folder")
+                if folders:
+                    folder_name = unquote(folders[0])
+                    candidate = os.path.join(self.reader.working_path, folder_name)
+                    if os.path.isdir(candidate):
+                        latest_folder = candidate
+                    else:
+                        self._send_json(404, {"error": "folder_not_found"})
+                        return
 
             folder_name = os.path.basename(latest_folder)
             cut_pic_dir = os.path.join(latest_folder, "cut_pic", "1")
@@ -155,6 +243,17 @@ class ResultsHandler(BaseHTTPRequestHandler):
                     "folder": folder_name,
                 },
             )
+            return
+
+        if path == "/client/results/recent":
+            try:
+                limit = int(query.get("limit", ["5"])[0])
+            except ValueError:
+                limit = 5
+            if limit <= 0:
+                limit = 5
+            items = self._get_recent_results(limit)
+            self._send_json(200, {"items": items})
             return
 
         if path.startswith("/client/results/image/"):

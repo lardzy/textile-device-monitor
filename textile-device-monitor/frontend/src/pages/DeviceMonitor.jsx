@@ -3,6 +3,7 @@ import { Card, Row, Col, Badge, Tag, Progress, Form, Input, Button, Table, List,
 import { CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
+import { resultsApi } from '../api/results';
 import ResultsModal from '../components/ResultsModal';
 import wsClient from '../websocket/client';
 import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHelper';
@@ -23,8 +24,9 @@ function DeviceMonitor() {
   const [queue, setQueue] = useState([]);
   const [queueLogs, setQueueLogs] = useState([]);
   const [inspectorName, setInspectorName] = useState(getInspectorName());
-  const [tableModalOpen, setTableModalOpen] = useState(false);
-  const [imagesModalOpen, setImagesModalOpen] = useState(false);
+  const [tableModal, setTableModal] = useState({ open: false, folder: null });
+  const [imagesModal, setImagesModal] = useState({ open: false, folder: null });
+  const [recentResults, setRecentResults] = useState([]);
   const [form] = Form.useForm();
 
 
@@ -80,6 +82,19 @@ function DeviceMonitor() {
       setQueueLogs(sortedLogs);
     } catch (error) {
       message.error('获取排队列表失败');
+    }
+  };
+
+  const fetchRecentResults = async (deviceId) => {
+    if (!deviceId) {
+      setRecentResults([]);
+      return;
+    }
+    try {
+      const data = await resultsApi.getRecent(deviceId, 5);
+      setRecentResults(data.items || []);
+    } catch (error) {
+      console.error('Failed to fetch recent results:', error);
     }
   };
 
@@ -153,6 +168,7 @@ function DeviceMonitor() {
       fetchDevices();
       if (selectedDeviceId) {
         fetchQueue(selectedDeviceId);
+        fetchRecentResults(selectedDeviceId);
       }
     }, 8000);
 
@@ -168,10 +184,18 @@ function DeviceMonitor() {
   useEffect(() => {
     if (selectedDeviceId) {
       fetchQueue(selectedDeviceId);
+      fetchRecentResults(selectedDeviceId);
     }
-    setTableModalOpen(false);
-    setImagesModalOpen(false);
+    setTableModal({ open: false, folder: null });
+    setImagesModal({ open: false, folder: null });
   }, [selectedDeviceId]);
+
+  const buildResultsUrl = (type, folder) => {
+    if (!selectedDevice?.id) return '';
+    const basePath = type === 'table' ? '/results/table' : '/results/images';
+    const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
+    return `${basePath}?device_id=${selectedDevice.id}${folderParam}`;
+  };
 
 
   const handleJoinQueue = async (values) => {
@@ -352,13 +376,13 @@ function DeviceMonitor() {
                         <Button
                           type="primary"
                           disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
-                          onClick={() => setTableModalOpen(true)}
+                          onClick={() => setTableModal({ open: true, folder: null })}
                         >
                           查看表格
                         </Button>
                         <Button
                           disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
-                          onClick={() => setImagesModalOpen(true)}
+                          onClick={() => setImagesModal({ open: true, folder: null })}
                         >
                           查看图片
                         </Button>
@@ -366,17 +390,53 @@ function DeviceMonitor() {
                       <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
                         仅在检测完成（进度100%）后可查看结果
                       </div>
-                      <ResultsModal
-                        open={tableModalOpen}
-                        title="结果表格"
-                        url={`/results/table?device_id=${selectedDevice?.id}`}
-                        onClose={() => setTableModalOpen(false)}
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 12 }}>
+                        最近5次结果
+                      </div>
+                      <List
+                        dataSource={recentResults}
+                        locale={{ emptyText: '暂无历史结果' }}
+                        size="small"
+                        style={{ marginTop: 4 }}
+                        renderItem={item => (
+                          <List.Item style={{ paddingLeft: 0, paddingRight: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+                              <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: '#333' }}>
+                                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {item.task_name || item.folder || '-'}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                                <Button
+                                  size="small"
+                                  disabled={!item.folder}
+                                  onClick={() => setTableModal({ open: true, folder: item.folder })}
+                                >
+                                  查看表格
+                                </Button>
+                                <Button
+                                  size="small"
+                                  disabled={!item.folder}
+                                  onClick={() => setImagesModal({ open: true, folder: item.folder })}
+                                >
+                                  查看图片
+                                </Button>
+                              </div>
+                            </div>
+                          </List.Item>
+                        )}
                       />
                       <ResultsModal
-                        open={imagesModalOpen}
+                        open={tableModal.open}
+                        title="结果表格"
+                        url={buildResultsUrl('table', tableModal.folder)}
+                        onClose={() => setTableModal({ open: false, folder: null })}
+                      />
+                      <ResultsModal
+                        open={imagesModal.open}
                         title="结果图片"
-                        url={`/results/images?device_id=${selectedDevice?.id}`}
-                        onClose={() => setImagesModalOpen(false)}
+                        url={buildResultsUrl('images', imagesModal.folder)}
+                        onClose={() => setImagesModal({ open: false, folder: null })}
                       />
                     </Card>
                   </Col>

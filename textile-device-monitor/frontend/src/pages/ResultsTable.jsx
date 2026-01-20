@@ -15,6 +15,13 @@ function ResultsTable() {
 
   const params = new URLSearchParams(window.location.search);
   const deviceId = params.get('device_id');
+  const folder = params.get('folder');
+
+  const buildTableUrl = () => {
+    if (!deviceId) return '';
+    const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
+    return `/api/results/table?device_id=${deviceId}${folderParam}`;
+  };
 
   useEffect(() => {
     const fetchTable = async () => {
@@ -25,7 +32,7 @@ function ResultsTable() {
       }
 
       try {
-        const response = await fetch(`/api/results/table?device_id=${deviceId}`);
+        const response = await fetch(buildTableUrl());
         if (!response.ok) {
           throw new Error('表格获取失败');
         }
@@ -54,7 +61,7 @@ function ResultsTable() {
     };
 
     fetchTable();
-  }, [deviceId]);
+  }, [deviceId, folder]);
 
   const buildSheetData = (workbook, name) => {
     const sheet = workbook.Sheets[name];
@@ -115,7 +122,7 @@ function ResultsTable() {
 
   const handleDownload = () => {
     if (!deviceId) return;
-    window.open(`/api/results/table?device_id=${deviceId}`, '_blank');
+    window.open(buildTableUrl(), '_blank');
   };
 
   const handleSheetChange = (value) => {
