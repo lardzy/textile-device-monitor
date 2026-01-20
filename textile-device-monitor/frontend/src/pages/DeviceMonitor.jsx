@@ -337,7 +337,7 @@ function DeviceMonitor() {
                 </Form>
 
                 <Row gutter={[16, 16]}>
-                  <Col span={14}>
+                  <Col xs={24} lg={24} xl={12} xxl={11}>
                     <Table 
                       dataSource={queue}
                       columns={queueColumns}
@@ -346,8 +346,8 @@ function DeviceMonitor() {
                       size="small"
                     />
                   </Col>
-                  <Col span={10}>
-                    <Card title="结果查看" size="small" style={{ marginBottom: 16 }}>
+                  <Col xs={24} lg={12} xl={7} xxl={8}>
+                    <Card title="结果查看" size="small" style={{ height: '100%' }}>
                       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                         <Button
                           type="primary"
@@ -379,6 +379,8 @@ function DeviceMonitor() {
                         onClose={() => setImagesModalOpen(false)}
                       />
                     </Card>
+                  </Col>
+                  <Col xs={24} lg={12} xl={5} xxl={5}>
                     <Card title="修改历史（今日）" size="small" style={{ height: '100%' }}>
                       <List
                         dataSource={queueLogs}
