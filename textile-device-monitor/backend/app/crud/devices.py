@@ -37,7 +37,7 @@ def create_device(db: Session, device: DeviceCreate) -> Device:
 
 
 def update_device(
-    db: Session, device_id: int, device_update: DeviceUpdate
+        db: Session, device_id: int, device_update: DeviceUpdate
 ) -> Optional[Device]:
     db_device = get_device(db, device_id)
     if db_device:
@@ -75,14 +75,14 @@ def delete_device(db: Session, device_id: int) -> bool:
     return True
 
 
-def update_device_status(
-    db: Session,
-    device: Device,
-    status: DeviceStatus,
-    task_id: Optional[str] = None,
-    task_name: Optional[str] = None,
-    task_progress: Optional[int] = None,
-    metrics: Optional[dict] = None,
+def update_device_status(  # 更新设备状态
+        db: Session,
+        device: Device,
+        status: DeviceStatus,
+        task_id: Optional[str] = None,
+        task_name: Optional[str] = None,
+        task_progress: Optional[int] = None,
+        metrics: Optional[dict] = None,
 ) -> Device:
     now = datetime.now(timezone.utc)
     new_task = False
@@ -93,16 +93,16 @@ def update_device_status(
 
     if task_id and device.task_id and task_id != device.task_id:
         if (
-            device.task_progress is None
-            or task_progress is None
-            or device.task_progress == 100
-            or (task_progress is not None and task_progress < device.task_progress)
+                device.task_progress is None
+                or task_progress is None
+                or (device.task_progress == 100 and status == DeviceStatus.BUSY)
+                or (task_progress is not None and task_progress < device.task_progress)
         ):
             new_task = True
     elif (
-        device.task_progress == 100
-        and task_progress is not None
-        and task_progress < 100
+            device.task_progress == 100
+            and task_progress is not None
+            and task_progress < 100
     ):
         new_task = True
     elif device.status != DeviceStatus.BUSY and status == DeviceStatus.BUSY:
@@ -146,7 +146,7 @@ def get_online_devices(db: Session) -> List[Device]:
 
 
 def get_device_stats(
-    db: Session, device_id: int, start_date: datetime, end_date: datetime
+        db: Session, device_id: int, start_date: datetime, end_date: datetime
 ):
     from app.models import DeviceStatusHistory
 
