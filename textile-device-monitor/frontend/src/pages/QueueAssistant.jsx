@@ -4,7 +4,7 @@ import { PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from
 import { queueApi } from '../api/queue';
 import { deviceApi } from '../api/devices';
 import wsClient from '../websocket/client';
-import { getInspectorName, saveInspectorName } from '../utils/localStorage';
+import { addQueueNoticeEntry, getInspectorName, removeQueueNoticeEntry, saveInspectorName } from '../utils/localStorage';
 import { formatDateTime, formatTime } from '../utils/dateHelper';
 
 function QueueAssistant() {
@@ -51,12 +51,19 @@ function QueueAssistant() {
 
   const handleJoinQueue = async (values) => {
     try {
-      await queueApi.join({
+      const queueRecord = await queueApi.join({
         inspector_name: values.inspector_name,
         device_id: values.device_id
       });
       message.success('加入排队成功');
       saveInspectorName(values.inspector_name);
+      if (queueRecord?.id) {
+        addQueueNoticeEntry({
+          id: queueRecord.id,
+          device_id: queueRecord.device_id,
+          inspector_name: queueRecord.inspector_name,
+        });
+      }
       fetchQueue(values.device_id);
       form.resetFields();
     } catch (error) {
@@ -85,6 +92,7 @@ function QueueAssistant() {
         try {
           await queueApi.leave(queueId);
           message.success('离开排队成功');
+          removeQueueNoticeEntry(queueId);
           fetchQueue(selectedDevice);
         } catch (error) {
           message.error('离开排队失败');

@@ -1,13 +1,13 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Card, Row, Col, Badge, Tag, Progress, Form, Input, Button, Table, List, Select, message } from 'antd';
-import { CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, ClockCircleOutlined, ClockCircleFilled, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
 import { resultsApi } from '../api/results';
 import ResultsModal from '../components/ResultsModal';
 import wsClient from '../websocket/client';
 import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHelper';
-import { getInspectorName, saveInspectorName } from '../utils/localStorage';
+import { addQueueNoticeEntry, getInspectorName, getQueueNoticeEntries, getQueueNoticeModes, removeQueueNoticeEntry, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
 
 
 const statusConfig = {
@@ -27,12 +27,28 @@ function DeviceMonitor() {
   const [tableModal, setTableModal] = useState({ open: false, folder: null });
   const [imagesModal, setImagesModal] = useState({ open: false, folder: null });
   const [recentResults, setRecentResults] = useState([]);
+  const [notifyModes, setNotifyModes] = useState(() => getQueueNoticeModes());
   const [form] = Form.useForm();
+  const devicesRef = useRef([]);
+  const notifyModesRef = useRef(notifyModes);
+  const lastProgressRef = useRef(new Map());
+  const lastQueueCompletionRef = useRef(new Map());
+  const lastDeviceNotificationRef = useRef(new Map());
+  const deviceNotifyTimersRef = useRef(new Map());
 
 
   const selectedDevice = useMemo(() => {
     return devices.find(device => device.id === selectedDeviceId) || null;
   }, [devices, selectedDeviceId]);
+
+  useEffect(() => {
+    devicesRef.current = devices;
+  }, [devices]);
+
+  useEffect(() => {
+    notifyModesRef.current = notifyModes;
+    saveQueueNoticeModes(notifyModes);
+  }, [notifyModes]);
 
   const fetchDevices = async () => {
     try {
@@ -85,18 +101,144 @@ function DeviceMonitor() {
     }
   };
 
-  const fetchRecentResults = async (deviceId) => {
-    if (!deviceId) {
+  const fetchRecentResults = async (device) => {
+    if (!device?.id) {
+      setRecentResults([]);
+      return;
+    }
+    if (!device.client_base_url || device.status === 'offline') {
       setRecentResults([]);
       return;
     }
     try {
-      const data = await resultsApi.getRecent(deviceId, 5);
+      const data = await resultsApi.getRecent(device.id, 5);
       setRecentResults(data.items || []);
     } catch (error) {
-      console.error('Failed to fetch recent results:', error);
+      setRecentResults([]);
     }
   };
+
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      message.warning('当前浏览器不支持系统通知');
+      return false;
+    }
+    if (Notification.permission === 'granted') {
+      return true;
+    }
+    if (Notification.permission === 'denied') {
+      message.warning('系统通知已被禁用，请在浏览器设置中开启');
+      return false;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      message.warning('未获得系统通知权限');
+      return false;
+    }
+    return true;
+  };
+
+  const sendQueueNotification = (entry, deviceName) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      return;
+    }
+    const title = '排队提醒';
+    const body = `${deviceName || '设备'} - ${entry.inspector_name || '检验员'} 已轮到`;
+    new Notification(title, { body });
+  };
+
+  const sendDeviceNotification = (device) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      return;
+    }
+    const title = '检测完成提醒';
+    const body = `${device.name || '设备'} 检测完成`;
+    new Notification(title, { body });
+  };
+
+  const getNotifyModeByDevice = (deviceId) => {
+    if (deviceId == null) return 'off';
+    const key = String(deviceId);
+    return notifyModesRef.current[key] || notifyModesRef.current['*'] || 'off';
+  };
+
+  const handleQueueCompletion = async (data) => {
+    if (!data) return;
+    const queueId = data.queue_id != null ? Number(data.queue_id) : null;
+    const entries = getQueueNoticeEntries();
+    const entry = entries.find(item => queueId != null && item.id === queueId)
+      || entries.find(item => item.id === data.queue_id)
+      || entries.find(item => item.device_id === data.device_id && item.inspector_name === data.completed_by);
+    if (!entry) {
+      return;
+    }
+    removeQueueNoticeEntry(entry.id);
+    const permitted = await requestNotificationPermission();
+    if (!permitted) {
+      return;
+    }
+    if (entry.device_id != null) {
+      const lastDeviceTime = lastDeviceNotificationRef.current.get(entry.device_id);
+      if (lastDeviceTime && Date.now() - lastDeviceTime < 2000) {
+        return;
+      }
+    }
+    const deviceName = data.device_name
+      || devicesRef.current.find(device => device.id === entry.device_id)?.name
+      || '';
+    sendQueueNotification(entry, deviceName);
+    const deviceId = entry.device_id;
+    if (deviceId != null) {
+      lastQueueCompletionRef.current.set(deviceId, Date.now());
+      const timer = deviceNotifyTimersRef.current.get(deviceId);
+      if (timer) {
+        clearTimeout(timer);
+        deviceNotifyTimersRef.current.delete(deviceId);
+      }
+    }
+  };
+
+  const scheduleDeviceNotification = (device) => {
+    if (!device?.id) return;
+    const mode = getNotifyModeByDevice(device.id);
+    if (mode === 'off') return;
+    const timers = deviceNotifyTimersRef.current;
+    if (timers.has(device.id)) {
+      clearTimeout(timers.get(device.id));
+    }
+    const timerId = setTimeout(async () => {
+      timers.delete(device.id);
+      const lastQueueTime = lastQueueCompletionRef.current.get(device.id);
+      if (lastQueueTime && Date.now() - lastQueueTime < 2000) {
+        return;
+      }
+      const permitted = await requestNotificationPermission();
+      if (!permitted) {
+        return;
+      }
+      sendDeviceNotification(device);
+      lastDeviceNotificationRef.current.set(device.id, Date.now());
+      if (mode === 'once') {
+        setNotifyModes(prev => ({
+          ...prev,
+          [String(device.id)]: 'off'
+        }));
+      }
+    }, 600);
+    timers.set(device.id, timerId);
+  };
+
+  useEffect(() => {
+    const progressMap = lastProgressRef.current;
+    devices.forEach(device => {
+      const prev = progressMap.get(device.id);
+      const next = device.task_progress;
+      if (prev !== undefined && prev !== 100 && next === 100) {
+        scheduleDeviceNotification(device);
+      }
+      progressMap.set(device.id, next);
+    });
+  }, [devices]);
 
   useEffect(() => {
     fetchDevices();
@@ -154,6 +296,12 @@ function DeviceMonitor() {
 
     wsClient.on('queue_update', (data) => {
       if (!data || data.device_id == null) return;
+      if (data.action === 'complete') {
+        handleQueueCompletion(data);
+      }
+      if (data.action === 'leave' && data.queue_id) {
+        removeQueueNoticeEntry(data.queue_id);
+      }
       if (data.device_id === selectedDeviceId) {
         fetchQueue(selectedDeviceId);
       }
@@ -168,7 +316,8 @@ function DeviceMonitor() {
       fetchDevices();
       if (selectedDeviceId) {
         fetchQueue(selectedDeviceId);
-        fetchRecentResults(selectedDeviceId);
+        const device = devicesRef.current.find(item => item.id === selectedDeviceId);
+        fetchRecentResults(device);
       }
     }, 8000);
 
@@ -182,9 +331,10 @@ function DeviceMonitor() {
   }, [selectedDeviceId]);
 
   useEffect(() => {
+    setRecentResults([]);
     if (selectedDeviceId) {
       fetchQueue(selectedDeviceId);
-      fetchRecentResults(selectedDeviceId);
+      fetchRecentResults(selectedDevice);
     }
     setTableModal({ open: false, folder: null });
     setImagesModal({ open: false, folder: null });
@@ -200,12 +350,19 @@ function DeviceMonitor() {
 
   const handleJoinQueue = async (values) => {
     try {
-      await queueApi.join({
+      const queueRecord = await queueApi.join({
         inspector_name: values.inspector_name,
         device_id: selectedDeviceId
       });
       message.success('加入排队成功');
       saveInspectorName(values.inspector_name);
+      if (queueRecord?.id) {
+        addQueueNoticeEntry({
+          id: queueRecord.id,
+          device_id: queueRecord.device_id,
+          inspector_name: queueRecord.inspector_name,
+        });
+      }
       form.resetFields();
       setInspectorName('');
       fetchQueue(selectedDeviceId);
@@ -232,11 +389,41 @@ function DeviceMonitor() {
     try {
       await queueApi.leave(queueId);
       message.success('离开排队成功');
+      removeQueueNoticeEntry(queueId);
       fetchQueue(selectedDeviceId);
     } catch (error) {
       message.error('离开排队失败');
     }
   };
+
+  const notifyMode = selectedDeviceId != null
+    ? (notifyModes[String(selectedDeviceId)] || notifyModes['*'] || 'off')
+    : 'off';
+
+  const handleToggleNotifyMode = async () => {
+    if (selectedDeviceId == null) return;
+    const nextMode = notifyMode === 'off' ? 'once' : notifyMode === 'once' ? 'always' : 'off';
+    if (nextMode !== 'off') {
+      const permitted = await requestNotificationPermission();
+      if (!permitted) {
+        setNotifyModes(prev => ({
+          ...prev,
+          [String(selectedDeviceId)]: 'off'
+        }));
+        return;
+      }
+    }
+    setNotifyModes(prev => ({
+      ...prev,
+      [String(selectedDeviceId)]: nextMode
+    }));
+  };
+
+  const notifyLabel = notifyMode === 'once' ? '只提醒一次' : notifyMode === 'always' ? '一直提醒' : '';
+  const notifyColor = notifyMode === 'off' ? '#bfbfbf' : '#1677ff';
+  const notifyIcon = notifyMode === 'always'
+    ? <ClockCircleFilled style={{ color: notifyColor }} />
+    : <ClockCircleOutlined style={{ color: notifyColor }} />;
 
   const queueColumns = [
     { title: '位置', dataIndex: 'position', key: 'position', width: 80 },
@@ -357,6 +544,16 @@ function DeviceMonitor() {
                     <Button type="primary" htmlType="submit" icon={<PlusOutlined />}>
                       加入排队
                     </Button>
+                  </Form.Item>
+                  <Form.Item style={{ marginRight: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Button type="text" htmlType="button" onClick={handleToggleNotifyMode} style={{ padding: 0, height: 'auto' }}>
+                        {notifyIcon}
+                      </Button>
+                      {notifyLabel && (
+                        <span style={{ fontSize: 12, color: notifyColor }}>{notifyLabel}</span>
+                      )}
+                    </div>
                   </Form.Item>
                 </Form>
 

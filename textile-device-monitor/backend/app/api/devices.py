@@ -166,7 +166,9 @@ async def report_device_status(
                     "device_id": device.id,
                     "action": "complete",
                     "queue_count": queue_count,
+                    "queue_id": completed_record.id,
                     "completed_by": completed_record.inspector_name,
+                    "device_name": device.name,
                 },
             }
         )
