@@ -78,6 +78,9 @@ class StatusReporter:
         task_name = latest_folder_name or "AI显微镜检测"
         task_progress = self._get_task_progress()
         metrics = self.metrics_collector.collect_metrics()
+        client_base_url = (
+            self.progress_reader.get_client_base_url() if self.progress_reader else None
+        )
 
         response = self.api_client.report_status(
             device_code=self.device_code,
@@ -86,6 +89,7 @@ class StatusReporter:
             task_name=task_name,
             task_progress=task_progress,
             metrics=metrics,
+            client_base_url=client_base_url,
         )
 
         if response:

@@ -83,6 +83,7 @@ def update_device_status(  # 更新设备状态
         task_name: Optional[str] = None,
         task_progress: Optional[int] = None,
         metrics: Optional[dict] = None,
+        client_base_url: Optional[str] = None,
 ) -> Device:
     now = datetime.now(timezone.utc)
     new_task = False
@@ -119,6 +120,8 @@ def update_device_status(  # 更新设备状态
     device.task_name = task_name
     device.task_progress = task_progress
     device.metrics = metrics
+    if client_base_url is not None and str(client_base_url).strip():
+        device.client_base_url = client_base_url
 
     next_progress = task_progress if task_progress is not None else previous_progress
     if device.task_started_at:

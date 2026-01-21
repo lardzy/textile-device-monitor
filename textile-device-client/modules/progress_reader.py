@@ -128,15 +128,22 @@ class ProgressReader:
             hostname = socket.gethostname()
             candidates = socket.gethostbyname_ex(hostname)[2]
             for candidate in candidates:
-                if not candidate.startswith("127."):
-                    host = candidate
-                    break
+                if candidate.startswith("127."):
+                    continue
+                if candidate == "0.0.0.0":
+                    continue
+                host = candidate
+                break
             if not host:
                 host = socket.gethostbyname(hostname)
+                if host.startswith("127.") or host == "0.0.0.0":
+                    host = None
 
             port = getattr(self, "results_port", None)
             if not port:
                 port = 9100
+            if not host:
+                return None
             return f"http://{host}:{port}"
         except Exception:
             return None

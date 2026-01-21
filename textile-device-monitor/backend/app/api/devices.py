@@ -130,6 +130,7 @@ async def report_device_status(
         status_report.task_name,
         status_report.task_progress,
         status_report.metrics,
+        status_report.client_base_url,
     )
 
     completed_record = None
