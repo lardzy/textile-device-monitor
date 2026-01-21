@@ -3,6 +3,11 @@
 """
 
 import os
+import io
+import threading
+import tempfile
+import shutil
+from collections import OrderedDict
 from typing import Optional, List, Dict
 from datetime import datetime
 from http.server import HTTPServer
@@ -10,11 +15,115 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote, quote
 from .progress_reader import ProgressReader
 from .logger import Logger
+import openpyxl
+import formulas
 
 
 class ResultsHandler(BaseHTTPRequestHandler):
     reader: Optional[ProgressReader] = None
     logger: Optional[Logger] = None
+    _formula_cache = OrderedDict()
+    _formula_cache_lock = threading.Lock()
+    _formula_in_progress = set()
+    _formula_cache_limit = 6
+
+    def _process_xlsx_with_formulas(self, xlsx_path: str) -> Optional[bytes]:
+        temp_dir = tempfile.mkdtemp()
+        try:
+            try:
+                xl_model = formulas.ExcelModel().loads(xlsx_path).finish()
+                xl_model.calculate()
+                result = xl_model.write(dirpath=temp_dir)
+                if result:
+                    for file_info in result.values():
+                        if isinstance(file_info, dict) and file_info:
+                            book_key = list(file_info.keys())[0]
+                            wb = file_info.get(book_key)
+                            if isinstance(wb, openpyxl.Workbook):
+                                output = io.BytesIO()
+                                wb.save(output)
+                                output.seek(0)
+                                wb.close()
+                                return output.read()
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"使用formulas计算失败: {exc}, 降级到openpyxl")
+
+        try:
+            wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            wb.close()
+            return output.read()
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"处理xlsx文件失败: {exc}")
+            return None
+
+    def _get_cache_key(self, file_path: str) -> str:
+        return os.path.abspath(file_path)
+
+    def _get_cached_formula(self, file_path: str) -> Optional[bytes]:
+        try:
+            mtime = os.path.getmtime(file_path)
+        except OSError:
+            return None
+        key = self._get_cache_key(file_path)
+        with self._formula_cache_lock:
+            entry = self._formula_cache.get(key)
+            if entry and entry.get("mtime") == mtime:
+                self._formula_cache.move_to_end(key)
+                return entry.get("data")
+            if entry:
+                self._formula_cache.pop(key, None)
+        return None
+
+    def _store_cached_formula(self, file_path: str, mtime: float, data: bytes) -> None:
+        key = self._get_cache_key(file_path)
+        with self._formula_cache_lock:
+            self._formula_cache[key] = {"mtime": mtime, "data": data}
+            self._formula_cache.move_to_end(key)
+            while len(self._formula_cache) > self._formula_cache_limit:
+                self._formula_cache.popitem(last=False)
+
+    def _build_formula_cache(self, file_path: str, mtime: float) -> None:
+        data = self._process_xlsx_with_formulas(file_path)
+        key = self._get_cache_key(file_path)
+        with self._formula_cache_lock:
+            self._formula_in_progress.discard(key)
+        if not data:
+            return
+        try:
+            current_mtime = os.path.getmtime(file_path)
+        except OSError:
+            return
+        if current_mtime != mtime:
+            return
+        self._store_cached_formula(file_path, mtime, data)
+
+    def _schedule_formula_cache(self, file_path: str) -> None:
+        try:
+            mtime = os.path.getmtime(file_path)
+        except OSError:
+            return
+        key = self._get_cache_key(file_path)
+        with self._formula_cache_lock:
+            entry = self._formula_cache.get(key)
+            if entry and entry.get("mtime") == mtime:
+                self._formula_cache.move_to_end(key)
+                return
+            if key in self._formula_in_progress:
+                return
+            self._formula_in_progress.add(key)
+        worker = threading.Thread(
+            target=self._build_formula_cache,
+            args=(file_path, mtime),
+            daemon=True,
+        )
+        worker.start()
 
     def _get_recent_results(self, limit: int) -> List[Dict]:
         if not self.reader:
@@ -55,6 +164,8 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 continue
             files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
             xlsx_name = files[-1]
+            xlsx_path = os.path.join(result_dir, xlsx_name)
+            self._schedule_formula_cache(xlsx_path)
 
             cut_pic_dir = os.path.join(folder_path, "cut_pic", "1")
             image_count = 0
@@ -88,6 +199,14 @@ class ResultsHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_bytes(self, data: bytes, content_type: str, status: int = 200):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=300")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _send_file(
         self,
@@ -150,6 +269,8 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
                 if files:
                     xlsx_name = files[-1]
+                    xlsx_path = os.path.join(result_dir, xlsx_name)
+                    self._schedule_formula_cache(xlsx_path)
 
             image_count = 0
             if os.path.exists(cut_pic_dir):
@@ -205,6 +326,50 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 download_name=xlsx_name,
             )
+            return
+
+        if path == "/client/results/table_view":
+            latest_folder = self.reader._get_latest_modified_folder(
+                self.reader.working_path
+            )
+            if not latest_folder:
+                self._send_json(404, {"error": "no_latest_folder"})
+                return
+
+            if "folder" in query and query.get("folder"):
+                folders = query.get("folder")
+                if folders:
+                    folder_name = unquote(folders[0])
+                    candidate = os.path.join(self.reader.working_path, folder_name)
+                    if os.path.isdir(candidate):
+                        latest_folder = candidate
+                    else:
+                        self._send_json(404, {"error": "folder_not_found"})
+                        return
+
+            result_dir = os.path.join(latest_folder, "result")
+            if not os.path.exists(result_dir):
+                self._send_json(404, {"error": "result_dir_missing"})
+                return
+
+            files = [f for f in os.listdir(result_dir) if f.lower().endswith(".xlsx")]
+            files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
+            if not files:
+                self._send_json(404, {"error": "xlsx_not_found"})
+                return
+
+            xlsx_name = files[-1]
+            xlsx_path = os.path.join(result_dir, xlsx_name)
+            cached = self._get_cached_formula(xlsx_path)
+            if cached:
+                self._send_bytes(
+                    cached,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                return
+
+            self._schedule_formula_cache(xlsx_path)
+            self._send_json(202, {"status": "processing"})
             return
 
         if path == "/client/results/images":

@@ -23,7 +23,14 @@ function ResultsTable() {
     return `/api/results/table?device_id=${deviceId}${folderParam}`;
   };
 
+  const buildTableViewUrl = () => {
+    if (!deviceId) return '';
+    const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
+    return `/api/results/table_view?device_id=${deviceId}${folderParam}`;
+  };
+
   useEffect(() => {
+    let cancelled = false;
     const fetchTable = async () => {
       if (!deviceId) {
         message.error('缺少设备参数');
@@ -31,36 +38,66 @@ function ResultsTable() {
         return;
       }
 
-      try {
-        const response = await fetch(buildTableUrl());
-        if (!response.ok) {
-          throw new Error('表格获取失败');
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-        workbookRef.current = workbook;
-        const sheetNames = workbook.SheetNames || [];
+      const maxAttempts = 20;
+      const retryDelayMs = 3000;
+      let attempt = 0;
+      let notified = false;
+      setLoading(true);
 
-        if (sheetNames.length === 0) {
-          setHasData(false);
-          setSheetData(null);
-          setSheets([]);
-          setSelectedSheet(null);
-        } else {
-          setSheets(sheetNames);
-          setHasData(true);
-          const initialSheet = sheetNames[0];
-          setSelectedSheet(initialSheet);
-          setSheetData(buildSheetData(workbook, initialSheet));
+      while (!cancelled) {
+        try {
+          const response = await fetch(buildTableViewUrl());
+          if (cancelled) {
+            return;
+          }
+          if (response.status === 202) {
+            if (!notified) {
+              message.info('表格计算中，请稍后自动刷新');
+              notified = true;
+            }
+            attempt += 1;
+            if (attempt >= maxAttempts) {
+              throw new Error('表格计算超时');
+            }
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+            continue;
+          }
+          if (!response.ok) {
+            throw new Error('表格获取失败');
+          }
+          const arrayBuffer = await response.arrayBuffer();
+          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+          workbookRef.current = workbook;
+          const sheetNames = workbook.SheetNames || [];
+
+          if (sheetNames.length === 0) {
+            setHasData(false);
+            setSheetData(null);
+            setSheets([]);
+            setSelectedSheet(null);
+          } else {
+            setSheets(sheetNames);
+            setHasData(true);
+            const initialSheet = sheetNames[0];
+            setSelectedSheet(initialSheet);
+            setSheetData(buildSheetData(workbook, initialSheet));
+          }
+          setLoading(false);
+          return;
+        } catch (error) {
+          if (!cancelled) {
+            message.error('表格加载失败');
+            setLoading(false);
+          }
+          return;
         }
-      } catch (error) {
-        message.error('表格加载失败');
-      } finally {
-        setLoading(false);
       }
     };
 
     fetchTable();
+    return () => {
+      cancelled = true;
+    };
   }, [deviceId, folder]);
 
   const buildSheetData = (workbook, name) => {

@@ -61,6 +61,31 @@ def get_table(
     )
 
 
+@router.get("/table_view")
+def get_table_view(
+    device_id: int = Query(...),
+    folder: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    base_url = _get_client_base_url(db, device_id)
+    try:
+        params = {"folder": folder} if folder else None
+        resp = requests.get(
+            f"{base_url}/client/results/table_view",
+            params=params,
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code not in (200, 202):
+        raise HTTPException(status_code=resp.status_code, detail="Client error")
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("Content-Type", "application/octet-stream"),
+        status_code=resp.status_code,
+    )
+
+
 @router.get("/images")
 def get_images(
     device_id: int = Query(...),
