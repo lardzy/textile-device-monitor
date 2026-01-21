@@ -617,16 +617,7 @@ function DeviceMonitor() {
                         输出路径: {olympus.output_path}
                       </div>
                     )}
-                    {Array.isArray(olympus.output_path_candidates) && olympus.output_path_candidates.length > 1 && (
-                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                        输出路径候选:
-                        {olympus.output_path_candidates.map((candidate, index) => (
-                          <div key={`${candidate}-${index}`} title={candidate} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {candidate}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+
                     {(xyPosition || zPosition != null) && (
                       <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
                         {xyPosition ? `样品台: ${xyPosition.x}, ${xyPosition.y}` : ''}
