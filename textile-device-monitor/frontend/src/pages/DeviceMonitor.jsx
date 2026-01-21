@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Card, Row, Col, Badge, Tag, Progress, Form, Input, Button, Table, List, Select, message } from 'antd';
+import { Card, Row, Col, Badge, Tag, Progress, Form, Input, Button, Table, List, Select, message, Modal } from 'antd';
 import { CheckCircleOutlined, ClockCircleOutlined, ClockCircleFilled, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
@@ -16,6 +16,34 @@ const statusConfig = {
   maintenance: { color: 'warning', icon: <ClockCircleOutlined />, text: '维护中' },
   error: { color: 'error', icon: <ExclamationCircleOutlined />, text: '故障' },
   offline: { color: 'default', icon: <StopOutlined />, text: '离线' },
+};
+
+const olympusStateLabels = {
+  StateIdle: '空闲',
+  StateRepeatStarting: '开始采集',
+  StateRepeatRunning: '采集中',
+  StateRepeatStopping: '停止中',
+};
+
+const getOlympusStateLabel = (state) => {
+  if (!state) return '-';
+  return olympusStateLabels[state] || state;
+};
+
+const getOlympusDisplayState = (olympus, deviceStatus) => {
+  if (!olympus) return '-';
+  if (olympus.active) return '采集中';
+  const label = getOlympusStateLabel(olympus.state);
+  if (label !== '-') return label;
+  if (deviceStatus && statusConfig[deviceStatus]) {
+    return statusConfig[deviceStatus].text;
+  }
+  return '-';
+};
+
+const isConfocalDevice = (device) => {
+  if (!device) return false;
+  return device.metrics?.device_type === 'laser_confocal' || Boolean(device.metrics?.olympus);
 };
 
 function DeviceMonitor() {
@@ -347,6 +375,33 @@ function DeviceMonitor() {
     return `${basePath}?device_id=${selectedDevice.id}${folderParam}`;
   };
 
+  const handleCleanupImages = (folder) => {
+    if (!selectedDevice?.id) return;
+    Modal.confirm({
+      title: '删除多余图片',
+      content: '仅保留以“_I.jpg”结尾的图片，其余图片会移动到输出目录的 .recycle 文件夹。',
+      okText: '确认删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const data = await resultsApi.cleanupImages(selectedDevice.id, folder || undefined);
+          const moved = data?.moved ?? 0;
+          message.success(`已移动 ${moved} 张图片`);
+        } catch (error) {
+          const msg = error?.message || '';
+          if (msg.includes('folder_not_found')) {
+            message.error('输出路径不存在，无法清理');
+          } else if (msg.includes('cleanup_not_supported')) {
+            message.error('当前设备不支持清理');
+          } else {
+            message.error('删除多余图片失败');
+          }
+        }
+      }
+    });
+  };
+
 
   const handleJoinQueue = async (values) => {
     try {
@@ -464,6 +519,24 @@ function DeviceMonitor() {
         {devices.map(device => {
           const config = statusConfig[device.status] || statusConfig.offline;
           const isSelected = device.id === selectedDeviceId;
+          const isConfocal = isConfocalDevice(device);
+          const olympus = device.metrics?.olympus || {};
+          const imageProgress = Number.isFinite(Number(olympus.image_progress))
+            ? Number(olympus.image_progress)
+            : null;
+          const frameCurrent = olympus.frame_current;
+          const frameTotal = olympus.frame_total;
+          const overallProgress = Number.isFinite(Number(device.task_progress))
+            ? Number(device.task_progress)
+            : 0;
+          const groupTotal = olympus.group_total;
+          const groupCompleted = olympus.group_completed;
+          const frameLabel = frameCurrent
+            ? `z${String(frameCurrent).padStart(3, '0')}/${frameTotal || '?'}`
+            : '-';
+          const xyPosition = olympus.xy_position;
+          const zPosition = olympus.z_position;
+          const zRange = olympus.z_range;
           return (
             <Col xs={24} sm={12} md={8} lg={6} key={device.id}>
               <Card 
@@ -483,7 +556,7 @@ function DeviceMonitor() {
                   <Tag color="green">位置: {device.location || '-'}</Tag>
                 </div>
                 
-                {Number.isFinite(Number(device.task_progress)) && (
+                {!isConfocal && Number.isFinite(Number(device.task_progress)) && (
                   <div style={{ marginBottom: '12px' }}>
                     <div style={{ fontSize: '14px', marginBottom: '4px' }}>
                       当前任务: {device.task_name || '未知任务'}
@@ -496,6 +569,70 @@ function DeviceMonitor() {
                         '100%': '#87d068',
                       }}
                     />
+                  </div>
+                )}
+
+                {isConfocal && (
+                  <div style={{ marginBottom: '12px' }}>
+                    <div style={{ fontSize: '14px', marginBottom: '4px' }}>
+                      当前任务: {device.task_name || '未知任务'}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
+                      设备状态: {getOlympusDisplayState(olympus, device.status)}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
+                      当前图片进度: {frameLabel}
+                    </div>
+                    <Progress
+                      percent={imageProgress ?? 0}
+                      status="active"
+                      format={() => (imageProgress != null ? `${imageProgress}%` : frameLabel)}
+                    />
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 8, marginBottom: 4 }}>
+                      多点总进度
+                    </div>
+                    <Progress
+                      percent={overallProgress}
+                      status="active"
+                      format={() => (
+                        groupTotal ? `${overallProgress}% (${groupCompleted || 0}/${groupTotal})` : `${overallProgress}%`
+                      )}
+                    />
+                    {olympus.current_file && (
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>
+                        当前文件: {olympus.current_file}
+                      </div>
+                    )}
+                    {olympus.output_path && (
+                      <div
+                        title={olympus.output_path}
+                        style={{ fontSize: 12, color: '#666', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                      >
+                        输出路径: {olympus.output_path}
+                      </div>
+                    )}
+                    {Array.isArray(olympus.output_path_candidates) && olympus.output_path_candidates.length > 1 && (
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                        输出路径候选:
+                        {olympus.output_path_candidates.map((candidate, index) => (
+                          <div key={`${candidate}-${index}`} title={candidate} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {candidate}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(xyPosition || zPosition != null) && (
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                        {xyPosition ? `样品台: ${xyPosition.x}, ${xyPosition.y}` : ''}
+                        {xyPosition && zPosition != null ? ' | ' : ''}
+                        {zPosition != null ? `Z: ${zPosition}` : ''}
+                      </div>
+                    )}
+                    {zRange && (
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                        Z范围: {zRange.start} ~ {zRange.end}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -570,13 +707,24 @@ function DeviceMonitor() {
                   <Col xs={24} lg={12} xl={7} xxl={8}>
                     <Card title="结果查看" size="small" style={{ height: '100%' }}>
                       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                        <Button
-                          type="primary"
-                          disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
-                          onClick={() => setTableModal({ open: true, folder: null })}
-                        >
-                          查看表格
-                        </Button>
+                        {!isConfocalDevice(selectedDevice) ? (
+                          <Button
+                            type="primary"
+                            disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
+                            onClick={() => setTableModal({ open: true, folder: null })}
+                          >
+                            查看表格
+                          </Button>
+                        ) : (
+                          <Button
+                            type="primary"
+                            danger
+                            disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
+                            onClick={() => handleCleanupImages(null)}
+                          >
+                            删除多余图片
+                          </Button>
+                        )}
                         <Button
                           disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
                           onClick={() => setImagesModal({ open: true, folder: null })}
@@ -604,13 +752,24 @@ function DeviceMonitor() {
                                 </div>
                               </div>
                               <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                                <Button
-                                  size="small"
-                                  disabled={!item.folder}
-                                  onClick={() => setTableModal({ open: true, folder: item.folder })}
-                                >
-                                  查看表格
-                                </Button>
+                                {!isConfocalDevice(selectedDevice) ? (
+                                  <Button
+                                    size="small"
+                                    disabled={!item.folder}
+                                    onClick={() => setTableModal({ open: true, folder: item.folder })}
+                                  >
+                                    查看表格
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="small"
+                                    danger
+                                    disabled={!item.folder}
+                                    onClick={() => handleCleanupImages(item.folder)}
+                                  >
+                                    删除多余图片
+                                  </Button>
+                                )}
                                 <Button
                                   size="small"
                                   disabled={!item.folder}
@@ -623,12 +782,14 @@ function DeviceMonitor() {
                           </List.Item>
                         )}
                       />
-                      <ResultsModal
-                        open={tableModal.open}
-                        title="结果表格"
-                        url={buildResultsUrl('table', tableModal.folder)}
-                        onClose={() => setTableModal({ open: false, folder: null })}
-                      />
+                      {!isConfocalDevice(selectedDevice) && (
+                        <ResultsModal
+                          open={tableModal.open}
+                          title="结果表格"
+                          url={buildResultsUrl('table', tableModal.folder)}
+                          onClose={() => setTableModal({ open: false, folder: null })}
+                        />
+                      )}
                       <ResultsModal
                         open={imagesModal.open}
                         title="结果图片"

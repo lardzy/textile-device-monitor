@@ -155,3 +155,32 @@ def get_image(
         content=resp.content,
         media_type=resp.headers.get("Content-Type", "image/png"),
     )
+
+
+@router.post("/cleanup")
+def cleanup_images(
+    device_id: int = Query(...),
+    folder: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    base_url = _get_client_base_url(db, device_id)
+    try:
+        params = {"folder": folder} if folder else None
+        resp = requests.post(
+            f"{base_url}/client/results/cleanup",
+            params=params,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code != 200:
+        detail = "Client error"
+        try:
+            payload = resp.json()
+            if isinstance(payload, dict):
+                detail = payload.get("error") or detail
+        except ValueError:
+            if resp.text:
+                detail = resp.text
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+    return resp.json()
