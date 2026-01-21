@@ -33,6 +33,12 @@ const getOlympusStateLabel = (state) => {
 const getOlympusDisplayState = (olympus, deviceStatus) => {
   if (!olympus) return '-';
   if (olympus.active) return '采集中';
+  if (olympus.image_progress != null && olympus.image_progress > 0 && olympus.image_progress < 100) {
+    return '采集中';
+  }
+  if (olympus.frame_current != null && olympus.frame_current > 0) {
+    return '采集中';
+  }
   const label = getOlympusStateLabel(olympus.state);
   if (label !== '-') return label;
   if (deviceStatus && statusConfig[deviceStatus]) {

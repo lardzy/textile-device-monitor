@@ -184,9 +184,17 @@ class OlympusProgressReader(ProgressReader):
         if os.name == "nt":
             self._encoding = "gbk"
             self._decode_candidates = ["gbk", "mbcs", "utf-8"]
+            self._path_decode_candidates = [
+                "gbk",
+                "cp936",
+                "gb2312",
+                "mbcs",
+                "utf-8",
+            ]
         else:
             self._encoding = "utf-8"
             self._decode_candidates = ["utf-8"]
+            self._path_decode_candidates = ["utf-8"]
         self._lock = threading.Lock()
         self._offset = 0
         self._initialized = False
@@ -239,7 +247,7 @@ class OlympusProgressReader(ProgressReader):
     def _decode_path_bytes(self, raw: bytes) -> str:
         best_text = ""
         best_score = -10**9
-        for encoding in self._decode_candidates:
+        for encoding in self._path_decode_candidates:
             try:
                 decoded = raw.decode(encoding)
                 errors = 0
@@ -255,7 +263,7 @@ class OlympusProgressReader(ProgressReader):
     def _build_path_candidates(self, raw: bytes, fallback: Optional[str]) -> list[str]:
         seen: set[str] = set()
         candidates: list[str] = []
-        for encoding in self._decode_candidates:
+        for encoding in self._path_decode_candidates:
             for errors in ("strict", "replace"):
                 try:
                     decoded = raw.decode(encoding, errors=errors)
@@ -265,6 +273,13 @@ class OlympusProgressReader(ProgressReader):
                 if decoded and decoded not in seen:
                     seen.add(decoded)
                     candidates.append(decoded)
+        try:
+            latin1_fixed = raw.decode("latin1").encode("latin1").decode("gbk")
+            latin1_fixed = self._maybe_fix_mojibake(latin1_fixed)
+            if latin1_fixed and latin1_fixed not in seen:
+                candidates.append(latin1_fixed)
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            pass
         if fallback:
             normalized = self._maybe_fix_mojibake(fallback)
             if normalized and normalized not in seen:
