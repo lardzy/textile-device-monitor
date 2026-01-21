@@ -38,7 +38,7 @@ function ResultsTable() {
         return;
       }
 
-      const maxAttempts = 20;
+      const maxAttempts = 40;
       const retryDelayMs = 3000;
       let attempt = 0;
       let notified = false;
