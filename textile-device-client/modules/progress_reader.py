@@ -155,57 +155,26 @@ class ProgressReader:
 
 
 class OlympusProgressReader(ProgressReader):
-    _TIMESTAMP_PATTERN = re.compile(r"^(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}\.\d+)")
-    _DATAPATH_PATTERN = re.compile(r"datapath=([^\s)]+)")
-    _BASENAME_PATTERN = re.compile(r"basename=([^\s,]+)")
-    _STATE_PATTERN = re.compile(r"Enter State \((State[^)]+)\)")
-    _FRAME_PATTERN = re.compile(r"frame:z(\d+)_0_1")
-    _GROUP_START_PATTERN = re.compile(r"notifyProtocolGroupStarted.*name=G(\d{3})")
-    _GROUP_END_PATTERN = re.compile(
-        r"notifyProtocolGroupCompleted.*name=G(\d{3}).*action=end"
-    )
-    _EXPORT_PATTERN = re.compile(r"exportAreaImage\(\) filename=([^\s,]+)")
-    _EXPORT_NOTIFY_PATTERN = re.compile(r"notifyExportImage.*filename=([^\s,]+)")
-    _EXPORT_PATH_PATTERN = re.compile(r"notifyExportImage.*path=([^,]+)")
-    _EXPORT_PATH_BYTES_PATTERN = re.compile(rb"notifyExportImage.*path=([^,]+)")
-    _GROUP_FROM_FILENAME_PATTERN = re.compile(r"_G(\d{3})_A\d+")
-    _GROUP_TOTAL_PATTERN = re.compile(r"numberOfGroup=(\d+)")
-    _XY_PATTERN = re.compile(r"3NXYP\s+(-?\d+),(-?\d+),0")
-    _Z_PATTERN = re.compile(r"1PE\s+(-?\d+),0")
-    _STAGE_POS_PATTERN = re.compile(r"stagePosition\"?[=:](-?\d+)")
-    _REPEAT_COUNT_PATTERN = re.compile(r"SetZLoopParam.*?repeatCount\"?[=:](\d+)")
-    _Z_START_PATTERN = re.compile(r"SetZLoopParam.*?startPosition\"?[=:](-?\d+)")
-    _Z_END_PATTERN = re.compile(r"SetZLoopParam.*?endPosition\"?[=:](-?\d+)")
-
     def __init__(self, log_path: str, logger: Logger, results_port: int = 9100):
         super().__init__(working_path="", logger=logger, results_port=results_port)
         self.log_path = log_path
         self.is_laser_confocal = True
         if os.name == "nt":
             self._encoding = "gbk"
-            self._decode_candidates = ["gbk", "mbcs", "utf-8"]
-            self._path_decode_candidates = [
+            self._decode_candidates = [
                 "gbk",
                 "cp936",
                 "gb2312",
                 "big5",
-                "cp950",
                 "mbcs",
                 "utf-8",
                 "latin1",
             ]
         else:
             self._encoding = "utf-8"
-            self._decode_candidates = ["utf-8"]
-            self._path_decode_candidates = [
-                "utf-8",
-                "gbk",
-                "cp936",
-                "gb2312",
-                "big5",
-                "cp950",
-                "latin1",
-            ]
+            self._decode_candidates = ["utf-8", "gbk", "gb2312", "big5", "latin1"]
+
+        # 线程锁和状态变量
         self._lock = threading.Lock()
         self._offset = 0
         self._initialized = False
@@ -235,6 +204,54 @@ class OlympusProgressReader(ProgressReader):
         self._frame_total: Optional[int] = None
         self._z_range: Optional[tuple[int, int]] = None
         self._output_path_candidates: list[str] = []
+
+        # 定义所有正则表达式
+        self._TIMESTAMP_PATTERN = re.compile(
+            r"^(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}\.\d+)"
+        )
+        self._DATAPATH_PATTERN = re.compile(r"datapath=([^\s)]+)")
+        self._BASENAME_PATTERN = re.compile(r"basename=([^\s,]+)")
+        self._STATE_PATTERN = re.compile(r"Enter State \((State[^)]+)\)")
+        self._FRAME_PATTERN = re.compile(
+            r"frame:z(\d+)_\d+_\d+"
+        )  # 修复：支持frame:z527_0_1格式
+        self._GROUP_START_PATTERN = re.compile(
+            r"notifyProtocolGroupStarted.*name=G(\d{3})"
+        )
+        self._GROUP_END_PATTERN = re.compile(
+            r"notifyProtocolGroupCompleted.*name=G(\d{3}).*action=end"
+        )
+        self._EXPORT_PATTERN = re.compile(r"exportAreaImage\(\) filename=([^\s,]+)")
+        self._EXPORT_NOTIFY_PATTERN = re.compile(
+            r"notifyExportImage.*filename=([^\s,]+)"
+        )
+        self._EXPORT_PATH_PATTERN = re.compile(r"notifyExportImage.*path=([^,]+)")
+        self._EXPORT_PATH_BYTES_PATTERN = re.compile(
+            rb"notifyExportImage.*path=([^,]+)"
+        )
+        self._GROUP_FROM_FILENAME_PATTERN = re.compile(r"_G(\d{3})_A\d+")
+        self._GROUP_TOTAL_PATTERN = re.compile(r"numberOfGroup=(\d+)")
+        self._XY_PATTERN = re.compile(r"3NXYP\s+(-?\d+),(-?\d+),0")
+        self._Z_PATTERN = re.compile(r"1PE\s+(-?\d+),0")
+        self._STAGE_POS_PATTERN = re.compile(r"stagePosition\"?[=:](-?\d+)")
+        self._REPEAT_COUNT_PATTERN = re.compile(
+            r"SetZLoopParam.*?repeatCount\"?[=:](\d+)"
+        )
+        self._Z_START_PATTERN = re.compile(
+            r"SetZLoopParam.*?startPosition\"?[=:](-?\d+)"
+        )
+        self._Z_END_PATTERN = re.compile(r"SetZLoopParam.*?endPosition\"?[=:](-?\d+)")
+
+        # 添加路径解码候选
+        self._path_decode_candidates = [
+            "gbk",
+            "cp936",
+            "gb2312",
+            "big5",
+            "mbcs",
+            "utf-8",
+            "latin1",
+        ]
 
     def _count_cjk(self, text: str) -> int:
         return sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
@@ -487,8 +504,32 @@ class OlympusProgressReader(ProgressReader):
         return path.startswith("\\\\") or path.startswith("//")
 
     def _is_temp_output_path(self, path: str) -> bool:
+        """检查是否为临时输出路径，排除Olympus设备的临时文件地址"""
+        if not path:
+            return True
+
         normalized = path.replace("/", "\\").lower()
-        return "microscopeapp\\temp\\image" in normalized
+
+        # Olympus设备临时文件路径模式
+        olympus_temp_patterns = [
+            "programdata\\olympus\\lext-ols50-sw\\microscopeapp\\temp\\image",
+            "microscopeapp\\temp\\image",  # 保留原有的检查
+            "temp\\image",  # 更宽泛的临时路径检查
+        ]
+
+        # 检查是否匹配任何临时路径模式
+        for pattern in olympus_temp_patterns:
+            if pattern in normalized:
+                return True
+
+        # 检查是否为系统临时目录下的文件
+        if normalized.startswith("c:\\programdata\\") and "temp" in normalized:
+            return True
+
+        if normalized.startswith("c:\\windows\\temp\\"):
+            return True
+
+        return False
 
     def _update_output_path(
         self, path: str, timestamp: Optional[datetime], allow_reset: bool = True
@@ -497,8 +538,6 @@ class OlympusProgressReader(ProgressReader):
             return
         normalized = self._maybe_fix_mojibake(path.strip())
         if not normalized:
-            return
-        if self._is_temp_output_path(normalized):
             return
         if self._current_output_path:
             current_is_unc = self._is_unc_path(self._current_output_path)
@@ -688,40 +727,128 @@ class OlympusProgressReader(ProgressReader):
         self._groups_completed.add(group_name)
         self._max_group_index = max(self._max_group_index, group_index)
 
-    def _estimate_frame_total(self) -> Optional[int]:
-        if self._frame_total and self._frame_total > 0:
-            return self._frame_total
-        return self._last_frame_total
+    def _calculate_z_axis_progress(self) -> Optional[int]:
+        """计算Z轴扫描进度"""
+
+        if not (self._z_range and self._z_position is not None):
+            return None
+
+        # 计算Z轴总步数
+        total_steps = abs(self._z_range[1] - self._z_range[0])  # stepSize通常为380
+        if total_steps <= 0:
+            return None
+
+        # 计算当前步数（从起始位置开始）
+        current_step = abs(self._z_position - self._z_range[0])
+
+        # 计算进度百分比
+        progress = int((current_step / max(total_steps, 1)) * 100)
+        return max(0, min(100, progress))
+
+    def _calculate_group_progress(self) -> Optional[int]:
+        """计算组进度（基于已完成的组数和总组数）"""
+        if not self._group_total or self._group_total <= 0:
+            return None
+
+        completed = len(self._groups_completed)
+
+        # 如果有当前正在进行的组，计算其在总进度中的比例
+        current_fraction = 0.0
+        if self._current_group:
+            try:
+                current_group_index = (
+                    int(self._current_group[1:])
+                    if self._current_group.startswith("G")
+                    else 0
+                )
+                current_fraction = current_group_index / self._group_total
+            except (ValueError, IndexError):
+                current_fraction = 0.0
+
+        # 进度 = (已完成组数 + 当前组进度) / 总组数
+        progress = ((completed + current_fraction) / self._group_total) * 100
+        return max(0, min(99, int(progress)))  # 最大99%，避免显示100%直到真正完成
+
+    def _calculate_image_progress_enhanced(self) -> Optional[int]:
+        """计算当前图像进度（基于实际导出的图像数量）"""
+        # 这里应该基于实际的图像导出数量和当前文件推断
+        if not self._current_file_name:
+            return None
+
+        # 从文件名提取组信息
+        match = self._GROUP_FROM_FILENAME_PATTERN.match(self._current_file_name)
+        if not match:
+            return None
+
+        current_group_index = int(match.group(1))
+
+        # 计算当前组的导出图像数量（通过历史记录估算）
+        # 这里简化处理：假设每组有相同数量的图像，使用当前组索引
+        total_groups = self._group_total or self._max_group_index or 1
+
+        # 基于组进度和组内平均图像数估算
+        group_progress = self._calculate_group_progress()
+        if group_progress is None:
+            return None
+
+        # 如果是单组任务，基于Z轴进度估算
+        if total_groups == 1:
+            z_progress = self._calculate_z_axis_progress()
+            return z_progress
+
+        # 多组任务：基于组进度
+        return group_progress
 
     def _calculate_image_progress(self) -> Optional[int]:
-        total = self._estimate_frame_total()
-        if not total or total <= 0:
+        """计算当前图像进度（基于当前帧位置估算）"""
+        if not (
+            self._current_frame
+            and self._last_frame_total
+            and self._last_frame_total > 0
+        ):
             return None
-        progress = int((self._current_frame / total) * 100)
-        return max(0, min(100, progress))
+
+        # 使用Z轴位置来估算进度，因为每个Z轴位置通常对应一个图像
+        z_progress = self._calculate_z_axis_progress()
+        if z_progress is not None:
+            return z_progress
+
+        # 基于历史最大帧数计算进度
+        if self._frame_total and self._frame_total > 0:
+            progress = int((self._current_frame / self._frame_total) * 100)
+            return max(0, min(100, progress))
 
     def _calculate_overall_progress(self) -> int:
         if not self._task_started:
             return 0
         if self._task_finished:
             return 100
-        completed = len(self._groups_completed)
-        image_progress = self._calculate_image_progress()
-        current_fraction = 0.0
-        if image_progress is not None:
-            current_fraction = image_progress / 100.0
-        if self._group_total and self._group_total > 0:
-            total_groups = self._group_total
-        else:
-            in_progress = self._current_group is not None or self._current_frame > 0
-            inferred = completed + (1 if in_progress else 0)
-            total_groups = max(self._max_group_index, inferred)
-        if not total_groups:
+
+        # 计算总组数
+        total_groups = self._group_total or self._max_group_index
+        if total_groups <= 0:
             return 0
+
+        # 计算已完成的组数
+        completed = len(self._groups_completed)
+
+        # 计算当前组内的进度
+        current_fraction = 0.0
+        if (
+            self._current_group
+            and self._last_frame_total
+            and self._last_frame_total > 0
+        ):
+            current_fraction = self._current_frame / self._last_frame_total
+
+        # 计算总体进度
         progress = int(((completed + current_fraction) / total_groups) * 100)
-        if progress >= 100:
-            progress = 99
-        return max(0, min(99, progress))
+
+        # 限制在99%，直到任务真正完成
+        if not self._task_finished:
+            progress = min(99, progress)
+
+        return max(0, progress)
 
     def read_progress(self) -> int:
         self._refresh_state()
@@ -768,6 +895,11 @@ class OlympusProgressReader(ProgressReader):
             if not path or path in seen:
                 continue
             seen.add(path)
+
+            # 过滤临时路径
+            if self._is_temp_output_path(path):
+                continue
+
             timestamp = entry.get("timestamp")
             if timestamp and timestamp.date() != today:
                 continue
@@ -800,14 +932,31 @@ class OlympusProgressReader(ProgressReader):
 
     def get_extra_metrics(self) -> Dict[str, Any]:
         self._refresh_state()
+
+        # 图像进度（基于当前帧位置估算）
         image_progress = self._calculate_image_progress()
+
+        # 总组数
         total_groups = self._group_total or (self._max_group_index or None)
+
+        # 当前组信息
         group_current = None
         if self._current_group:
             try:
-                group_current = int(self._current_group[1:])
-            except ValueError:
+                group_current = (
+                    int(self._current_group[1:])
+                    if self._current_group.startswith("G")
+                    else 0
+                )
+            except (ValueError, IndexError):
                 group_current = None
+
+        # Z轴进度（新增）
+        z_progress = self._calculate_z_axis_progress()
+
+        # 组进度
+        group_progress = self._calculate_group_progress()
+
         olympus = {
             "state": self._current_state,
             "active": self.is_task_active(),
@@ -815,7 +964,7 @@ class OlympusProgressReader(ProgressReader):
             "output_path_candidates": self._output_path_candidates,
             "current_file": self._current_file_name,
             "frame_current": self._current_frame if self._current_frame else None,
-            "frame_total": self._estimate_frame_total(),
+            "frame_total": self._frame_total,
             "image_progress": image_progress,
             "group_current": group_current,
             "group_completed": len(self._groups_completed),
@@ -831,6 +980,11 @@ class OlympusProgressReader(ProgressReader):
                 if self._z_range
                 else None
             ),
+            # 新增Z轴进度和相关信息
+            "z_axis_progress": z_progress,
+            "z_start": self._z_range[0] if self._z_range else None,
+            "z_end": self._z_range[1] if self._z_range else None,
+            "z_step": 380,  # stepSize通常为380
         }
         return {"device_type": "laser_confocal", "olympus": olympus}
 

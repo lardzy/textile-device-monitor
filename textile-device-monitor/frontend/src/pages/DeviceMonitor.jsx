@@ -52,6 +52,43 @@ const isConfocalDevice = (device) => {
   return device.metrics?.device_type === 'laser_confocal' || Boolean(device.metrics?.olympus);
 };
 
+const isTempOutputPath = (path) => {
+  // 检查是否为临时输出路径，排除Olympus设备的临时文件地址
+  if (!path) return true;
+  
+  const normalized = path.replace(/\//g, '\\').toLowerCase();
+  
+  // Olympus设备临时文件路径模式
+  const olympusTempPatterns = [
+    "programdata\\olympus\\lext-ols50-sw\\microscopeapp\\temp\\image",
+    "microscopeapp\\temp\\image",  // 保留原有的检查
+    "temp\\image",  // 更宽泛的临时路径检查
+  ];
+  
+  // 检查是否匹配任何临时路径模式
+  for (const pattern of olympusTempPatterns) {
+    if (normalized.includes(pattern)) {
+      return true;
+    }
+  }
+  
+  // 检查是否为系统临时目录下的文件
+  if (normalized.startsWith("c:\\programdata\\") && normalized.includes("temp")) {
+    return true;
+  }
+  
+  if (normalized.startsWith("c:\\windows\\temp\\")) {
+    return true;
+  }
+  
+  return false;
+};
+
+const getValidOutputPath = (outputPath) => {
+  if (!outputPath) return null;
+  return isTempOutputPath(outputPath) ? null : outputPath;
+};
+
 function DeviceMonitor() {
   const [devices, setDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState(null);
@@ -609,14 +646,17 @@ function DeviceMonitor() {
                         当前文件: {olympus.current_file}
                       </div>
                     )}
-                    {olympus.output_path && (
-                      <div
-                        title={olympus.output_path}
-                        style={{ fontSize: 12, color: '#666', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                      >
-                        输出路径: {olympus.output_path}
-                      </div>
-                    )}
+                    {(() => {
+                      const validOutputPath = getValidOutputPath(olympus.output_path);
+                      return validOutputPath && (
+                        <div
+                          title={validOutputPath}
+                          style={{ fontSize: 12, color: '#666', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                        >
+                          输出路径: {validOutputPath}
+                        </div>
+                      );
+                    })()}
 
                     {(xyPosition || zPosition != null) && (
                       <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>

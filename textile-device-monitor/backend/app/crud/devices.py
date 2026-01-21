@@ -37,7 +37,7 @@ def create_device(db: Session, device: DeviceCreate) -> Device:
 
 
 def update_device(
-        db: Session, device_id: int, device_update: DeviceUpdate
+    db: Session, device_id: int, device_update: DeviceUpdate
 ) -> Optional[Device]:
     db_device = get_device(db, device_id)
     if db_device:
@@ -75,15 +75,74 @@ def delete_device(db: Session, device_id: int) -> bool:
     return True
 
 
+def is_temp_output_path(path: str) -> bool:
+    """检查是否为临时输出路径，排除Olympus设备的临时文件地址"""
+    if not path:
+        return True
+
+    normalized = path.replace("/", "\\").lower()
+
+    # Olympus设备临时文件路径模式
+    olympus_temp_patterns = [
+        "programdata\\olympus\\lext-ols50-sw\\microscopeapp\\temp\\image",
+        "microscopeapp\\temp\\image",  # 保留原有的检查
+        "temp\\image",  # 更宽泛的临时路径检查
+    ]
+
+    # 检查是否匹配任何临时路径模式
+    for pattern in olympus_temp_patterns:
+        if pattern in normalized:
+            return True
+
+    # 检查是否为系统临时目录下的文件
+    if normalized.startswith("c:\\programdata\\") and "temp" in normalized:
+        return True
+
+    if normalized.startswith("c:\\windows\\temp\\"):
+        return True
+
+    return False
+
+
+def filter_output_paths_in_metrics(metrics: Optional[dict]) -> Optional[dict]:
+    """过滤metrics中的临时输出路径"""
+    if not metrics or not isinstance(metrics, dict):
+        return metrics
+
+    filtered_metrics = metrics.copy()
+
+    # 处理olympus指标
+    olympus = filtered_metrics.get("olympus")
+    if olympus and isinstance(olympus, dict):
+        filtered_olympus = olympus.copy()
+
+        # 过滤output_path
+        output_path = filtered_olympus.get("output_path")
+        if output_path and is_temp_output_path(output_path):
+            filtered_olympus["output_path"] = None
+
+        # 过滤output_path_candidates中的临时路径
+        candidates = filtered_olympus.get("output_path_candidates", [])
+        if candidates and isinstance(candidates, list):
+            filtered_candidates = [
+                path for path in candidates if path and not is_temp_output_path(path)
+            ]
+            filtered_olympus["output_path_candidates"] = filtered_candidates
+
+        filtered_metrics["olympus"] = filtered_olympus
+
+    return filtered_metrics
+
+
 def update_device_status(  # 更新设备状态
-        db: Session,
-        device: Device,
-        status: DeviceStatus,
-        task_id: Optional[str] = None,
-        task_name: Optional[str] = None,
-        task_progress: Optional[int] = None,
-        metrics: Optional[dict] = None,
-        client_base_url: Optional[str] = None,
+    db: Session,
+    device: Device,
+    status: DeviceStatus,
+    task_id: Optional[str] = None,
+    task_name: Optional[str] = None,
+    task_progress: Optional[int] = None,
+    metrics: Optional[dict] = None,
+    client_base_url: Optional[str] = None,
 ) -> Device:
     now = datetime.now(timezone.utc)
     new_task = False
@@ -94,16 +153,16 @@ def update_device_status(  # 更新设备状态
 
     if task_id and device.task_id and task_id != device.task_id:
         if (
-                device.task_progress is None
-                or task_progress is None
-                or (device.task_progress == 100 and status == DeviceStatus.BUSY)
-                or (task_progress is not None and task_progress < device.task_progress)
+            device.task_progress is None
+            or task_progress is None
+            or (device.task_progress == 100 and status == DeviceStatus.BUSY)
+            or (task_progress is not None and task_progress < device.task_progress)
         ):
             new_task = True
     elif (
-            device.task_progress == 100
-            and task_progress is not None
-            and task_progress < 100
+        device.task_progress == 100
+        and task_progress is not None
+        and task_progress < 100
     ):
         new_task = True
     elif device.status != DeviceStatus.BUSY and status == DeviceStatus.BUSY:
@@ -119,7 +178,7 @@ def update_device_status(  # 更新设备状态
     device.task_id = task_id
     device.task_name = task_name
     device.task_progress = task_progress
-    device.metrics = metrics
+    device.metrics = filter_output_paths_in_metrics(metrics)
     if client_base_url is not None and str(client_base_url).strip():
         device.client_base_url = client_base_url
 
@@ -153,7 +212,7 @@ def get_online_devices(db: Session) -> List[Device]:
 
 
 def get_device_stats(
-        db: Session, device_id: int, start_date: datetime, end_date: datetime
+    db: Session, device_id: int, start_date: datetime, end_date: datetime
 ):
     from app.models import DeviceStatusHistory
 
