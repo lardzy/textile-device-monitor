@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Card, Input, Modal, Spin, message } from 'antd';
+import { Button, Card, Input, Modal, Progress, Spin, message } from 'antd';
 
 import { FixedSizeGrid as Grid } from 'react-window';
 import { resultsApi } from '../api/results';
@@ -31,6 +31,8 @@ function ResultsImages() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [folder, setFolder] = useState(null);
+  const [loadingAll, setLoadingAll] = useState(false);
+  const [loadAllProgress, setLoadAllProgress] = useState(0);
 
   const [containerWidth, setContainerWidth] = useState(window.innerWidth);
   const [columns, setColumns] = useState(Math.max(1, Math.floor(window.innerWidth / COLUMN_WIDTH)));
@@ -92,7 +94,7 @@ function ResultsImages() {
   };
 
   const loadPage = async (pageToLoad, reset = false) => {
-    if (!deviceId) return;
+    if (!deviceId) return null;
     setLoading(true);
     try {
       const data = await resultsApi.getImages(deviceId, {
@@ -114,8 +116,10 @@ function ResultsImages() {
       setItems(prev => reset ? newItems : [...prev, ...newItems]);
       setPage(pageToLoad);
       newItems.forEach(enqueueImage);
+      return { newItemsCount: newItems.length, total: data.total || 0 };
     } catch (error) {
       message.error('图片加载失败');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -154,9 +158,57 @@ function ResultsImages() {
   }, []);
 
   const onItemsRendered = ({ visibleRowStopIndex }) => {
+    if (loadingAll) return;
     const loadedRows = Math.ceil(items.length / columns);
     if (!loading && items.length < total && visibleRowStopIndex >= loadedRows - 6) {
       loadPage(page + 1);
+    }
+  };
+
+  const handleLoadAll = async () => {
+    if (loadingAll || loading) return;
+    setLoadingAll(true);
+    setLoadAllProgress(0);
+    let currentPage = page;
+    let loadedCount = items.length;
+    let totalCount = total;
+
+    try {
+      if (loadedCount === 0) {
+        const result = await loadPage(1, true);
+        if (!result) {
+          message.error('加载全部失败，请重试。');
+          return;
+        }
+        currentPage = 1;
+        loadedCount = result.newItemsCount;
+        totalCount = result.total;
+      }
+
+      if (!totalCount) {
+        setLoadAllProgress(100);
+        return;
+      }
+
+      setLoadAllProgress(Math.min(100, Math.round((loadedCount / totalCount) * 100)));
+
+      while (loadedCount < totalCount) {
+        const result = await loadPage(currentPage + 1);
+        if (!result) {
+          message.error('加载全部失败，请重试。');
+          break;
+        }
+        currentPage += 1;
+        loadedCount += result.newItemsCount;
+        totalCount = result.total;
+        if (!totalCount || result.newItemsCount === 0) {
+          break;
+        }
+        setLoadAllProgress(Math.min(100, Math.round((loadedCount / totalCount) * 100)));
+      }
+      setLoadAllProgress(100);
+    } finally {
+      setLoadingAll(false);
     }
   };
 
@@ -229,11 +281,18 @@ function ResultsImages() {
               onChange={(event) => setSearchText(event.target.value)}
               style={{ width: 220 }}
             />
-            <span style={{ fontSize: 12, color: '#999' }}>请将滚动条拉到底端后再进行搜索！</span>
-            <Button onClick={() => loadPage(1, true)}>刷新</Button>
+            <span style={{ fontSize: 12, color: '#999' }}>请加载全部后再进行搜索！</span>
+            <Button onClick={handleLoadAll} disabled={loadingAll || loading}>
+              加载全部
+            </Button>
           </div>
         )}
       >
+        {loadingAll && (
+          <div style={{ marginBottom: 12 }}>
+            <Progress percent={loadAllProgress} size="small" />
+          </div>
+        )}
         {loading && items.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
