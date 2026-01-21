@@ -50,9 +50,14 @@ def get_table(
         raise HTTPException(status_code=502, detail="Client unreachable") from exc
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail="Client error")
+    headers = {}
+    content_disposition = resp.headers.get("Content-Disposition")
+    if content_disposition:
+        headers["Content-Disposition"] = content_disposition
     return Response(
         content=resp.content,
         media_type=resp.headers.get("Content-Type", "application/octet-stream"),
+        headers=headers,
     )
 
 

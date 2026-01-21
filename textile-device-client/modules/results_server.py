@@ -89,13 +89,30 @@ class ResultsHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, file_path: str, content_type: str):
+    def _send_file(
+        self,
+        file_path: str,
+        content_type: str,
+        download_name: Optional[str] = None,
+    ):
         try:
             with open(file_path, "rb") as f:
                 data = f.read()
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
+            if download_name:
+                safe_name = download_name.replace('"', "").replace("\\", "")
+                encoded_name = quote(safe_name)
+                fallback_name = safe_name.encode("ascii", "ignore").decode("ascii")
+                if not fallback_name:
+                    ext = os.path.splitext(safe_name)[1]
+                    fallback_name = f"download{ext}" if ext else "download"
+                disposition = (
+                    f'attachment; filename="{fallback_name}"; '
+                    f"filename*=UTF-8''{encoded_name}"
+                )
+                self.send_header("Content-Disposition", disposition)
             self.send_header("Cache-Control", "public, max-age=300")
             self.end_headers()
             self.wfile.write(data)
@@ -181,10 +198,12 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "xlsx_not_found"})
                 return
 
-            xlsx_path = os.path.join(result_dir, files[-1])
+            xlsx_name = files[-1]
+            xlsx_path = os.path.join(result_dir, xlsx_name)
             self._send_file(
                 xlsx_path,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                download_name=xlsx_name,
             )
             return
 
