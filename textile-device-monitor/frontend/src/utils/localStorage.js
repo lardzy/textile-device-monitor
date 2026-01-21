@@ -53,7 +53,7 @@ export const saveQueueNoticeModes = (modes) => {
 export const getQueueNoticeMode = (deviceId) => {
   const modes = getQueueNoticeModes();
   const key = deviceId != null ? String(deviceId) : '';
-  return modes[key] || modes['*'] || 'off';
+  return modes[key] || 'off';
 };
 
 export const saveQueueNoticeMode = (deviceId, mode) => {

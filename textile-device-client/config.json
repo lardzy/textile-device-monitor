@@ -1,6 +1,6 @@
 {
-  "device_code": "2号",
-  "device_name": "2号设备",
+  "device_code": "11号",
+  "device_name": "11号设备",
   "server_url": "http://127.0.0.1:8000",
   "working_path": "F:\\tmp\\test\\bak",
   "report_interval": 5,

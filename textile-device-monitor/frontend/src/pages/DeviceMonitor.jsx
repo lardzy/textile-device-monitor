@@ -159,7 +159,7 @@ function DeviceMonitor() {
   const getNotifyModeByDevice = (deviceId) => {
     if (deviceId == null) return 'off';
     const key = String(deviceId);
-    return notifyModesRef.current[key] || notifyModesRef.current['*'] || 'off';
+    return notifyModesRef.current[key] || 'off';
   };
 
   const handleQueueCompletion = async (data) => {
@@ -397,7 +397,7 @@ function DeviceMonitor() {
   };
 
   const notifyMode = selectedDeviceId != null
-    ? (notifyModes[String(selectedDeviceId)] || notifyModes['*'] || 'off')
+    ? (notifyModes[String(selectedDeviceId)] || 'off')
     : 'off';
 
   const handleToggleNotifyMode = async () => {
