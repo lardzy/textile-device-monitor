@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QMessageBox,
     QFileDialog,
+    QCheckBox,
 )
 from PyQt6.QtCore import Qt
 from typing import Optional, Tuple
@@ -59,6 +60,23 @@ class ConfigWindow(QDialog):
         self.server_url_edit = QLineEdit()
         layout.addWidget(self.server_url_edit)
 
+        self.confocal_checkbox = QCheckBox("激光共聚焦显微镜")
+        self.confocal_checkbox.toggled.connect(self._toggle_confocal_fields)
+        layout.addWidget(self.confocal_checkbox)
+
+        log_path_label = QLabel("日志路径:")
+        layout.addWidget(log_path_label)
+
+        log_path_layout = QHBoxLayout()
+        self.log_path_edit = QLineEdit()
+        log_path_layout.addWidget(self.log_path_edit)
+
+        self.log_browse_button = QPushButton("浏览...")
+        self.log_browse_button.clicked.connect(self._browse_log_path)
+        log_path_layout.addWidget(self.log_browse_button)
+
+        layout.addLayout(log_path_layout)
+
         working_path_label = QLabel("工作路径:")
         layout.addWidget(working_path_label)
 
@@ -100,6 +118,18 @@ class ConfigWindow(QDialog):
         if folder_path:
             self.working_path_edit.setText(folder_path)
 
+    def _browse_log_path(self):
+        """浏览日志路径"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择日志文件", "", "Log Files (*.log);;All Files (*)"
+        )
+        if file_path:
+            self.log_path_edit.setText(file_path)
+
+    def _toggle_confocal_fields(self, checked: bool):
+        self.log_path_edit.setEnabled(checked)
+        self.log_browse_button.setEnabled(checked)
+
     def _load_current_config(self):
         """加载当前配置"""
         device_code = self.current_config.get("device_code", "1号")
@@ -114,8 +144,17 @@ class ConfigWindow(QDialog):
         self.server_url_edit.setText(
             self.current_config.get("server_url", "http://192.168.1.100:8000")
         )
+        self.confocal_checkbox.setChecked(
+            bool(self.current_config.get("is_laser_confocal", False))
+        )
+        self.log_path_edit.setText(
+            self.current_config.get(
+                "log_path", "C:\\ProgramData\\OLYMPUS\\LEXT-OLS50-SW\\Log\\Olympus.log"
+            )
+        )
         self.working_path_edit.setText(self.current_config.get("working_path", ""))
         self.interval_spin.setValue(self.current_config.get("report_interval", 5))
+        self._toggle_confocal_fields(self.confocal_checkbox.isChecked())
 
     def _on_device_code_changed(self, text: str):
         """设备编码改变事件"""
@@ -129,6 +168,8 @@ class ConfigWindow(QDialog):
         device_code = self.device_code_combo.currentText().strip()
         device_name = self.device_name_edit.text().strip()
         server_url = self.server_url_edit.text().strip()
+        is_confocal = self.confocal_checkbox.isChecked()
+        log_path = self.log_path_edit.text().strip()
         working_path = self.working_path_edit.text().strip()
         interval = self.interval_spin.value()
 
@@ -144,14 +185,21 @@ class ConfigWindow(QDialog):
             QMessageBox.warning(self, "错误", "服务器地址不能为空")
             return
 
-        if not working_path:
-            QMessageBox.warning(self, "错误", "工作路径不能为空")
-            return
+        if is_confocal:
+            if not log_path:
+                QMessageBox.warning(self, "错误", "日志路径不能为空")
+                return
+        else:
+            if not working_path:
+                QMessageBox.warning(self, "错误", "工作路径不能为空")
+                return
 
         self.config_data = {
             "device_code": device_code,
             "device_name": device_name,
             "server_url": server_url,
+            "is_laser_confocal": is_confocal,
+            "log_path": log_path,
             "working_path": working_path,
             "report_interval": interval,
             "manual_status": None,

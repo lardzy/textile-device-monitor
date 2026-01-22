@@ -5,7 +5,7 @@
 import threading
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, cast
 from .api_client import ApiClient
 from .progress_reader import ProgressReader
 from .metrics_collector import MetricsCollector
@@ -78,6 +78,19 @@ class StatusReporter:
         task_name = latest_folder_name or "AI显微镜检测"
         task_progress = self._get_task_progress()
         metrics = self.metrics_collector.collect_metrics()
+        extra_metrics: Dict[str, Any] = {}
+        if self.progress_reader:
+            progress_reader = cast(Any, self.progress_reader)
+            metrics_getter = getattr(progress_reader, "get_extra_metrics", None)
+            if callable(metrics_getter):
+                try:
+                    result = metrics_getter() or {}
+                    if isinstance(result, dict):
+                        extra_metrics = result
+                except Exception as exc:
+                    self.logger.error(f"获取扩展指标失败: {exc}")
+        if extra_metrics:
+            metrics = {**metrics, **extra_metrics}
         client_base_url = (
             self.progress_reader.get_client_base_url() if self.progress_reader else None
         )
@@ -111,6 +124,24 @@ class StatusReporter:
         if self.manual_status:
             return self.manual_status
 
+        if self.progress_reader and getattr(self.progress_reader, "is_laser_confocal", False):
+            state_getter = getattr(self.progress_reader, "get_device_state", None)
+            active_getter = getattr(self.progress_reader, "is_task_active", None)
+            state = None
+            is_active = False
+            if callable(state_getter):
+                state = state_getter()
+            if callable(active_getter):
+                is_active = bool(active_getter())
+            progress = self.progress_reader.read_progress()
+            if state in ("StateRepeatRunning", "StateRepeatStarting", "StateRepeatStopping"):
+                return "busy"
+            if is_active:
+                return "busy"
+            if state == "StateIdle":
+                if progress < 100:
+                    return "busy"
+                return "idle"
         progress = self.progress_reader.read_progress()
 
         if progress < 100:

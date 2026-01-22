@@ -12,7 +12,7 @@ from modules.config import Config
 from modules.logger import Logger
 from modules.api_client import ApiClient
 from modules.device_manager import DeviceManager
-from modules.progress_reader import ProgressReader
+from modules.progress_reader import ProgressReader, OlympusProgressReader
 from modules.metrics_collector import MetricsCollector
 from modules.results_server import ResultsServer
 
@@ -92,11 +92,21 @@ class TextileDeviceClient:
             api_client=self.api_client, logger=self.logger
         )
 
-        self.progress_reader = ProgressReader(
-            working_path=config["working_path"],
-            logger=self.logger,
-            results_port=self.config.get_results_port(),
-        )
+        if config.get("is_laser_confocal"):
+            self.progress_reader = OlympusProgressReader(
+                log_path=config.get(
+                    "log_path",
+                    "C:\\ProgramData\\OLYMPUS\\LEXT-OLS50-SW\\Log\\Olympus.log",
+                ),
+                logger=self.logger,
+                results_port=self.config.get_results_port(),
+            )
+        else:
+            self.progress_reader = ProgressReader(
+                working_path=config["working_path"],
+                logger=self.logger,
+                results_port=self.config.get_results_port(),
+            )
 
         self.metrics_collector = MetricsCollector(logger=self.logger)
 
@@ -261,10 +271,26 @@ class TextileDeviceClient:
             if not server_url:
                 server_url = config["server_url"]
 
-            print(f"\n默认工作路径: {config['working_path']}")
-            working_path = input("请输入工作路径（直接回车使用默认）: ").strip()
-            if not working_path:
-                working_path = config["working_path"]
+            confocal_input = input("\n是否激光共聚焦显微镜? (y/N): ").strip().lower()
+            is_confocal = confocal_input in ("y", "yes")
+
+            log_path = config.get(
+                "log_path",
+                "C:\\ProgramData\\OLYMPUS\\LEXT-OLS50-SW\\Log\\Olympus.log",
+            )
+            working_path = config["working_path"]
+
+            if is_confocal:
+                print(f"\n默认日志路径: {log_path}")
+                log_input = input("请输入日志文件路径（直接回车使用默认）: ").strip()
+                if log_input:
+                    log_path = log_input
+                working_path = ""
+            else:
+                print(f"\n默认工作路径: {config['working_path']}")
+                working_path = input("请输入工作路径（直接回车使用默认）: ").strip()
+                if not working_path:
+                    working_path = config["working_path"]
 
             print(f"\n默认上报间隔: {config['report_interval']} 秒")
             interval_input = input("请输入上报间隔（直接回车使用默认）: ").strip()
@@ -280,6 +306,8 @@ class TextileDeviceClient:
                 "device_code": device_code,
                 "device_name": device_name,
                 "server_url": server_url,
+                "is_laser_confocal": is_confocal,
+                "log_path": log_path,
                 "working_path": working_path,
                 "report_interval": interval,
                 "results_port": config.get("results_port", 9100),
@@ -294,6 +322,9 @@ class TextileDeviceClient:
             print(f"设备编码: {new_config['device_code']}")
             print(f"设备名称: {new_config['device_name']}")
             print(f"服务器地址: {new_config['server_url']}")
+            print(f"激光共聚焦: {'是' if new_config['is_laser_confocal'] else '否'}")
+            if new_config["is_laser_confocal"]:
+                print(f"日志路径: {new_config['log_path']}")
             print(f"工作路径: {new_config['working_path']}")
             print(f"上报间隔: {new_config['report_interval']} 秒")
             print(f"结果服务端口: {new_config['results_port']}")
@@ -362,6 +393,8 @@ class TextileDeviceClient:
                 old_device_code = self.config.get_device_code()
                 old_server_url = self.config.get_server_url()
                 old_working_path = self.config.get_working_path()
+                old_log_path = self.config.get_log_path()
+                old_is_confocal = self.config.is_laser_confocal()
 
                 self.config.update(new_config)
 
@@ -369,6 +402,8 @@ class TextileDeviceClient:
                     old_device_code != new_config["device_code"]
                     or old_server_url != new_config["server_url"]
                     or old_working_path != new_config["working_path"]
+                    or old_log_path != new_config.get("log_path", "")
+                    or old_is_confocal != new_config.get("is_laser_confocal", False)
                     or self.config.get_results_port()
                     != new_config.get("results_port", 9100)
                 ):

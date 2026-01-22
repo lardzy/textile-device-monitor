@@ -12,6 +12,8 @@ DEFAULT_CONFIG = {
     "device_name": "1号",
     "server_url": "http://127.0.0.1:8000",
     "working_path": "",
+    "is_laser_confocal": False,
+    "log_path": "C:\\ProgramData\\OLYMPUS\\LEXT-OLS50-SW\\Log\\Olympus.log",
     "report_interval": 5,
     "results_port": 9100,
     "log_level": "INFO",
@@ -101,6 +103,17 @@ class Config:
     def get_working_path(self) -> str:
         """获取工作路径"""
         return self.config.get("working_path", "")
+
+    def is_laser_confocal(self) -> bool:
+        """是否激光共聚焦"""
+        return bool(self.config.get("is_laser_confocal", False))
+
+    def get_log_path(self) -> str:
+        """获取日志路径"""
+        return self.config.get(
+            "log_path",
+            "C:\\ProgramData\\OLYMPUS\\LEXT-OLS50-SW\\Log\\Olympus.log",
+        )
 
     def get_report_interval(self) -> int:
         """获取上报间隔（秒）"""

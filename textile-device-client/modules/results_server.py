@@ -8,7 +8,7 @@ import threading
 import tempfile
 import shutil
 from collections import OrderedDict
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Callable, cast
 from datetime import datetime
 from http.server import HTTPServer
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
@@ -125,9 +125,70 @@ class ResultsHandler(BaseHTTPRequestHandler):
         )
         worker.start()
 
+    def _is_confocal(self) -> bool:
+        return bool(getattr(self.reader, "is_laser_confocal", False))
+
+    def _resolve_confocal_folder(self, folder_param: Optional[str]) -> Optional[str]:
+        if not self.reader:
+            return None
+        resolver = getattr(self.reader, "resolve_output_folder", None)
+        if not callable(resolver):
+            return None
+        try:
+            typed_resolver = cast(Callable[[Optional[str]], Optional[str]], resolver)
+            return typed_resolver(folder_param)
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"解析输出目录失败: {exc}")
+            return None
+
+    def _list_confocal_images(self, folder_path: str) -> List[str]:
+        try:
+            images = [
+                name
+                for name in os.listdir(folder_path)
+                if os.path.isfile(os.path.join(folder_path, name))
+                and name.lower().endswith((".jpg", ".jpeg", ".png"))
+            ]
+            images.sort()
+            return images
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"读取图片列表失败: {exc}")
+            return []
+
+    def _cleanup_confocal_images(self, folder_path: str) -> Dict[str, Optional[str] | int]:
+        recycle_dir = os.path.join(folder_path, ".recycle")
+        os.makedirs(recycle_dir, exist_ok=True)
+        moved = 0
+        for name in os.listdir(folder_path):
+            if name in {".", "..", ".recycle"}:
+                continue
+            src = os.path.join(folder_path, name)
+            if os.path.isdir(src):
+                continue
+            lower_name = name.lower()
+            if not lower_name.endswith((".jpg", ".jpeg", ".png")):
+                continue
+            if lower_name.endswith("_i.jpg") or lower_name.endswith("_i.jpeg"):
+                continue
+            dst = os.path.join(recycle_dir, name)
+            shutil.move(src, dst)
+            moved += 1
+        return {"moved": moved, "recycle_dir": recycle_dir}
+
     def _get_recent_results(self, limit: int) -> List[Dict]:
         if not self.reader:
             return []
+        recent_getter = getattr(self.reader, "get_recent_results", None)
+        if callable(recent_getter):
+            try:
+                typed_getter = cast(Callable[[int], List[Dict]], recent_getter)
+                return typed_getter(limit)
+            except Exception as exc:
+                if self.logger:
+                    self.logger.error(f"读取共聚焦结果列表失败: {exc}")
+                return []
         try:
             entries = [
                 os.path.join(self.reader.working_path, name)
@@ -248,8 +309,24 @@ class ResultsHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+        is_confocal = self._is_confocal()
 
         if path == "/client/results/latest":
+            if is_confocal:
+                latest_folder = self._resolve_confocal_folder(None)
+                if not latest_folder or not os.path.isdir(latest_folder):
+                    self._send_json(200, {"latest_folder": None})
+                    return
+                folder_name = os.path.basename(latest_folder)
+                images = self._list_confocal_images(latest_folder)
+                self._send_json(
+                    200,
+                    {
+                        "latest_folder": folder_name,
+                        "image_count": len(images),
+                    },
+                )
+                return
             latest_folder = self.reader._get_latest_modified_folder(
                 self.reader.working_path
             )
@@ -289,6 +366,9 @@ class ResultsHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/client/results/table":
+            if is_confocal:
+                self._send_json(404, {"error": "table_not_supported"})
+                return
             latest_folder = self.reader._get_latest_modified_folder(
                 self.reader.working_path
             )
@@ -329,6 +409,9 @@ class ResultsHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/client/results/table_view":
+            if is_confocal:
+                self._send_json(404, {"error": "table_not_supported"})
+                return
             latest_folder = self.reader._get_latest_modified_folder(
                 self.reader.working_path
             )
@@ -373,6 +456,46 @@ class ResultsHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/client/results/images":
+            if is_confocal:
+                folder_param = None
+                if "folder" in query and query.get("folder"):
+                    folders = query.get("folder")
+                    if folders:
+                        folder_param = unquote(folders[0])
+                target_folder = self._resolve_confocal_folder(folder_param)
+                if not target_folder or not os.path.isdir(target_folder):
+                    if folder_param:
+                        self._send_json(404, {"error": "folder_not_found"})
+                    else:
+                        self._send_json(
+                            200,
+                            {"items": [], "total": 0, "page": 1, "folder": None},
+                        )
+                    return
+                folder_value = folder_param or target_folder
+                page = int(query.get("page", ["1"])[0])
+                page_size = int(query.get("page_size", ["200"])[0])
+                images = self._list_confocal_images(target_folder)
+                total = len(images)
+                start = (page - 1) * page_size
+                end = start + page_size
+                items = [
+                    {
+                        "name": name,
+                        "url": f"/client/results/image/{quote(name, safe='')}?folder={quote(folder_value, safe='')}",
+                    }
+                    for name in images[start:end]
+                ]
+                self._send_json(
+                    200,
+                    {
+                        "items": items,
+                        "total": total,
+                        "page": page,
+                        "folder": folder_value,
+                    },
+                )
+                return
             latest_folder = self.reader._get_latest_modified_folder(
                 self.reader.working_path
             )
@@ -441,6 +564,25 @@ class ResultsHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/client/results/image/"):
+            if is_confocal:
+                folder_param = None
+                if "folder" in query and query.get("folder"):
+                    folders = query.get("folder")
+                    if folders:
+                        folder_param = unquote(folders[0])
+                target_folder = self._resolve_confocal_folder(folder_param)
+                if not target_folder or not os.path.isdir(target_folder):
+                    self._send_json(404, {"error": "folder_not_found"})
+                    return
+                filename = unquote(path.split("/client/results/image/")[-1])
+                image_path = os.path.join(target_folder, filename)
+                if not os.path.exists(image_path):
+                    self._send_json(404, {"error": "image_not_found"})
+                    return
+                ext = os.path.splitext(filename)[1].lower()
+                content_type = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png"
+                self._send_file(image_path, content_type)
+                return
             folder_name = None
             if "folder" in query and query.get("folder"):
                 folders = query.get("folder")
@@ -467,6 +609,40 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_file(image_path, "image/png")
+            return
+
+        self._send_json(404, {"error": "not_found"})
+
+    def do_POST(self):  # noqa: N802
+        if not self.reader:
+            self._send_json(500, {"error": "reader_not_ready"})
+            return
+
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        if path == "/client/results/cleanup":
+            if not self._is_confocal():
+                self._send_json(404, {"error": "cleanup_not_supported"})
+                return
+            folder_param = None
+            if "folder" in query and query.get("folder"):
+                folders = query.get("folder")
+                if folders:
+                    folder_param = unquote(folders[0])
+            target_folder = self._resolve_confocal_folder(folder_param)
+            if not target_folder or not os.path.isdir(target_folder):
+                self._send_json(404, {"error": "folder_not_found"})
+                return
+            try:
+                result = self._cleanup_confocal_images(target_folder)
+            except Exception as exc:
+                if self.logger:
+                    self.logger.error(f"清理图片失败: {exc}")
+                self._send_json(500, {"error": "cleanup_failed"})
+                return
+            self._send_json(200, result)
             return
 
         self._send_json(404, {"error": "not_found"})
