@@ -623,17 +623,6 @@ function DeviceMonitor() {
                     <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
                       设备状态: {getOlympusDisplayState(olympus, device.status)}
                     </div>
-                    <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
-                      当前图片进度: {frameLabel}
-                    </div>
-                    <Progress
-                      percent={imageProgress ?? 0}
-                      status="active"
-                      format={() => (imageProgress != null ? `${imageProgress}%` : frameLabel)}
-                    />
-                    <div style={{ fontSize: 12, color: '#666', marginTop: 8, marginBottom: 4 }}>
-                      多点总进度
-                    </div>
                     <Progress
                       percent={overallProgress}
                       status="active"
@@ -658,18 +647,7 @@ function DeviceMonitor() {
                       );
                     })()}
 
-                    {(xyPosition || zPosition != null) && (
-                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                        {xyPosition ? `样品台: ${xyPosition.x}, ${xyPosition.y}` : ''}
-                        {xyPosition && zPosition != null ? ' | ' : ''}
-                        {zPosition != null ? `Z: ${zPosition}` : ''}
-                      </div>
-                    )}
-                    {zRange && (
-                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                        Z范围: {zRange.start} ~ {zRange.end}
-                      </div>
-                    )}
+
                   </div>
                 )}
 
