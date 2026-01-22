@@ -151,6 +151,8 @@ def update_device_status(  # 更新设备状态
         device.task_started_at = now
         device.task_elapsed_seconds = 0
 
+    is_laser_confocal = metrics and metrics.get("device_type") == "laser_confocal"
+
     if task_id and device.task_id and task_id != device.task_id:
         if (
             device.task_progress is None
@@ -165,7 +167,11 @@ def update_device_status(  # 更新设备状态
         and task_progress < 100
     ):
         new_task = True
-    elif device.status != DeviceStatus.BUSY and status == DeviceStatus.BUSY:
+    elif (
+        device.status != DeviceStatus.BUSY
+        and status == DeviceStatus.BUSY
+        and not is_laser_confocal
+    ):
         new_task = True
 
     if new_task:
@@ -189,7 +195,11 @@ def update_device_status(  # 更新设备状态
                 device.task_elapsed_seconds = int(
                     (now - device.task_started_at).total_seconds()
                 )
-        else:
+        elif not (
+            is_laser_confocal
+            and device.task_elapsed_seconds is not None
+            and previous_progress == 100
+        ):
             device.task_elapsed_seconds = int(
                 (now - device.task_started_at).total_seconds()
             )
