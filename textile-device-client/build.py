@@ -55,6 +55,8 @@ def build():
             "--hidden-import=PIL",
             "--hidden-import=psutil",
             "--hidden-import=requests",
+            "--hidden-import=openpyxl",
+            "--hidden-import=formulas",
             "--paths=.",
         ]
     )
@@ -84,6 +86,8 @@ def build():
             "--hidden-import=PIL",
             "--hidden-import=psutil",
             "--hidden-import=requests",
+            "--hidden-import=openpyxl",
+            "--hidden-import=formulas",
             "--paths=.",
         ]
     )
