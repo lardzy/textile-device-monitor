@@ -5,6 +5,7 @@ PyInstaller 打包脚本
 import PyInstaller.__main__
 import os
 import shutil
+from PyInstaller.utils.hooks import collect_submodules
 
 APP_NAME = "textile-device-client"
 VERSION = "1.0.0"
@@ -36,6 +37,8 @@ def build():
     """执行打包 - 生成两个版本"""
     clean_build()
 
+    formulas_modules = collect_submodules("formulas")
+
     print("开始打包...")
     print("\n[1/2] 打包带控制台版本（用于首次配置）...")
 
@@ -57,6 +60,7 @@ def build():
             "--hidden-import=requests",
             "--hidden-import=openpyxl",
             "--hidden-import=formulas",
+            *[f"--hidden-import={mod}" for mod in formulas_modules],
             "--paths=.",
         ]
     )
@@ -88,6 +92,7 @@ def build():
             "--hidden-import=requests",
             "--hidden-import=openpyxl",
             "--hidden-import=formulas",
+            *[f"--hidden-import={mod}" for mod in formulas_modules],
             "--paths=.",
         ]
     )
