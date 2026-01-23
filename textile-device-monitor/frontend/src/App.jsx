@@ -1,12 +1,13 @@
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Layout, Menu } from 'antd';
-import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined } from '@ant-design/icons';
+import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined, PictureOutlined } from '@ant-design/icons';
 import DeviceMonitor from './pages/DeviceMonitor';
 import HistoryQuery from './pages/HistoryQuery';
 import Statistics from './pages/Statistics';
 import DeviceManagement from './pages/DeviceManagement';
 import ResultsTable from './pages/ResultsTable';
 import ResultsImages from './pages/ResultsImages';
+import InteractiveSegmentation from './pages/InteractiveSegmentation';
 import wsClient from './websocket/client';
 import { useState, useEffect } from 'react';
 
@@ -16,6 +17,7 @@ const menuItems = [
   { key: 'monitor', icon: <MonitorOutlined />, label: '设备监控', path: '/' },
   { key: 'history', icon: <HistoryOutlined />, label: '历史记录', path: '/history' },
   { key: 'statistics', icon: <BarChartOutlined />, label: '数据统计', path: '/statistics' },
+  { key: 'unigraco', icon: <PictureOutlined />, label: '交互分割', path: '/interactive-segmentation' },
   { key: 'management', icon: <SettingOutlined />, label: '设备管理', path: '/management' },
 ];
 
@@ -24,6 +26,7 @@ const appRoutes = (
     <Route path="/" element={<DeviceMonitor />} />
     <Route path="/history" element={<HistoryQuery />} />
     <Route path="/statistics" element={<Statistics />} />
+    <Route path="/interactive-segmentation" element={<InteractiveSegmentation />} />
     <Route path="/management" element={<DeviceManagement />} />
     <Route path="/results/table" element={<ResultsTable />} />
     <Route path="/results/images" element={<ResultsImages />} />
