@@ -21,24 +21,29 @@ def get_queue(device_id: int, db: Session = Depends(get_db)):
     return QueueWithLogs(queue=queue, logs=logs)
 
 
-@router.post("", response_model=QueueRecord, status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def join_queue(queue: QueueCreate, db: Session = Depends(get_db)):
     """加入排队"""
-    queue_record = queue_crud.join_queue(db, queue)
+    queue_records = queue_crud.join_queue(db, queue)
 
-    await websocket_manager.broadcast(
-        {
-            "type": "queue_update",
-            "data": {
-                "device_id": queue.device_id,
-                "action": "join",
-                "inspector_name": queue.inspector_name,
-                "position": queue_record.position,
-            },
-        }
-    )
+    if queue_records:
+        queue_count = queue_crud.get_queue_count(db, queue.device_id)
 
-    return queue_record
+        await websocket_manager.broadcast(
+            {
+                "type": "queue_update",
+                "data": {
+                    "device_id": queue.device_id,
+                    "action": "join",
+                    "inspector_name": queue.inspector_name,
+                    "position": queue_records[0].position,
+                    "queue_count": queue_count,
+                    "queue_records": queue_records,
+                },
+            }
+        )
+
+    return queue_records
 
 
 @router.put("/{queue_id}/position", response_model=QueueRecord)
@@ -124,6 +129,8 @@ async def complete_task(device_id: int, db: Session = Depends(get_db)):
     """设备完成一单（减少排队数量）"""
     completed_record = queue_crud.complete_first_in_queue(db, device_id)
 
+    queue_count = queue_crud.get_queue_count(db, device_id)
+
     if completed_record:
         await websocket_manager.broadcast(
             {
@@ -133,6 +140,7 @@ async def complete_task(device_id: int, db: Session = Depends(get_db)):
                     "action": "complete",
                     "queue_id": completed_record.id,
                     "completed_by": completed_record.inspector_name,
+                    "queue_count": queue_count,
                 },
             }
         )
@@ -142,7 +150,7 @@ async def complete_task(device_id: int, db: Session = Depends(get_db)):
         message="Task completed",
         data={
             "device_id": device_id,
-            "queue_count": queue_crud.get_queue_count(db, device_id),
+            "queue_count": queue_count,
         },
     )
 

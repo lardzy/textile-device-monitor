@@ -515,12 +515,25 @@ function DeviceMonitor() {
 
   const handleJoinQueue = async (values) => {
     try {
-      await queueApi.join({
+      const records = await queueApi.join({
         inspector_name: values.inspector_name,
         device_id: selectedDeviceId,
         copies: values.copies || 1
       });
-      message.success(`加入排队成功 (${values.copies || 1}份)`);
+
+      const copies = values.copies || 1;
+
+      if (records && records.length > 0) {
+        for (let i = 0; i < Math.min(records.length, copies); i++) {
+          addQueueNoticeEntry({
+            id: records[i].id,
+            device_id: selectedDeviceId,
+            inspector_name: values.inspector_name,
+          });
+        }
+      }
+
+      message.success(`加入排队成功 (${copies}份)`);
       saveInspectorName(values.inspector_name);
       form.resetFields();
       setInspectorName('');

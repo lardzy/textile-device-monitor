@@ -39,7 +39,7 @@ def get_queue_by_device_with_logs(db: Session, device_id: int) -> tuple:
     return queue, logs
 
 
-def join_queue(db: Session, queue: QueueCreate) -> QueueRecord:
+def join_queue(db: Session, queue: QueueCreate) -> List[QueueRecord]:
     copies = queue.copies if queue.copies else 1
 
     try:
@@ -53,25 +53,23 @@ def join_queue(db: Session, queue: QueueCreate) -> QueueRecord:
             or 0
         )
 
-        db_queue = QueueRecord(
-            inspector_name=queue.inspector_name,
-            device_id=queue.device_id,
-            position=max_position + 1,
-        )
-        db.add(db_queue)
-
-        for i in range(1, copies):
-            max_position += 1
-            db_queue_copy = QueueRecord(
+        records = []
+        for i in range(copies):
+            position = max_position + i + 1
+            db_queue = QueueRecord(
                 inspector_name=queue.inspector_name,
                 device_id=queue.device_id,
-                position=max_position + 1,
+                position=position,
             )
-            db.add(db_queue_copy)
+            db.add(db_queue)
+            records.append(db_queue)
 
         db.commit()
-        db.refresh(db_queue)
-        return db_queue
+
+        for record in records:
+            db.refresh(record)
+
+        return records
     except Exception as e:
         db.rollback()
         raise e
