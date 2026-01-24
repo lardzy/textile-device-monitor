@@ -8,6 +8,22 @@ from app.crud import devices as device_crud
 router = APIRouter(prefix="/results", tags=["results"])
 
 
+def _extract_client_error(resp: requests.Response) -> str:
+    try:
+        payload = resp.json()
+        if isinstance(payload, dict):
+            return (
+                payload.get("detail")
+                or payload.get("error")
+                or payload.get("message")
+                or resp.text
+            )
+    except ValueError:
+        if resp.text:
+            return resp.text
+    return "Client error"
+
+
 def _get_client_base_url(db: Session, device_id: int) -> str:
     device = device_crud.get_device(db, device_id)
     if not device:
@@ -28,7 +44,9 @@ def get_latest(device_id: int = Query(...), db: Session = Depends(get_db)):
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail="Client unreachable") from exc
     if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail="Client error")
+        raise HTTPException(
+            status_code=resp.status_code, detail=_extract_client_error(resp)
+        )
     return resp.json()
 
 
@@ -78,7 +96,9 @@ def get_table_view(
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail="Client unreachable") from exc
     if resp.status_code not in (200, 202):
-        raise HTTPException(status_code=resp.status_code, detail="Client error")
+        raise HTTPException(
+            status_code=resp.status_code, detail=_extract_client_error(resp)
+        )
     return Response(
         content=resp.content,
         media_type=resp.headers.get("Content-Type", "application/octet-stream"),

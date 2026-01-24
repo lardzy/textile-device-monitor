@@ -3,6 +3,7 @@ import { Button, Card, Select, Spin, message } from 'antd';
 import Spreadsheet from 'x-data-spreadsheet';
 import 'x-data-spreadsheet/dist/xspreadsheet.css';
 import * as XLSX from 'xlsx';
+import { resultsApi } from '../api/results';
 
 function ResultsTable() {
   const [loading, setLoading] = useState(true);
@@ -12,6 +13,14 @@ function ResultsTable() {
   const [sheets, setSheets] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState(null);
   const [hasData, setHasData] = useState(true);
+
+  const errorMessageMap = {
+    table_not_supported: '当前设备不支持结果表格',
+    no_latest_folder: '未找到最新结果目录',
+    folder_not_found: '结果目录不存在',
+    result_dir_missing: '结果目录不存在',
+    xlsx_not_found: '未找到结果表格文件',
+  };
 
   const params = new URLSearchParams(window.location.search);
   const deviceId = params.get('device_id');
@@ -29,6 +38,36 @@ function ResultsTable() {
     return `/api/results/table_view?device_id=${deviceId}${folderParam}`;
   };
 
+  const extractErrorDetail = async (response) => {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      try {
+        const payload = await response.json();
+        if (payload && typeof payload === 'object') {
+          return payload.detail || payload.error || payload.message || '';
+        }
+      } catch {
+        return '';
+      }
+    }
+    try {
+      return await response.text();
+    } catch {
+      return '';
+    }
+  };
+
+  const resolveErrorMessage = (detail, status) => {
+    const normalized = String(detail || '').trim();
+    if (normalized && errorMessageMap[normalized]) {
+      return errorMessageMap[normalized];
+    }
+    if (status === 502 || normalized === 'Client unreachable') {
+      return '设备客户端不可达';
+    }
+    return '表格加载失败';
+  };
+
   useEffect(() => {
     let cancelled = false;
     const fetchTable = async () => {
@@ -43,6 +82,14 @@ function ResultsTable() {
       let attempt = 0;
       let notified = false;
       setLoading(true);
+
+      if (!folder) {
+        try {
+          await resultsApi.getLatest(deviceId);
+        } catch (error) {
+          console.warn('Failed to prewarm results table', error);
+        }
+      }
 
       while (!cancelled) {
         try {
@@ -63,7 +110,8 @@ function ResultsTable() {
             continue;
           }
           if (!response.ok) {
-            throw new Error('表格获取失败');
+            const detail = await extractErrorDetail(response);
+            throw new Error(resolveErrorMessage(detail, response.status));
           }
           const arrayBuffer = await response.arrayBuffer();
           const workbook = XLSX.read(arrayBuffer, { type: 'array' });
@@ -86,7 +134,7 @@ function ResultsTable() {
           return;
         } catch (error) {
           if (!cancelled) {
-            message.error('表格加载失败');
+            message.error(error?.message || '表格加载失败');
             setLoading(false);
           }
           return;
