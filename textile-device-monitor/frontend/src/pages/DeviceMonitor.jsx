@@ -813,7 +813,7 @@ function DeviceMonitor() {
                         footer={null}
                         width="90vw"
                         style={{ top: 20 }}
-                        bodyStyle={{ height: '80vh', padding: 0 }}
+                        bodyStyle={{ height: '80vh', padding: 0, width: '100%', overflow: 'hidden' }}
                         destroyOnClose
                       >
                         {imagesModal.open && (

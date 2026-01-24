@@ -55,8 +55,8 @@ function ResultsImages({
   const loadAllStartRef = useRef(null);
   const loadAllCancelledRef = useRef(false);
 
-  const [containerWidth, setContainerWidth] = useState(window.innerWidth);
-  const [columns, setColumns] = useState(Math.max(1, Math.floor(window.innerWidth / COLUMN_WIDTH)));
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [columns, setColumns] = useState(1);
 
   const filteredItems = useMemo(() => {
     if (!searchText) return items;
@@ -537,11 +537,11 @@ function ResultsImages({
 
 
   return (
-    <div style={{ padding: embedded ? 0 : 24, height: embedded ? '100%' : 'auto', display: embedded ? 'flex' : 'block' }}>
+    <div style={{ padding: embedded ? 0 : 24, height: embedded ? '100%' : 'auto', display: embedded ? 'flex' : 'block', width: '100%', minWidth: 0, maxWidth: '100%' }}>
       <Card
         title="结果图片"
-        style={embedded ? { height: '100%', display: 'flex', flexDirection: 'column' } : undefined}
-        bodyStyle={embedded ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : undefined}
+        style={embedded ? { height: '100%', display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0 } : undefined}
+        bodyStyle={embedded ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', overflow: 'hidden' } : undefined}
         extra={(
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <Input
@@ -581,7 +581,7 @@ function ResultsImages({
         ) : (
           <div
             ref={containerRef}
-            style={{ width: '100%', flex: embedded ? 1 : undefined, minHeight: embedded ? 0 : undefined }}
+            style={{ width: '100%', flex: embedded ? 1 : undefined, minHeight: embedded ? 0 : undefined, minWidth: 0 }}
           >
             <Grid
               columnCount={columns}
