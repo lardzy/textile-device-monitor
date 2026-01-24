@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Input, Modal, Progress, Spin, message } from 'antd';
 
 import { FixedSizeGrid as Grid } from 'react-window';
@@ -33,17 +33,21 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
   const [folder, setFolder] = useState(null);
   const [loadingAll, setLoadingAll] = useState(false);
   const [loadAllProgress, setLoadAllProgress] = useState(0);
+  const previewContainerRef = useRef(null);
 
   const [containerWidth, setContainerWidth] = useState(window.innerWidth);
   const [columns, setColumns] = useState(Math.max(1, Math.floor(window.innerWidth / COLUMN_WIDTH)));
 
-  const filteredItems = searchText
-    ? items.filter(item => item.name.toLowerCase().includes(searchText.trim().toLowerCase()))
-    : items;
+  const filteredItems = useMemo(() => {
+    if (!searchText) return items;
+    const query = searchText.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter(item => item.name.toLowerCase().includes(query));
+  }, [items, searchText]);
   const rows = Math.ceil(filteredItems.length / columns);
 
 
-  const processQueue = () => {
+  const processQueue = useCallback(() => {
     while (activeRef.current < MAX_CONCURRENT && queueRef.current.length > 0) {
       const item = queueRef.current.shift();
       if (!item) continue;
@@ -80,9 +84,9 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
           processQueue();
         });
     }
-  };
+  }, []);
 
-  const enqueueImage = (item) => {
+  const enqueueImage = useCallback((item) => {
     if (!item) return;
     const cacheKey = item.cacheKey;
     if (cacheRef.current.has(cacheKey) || pendingRef.current.has(cacheKey)) {
@@ -91,7 +95,7 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
     pendingRef.current.add(cacheKey);
     queueRef.current.push({ cacheKey, url: item.url });
     processQueue();
-  };
+  }, [processQueue]);
 
   const loadPage = async (pageToLoad, reset = false) => {
     if (!deviceId) return null;
@@ -258,14 +262,46 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 3));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.4));
   const handleZoomReset = () => setZoom(1);
-  const handleWheelZoom = (event) => {
+  const handleWheelZoom = useCallback((event) => {
+    const element = previewContainerRef.current;
+    if (!element || !element.contains(event.target)) return;
     event.preventDefault();
     const direction = event.deltaY > 0 ? -0.1 : 0.1;
     setZoom(prev => {
       const next = prev + direction;
       return Math.min(Math.max(next, 0.4), 3);
     });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!previewItem) return;
+    window.addEventListener('wheel', handleWheelZoom, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheelZoom);
+  }, [handleWheelZoom, previewItem]);
+
+  useEffect(() => {
+    if (!previewItem) return;
+    const handleKeyDown = (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) {
+          return;
+        }
+      }
+      const currentIndex = filteredItems.findIndex(item => item.cacheKey === previewItem.cacheKey);
+      if (currentIndex < 0) return;
+      const nextIndex = event.key === 'ArrowRight' ? currentIndex + 1 : currentIndex - 1;
+      if (nextIndex < 0 || nextIndex >= filteredItems.length) return;
+      const nextItem = filteredItems[nextIndex];
+      setPreviewItem(nextItem);
+      setZoom(1);
+      enqueueImage(nextItem);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [enqueueImage, filteredItems, previewItem]);
 
 
   return (
@@ -331,7 +367,7 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
             <Button onClick={handleZoomIn}>放大</Button>
           </div>
           {previewUrl ? (
-            <div style={{ overflow: 'auto', maxHeight: '70vh' }} onWheel={handleWheelZoom}>
+            <div ref={previewContainerRef} style={{ overflow: 'auto', maxHeight: '70vh' }}>
               <img
                 src={previewUrl}
                 alt={previewItem?.name || 'preview'}
