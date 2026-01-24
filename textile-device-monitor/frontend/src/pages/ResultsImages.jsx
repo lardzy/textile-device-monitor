@@ -48,8 +48,12 @@ function ResultsImages({
   const [loadAllProgress, setLoadAllProgress] = useState(0);
   const [loadedCount, setLoadedCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
+  const [loadAllDuration, setLoadAllDuration] = useState(null);
+  const [gridHeight, setGridHeight] = useState(600);
   const [clientBaseUrl, setClientBaseUrl] = useState(propClientBaseUrl || null);
   const previewContainerRef = useRef(null);
+  const loadAllStartRef = useRef(null);
+  const loadAllCancelledRef = useRef(false);
 
   const [containerWidth, setContainerWidth] = useState(window.innerWidth);
   const [columns, setColumns] = useState(Math.max(1, Math.floor(window.innerWidth / COLUMN_WIDTH)));
@@ -268,6 +272,17 @@ function ResultsImages({
     }
   };
 
+  const formatDuration = (durationMs) => {
+    if (durationMs == null) return '';
+    const totalSeconds = Math.max(0, durationMs / 1000);
+    if (totalSeconds < 60) {
+      return `${totalSeconds.toFixed(1)}s`;
+    }
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.round(totalSeconds % 60);
+    return `${minutes}m${String(seconds).padStart(2, '0')}s`;
+  };
+
   useEffect(() => {
     if (!deviceId) {
       message.error('缺少设备参数');
@@ -293,17 +308,31 @@ function ResultsImages({
     setLoadAllProgress(0);
     setLoadAllActive(false);
     setLoadingAllMeta(false);
+    setLoadAllDuration(null);
+    loadAllStartRef.current = null;
+    loadAllCancelledRef.current = false;
     loadPage(1, true);
 
   }, [deviceId, requestedFolder]);
 
   useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return undefined;
     const updateSize = () => {
-      const width = containerRef.current?.clientWidth || window.innerWidth;
+      const width = element.clientWidth || window.innerWidth;
+      const height = element.clientHeight || 0;
       setContainerWidth(width);
       setColumns(Math.max(1, Math.floor(width / COLUMN_WIDTH)));
+      if (height) {
+        setGridHeight(height);
+      }
     };
     updateSize();
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateSize);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
     window.addEventListener('resize', updateSize);
     return () => window.removeEventListener('resize', updateSize);
   }, []);
@@ -325,6 +354,9 @@ function ResultsImages({
     setLoadAllActive(true);
     setLoadingAllMeta(true);
     setLoadAllProgress(0);
+    setLoadAllDuration(null);
+    loadAllStartRef.current = Date.now();
+    loadAllCancelledRef.current = false;
     let currentPage = page;
     let loadedMetaCount = items.length;
     let totalCount = total;
@@ -349,6 +381,9 @@ function ResultsImages({
       }
 
       while (loadedMetaCount < totalCount) {
+        if (loadAllCancelledRef.current) {
+          break;
+        }
         const result = await loadPage(currentPage + 1);
         if (!result) {
           message.error('加载全部失败，请重试。');
@@ -367,6 +402,15 @@ function ResultsImages({
     }
   };
 
+  const handleStopLoadAll = () => {
+    loadAllCancelledRef.current = true;
+    setLoadAllActive(false);
+    setLoadingAllMeta(false);
+    setLoadAllDuration(null);
+    loadAllStartRef.current = null;
+    pruneQueue(desiredKeysRef.current);
+  };
+
   useEffect(() => {
     if (!loadAllActive) return;
     if (!total) {
@@ -377,6 +421,10 @@ function ResultsImages({
     const progress = Math.min(100, Math.round((completed / total) * 100));
     setLoadAllProgress(progress);
     if (completed >= total) {
+      if (loadAllStartRef.current) {
+        setLoadAllDuration(Date.now() - loadAllStartRef.current);
+        loadAllStartRef.current = null;
+      }
       setLoadAllActive(false);
     }
   }, [failedCount, loadAllActive, loadedCount, total]);
@@ -425,6 +473,7 @@ function ResultsImages({
 
   const columnWidth = Math.max(120, Math.floor(containerWidth / columns));
   const gridWidth = containerWidth;
+  const gridHeightValue = embedded ? Math.max(240, gridHeight) : 600;
 
   useEffect(() => {
     return () => {
@@ -488,9 +537,11 @@ function ResultsImages({
 
 
   return (
-    <div style={{ padding: embedded ? 0 : 24 }}>
+    <div style={{ padding: embedded ? 0 : 24, height: embedded ? '100%' : 'auto', display: embedded ? 'flex' : 'block' }}>
       <Card
         title="结果图片"
+        style={embedded ? { height: '100%', display: 'flex', flexDirection: 'column' } : undefined}
+        bodyStyle={embedded ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : undefined}
         extra={(
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <Input
@@ -504,15 +555,22 @@ function ResultsImages({
             <Button onClick={handleLoadAll} disabled={loadingAllMeta || loading}>
               加载全部
             </Button>
+            {loadAllActive && (
+              <Button danger onClick={handleStopLoadAll}>
+                停止加载
+              </Button>
+            )}
           </div>
         )}
       >
-        {loadAllActive && (
+        {(loadAllActive || loadAllDuration != null) && (
           <div style={{ marginBottom: 12 }}>
-            <Progress percent={loadAllProgress} size="small" />
-            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-              已加载 {Math.min(loadedCount, total)} / {total || 0}
+            {loadAllActive && <Progress percent={loadAllProgress} size="small" />}
+            <div style={{ fontSize: 12, color: '#999', marginTop: loadAllActive ? 4 : 0 }}>
+              元数据 {Math.min(items.length, total)} / {total || 0}
+              {'，'}缩略图 {Math.min(loadedCount, total)} / {total || 0}
               {failedCount ? `，失败 ${failedCount}` : ''}
+              {loadAllDuration != null ? `，耗时 ${formatDuration(loadAllDuration)}` : ''}
             </div>
           </div>
         )}
@@ -521,11 +579,14 @@ function ResultsImages({
             <Spin />
           </div>
         ) : (
-          <div ref={containerRef} style={{ width: '100%' }}>
+          <div
+            ref={containerRef}
+            style={{ width: '100%', flex: embedded ? 1 : undefined, minHeight: embedded ? 0 : undefined }}
+          >
             <Grid
               columnCount={columns}
               columnWidth={columnWidth}
-              height={600}
+              height={gridHeightValue}
               rowCount={rows}
               rowHeight={ROW_HEIGHT}
               width={gridWidth}
@@ -545,33 +606,40 @@ function ResultsImages({
           }}
           width="80vw"
           style={{ top: 20 }}
-          bodyStyle={{ textAlign: 'center', padding: 16 }}
+          bodyStyle={{ textAlign: 'center', padding: 16, height: '80vh', display: 'flex', flexDirection: 'column' }}
           destroyOnClose
         >
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
-            <Button onClick={handleZoomOut}>缩小</Button>
-            <Button onClick={handleZoomReset}>复位</Button>
-            <Button onClick={handleZoomIn}>放大</Button>
-          </div>
-          {previewUrl ? (
-            <div ref={previewContainerRef} style={{ overflow: 'auto', maxHeight: '70vh' }}>
-              <img
-                src={previewUrl}
-                alt={previewItem?.name || 'preview'}
-                decoding="async"
-                style={{
-                  transform: `scale(${zoom})`,
-                  transformOrigin: 'center center',
-                  maxWidth: '100%',
-                  maxHeight: '70vh',
-                  objectFit: 'contain',
-                  display: 'inline-block',
-                }}
-              />
+          <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 12, flexShrink: 0 }}>
+              <Button onClick={handleZoomOut}>缩小</Button>
+              <Button onClick={handleZoomReset}>复位</Button>
+              <Button onClick={handleZoomIn}>放大</Button>
             </div>
-          ) : (
-            <div style={{ padding: 24, color: '#999' }}>图片加载中...</div>
-          )}
+            {previewUrl ? (
+              <div
+                ref={previewContainerRef}
+                style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+              >
+                <img
+                  src={previewUrl}
+                  alt={previewItem?.name || 'preview'}
+                  decoding="async"
+                  style={{
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'center center',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    objectFit: 'contain',
+                    display: 'inline-block',
+                  }}
+                />
+              </div>
+            ) : (
+              <div style={{ padding: 24, color: '#999', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                图片加载中...
+              </div>
+            )}
+          </div>
         </Modal>
       </Card>
 

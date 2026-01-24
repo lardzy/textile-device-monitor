@@ -289,7 +289,7 @@ class ResultsHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        self._safe_write(body)
 
     def _send_bytes(self, data: bytes, content_type: str, status: int = 200):
         self.send_response(status)
@@ -298,7 +298,7 @@ class ResultsHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "public, max-age=300")
         self.end_headers()
-        self.wfile.write(data)
+        self._safe_write(data)
 
     def _send_file(
         self,
@@ -327,11 +327,17 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Disposition", disposition)
             self.send_header("Cache-Control", "public, max-age=300")
             self.end_headers()
-            self.wfile.write(data)
+            self._safe_write(data)
         except Exception as exc:
             if self.logger:
                 self.logger.error(f"读取文件失败: {exc}")
             self._send_json(500, {"error": "file_read_failed"})
+
+    def _safe_write(self, data: bytes) -> None:
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            return
 
     def _add_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
