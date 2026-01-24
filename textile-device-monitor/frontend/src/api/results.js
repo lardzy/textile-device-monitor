@@ -8,6 +8,10 @@ export const resultsApi = {
     const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
     return `/api/results/table?device_id=${deviceId}${folderParam}`;
   },
+  getThumbUrl: (deviceId, filename, folder) => {
+    const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
+    return `/api/results/thumb/${encodeURIComponent(filename)}?device_id=${deviceId}${folderParam}`;
+  },
   getImageUrl: (deviceId, filename, folder) => {
     const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
     return `/api/results/image/${encodeURIComponent(filename)}?device_id=${deviceId}${folderParam}`;

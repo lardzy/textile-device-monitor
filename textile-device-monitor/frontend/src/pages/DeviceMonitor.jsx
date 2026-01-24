@@ -821,6 +821,7 @@ function DeviceMonitor() {
                             deviceId={selectedDeviceId}
                             folder={imagesModal.folder}
                             embedded
+                            clientBaseUrl={selectedDevice?.client_base_url || null}
                           />
                         )}
                       </Modal>

@@ -17,6 +17,7 @@ from .progress_reader import ProgressReader
 from .logger import Logger
 import openpyxl
 import formulas
+from PIL import Image
 
 
 class ResultsHandler(BaseHTTPRequestHandler):
@@ -64,6 +65,29 @@ class ResultsHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             if self.logger:
                 self.logger.error(f"处理xlsx文件失败: {exc}")
+            return None
+
+    def _build_thumbnail(
+        self, image_path: str, size: int
+    ) -> Optional[tuple[bytes, str]]:
+        try:
+            with Image.open(image_path) as img:
+                original_format = img.format or "PNG"
+                target_size = max(64, min(size, 1024))
+                img.thumbnail((target_size, target_size))
+                output = io.BytesIO()
+                if original_format.upper() in ("JPG", "JPEG"):
+                    img = img.convert("RGB")
+                    img.save(output, format="JPEG", quality=85, optimize=True)
+                    content_type = "image/jpeg"
+                else:
+                    img.save(output, format="PNG", optimize=True)
+                    content_type = "image/png"
+                output.seek(0)
+                return output.read(), content_type
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"生成缩略图失败: {exc}")
             return None
 
     def _get_cache_key(self, file_path: str) -> str:
@@ -261,6 +285,7 @@ class ResultsHandler(BaseHTTPRequestHandler):
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
+        self._add_cors_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -268,6 +293,7 @@ class ResultsHandler(BaseHTTPRequestHandler):
 
     def _send_bytes(self, data: bytes, content_type: str, status: int = 200):
         self.send_response(status)
+        self._add_cors_headers()
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "public, max-age=300")
@@ -284,6 +310,7 @@ class ResultsHandler(BaseHTTPRequestHandler):
             with open(file_path, "rb") as f:
                 data = f.read()
             self.send_response(200)
+            self._add_cors_headers()
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             if download_name:
@@ -305,6 +332,17 @@ class ResultsHandler(BaseHTTPRequestHandler):
             if self.logger:
                 self.logger.error(f"读取文件失败: {exc}")
             self._send_json(500, {"error": "file_read_failed"})
+
+    def _add_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def do_OPTIONS(self):  # noqa: N802
+        self.send_response(204)
+        self._add_cors_headers()
+        self.end_headers()
+        return
 
     def do_GET(self):  # noqa: N802
         if not self.reader:
@@ -611,6 +649,72 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 limit = 5
             items = self._get_recent_results(limit)
             self._send_json(200, {"items": items})
+            return
+
+        if path.startswith("/client/results/thumb/"):
+            size_param = query.get("size", ["320"])[0]
+            try:
+                size = int(size_param)
+            except ValueError:
+                size = 320
+            if is_confocal:
+                folder_param = None
+                if "folder" in query and query.get("folder"):
+                    folders = query.get("folder")
+                    if folders:
+                        folder_param = unquote(folders[0])
+                target_folder = self._resolve_confocal_folder(folder_param)
+                if not target_folder or not os.path.isdir(target_folder):
+                    if folder_param:
+                        self._send_json(404, {"error": "folder_not_found"})
+                    else:
+                        self._send_json(404, {"error": "no_latest_folder"})
+                    return
+                filename = unquote(path.split("/client/results/thumb/")[-1])
+                image_path = os.path.join(target_folder, filename)
+                if not os.path.exists(image_path):
+                    self._send_json(404, {"error": "image_not_found"})
+                    return
+                thumbnail = self._build_thumbnail(image_path, size)
+                if not thumbnail:
+                    self._send_json(500, {"error": "thumb_failed"})
+                    return
+                data, content_type = thumbnail
+                self._send_bytes(data, content_type)
+                return
+
+            folder_name = None
+            if "folder" in query and query.get("folder"):
+                folders = query.get("folder")
+                if folders:
+                    folder_name = unquote(folders[0])
+
+            latest_folder = self.reader._get_latest_modified_folder(
+                self.reader.working_path
+            )
+            if not latest_folder:
+                self._send_json(404, {"error": "no_latest_folder"})
+                return
+
+            if folder_name:
+                candidate = os.path.join(self.reader.working_path, folder_name)
+                if os.path.isdir(candidate):
+                    latest_folder = candidate
+                else:
+                    self._send_json(404, {"error": "folder_not_found"})
+                    return
+
+            filename = unquote(path.split("/client/results/thumb/")[-1])
+            image_path = os.path.join(latest_folder, "cut_pic", "1", filename)
+            if not os.path.exists(image_path):
+                self._send_json(404, {"error": "image_not_found"})
+                return
+            thumbnail = self._build_thumbnail(image_path, size)
+            if not thumbnail:
+                self._send_json(500, {"error": "thumb_failed"})
+                return
+            data, content_type = thumbnail
+            self._send_bytes(data, content_type)
             return
 
         if path.startswith("/client/results/image/"):

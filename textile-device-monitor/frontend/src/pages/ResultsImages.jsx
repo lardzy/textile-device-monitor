@@ -3,25 +3,37 @@ import { Button, Card, Input, Modal, Progress, Spin, message } from 'antd';
 
 import { FixedSizeGrid as Grid } from 'react-window';
 import { resultsApi } from '../api/results';
+import { deviceApi } from '../api/devices';
 
 const COLUMN_WIDTH = 140;
 const ROW_HEIGHT = 160;
 const PAGE_SIZE = 400;
-const MAX_CONCURRENT = 8;
+const MAX_CONCURRENT = 4;
+const PREFETCH_ROWS = 4;
+const IMAGE_TIMEOUT_MS = 12000;
 const EMPTY_IMAGE =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 
-function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = false }) {
+function ResultsImages({
+  deviceId: propDeviceId,
+  folder: propFolder,
+  embedded = false,
+  clientBaseUrl: propClientBaseUrl,
+}) {
   const params = new URLSearchParams(window.location.search);
   const deviceId = propDeviceId ?? params.get('device_id');
   const requestedFolder = propFolder ?? params.get('folder');
 
   const containerRef = useRef(null);
-  const cacheRef = useRef(new Map());
+  const thumbCacheRef = useRef(new Map());
   const pendingRef = useRef(new Set());
   const queueRef = useRef([]);
   const retryRef = useRef(new Map());
   const activeRef = useRef(0);
+  const controllersRef = useRef(new Map());
+  const desiredKeysRef = useRef(new Set());
+  const visibleCenterRef = useRef(0);
+  const failedRef = useRef(new Set());
   const [cacheTick, setCacheTick] = useState(0);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
@@ -31,8 +43,12 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [folder, setFolder] = useState(null);
-  const [loadingAll, setLoadingAll] = useState(false);
+  const [loadingAllMeta, setLoadingAllMeta] = useState(false);
+  const [loadAllActive, setLoadAllActive] = useState(false);
   const [loadAllProgress, setLoadAllProgress] = useState(0);
+  const [loadedCount, setLoadedCount] = useState(0);
+  const [failedCount, setFailedCount] = useState(0);
+  const [clientBaseUrl, setClientBaseUrl] = useState(propClientBaseUrl || null);
   const previewContainerRef = useRef(null);
 
   const [containerWidth, setContainerWidth] = useState(window.innerWidth);
@@ -46,18 +62,76 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
   }, [items, searchText]);
   const rows = Math.ceil(filteredItems.length / columns);
 
+  const resolvedBaseUrl = useMemo(() => {
+    if (!clientBaseUrl) return null;
+    return String(clientBaseUrl).replace(/\/+$/, '');
+  }, [clientBaseUrl]);
+
+  const buildImageUrls = useCallback((name, targetFolder) => {
+    const encodedName = encodeURIComponent(name);
+    const folderParam = targetFolder ? `?folder=${encodeURIComponent(targetFolder)}` : '';
+    if (resolvedBaseUrl) {
+      return {
+        fullUrl: `${resolvedBaseUrl}/client/results/image/${encodedName}${folderParam}`,
+        thumbUrl: `${resolvedBaseUrl}/client/results/thumb/${encodedName}${folderParam}`,
+      };
+    }
+    return {
+      fullUrl: resultsApi.getImageUrl(deviceId, name, targetFolder),
+      thumbUrl: resultsApi.getThumbUrl(deviceId, name, targetFolder),
+    };
+  }, [deviceId, resolvedBaseUrl]);
+
+  useEffect(() => {
+    if (propClientBaseUrl) {
+      setClientBaseUrl(propClientBaseUrl);
+      return;
+    }
+    if (!deviceId) return;
+    let cancelled = false;
+    deviceApi.getById(deviceId)
+      .then((device) => {
+        if (cancelled) return;
+        setClientBaseUrl(device?.client_base_url || null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setClientBaseUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, propClientBaseUrl]);
+
+  useEffect(() => {
+    if (!resolvedBaseUrl || items.length === 0) return;
+    setItems(prev => prev.map(item => {
+      if (!item) return item;
+      const urls = buildImageUrls(item.name, item.folder);
+      return {
+        ...item,
+        fullUrl: urls.fullUrl,
+        thumbUrl: urls.thumbUrl,
+      };
+    }));
+  }, [buildImageUrls, resolvedBaseUrl]);
+
 
   const processQueue = useCallback(() => {
     while (activeRef.current < MAX_CONCURRENT && queueRef.current.length > 0) {
+      queueRef.current.sort((a, b) => a.priority - b.priority);
       const item = queueRef.current.shift();
       if (!item) continue;
       const { cacheKey, url } = item;
-      if (cacheRef.current.has(cacheKey)) {
+      if (thumbCacheRef.current.has(cacheKey)) {
         pendingRef.current.delete(cacheKey);
         continue;
       }
       activeRef.current += 1;
-      fetch(url, { cache: 'force-cache' })
+      const controller = new AbortController();
+      controllersRef.current.set(cacheKey, controller);
+      const timeoutId = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+      fetch(url, { cache: 'force-cache', signal: controller.signal })
         .then(response => {
           if (!response.ok) {
             throw new Error('load_failed');
@@ -65,37 +139,100 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
           return response.blob();
         })
         .then(blob => {
-          const blobUrl = URL.createObjectURL(blob);
-          cacheRef.current.set(cacheKey, blobUrl);
+          if (!thumbCacheRef.current.has(cacheKey)) {
+            const blobUrl = URL.createObjectURL(blob);
+            thumbCacheRef.current.set(cacheKey, blobUrl);
+            setLoadedCount(prev => prev + 1);
+            setCacheTick(tick => tick + 1);
+          }
           retryRef.current.delete(cacheKey);
           pendingRef.current.delete(cacheKey);
-          setCacheTick(tick => tick + 1);
         })
-        .catch(() => {
+        .catch((error) => {
+          if (error?.name === 'AbortError') {
+            pendingRef.current.delete(cacheKey);
+            return;
+          }
           const retries = retryRef.current.get(cacheKey) || 0;
           pendingRef.current.delete(cacheKey);
           if (retries < 2) {
             retryRef.current.set(cacheKey, retries + 1);
-            queueRef.current.push({ cacheKey, url });
+            queueRef.current.push({ cacheKey, url, priority: item.priority + 1 });
+          } else if (!failedRef.current.has(cacheKey)) {
+            failedRef.current.add(cacheKey);
+            setFailedCount(prev => prev + 1);
           }
         })
         .finally(() => {
+          clearTimeout(timeoutId);
+          controllersRef.current.delete(cacheKey);
           activeRef.current -= 1;
           processQueue();
         });
     }
   }, []);
 
-  const enqueueImage = useCallback((item) => {
+  const enqueueImage = useCallback((item, priority = 0) => {
     if (!item) return;
     const cacheKey = item.cacheKey;
-    if (cacheRef.current.has(cacheKey) || pendingRef.current.has(cacheKey)) {
+    if (
+      thumbCacheRef.current.has(cacheKey)
+      || pendingRef.current.has(cacheKey)
+      || failedRef.current.has(cacheKey)
+    ) {
+      if (pendingRef.current.has(cacheKey)) {
+        const queued = queueRef.current.find(entry => entry.cacheKey === cacheKey);
+        if (queued) {
+          queued.priority = Math.min(queued.priority, priority);
+        }
+      }
       return;
     }
     pendingRef.current.add(cacheKey);
-    queueRef.current.push({ cacheKey, url: item.url });
+    queueRef.current.push({ cacheKey, url: item.thumbUrl, priority });
     processQueue();
   }, [processQueue]);
+
+  const pruneQueue = useCallback((desiredKeys) => {
+    queueRef.current = queueRef.current.filter(item => {
+      if (desiredKeys.has(item.cacheKey)) {
+        return true;
+      }
+      pendingRef.current.delete(item.cacheKey);
+      return false;
+    });
+    controllersRef.current.forEach((controller, key) => {
+      if (desiredKeys.has(key) || thumbCacheRef.current.has(key)) {
+        return;
+      }
+      controller.abort();
+      controllersRef.current.delete(key);
+      pendingRef.current.delete(key);
+    });
+  }, []);
+
+  const scheduleVisibleImages = useCallback((startRow, endRow) => {
+    if (!filteredItems.length) return;
+    const startIndex = Math.max(0, startRow * columns);
+    const endIndex = Math.min(
+      filteredItems.length - 1,
+      (endRow + 1) * columns - 1
+    );
+    const desiredKeys = new Set();
+    const centerIndex = Math.floor((startIndex + endIndex) / 2);
+    visibleCenterRef.current = centerIndex;
+    for (let index = startIndex; index <= endIndex; index += 1) {
+      const item = filteredItems[index];
+      if (!item) continue;
+      desiredKeys.add(item.cacheKey);
+      const priority = Math.abs(index - centerIndex);
+      enqueueImage(item, priority);
+    }
+    desiredKeysRef.current = desiredKeys;
+    if (!loadAllActive) {
+      pruneQueue(desiredKeys);
+    }
+  }, [columns, enqueueImage, filteredItems, loadAllActive, pruneQueue]);
 
   const loadPage = async (pageToLoad, reset = false) => {
     if (!deviceId) return null;
@@ -109,17 +246,19 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
       const nextFolder = data.folder || requestedFolder || folder;
       const newItems = (data.items || []).map(item => {
         const cacheKey = `${nextFolder || 'latest'}/${item.name}`;
+        const urls = buildImageUrls(item.name, nextFolder);
         return {
           ...item,
           cacheKey,
-          url: resultsApi.getImageUrl(deviceId, item.name, nextFolder),
+          folder: nextFolder || null,
+          fullUrl: urls.fullUrl,
+          thumbUrl: urls.thumbUrl,
         };
       });
       setFolder(nextFolder || null);
       setTotal(data.total || 0);
       setItems(prev => reset ? newItems : [...prev, ...newItems]);
       setPage(pageToLoad);
-      newItems.forEach(enqueueImage);
       return { newItemsCount: newItems.length, total: data.total || 0 };
     } catch (error) {
       message.error('图片加载失败');
@@ -140,12 +279,20 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
     setPage(1);
     setPreviewItem(null);
     setZoom(1);
-    cacheRef.current.forEach(url => URL.revokeObjectURL(url));
-    cacheRef.current.clear();
+    thumbCacheRef.current.forEach(url => URL.revokeObjectURL(url));
+    thumbCacheRef.current.clear();
     pendingRef.current.clear();
     retryRef.current.clear();
+    failedRef.current.clear();
+    controllersRef.current.forEach(controller => controller.abort());
+    controllersRef.current.clear();
     queueRef.current = [];
     activeRef.current = 0;
+    setLoadedCount(0);
+    setFailedCount(0);
+    setLoadAllProgress(0);
+    setLoadAllActive(false);
+    setLoadingAllMeta(false);
     loadPage(1, true);
 
   }, [deviceId, requestedFolder]);
@@ -161,8 +308,12 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
     return () => window.removeEventListener('resize', updateSize);
   }, []);
 
-  const onItemsRendered = ({ visibleRowStopIndex }) => {
-    if (loadingAll) return;
+  const onItemsRendered = ({ visibleRowStartIndex, visibleRowStopIndex }) => {
+    if (rows <= 0) return;
+    const startRow = Math.max(0, visibleRowStartIndex - PREFETCH_ROWS);
+    const endRow = Math.min(rows - 1, visibleRowStopIndex + PREFETCH_ROWS);
+    scheduleVisibleImages(startRow, endRow);
+    if (loadingAllMeta) return;
     const loadedRows = Math.ceil(items.length / columns);
     if (!loading && items.length < total && visibleRowStopIndex >= loadedRows - 6) {
       loadPage(page + 1);
@@ -170,58 +321,85 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
   };
 
   const handleLoadAll = async () => {
-    if (loadingAll || loading) return;
-    setLoadingAll(true);
+    if (loadingAllMeta || loading) return;
+    setLoadAllActive(true);
+    setLoadingAllMeta(true);
     setLoadAllProgress(0);
     let currentPage = page;
-    let loadedCount = items.length;
+    let loadedMetaCount = items.length;
     let totalCount = total;
 
     try {
-      if (loadedCount === 0) {
+      if (loadedMetaCount === 0) {
         const result = await loadPage(1, true);
         if (!result) {
           message.error('加载全部失败，请重试。');
+          setLoadAllActive(false);
           return;
         }
         currentPage = 1;
-        loadedCount = result.newItemsCount;
+        loadedMetaCount = result.newItemsCount;
         totalCount = result.total;
       }
 
       if (!totalCount) {
-        setLoadAllProgress(100);
+        setLoadAllProgress(0);
+        setLoadAllActive(false);
         return;
       }
 
-      setLoadAllProgress(Math.min(100, Math.round((loadedCount / totalCount) * 100)));
-
-      while (loadedCount < totalCount) {
+      while (loadedMetaCount < totalCount) {
         const result = await loadPage(currentPage + 1);
         if (!result) {
           message.error('加载全部失败，请重试。');
+          setLoadAllActive(false);
           break;
         }
         currentPage += 1;
-        loadedCount += result.newItemsCount;
+        loadedMetaCount += result.newItemsCount;
         totalCount = result.total;
         if (!totalCount || result.newItemsCount === 0) {
           break;
         }
-        setLoadAllProgress(Math.min(100, Math.round((loadedCount / totalCount) * 100)));
       }
-      setLoadAllProgress(100);
     } finally {
-      setLoadingAll(false);
+      setLoadingAllMeta(false);
     }
   };
+
+  useEffect(() => {
+    if (!loadAllActive) return;
+    if (!total) {
+      setLoadAllProgress(0);
+      return;
+    }
+    const completed = loadedCount + failedCount;
+    const progress = Math.min(100, Math.round((completed / total) * 100));
+    setLoadAllProgress(progress);
+    if (completed >= total) {
+      setLoadAllActive(false);
+    }
+  }, [failedCount, loadAllActive, loadedCount, total]);
+
+  useEffect(() => {
+    if (!loadAllActive || items.length === 0) return;
+    const desiredKeys = new Set();
+    const centerIndex = visibleCenterRef.current;
+    items.forEach((item, index) => {
+      if (!item) return;
+      desiredKeys.add(item.cacheKey);
+      const priority = Math.abs(index - centerIndex) + PREFETCH_ROWS * columns;
+      enqueueImage(item, priority);
+    });
+    desiredKeysRef.current = desiredKeys;
+  }, [columns, enqueueImage, items, loadAllActive]);
 
   const Cell = ({ columnIndex, rowIndex, style }) => {
     const index = rowIndex * columns + columnIndex;
     const item = filteredItems[index];
 
     if (!item) return <div style={style} />;
-    const cachedUrl = cacheRef.current.get(item.cacheKey);
+    const cachedUrl = thumbCacheRef.current.get(item.cacheKey);
     if (!cachedUrl) {
       enqueueImage(item);
     }
@@ -234,6 +412,8 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
           <img
             src={cachedUrl || EMPTY_IMAGE}
             alt={item.name}
+            loading="lazy"
+            decoding="async"
             style={{ width: '100%', height: 100, objectFit: 'contain', display: 'block', background: '#f6f6f6' }}
           />
           <div style={{ fontSize: 12, marginTop: 4, color: '#555', wordBreak: 'break-all' }}>{item.name}</div>
@@ -248,16 +428,19 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
 
   useEffect(() => {
     return () => {
-      cacheRef.current.forEach(url => URL.revokeObjectURL(url));
-      cacheRef.current.clear();
+      thumbCacheRef.current.forEach(url => URL.revokeObjectURL(url));
+      thumbCacheRef.current.clear();
       pendingRef.current.clear();
       retryRef.current.clear();
+      failedRef.current.clear();
+      controllersRef.current.forEach(controller => controller.abort());
+      controllersRef.current.clear();
       queueRef.current = [];
       activeRef.current = 0;
     };
   }, []);
 
-  const previewUrl = previewItem ? cacheRef.current.get(previewItem.cacheKey) || previewItem.url : null;
+  const previewUrl = previewItem ? previewItem.fullUrl : null;
 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 3));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.4));
@@ -318,15 +501,19 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
               style={{ width: 220 }}
             />
             <span style={{ fontSize: 12, color: '#999' }}>请加载全部后再进行搜索！</span>
-            <Button onClick={handleLoadAll} disabled={loadingAll || loading}>
+            <Button onClick={handleLoadAll} disabled={loadingAllMeta || loading}>
               加载全部
             </Button>
           </div>
         )}
       >
-        {loadingAll && (
+        {loadAllActive && (
           <div style={{ marginBottom: 12 }}>
             <Progress percent={loadAllProgress} size="small" />
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+              已加载 {Math.min(loadedCount, total)} / {total || 0}
+              {failedCount ? `，失败 ${failedCount}` : ''}
+            </div>
           </div>
         )}
         {loading && items.length === 0 ? (
@@ -371,6 +558,7 @@ function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = 
               <img
                 src={previewUrl}
                 alt={previewItem?.name || 'preview'}
+                decoding="async"
                 style={{
                   transform: `scale(${zoom})`,
                   transformOrigin: 'center center',

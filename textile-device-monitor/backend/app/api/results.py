@@ -208,6 +208,34 @@ def get_image(
     )
 
 
+@router.get("/thumb/{filename}")
+def get_thumbnail(
+    filename: str,
+    device_id: int = Query(...),
+    folder: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    base_url = _get_client_base_url(db, device_id)
+    safe_filename = quote(filename, safe="")
+    params = {"folder": folder} if folder else None
+    try:
+        resp = requests.get(
+            f"{base_url}/client/results/thumb/{safe_filename}",
+            params=params,
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=resp.status_code, detail=_extract_client_error(resp)
+        )
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("Content-Type", "image/jpeg"),
+    )
+
+
 @router.post("/cleanup")
 def cleanup_images(
     device_id: int = Query(...),
