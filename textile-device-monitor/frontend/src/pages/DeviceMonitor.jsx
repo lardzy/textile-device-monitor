@@ -5,6 +5,7 @@ import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
 import { resultsApi } from '../api/results';
 import ResultsModal from '../components/ResultsModal';
+import ResultsImages from './ResultsImages';
 import wsClient from '../websocket/client';
 import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHelper';
 import { addQueueNoticeEntry, getInspectorName, getQueueNoticeEntries, getQueueNoticeModes, removeQueueNoticeEntry, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
@@ -805,12 +806,24 @@ function DeviceMonitor() {
                           onClose={() => setTableModal({ open: false, folder: null })}
                         />
                       )}
-                      <ResultsModal
-                        open={imagesModal.open}
+                      <Modal
                         title="结果图片"
-                        url={buildResultsUrl('images', imagesModal.folder)}
-                        onClose={() => setImagesModal({ open: false, folder: null })}
-                      />
+                        open={imagesModal.open}
+                        onCancel={() => setImagesModal({ open: false, folder: null })}
+                        footer={null}
+                        width="90vw"
+                        style={{ top: 20 }}
+                        bodyStyle={{ height: '80vh', padding: 0 }}
+                        destroyOnClose
+                      >
+                        {imagesModal.open && (
+                          <ResultsImages
+                            deviceId={selectedDeviceId}
+                            folder={imagesModal.folder}
+                            embedded
+                          />
+                        )}
+                      </Modal>
                     </Card>
                   </Col>
                   <Col xs={24} lg={12} xl={5} xxl={5}>

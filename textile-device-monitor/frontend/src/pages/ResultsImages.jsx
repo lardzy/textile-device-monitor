@@ -11,10 +11,10 @@ const MAX_CONCURRENT = 8;
 const EMPTY_IMAGE =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 
-function ResultsImages() {
+function ResultsImages({ deviceId: propDeviceId, folder: propFolder, embedded = false }) {
   const params = new URLSearchParams(window.location.search);
-  const deviceId = params.get('device_id');
-  const requestedFolder = params.get('folder');
+  const deviceId = propDeviceId ?? params.get('device_id');
+  const requestedFolder = propFolder ?? params.get('folder');
 
   const containerRef = useRef(null);
   const cacheRef = useRef(new Map());
@@ -269,7 +269,7 @@ function ResultsImages() {
 
 
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: embedded ? 0 : 24 }}>
       <Card
         title="结果图片"
         extra={(
