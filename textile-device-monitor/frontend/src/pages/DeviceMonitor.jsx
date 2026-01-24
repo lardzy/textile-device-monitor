@@ -50,6 +50,23 @@ const getOlympusDisplayState = (olympus, deviceStatus) => {
   return '-';
 };
 
+const getQueuePositionDisplay = (position) => {
+  if (position == null) return '-';
+  if (position === 1) return '正在使用';
+  return position - 1;
+};
+
+const getQueuePositionLabel = (position) => {
+  if (position == null) return '-';
+  if (position === 1) return '正在使用';
+  return `位置 ${position - 1}`;
+};
+
+const getActiveQueueEntry = (queueList) => {
+  if (!Array.isArray(queueList)) return null;
+  return queueList.find(item => item.position === 1) || null;
+};
+
 const type = 'queue-row';
 
 const isConfocalDevice = (device) => {
@@ -57,7 +74,7 @@ const isConfocalDevice = (device) => {
   return device.metrics?.device_type === 'laser_confocal' || Boolean(device.metrics?.olympus);
 };
 
-const DraggableRow = ({ index, moveRow, onDropConfirm, children, ...restProps }) => {
+const DraggableRow = ({ index, moveRow, onDropConfirm, isActive, children, ...restProps }) => {
   const ref = useRef(null);
   const [{ isOver, dropClassName }, drop] = useDrop({
     accept: type,
@@ -87,11 +104,16 @@ const DraggableRow = ({ index, moveRow, onDropConfirm, children, ...restProps })
     }),
   });
   drop(drag(ref));
+  const rowStyle = {
+    ...restProps.style,
+    cursor: 'move',
+    ...(isActive ? { background: '#f6ffed' } : null),
+  };
   return (
     <tr
       ref={ref}
       className={`${isOver ? dropClassName : ''}`}
-      style={{ cursor: 'move' }}
+      style={rowStyle}
       {...restProps}
     >
       {children}
@@ -112,7 +134,16 @@ const DragTable = ({ columns, dataSource, onDropConfirm, ...props }) => {
     body: {
       row: (props) => {
         const index = dataSource.findIndex((x) => x.id === props['data-row-key']);
-        return <DraggableRow index={index} moveRow={moveRow} onDropConfirm={onDropConfirm} {...props} />;
+        const record = index >= 0 ? dataSource[index] : null;
+        return (
+          <DraggableRow
+            index={index}
+            moveRow={moveRow}
+            onDropConfirm={onDropConfirm}
+            isActive={record?.position === 1}
+            {...props}
+          />
+        );
       },
     },
   };
@@ -172,6 +203,7 @@ function DeviceMonitor() {
   const notifyModesRef = useRef(notifyModes);
   const lastProgressRef = useRef(new Map());
   const lastQueueCompletionRef = useRef(new Map());
+  const activeQueueRef = useRef(new Map());
   const lastDeviceNotificationRef = useRef(new Map());
   const deviceNotifyTimersRef = useRef(new Map());
 
@@ -224,7 +256,8 @@ function DeviceMonitor() {
     }
   };
 
-  const fetchQueue = async (deviceId) => {
+  const fetchQueue = async (deviceId, options = {}) => {
+    const { notify = false, reason, updateState = true } = options;
     if (!deviceId) return;
     try {
       const data = await queueApi.getByDevice(deviceId);
@@ -232,8 +265,15 @@ function DeviceMonitor() {
         .slice()
         .sort((a, b) => a.position - b.position);
       const sortedLogs = (data.logs || []).slice().sort((a, b) => new Date(b.change_time) - new Date(a.change_time));
-      setQueue(sortedQueue);
-      setQueueLogs(sortedLogs);
+      if (updateState) {
+        setQueue(sortedQueue);
+        setQueueLogs(sortedLogs);
+      }
+      if (notify) {
+        await notifyActiveQueueEntry(sortedQueue, deviceId, reason);
+      } else {
+        syncActiveQueueEntry(deviceId, sortedQueue);
+      }
     } catch (error) {
       message.error('获取排队列表失败');
     }
@@ -300,33 +340,48 @@ function DeviceMonitor() {
     return notifyModesRef.current[key] || 'off';
   };
 
-  const handleQueueCompletion = async (data) => {
-    if (!data) return;
-    const queueId = data.queue_id != null ? Number(data.queue_id) : null;
+  const syncActiveQueueEntry = (deviceId, queueList) => {
+    if (deviceId == null) return;
+    const activeEntry = getActiveQueueEntry(queueList);
+    activeQueueRef.current.set(deviceId, activeEntry ? activeEntry.id : null);
+  };
+
+  const notifyActiveQueueEntry = async (queueList, deviceId, reason) => {
+    if (deviceId == null) return;
+    const activeEntry = getActiveQueueEntry(queueList);
+    const activeId = activeEntry ? activeEntry.id : null;
+    const previousId = activeQueueRef.current.get(deviceId);
+    activeQueueRef.current.set(deviceId, activeId);
+
+    if (!activeEntry || activeId == null || activeId === previousId) {
+      return;
+    }
+
     const entries = getQueueNoticeEntries();
-    const entry = entries.find(item => queueId != null && item.id === queueId)
-      || entries.find(item => item.id === data.queue_id)
-      || entries.find(item => item.device_id === data.device_id && item.inspector_name === data.completed_by);
-    if (!entry) {
+    const noticeEntry = entries.find(item => item.id === activeId)
+      || entries.find(item => item.device_id === deviceId && item.inspector_name === activeEntry.inspector_name);
+    if (!noticeEntry) {
       return;
     }
-    removeQueueNoticeEntry(entry.id);
-    const permitted = await requestNotificationPermission();
-    if (!permitted) {
-      return;
-    }
-    if (entry.device_id != null) {
-      const lastDeviceTime = lastDeviceNotificationRef.current.get(entry.device_id);
+
+    removeQueueNoticeEntry(noticeEntry.id);
+
+    if (reason === 'complete') {
+      const lastDeviceTime = lastDeviceNotificationRef.current.get(deviceId);
       if (lastDeviceTime && Date.now() - lastDeviceTime < 2000) {
         return;
       }
     }
-    const deviceName = data.device_name
-      || devicesRef.current.find(device => device.id === entry.device_id)?.name
-      || '';
-    sendQueueNotification(entry, deviceName);
-    const deviceId = entry.device_id;
-    if (deviceId != null) {
+
+    const permitted = await requestNotificationPermission();
+    if (!permitted) {
+      return;
+    }
+
+    const deviceName = devicesRef.current.find(device => device.id === deviceId)?.name || '';
+    sendQueueNotification(noticeEntry, deviceName);
+
+    if (reason === 'complete') {
       lastQueueCompletionRef.current.set(deviceId, Date.now());
       const timer = deviceNotifyTimersRef.current.get(deviceId);
       if (timer) {
@@ -434,14 +489,13 @@ function DeviceMonitor() {
 
     wsClient.on('queue_update', (data) => {
       if (!data || data.device_id == null) return;
-      if (data.action === 'complete') {
-        handleQueueCompletion(data);
-      }
       if (data.action === 'leave' && data.queue_id) {
         removeQueueNoticeEntry(data.queue_id);
       }
       if (data.device_id === selectedDeviceId) {
-        fetchQueue(selectedDeviceId);
+        fetchQueue(selectedDeviceId, { notify: true, reason: data.action });
+      } else {
+        fetchQueue(data.device_id, { notify: true, reason: data.action, updateState: false });
       }
       setDevices(prev => prev.map(device =>
         device.id === data.device_id
@@ -537,16 +591,18 @@ function DeviceMonitor() {
       saveInspectorName(values.inspector_name);
       form.resetFields();
       setInspectorName('');
-      fetchQueue(selectedDeviceId);
+      fetchQueue(selectedDeviceId, { notify: true, reason: 'join' });
     } catch (error) {
       message.error(error.response?.data?.detail || '加入排队失败');
     }
   };
 
   const handleChangePosition = async (record, newPosition) => {
+    const fromLabel = getQueuePositionLabel(record.position);
+    const toLabel = getQueuePositionLabel(newPosition);
     Modal.confirm({
       title: '确认移动位置',
-      content: `确定要将 ${record.inspector_name} 从位置 ${record.position} 移动到位置 ${newPosition} 吗？`,
+      content: `确定要将 ${record.inspector_name} 从 ${fromLabel} 移动到 ${toLabel} 吗？`,
       okText: '确认',
       cancelText: '取消',
       onOk: async () => {
@@ -558,7 +614,7 @@ function DeviceMonitor() {
             version: record.version
           });
           message.success('修改位置成功');
-          fetchQueue(selectedDeviceId);
+          fetchQueue(selectedDeviceId, { notify: true, reason: 'position_change' });
         } catch (error) {
           if (error.response?.status === 409) {
             message.error('该记录已被其他用户修改，请刷新后重试');
@@ -583,7 +639,7 @@ function DeviceMonitor() {
           await queueApi.leave(record.id);
           message.success('离开排队成功');
           removeQueueNoticeEntry(record.id);
-          fetchQueue(selectedDeviceId);
+          fetchQueue(selectedDeviceId, { notify: true, reason: 'leave' });
         } catch (error) {
           message.error('离开排队失败');
         }
@@ -637,7 +693,17 @@ function DeviceMonitor() {
       width: 50,
       render: () => <HolderOutlined style={{ cursor: 'move', color: '#999' }} />
     },
-    { title: '位置', dataIndex: 'position', key: 'position', width: 80 },
+    {
+      title: '位置',
+      dataIndex: 'position',
+      key: 'position',
+      width: 100,
+      render: (_, record) => (
+        record.position === 1
+          ? <span style={{ color: '#389e0d', fontWeight: 600 }}>正在使用</span>
+          : getQueuePositionDisplay(record.position)
+      )
+    },
     { title: '检验员', dataIndex: 'inspector_name', key: 'inspector_name' },
     { title: '加入时间', dataIndex: 'submitted_at', key: 'submitted_at', render: formatTime },
     {
@@ -645,11 +711,12 @@ function DeviceMonitor() {
       key: 'actions',
       width: 80,
       render: (_, record) => (
-        <Button 
-          type="text" 
-          danger 
-          icon={<DeleteOutlined />} 
+        <Button
+          type="text"
+          danger
+          icon={<DeleteOutlined />}
           onClick={() => handleDeleteQueue(record)}
+          disabled={record.position === 1}
         />
       )
     }
@@ -937,22 +1004,29 @@ function DeviceMonitor() {
                     </Card>
                   </Col>
                   <Col xs={24} lg={12} xl={5} xxl={5}>
-                    <Card title="修改历史（今日）" size="small" style={{ height: '100%' }}>
+                    <Card title="历史记录（今日）" size="small" style={{ height: '100%' }}>
                       <List
                         dataSource={queueLogs}
                         style={{ maxHeight: 240, overflowY: 'auto' }}
-                        renderItem={log => (
-                          <List.Item>
-                            <div style={{ width: '100%' }}>
-                              <div style={{ fontSize: '12px', color: '#999' }}>
-                                {formatDateTime(log.change_time)} - {log.changed_by}
+                        renderItem={log => {
+                          const isCompletionLog = log.new_position === 0;
+                          return (
+                            <List.Item>
+                              <div style={{ width: '100%' }}>
+                                <div style={{ fontSize: '12px', color: '#999' }}>
+                                  {formatDateTime(log.change_time)} - {log.changed_by}
+                                </div>
+                                {isCompletionLog ? (
+                                  <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>
+                                ) : (
+                                  <div>
+                                    {getQueuePositionLabel(log.old_position)} → {getQueuePositionLabel(log.new_position)}
+                                  </div>
+                                )}
                               </div>
-                              <div>
-                                位置 {log.old_position} → {log.new_position}
-                              </div>
-                            </div>
-                          </List.Item>
-                        )}
+                            </List.Item>
+                          );
+                        }}
                       />
                     </Card>
                   </Col>

@@ -7,6 +7,18 @@ import wsClient from '../websocket/client';
 import { addQueueNoticeEntry, getInspectorName, removeQueueNoticeEntry, saveInspectorName } from '../utils/localStorage';
 import { formatDateTime, formatTime } from '../utils/dateHelper';
 
+const getQueuePositionDisplay = (position) => {
+  if (position == null) return '-';
+  if (position === 1) return '正在使用';
+  return position - 1;
+};
+
+const getQueuePositionLabel = (position) => {
+  if (position == null) return '-';
+  if (position === 1) return '正在使用';
+  return `位置 ${position - 1}`;
+};
+
 function QueueAssistant() {
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState(null);
@@ -102,7 +114,17 @@ function QueueAssistant() {
   };
 
   const queueColumns = [
-    { title: '位置', dataIndex: 'position', key: 'position', width: 80 },
+    {
+      title: '位置',
+      dataIndex: 'position',
+      key: 'position',
+      width: 100,
+      render: (_, record) => (
+        record.position === 1
+          ? <span style={{ color: '#389e0d', fontWeight: 600 }}>正在使用</span>
+          : getQueuePositionDisplay(record.position)
+      )
+    },
     { title: '检验员', dataIndex: 'inspector_name', key: 'inspector_name' },
     { title: '加入时间', dataIndex: 'submitted_at', key: 'submitted_at', render: formatTime },
     {
@@ -128,6 +150,7 @@ function QueueAssistant() {
             danger 
             icon={<DeleteOutlined />} 
             onClick={() => handleDeleteQueue(record.id)}
+            disabled={record.position === 1}
           />
         </div>
       )
@@ -196,25 +219,35 @@ function QueueAssistant() {
               rowKey="id"
               pagination={false}
               size="small"
+              onRow={(record) => ({
+                style: record.position === 1 ? { background: '#f6ffed' } : undefined
+              })}
             />
           </Card>
         </Col>
         <Col span={8}>
-          <Card title="修改历史（今日）" style={{ height: '100%' }}>
+          <Card title="历史记录（今日）" style={{ height: '100%' }}>
             <List
               dataSource={logs}
-              renderItem={log => (
-                <List.Item>
-                  <div style={{ width: '100%' }}>
-                    <div style={{ fontSize: '12px', color: '#999' }}>
-                      {formatDateTime(log.change_time)} - {log.changed_by}
+              renderItem={log => {
+                const isCompletionLog = log.new_position === 0;
+                return (
+                  <List.Item>
+                    <div style={{ width: '100%' }}>
+                      <div style={{ fontSize: '12px', color: '#999' }}>
+                        {formatDateTime(log.change_time)} - {log.changed_by}
+                      </div>
+                      {isCompletionLog ? (
+                        <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>
+                      ) : (
+                        <div>
+                          {getQueuePositionLabel(log.old_position)} → {getQueuePositionLabel(log.new_position)}
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      位置 {log.old_position} → {log.new_position}
-                    </div>
-                  </div>
-                </List.Item>
-              )}
+                  </List.Item>
+                );
+              }}
             />
           </Card>
         </Col>

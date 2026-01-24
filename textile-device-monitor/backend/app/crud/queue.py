@@ -169,9 +169,18 @@ def complete_first_in_queue(db: Session, device_id: int) -> Optional[QueueRecord
         return None
 
     first_record = queue[0]
+    old_position = first_record.position
     first_record.status = TaskStatus.COMPLETED
     first_record.completed_at = datetime.now()
     db.flush()
+
+    completion_log = QueueChangeLog(
+        queue_id=first_record.id,
+        old_position=old_position,
+        new_position=0,
+        changed_by=first_record.inspector_name,
+    )
+    db.add(completion_log)
 
     normalize_queue_positions(db, device_id)
 
