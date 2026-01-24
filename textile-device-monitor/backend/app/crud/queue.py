@@ -112,24 +112,18 @@ def update_queue_position(
         if new_position == old_position:
             return queue
 
-        if old_position < new_position:
-            affected_records = [
-                item
-                for item in queue_list
-                if item.position > old_position and item.position <= new_position
-            ]
-            for record in affected_records:
-                record.position -= 1
-        else:
-            affected_records = [
-                item
-                for item in queue_list
-                if item.position >= new_position and item.position < old_position
-            ]
-            for record in affected_records:
-                record.position += 1
+        current_index = queue_list.index(queue)
+        target_index = new_position - 1
 
-        queue.position = new_position
+        if current_index == target_index:
+            return queue
+
+        queue_list.pop(current_index)
+        queue_list.insert(target_index, queue)
+
+        for i, record in enumerate(queue_list, start=1):
+            record.position = i
+
         queue.version += 1
 
         log = QueueChangeLog(

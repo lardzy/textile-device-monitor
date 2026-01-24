@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { DndProvider, useDrag, useDrop } from 'react-dnd';
+import { HTML5Backend } from 'react-dnd-html5-backend';
 import { Card, Row, Col, Badge, Tag, Progress, Form, Input, InputNumber, Button, Table, List, Select, message, Modal } from 'antd';
-import { CheckCircleOutlined, ClockCircleOutlined, ClockCircleFilled, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, ClockCircleOutlined, ClockCircleFilled, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
 import { resultsApi } from '../api/results';
@@ -48,9 +50,74 @@ const getOlympusDisplayState = (olympus, deviceStatus) => {
   return '-';
 };
 
+const type = 'queue-row';
+
 const isConfocalDevice = (device) => {
   if (!device) return false;
   return device.metrics?.device_type === 'laser_confocal' || Boolean(device.metrics?.olympus);
+};
+
+const DraggableRow = ({ index, moveRow, onDropConfirm, children, ...restProps }) => {
+  const ref = useRef(null);
+  const [{ isOver, dropClassName }, drop] = useDrop({
+    accept: type,
+    collect: (monitor) => {
+      const { index: dragIndex } = monitor.getItem() || {};
+      if (dragIndex === index) {
+        return {};
+      }
+      return {
+        isOver: monitor.isOver(),
+        dropClassName: 'drop-over-downward',
+      };
+    },
+    drop: (item) => {
+      const dragIndex = item.index;
+      if (dragIndex === index) {
+        return;
+      }
+      onDropConfirm(dragIndex, index);
+    },
+  });
+  const [, drag] = useDrag({
+    type,
+    item: { index },
+    collect: (monitor) => ({
+      isDragging: monitor.isDragging(),
+    }),
+  });
+  drop(drag(ref));
+  return (
+    <tr
+      ref={ref}
+      className={`${isOver ? dropClassName : ''}`}
+      style={{ cursor: 'move' }}
+      {...restProps}
+    >
+      {children}
+    </tr>
+  );
+};
+
+const DragTable = ({ columns, dataSource, onDropConfirm, ...props }) => {
+  const moveRow = (dragIndex, hoverIndex) => {
+    const dragRow = dataSource[dragIndex];
+    const newData = [...dataSource];
+    newData.splice(dragIndex, 1);
+    newData.splice(hoverIndex, 0, dragRow);
+    return newData;
+  };
+
+  const components = {
+    body: {
+      row: (props) => {
+        const index = dataSource.findIndex((x) => x.id === props['data-row-key']);
+        return <DraggableRow index={index} moveRow={moveRow} onDropConfirm={onDropConfirm} {...props} />;
+      },
+    },
+  };
+
+  return <Table columns={columns} dataSource={dataSource} components={components} pagination={false} size="small" {...props} />;
 };
 
 const isTempOutputPath = (path) => {
@@ -163,8 +230,7 @@ function DeviceMonitor() {
       const data = await queueApi.getByDevice(deviceId);
       const sortedQueue = (data.queue || [])
         .slice()
-        .sort((a, b) => a.position - b.position)
-        .map((item, index) => ({ ...item, position: index + 1 }));
+        .sort((a, b) => a.position - b.position);
       const sortedLogs = (data.logs || []).slice().sort((a, b) => new Date(b.change_time) - new Date(a.change_time));
       setQueue(sortedQueue);
       setQueueLogs(sortedLogs);
@@ -465,34 +531,51 @@ function DeviceMonitor() {
   };
 
   const handleChangePosition = async (record, newPosition) => {
-    try {
-      const changedBy = inspectorName?.trim() || '系统';
-      await queueApi.updatePosition(record.id, {
-        new_position: newPosition,
-        changed_by: changedBy,
-        version: record.version
-      });
-      message.success('修改位置成功');
-      fetchQueue(selectedDeviceId);
-    } catch (error) {
-      if (error.response?.status === 409) {
-        message.error('该记录已被其他用户修改，请刷新后重试');
-        fetchQueue(selectedDeviceId);
-      } else {
-        message.error(error.response?.data?.detail || '修改位置失败');
+    Modal.confirm({
+      title: '确认移动位置',
+      content: `确定要将 ${record.inspector_name} 从位置 ${record.position} 移动到位置 ${newPosition} 吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const changedBy = inspectorName?.trim() || '系统';
+          await queueApi.updatePosition(record.id, {
+            new_position: newPosition,
+            changed_by: changedBy,
+            version: record.version
+          });
+          message.success('修改位置成功');
+          fetchQueue(selectedDeviceId);
+        } catch (error) {
+          if (error.response?.status === 409) {
+            message.error('该记录已被其他用户修改，请刷新后重试');
+            fetchQueue(selectedDeviceId);
+          } else {
+            message.error(error.response?.data?.detail || '修改位置失败');
+          }
+        }
       }
-    }
+    });
   };
 
-  const handleDeleteQueue = async (queueId) => {
-    try {
-      await queueApi.leave(queueId);
-      message.success('离开排队成功');
-      removeQueueNoticeEntry(queueId);
-      fetchQueue(selectedDeviceId);
-    } catch (error) {
-      message.error('离开排队失败');
-    }
+  const handleDeleteQueue = async (record) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: `确定要将 ${record.inspector_name} 从排队中移除吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await queueApi.leave(record.id);
+          message.success('离开排队成功');
+          removeQueueNoticeEntry(record.id);
+          fetchQueue(selectedDeviceId);
+        } catch (error) {
+          message.error('离开排队失败');
+        }
+      }
+    });
   };
 
   const notifyMode = selectedDeviceId != null
@@ -524,41 +607,44 @@ function DeviceMonitor() {
     ? <ClockCircleFilled style={{ color: notifyColor }} />
     : <ClockCircleOutlined style={{ color: notifyColor }} />;
 
+  const handleDropConfirm = (dragIndex, dropIndex) => {
+    const dragRecord = queue[dragIndex];
+    const dropRecord = queue[dropIndex];
+    if (!dragRecord || !dropRecord) return;
+
+    const newPosition = dropRecord.position;
+    handleChangePosition(dragRecord, newPosition);
+  };
+
   const queueColumns = [
+    {
+      title: '',
+      dataIndex: 'drag',
+      key: 'drag',
+      width: 50,
+      render: () => <HolderOutlined style={{ cursor: 'move', color: '#999' }} />
+    },
     { title: '位置', dataIndex: 'position', key: 'position', width: 80 },
     { title: '检验员', dataIndex: 'inspector_name', key: 'inspector_name' },
     { title: '加入时间', dataIndex: 'submitted_at', key: 'submitted_at', render: formatTime },
     {
       title: '操作',
       key: 'actions',
-      width: 140,
-      render: (_, record, index) => (
-        <div>
-          <Button 
-            type="text" 
-            icon={<ArrowUpOutlined />} 
-            onClick={() => handleChangePosition(record, record.position - 1)}
-            disabled={record.position === 1}
-          />
-          <Button 
-            type="text" 
-            icon={<ArrowDownOutlined />} 
-            onClick={() => handleChangePosition(record, record.position + 1)}
-            disabled={index === queue.length - 1}
-          />
-          <Button 
-            type="text" 
-            danger 
-            icon={<DeleteOutlined />} 
-            onClick={() => handleDeleteQueue(record.id)}
-          />
-        </div>
+      width: 80,
+      render: (_, record) => (
+        <Button 
+          type="text" 
+          danger 
+          icon={<DeleteOutlined />} 
+          onClick={() => handleDeleteQueue(record)}
+        />
       )
     }
   ];
 
   return (
-    <div>
+    <DndProvider backend={HTML5Backend}>
+      <div>
       <Row gutter={[16, 16]}>
         {devices.map(device => {
           const config = statusConfig[device.status] || statusConfig.offline;
@@ -723,12 +809,11 @@ function DeviceMonitor() {
 
                 <Row gutter={[16, 16]}>
                   <Col xs={24} lg={24} xl={12} xxl={11}>
-                    <Table 
+                    <DragTable 
                       dataSource={queue}
                       columns={queueColumns}
                       rowKey="id"
-                      pagination={false}
-                      size="small"
+                      onDropConfirm={handleDropConfirm}
                     />
                   </Col>
                   <Col xs={24} lg={12} xl={7} xxl={8}>
@@ -867,7 +952,8 @@ function DeviceMonitor() {
           </Card>
         </Col>
       </Row>
-    </div>
+      </div>
+    </DndProvider>
   );
 }
 
