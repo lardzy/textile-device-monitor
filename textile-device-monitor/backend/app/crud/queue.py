@@ -195,25 +195,20 @@ def delete_queue(db: Session, queue_id: int) -> bool:
         return False
 
     device_id = queue.device_id
+    old_position = queue.position
+    queue.status = TaskStatus.COMPLETED
+    queue.completed_at = datetime.now()
+    db.flush()
 
-    db.query(QueueChangeLog).filter(QueueChangeLog.queue_id == queue_id).delete()
-    db.delete(queue)
-
-    db.commit()
-
-    queue_list = (
-        db.query(QueueRecord)
-        .filter(
-            QueueRecord.device_id == device_id,
-            QueueRecord.status == TaskStatus.WAITING,
-        )
-        .order_by(QueueRecord.position, QueueRecord.submitted_at, QueueRecord.id)
-        .all()
+    leave_log = QueueChangeLog(
+        queue_id=queue_id,
+        old_position=old_position,
+        new_position=-1,
+        changed_by=queue.inspector_name,
     )
+    db.add(leave_log)
 
-    for i, record in enumerate(queue_list, start=1):
-        record.position = i
-
+    normalize_queue_positions(db, device_id)
     db.commit()
 
     return True

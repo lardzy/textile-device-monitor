@@ -316,6 +316,19 @@ function DeviceMonitor() {
     return true;
   };
 
+  const showPersistentNotice = (title, content) => {
+    Modal.confirm({
+      title,
+      content,
+      okText: '我知道了',
+      cancelButtonProps: { style: { display: 'none' } },
+      maskClosable: false,
+      closable: false,
+      keyboard: false,
+      centered: true,
+    });
+  };
+
   const sendQueueNotification = (entry, deviceName) => {
     if (!('Notification' in window) || Notification.permission !== 'granted') {
       return;
@@ -366,19 +379,16 @@ function DeviceMonitor() {
 
     removeQueueNoticeEntry(noticeEntry.id);
 
-    if (reason === 'complete') {
-      const lastDeviceTime = lastDeviceNotificationRef.current.get(deviceId);
-      if (lastDeviceTime && Date.now() - lastDeviceTime < 2000) {
-        return;
-      }
-    }
+    const deviceName = devicesRef.current.find(device => device.id === deviceId)?.name || '';
+    showPersistentNotice(
+      '排队提醒',
+      `${deviceName || '设备'} - ${noticeEntry.inspector_name || '检验员'} 已轮到`
+    );
 
     const permitted = await requestNotificationPermission();
     if (!permitted) {
       return;
     }
-
-    const deviceName = devicesRef.current.find(device => device.id === deviceId)?.name || '';
     sendQueueNotification(noticeEntry, deviceName);
 
     if (reason === 'complete') {
@@ -405,6 +415,10 @@ function DeviceMonitor() {
       if (lastQueueTime && Date.now() - lastQueueTime < 2000) {
         return;
       }
+      showPersistentNotice(
+        '检测完成提醒',
+        `${device.name || '设备'} 检测完成`
+      );
       const permitted = await requestNotificationPermission();
       if (!permitted) {
         return;
@@ -1010,6 +1024,7 @@ function DeviceMonitor() {
                         style={{ maxHeight: 240, overflowY: 'auto' }}
                         renderItem={log => {
                           const isCompletionLog = log.new_position === 0;
+                          const isLeaveLog = log.new_position === -1;
                           return (
                             <List.Item>
                               <div style={{ width: '100%' }}>
@@ -1018,6 +1033,8 @@ function DeviceMonitor() {
                                 </div>
                                 {isCompletionLog ? (
                                   <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>
+                                ) : isLeaveLog ? (
+                                  <div style={{ color: '#ff4d4f', fontWeight: 600 }}>离开排队</div>
                                 ) : (
                                   <div>
                                     {getQueuePositionLabel(log.old_position)} → {getQueuePositionLabel(log.new_position)}

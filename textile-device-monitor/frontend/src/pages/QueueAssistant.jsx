@@ -231,6 +231,7 @@ function QueueAssistant() {
               dataSource={logs}
               renderItem={log => {
                 const isCompletionLog = log.new_position === 0;
+                const isLeaveLog = log.new_position === -1;
                 return (
                   <List.Item>
                     <div style={{ width: '100%' }}>
@@ -239,6 +240,8 @@ function QueueAssistant() {
                       </div>
                       {isCompletionLog ? (
                         <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>
+                      ) : isLeaveLog ? (
+                        <div style={{ color: '#ff4d4f', fontWeight: 600 }}>离开排队</div>
                       ) : (
                         <div>
                           {getQueuePositionLabel(log.old_position)} → {getQueuePositionLabel(log.new_position)}
