@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, text
 from typing import List, Optional
 from app.models import QueueRecord, QueueChangeLog, TaskStatus
 from app.schemas import QueueCreate, PositionChange
@@ -160,8 +160,7 @@ def normalize_queue_positions(db: Session, device_id: int) -> None:
     )
 
     for i, record in enumerate(queue, start=1):
-        if record.position != i:
-            record.position = i
+        record.position = i
 
     db.flush()
 
@@ -193,9 +192,23 @@ def delete_queue(db: Session, queue_id: int) -> bool:
     db.query(QueueChangeLog).filter(QueueChangeLog.queue_id == queue_id).delete()
     db.delete(queue)
 
-    normalize_queue_positions(db, device_id)
+    db.commit()
+
+    queue_list = (
+        db.query(QueueRecord)
+        .filter(
+            QueueRecord.device_id == device_id,
+            QueueRecord.status == TaskStatus.WAITING,
+        )
+        .order_by(QueueRecord.position, QueueRecord.submitted_at, QueueRecord.id)
+        .all()
+    )
+
+    for i, record in enumerate(queue_list, start=1):
+        record.position = i
 
     db.commit()
+
     return True
 
 

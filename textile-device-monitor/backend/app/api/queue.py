@@ -70,6 +70,7 @@ async def change_queue_position(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
         ) from e
 
+    queue_count = queue_crud.get_queue_count(db, queue_record.device_id)
     await websocket_manager.broadcast(
         {
             "type": "queue_update",
@@ -80,6 +81,7 @@ async def change_queue_position(
                 "old_position": old_position,
                 "new_position": position_change.new_position,
                 "changed_by": queue_record.inspector_name,
+                "queue_count": queue_count,
             },
         }
     )
@@ -101,6 +103,7 @@ async def leave_queue(queue_id: int, db: Session = Depends(get_db)):
     success = queue_crud.delete_queue(db, queue_id)
 
     if success:
+        queue_count = queue_crud.get_queue_count(db, device_id)
         await websocket_manager.broadcast(
             {
                 "type": "queue_update",
@@ -108,6 +111,7 @@ async def leave_queue(queue_id: int, db: Session = Depends(get_db)):
                     "device_id": device_id,
                     "action": "leave",
                     "queue_id": queue_id,
+                    "queue_count": queue_count,
                 },
             }
         )
