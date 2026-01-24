@@ -80,7 +80,11 @@ function HistoryQuery() {
     { title: '任务名称', dataIndex: 'task_name', width: 200 },
     { title: '进度', dataIndex: 'task_progress', width: 80, render: (v) => v ? `${v}%` : '-' },
     { title: '耗时(秒)', dataIndex: 'task_duration_seconds', width: 100, render: (v) => v ?? '-' },
-    { title: '设备指标', dataIndex: 'device_metrics', render: (v) => v ? JSON.stringify(v) : '-' },
+    {
+      title: '输出路径',
+      dataIndex: 'device_metrics',
+      render: (v) => v?.olympus?.output_path || '-',
+    },
   ];
 
   return (

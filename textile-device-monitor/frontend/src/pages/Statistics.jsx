@@ -38,7 +38,21 @@ function Statistics() {
         start_date: dateRange[0].format('YYYY-MM-DD'),
         end_date: dateRange[1].format('YYYY-MM-DD')
       });
-      setSummary(data);
+      const normalized = (Array.isArray(data) ? data : []).map((item) => {
+        const utilizationRate = Number(item?.utilization_rate);
+        const utilizationFallback = Number(item?.utilization);
+        const resolvedUtilization = Number.isFinite(utilizationRate)
+          ? utilizationRate
+          : Number.isFinite(utilizationFallback)
+            ? utilizationFallback
+            : 0;
+        return {
+          ...item,
+          device_name: item?.device_name || (item?.device_id ? `设备${item.device_id}` : '-'),
+          utilization_rate: resolvedUtilization,
+        };
+      });
+      setSummary(normalized);
     } catch (error) {
       console.error('Failed to fetch summary');
     }
@@ -108,7 +122,13 @@ function Statistics() {
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={summary}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="device_name" />
+                <XAxis
+                  dataKey="device_name"
+                  interval={0}
+                  angle={-30}
+                  textAnchor="end"
+                  height={70}
+                />
                 <YAxis />
                 <Tooltip />
                 <Legend />
@@ -124,9 +144,18 @@ function Statistics() {
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={summary}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="device_name" />
-                <YAxis />
-                <Tooltip formatter={(value) => `${value.toFixed(2)}%`} />
+                <XAxis
+                  dataKey="device_name"
+                  interval={0}
+                  angle={-30}
+                  textAnchor="end"
+                  height={70}
+                />
+                <YAxis domain={[0, 100]} />
+                <Tooltip formatter={(value) => {
+                  const numeric = Number(value);
+                  return `${Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00'}%`;
+                }} />
                 <Bar dataKey="utilization_rate" fill="#ffc658" name="利用率" />
               </BarChart>
             </ResponsiveContainer>
