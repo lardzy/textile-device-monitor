@@ -83,11 +83,13 @@ class DeviceStatusHistory(BaseModel):
 class QueueCreate(BaseModel):
     inspector_name: str = Field(..., min_length=1, max_length=50)
     device_id: int
+    copies: int = Field(default=1, gt=0, le=10)
 
 
 class PositionChange(BaseModel):
     new_position: int = Field(..., gt=0)
     changed_by: str = Field(..., min_length=1, max_length=50)
+    version: int
 
 
 class QueueRecord(BaseModel):
@@ -98,6 +100,7 @@ class QueueRecord(BaseModel):
     submitted_at: datetime
     completed_at: Optional[datetime]
     status: TaskStatus
+    version: int
 
     class Config:
         from_attributes = True

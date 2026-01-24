@@ -84,6 +84,7 @@ class QueueRecord(Base):
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
     status = Column(SQLEnum(TaskStatus), default=TaskStatus.WAITING)
+    version = Column(Integer, default=1, nullable=False)
 
     device = relationship("Device", back_populates="queue_records")
     change_logs = relationship(

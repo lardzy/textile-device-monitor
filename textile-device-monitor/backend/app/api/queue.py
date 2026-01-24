@@ -53,11 +53,22 @@ async def change_queue_position(
         )
 
     old_position = existing_record.position
-    queue_record = queue_crud.update_queue_position(db, queue_id, position_change)
-    if not queue_record:
+
+    try:
+        queue_record = queue_crud.update_queue_position(db, queue_id, position_change)
+        if not queue_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Queue record not found"
+            )
+    except ValueError as e:
+        if "Concurrency conflict" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="该记录已被其他用户修改，请刷新后重试",
+            ) from e
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Queue record not found"
-        )
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
 
     await websocket_manager.broadcast(
         {

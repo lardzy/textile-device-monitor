@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Card, Row, Col, Badge, Tag, Progress, Form, Input, Button, Table, List, Select, message, Modal } from 'antd';
+import { Card, Row, Col, Badge, Tag, Progress, Form, Input, InputNumber, Button, Table, List, Select, message, Modal } from 'antd';
 import { CheckCircleOutlined, ClockCircleOutlined, ClockCircleFilled, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
@@ -449,38 +449,38 @@ function DeviceMonitor() {
 
   const handleJoinQueue = async (values) => {
     try {
-      const queueRecord = await queueApi.join({
+      await queueApi.join({
         inspector_name: values.inspector_name,
-        device_id: selectedDeviceId
+        device_id: selectedDeviceId,
+        copies: values.copies || 1
       });
-      message.success('加入排队成功');
+      message.success(`加入排队成功 (${values.copies || 1}份)`);
       saveInspectorName(values.inspector_name);
-      if (queueRecord?.id) {
-        addQueueNoticeEntry({
-          id: queueRecord.id,
-          device_id: queueRecord.device_id,
-          inspector_name: queueRecord.inspector_name,
-        });
-      }
       form.resetFields();
       setInspectorName('');
       fetchQueue(selectedDeviceId);
     } catch (error) {
-      message.error('加入排队失败');
+      message.error(error.response?.data?.detail || '加入排队失败');
     }
   };
 
-  const handleChangePosition = async (queueId, newPosition) => {
+  const handleChangePosition = async (record, newPosition) => {
     try {
       const changedBy = inspectorName?.trim() || '系统';
-      await queueApi.updatePosition(queueId, {
+      await queueApi.updatePosition(record.id, {
         new_position: newPosition,
-        changed_by: changedBy
+        changed_by: changedBy,
+        version: record.version
       });
       message.success('修改位置成功');
       fetchQueue(selectedDeviceId);
     } catch (error) {
-      message.error('修改位置失败');
+      if (error.response?.status === 409) {
+        message.error('该记录已被其他用户修改，请刷新后重试');
+        fetchQueue(selectedDeviceId);
+      } else {
+        message.error(error.response?.data?.detail || '修改位置失败');
+      }
     }
   };
 
@@ -537,13 +537,13 @@ function DeviceMonitor() {
           <Button 
             type="text" 
             icon={<ArrowUpOutlined />} 
-            onClick={() => handleChangePosition(record.id, record.position - 1)}
-            disabled={index === 0}
+            onClick={() => handleChangePosition(record, record.position - 1)}
+            disabled={record.position === 1}
           />
           <Button 
             type="text" 
             icon={<ArrowDownOutlined />} 
-            onClick={() => handleChangePosition(record.id, record.position + 1)}
+            onClick={() => handleChangePosition(record, record.position + 1)}
             disabled={index === queue.length - 1}
           />
           <Button 
@@ -691,6 +691,17 @@ function DeviceMonitor() {
                     <Input 
                       placeholder="检验员姓名" 
                       style={{ width: 150 }}
+                    />
+                  </Form.Item>
+                  <Form.Item 
+                    name="copies"
+                    initialValue={1}
+                  >
+                    <InputNumber 
+                      min={1} 
+                      max={10}
+                      placeholder="份数"
+                      style={{ width: 80 }}
                     />
                   </Form.Item>
                   <Form.Item>
