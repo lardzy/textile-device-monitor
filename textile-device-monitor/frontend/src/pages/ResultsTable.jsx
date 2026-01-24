@@ -9,6 +9,11 @@ function ResultsTable() {
   const [loading, setLoading] = useState(true);
   const spreadsheetRef = useRef(null);
   const spreadsheetInstance = useRef(null);
+  const workbookRef = useRef(null);
+  const previewLoadedRef = useRef(false);
+  const previewLoadingRef = useRef(false);
+  const formulaLoadedRef = useRef(false);
+  const selectedSheetRef = useRef(null);
   const [sheetData, setSheetData] = useState(null);
   const [sheets, setSheets] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState(null);
@@ -36,6 +41,12 @@ function ResultsTable() {
     if (!deviceId) return '';
     const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
     return `/api/results/table_view?device_id=${deviceId}${folderParam}`;
+  };
+
+  const buildTablePreviewUrl = () => {
+    if (!deviceId) return '';
+    const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
+    return `/api/results/table_preview?device_id=${deviceId}${folderParam}`;
   };
 
   const extractErrorDetail = async (response) => {
@@ -68,6 +79,42 @@ function ResultsTable() {
     return '表格加载失败';
   };
 
+  const buildSheetData = (workbook, name) => {
+    const sheet = workbook.Sheets[name];
+    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    const rows = {};
+    jsonData.forEach((row, rowIndex) => {
+      const cells = {};
+      row.forEach((cell, cellIndex) => {
+        if (cell == null) return;
+        cells[cellIndex] = { text: String(cell) };
+      });
+      rows[rowIndex] = { cells };
+    });
+    return { name, rows };
+  };
+
+  const applyWorkbook = (workbook, preferredSheet) => {
+    workbookRef.current = workbook;
+    const sheetNames = workbook.SheetNames || [];
+
+    if (sheetNames.length === 0) {
+      setHasData(false);
+      setSheetData(null);
+      setSheets([]);
+      setSelectedSheet(null);
+      return;
+    }
+
+    setSheets(sheetNames);
+    setHasData(true);
+    const nextSheet = preferredSheet && sheetNames.includes(preferredSheet)
+      ? preferredSheet
+      : sheetNames[0];
+    setSelectedSheet(nextSheet);
+    setSheetData(buildSheetData(workbook, nextSheet));
+  };
+
   useEffect(() => {
     let cancelled = false;
     const fetchTable = async () => {
@@ -82,6 +129,9 @@ function ResultsTable() {
       let attempt = 0;
       let notified = false;
       setLoading(true);
+      previewLoadedRef.current = false;
+      previewLoadingRef.current = false;
+      formulaLoadedRef.current = false;
 
       if (!folder) {
         try {
@@ -90,6 +140,38 @@ function ResultsTable() {
           console.warn('Failed to prewarm results table', error);
         }
       }
+
+      const loadPreview = async () => {
+        if (
+          previewLoadedRef.current
+          || previewLoadingRef.current
+          || formulaLoadedRef.current
+        ) {
+          return;
+        }
+        previewLoadingRef.current = true;
+        try {
+          const previewResponse = await fetch(buildTablePreviewUrl());
+          if (cancelled || formulaLoadedRef.current) {
+            return;
+          }
+          if (!previewResponse.ok) {
+            const detail = await extractErrorDetail(previewResponse);
+            console.warn('Preview table load failed', detail || previewResponse.status);
+            return;
+          }
+          const previewBuffer = await previewResponse.arrayBuffer();
+          if (cancelled || formulaLoadedRef.current) {
+            return;
+          }
+          const previewWorkbook = XLSX.read(previewBuffer, { type: 'array' });
+          applyWorkbook(previewWorkbook, null);
+          previewLoadedRef.current = true;
+          setLoading(false);
+        } finally {
+          previewLoadingRef.current = false;
+        }
+      };
 
       while (!cancelled) {
         try {
@@ -102,8 +184,14 @@ function ResultsTable() {
               message.info('表格计算中，请稍后自动刷新');
               notified = true;
             }
+            await loadPreview();
             attempt += 1;
             if (attempt >= maxAttempts) {
+              if (previewLoadedRef.current) {
+                message.warning('表格计算超时，已显示未计算结果');
+                setLoading(false);
+                return;
+              }
               throw new Error('表格计算超时');
             }
             await new Promise(resolve => setTimeout(resolve, retryDelayMs));
@@ -115,21 +203,8 @@ function ResultsTable() {
           }
           const arrayBuffer = await response.arrayBuffer();
           const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-          workbookRef.current = workbook;
-          const sheetNames = workbook.SheetNames || [];
-
-          if (sheetNames.length === 0) {
-            setHasData(false);
-            setSheetData(null);
-            setSheets([]);
-            setSelectedSheet(null);
-          } else {
-            setSheets(sheetNames);
-            setHasData(true);
-            const initialSheet = sheetNames[0];
-            setSelectedSheet(initialSheet);
-            setSheetData(buildSheetData(workbook, initialSheet));
-          }
+          formulaLoadedRef.current = true;
+          applyWorkbook(workbook, previewLoadedRef.current ? selectedSheetRef.current : null);
           setLoading(false);
           return;
         } catch (error) {
@@ -148,22 +223,9 @@ function ResultsTable() {
     };
   }, [deviceId, folder]);
 
-  const buildSheetData = (workbook, name) => {
-    const sheet = workbook.Sheets[name];
-    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-    const rows = {};
-    jsonData.forEach((row, rowIndex) => {
-      const cells = {};
-      row.forEach((cell, cellIndex) => {
-        if (cell == null) return;
-        cells[cellIndex] = { text: String(cell) };
-      });
-      rows[rowIndex] = { cells };
-    });
-    return { name, rows };
-  };
-
-  const workbookRef = useRef(null);
+  useEffect(() => {
+    selectedSheetRef.current = selectedSheet;
+  }, [selectedSheet]);
 
   useEffect(() => {
     if (!spreadsheetRef.current || !sheetData || loading) {

@@ -51,6 +51,9 @@ class ResultsHandler(BaseHTTPRequestHandler):
             if self.logger:
                 self.logger.error(f"使用formulas计算失败: {exc}, 降级到openpyxl")
 
+        return self._process_xlsx_preview(xlsx_path)
+
+    def _process_xlsx_preview(self, xlsx_path: str) -> Optional[bytes]:
         try:
             wb = openpyxl.load_workbook(xlsx_path, data_only=True)
             output = io.BytesIO()
@@ -157,7 +160,9 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 self.logger.error(f"读取图片列表失败: {exc}")
             return []
 
-    def _cleanup_confocal_images(self, folder_path: str) -> Dict[str, Optional[str] | int]:
+    def _cleanup_confocal_images(
+        self, folder_path: str
+    ) -> Dict[str, Optional[str] | int]:
         recycle_dir = os.path.join(folder_path, ".recycle")
         os.makedirs(recycle_dir, exist_ok=True)
         moved = 0
@@ -405,6 +410,51 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 xlsx_path,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 download_name=xlsx_name,
+            )
+            return
+
+        if path == "/client/results/table_preview":
+            if is_confocal:
+                self._send_json(404, {"error": "table_not_supported"})
+                return
+            latest_folder = self.reader._get_latest_modified_folder(
+                self.reader.working_path
+            )
+            if not latest_folder:
+                self._send_json(404, {"error": "no_latest_folder"})
+                return
+
+            if "folder" in query and query.get("folder"):
+                folders = query.get("folder")
+                if folders:
+                    folder_name = unquote(folders[0])
+                    candidate = os.path.join(self.reader.working_path, folder_name)
+                    if os.path.isdir(candidate):
+                        latest_folder = candidate
+                    else:
+                        self._send_json(404, {"error": "folder_not_found"})
+                        return
+
+            result_dir = os.path.join(latest_folder, "result")
+            if not os.path.exists(result_dir):
+                self._send_json(404, {"error": "result_dir_missing"})
+                return
+
+            files = [f for f in os.listdir(result_dir) if f.lower().endswith(".xlsx")]
+            files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
+            if not files:
+                self._send_json(404, {"error": "xlsx_not_found"})
+                return
+
+            xlsx_name = files[-1]
+            xlsx_path = os.path.join(result_dir, xlsx_name)
+            preview_bytes = self._process_xlsx_preview(xlsx_path)
+            if not preview_bytes:
+                self._send_json(500, {"error": "preview_failed"})
+                return
+            self._send_bytes(
+                preview_bytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
             return
 

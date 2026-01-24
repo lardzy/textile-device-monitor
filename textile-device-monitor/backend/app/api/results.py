@@ -79,6 +79,37 @@ def get_table(
     )
 
 
+@router.get("/table_preview")
+def get_table_preview(
+    device_id: int = Query(...),
+    folder: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    base_url = _get_client_base_url(db, device_id)
+    try:
+        params = {"folder": folder} if folder else None
+        resp = requests.get(
+            f"{base_url}/client/results/table_preview",
+            params=params,
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Client unreachable") from exc
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=resp.status_code, detail=_extract_client_error(resp)
+        )
+    headers = {}
+    content_disposition = resp.headers.get("Content-Disposition")
+    if content_disposition:
+        headers["Content-Disposition"] = content_disposition
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("Content-Type", "application/octet-stream"),
+        headers=headers,
+    )
+
+
 @router.get("/table_view")
 def get_table_view(
     device_id: int = Query(...),
