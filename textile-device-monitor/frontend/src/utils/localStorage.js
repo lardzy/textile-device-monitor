@@ -17,6 +17,7 @@ export const getDeviceId = () => {
 const QUEUE_NOTICE_MODE_KEY = 'queue_notice_mode_by_device';
 const LEGACY_QUEUE_NOTICE_MODE_KEY = 'queue_notice_mode';
 const QUEUE_NOTICE_ENTRIES_KEY = 'queue_notice_entries';
+const QUEUE_USER_ID_KEY = 'queue_user_id';
 
 const normalizeQueueId = (value) => {
   const numeric = Number(value);
@@ -92,4 +93,24 @@ export const removeQueueNoticeEntry = (queueId) => {
   const entries = getQueueNoticeEntries().filter(item => item.id !== normalizedId);
   saveQueueNoticeEntries(entries);
   return entries;
+};
+
+const generateQueueUserId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const seed = Math.random().toString(36).slice(2, 10);
+  return `u_${Date.now().toString(36)}_${seed}`;
+};
+
+export const getQueueUserId = () => {
+  return localStorage.getItem(QUEUE_USER_ID_KEY);
+};
+
+export const getOrCreateQueueUserId = () => {
+  const existing = getQueueUserId();
+  if (existing) return existing;
+  const created = generateQueueUserId();
+  localStorage.setItem(QUEUE_USER_ID_KEY, created);
+  return created;
 };

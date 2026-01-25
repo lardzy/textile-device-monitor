@@ -84,12 +84,14 @@ class QueueCreate(BaseModel):
     inspector_name: str = Field(..., min_length=1, max_length=50)
     device_id: int
     copies: int = Field(default=1, gt=0, le=10)
+    created_by_id: Optional[str] = Field(None, max_length=64)
 
 
 class PositionChange(BaseModel):
     new_position: int = Field(..., gt=0)
     changed_by: str = Field(..., min_length=1, max_length=50)
     version: int
+    changed_by_id: Optional[str] = Field(None, max_length=64)
 
 
 class QueueRecord(BaseModel):
@@ -101,6 +103,7 @@ class QueueRecord(BaseModel):
     completed_at: Optional[datetime]
     status: TaskStatus
     version: int
+    created_by_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -112,6 +115,7 @@ class QueueChangeLog(BaseModel):
     old_position: Optional[int]
     new_position: int
     changed_by: str
+    changed_by_id: Optional[str] = None
     change_time: datetime
 
     class Config:

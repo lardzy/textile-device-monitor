@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
-import { Card, Row, Col, Badge, Tag, Progress, Form, Input, InputNumber, Button, Table, List, Select, message, Modal } from 'antd';
+import { Card, Row, Col, Badge, Tag, Progress, Form, Input, InputNumber, Button, Table, List, Select, message, Modal, Tooltip } from 'antd';
 import { CheckCircleOutlined, ClockCircleOutlined, ClockCircleFilled, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
@@ -10,7 +10,7 @@ import ResultsModal from '../components/ResultsModal';
 import ResultsImages from './ResultsImages';
 import wsClient from '../websocket/client';
 import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHelper';
-import { addQueueNoticeEntry, getInspectorName, getQueueNoticeEntries, getQueueNoticeModes, removeQueueNoticeEntry, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
+import { addQueueNoticeEntry, getInspectorName, getOrCreateQueueUserId, getQueueNoticeEntries, getQueueNoticeModes, removeQueueNoticeEntry, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
 
 
 const statusConfig = {
@@ -60,6 +60,38 @@ const getQueuePositionLabel = (position) => {
   if (position == null) return '-';
   if (position === 1) return '正在使用';
   return `位置 ${position - 1}`;
+};
+
+const formatUserIdShort = (value) => {
+  if (!value) return '-';
+  const text = String(value);
+  if (text.length <= 10) return text;
+  return text.slice(0, 8);
+};
+
+const renderUserId = (value) => {
+  if (!value) return '-';
+  const shortId = formatUserIdShort(value);
+  return (
+    <Tooltip title={String(value)}>
+      <span>{shortId}</span>
+    </Tooltip>
+  );
+};
+
+const renderUserLabel = (name, userId) => {
+  const label = name || '-';
+  if (!userId) return label;
+  const shortId = formatUserIdShort(userId);
+  return (
+    <span>
+      {label} (
+      <Tooltip title={String(userId)}>
+        <span>{shortId}</span>
+      </Tooltip>
+      )
+    </span>
+  );
 };
 
 const getActiveQueueEntry = (queueList) => {
@@ -206,6 +238,7 @@ function DeviceMonitor() {
   const activeQueueRef = useRef(new Map());
   const lastDeviceNotificationRef = useRef(new Map());
   const deviceNotifyTimersRef = useRef(new Map());
+  const queueUserIdRef = useRef(getOrCreateQueueUserId());
 
 
   const selectedDevice = useMemo(() => {
@@ -269,6 +302,7 @@ function DeviceMonitor() {
         setQueue(sortedQueue);
         setQueueLogs(sortedLogs);
       }
+      syncQueueNoticeEntries(sortedQueue, deviceId);
       if (notify) {
         await notifyActiveQueueEntry(sortedQueue, deviceId, reason);
       } else {
@@ -359,6 +393,22 @@ function DeviceMonitor() {
     activeQueueRef.current.set(deviceId, activeEntry ? activeEntry.id : null);
   };
 
+  const syncQueueNoticeEntries = (queueList, deviceId) => {
+    if (deviceId == null || !Array.isArray(queueList)) return;
+    const userId = queueUserIdRef.current;
+    if (!userId) return;
+    queueList.forEach(record => {
+      if (record?.created_by_id && record.created_by_id === userId) {
+        addQueueNoticeEntry({
+          id: record.id,
+          device_id: deviceId,
+          inspector_name: record.inspector_name,
+          created_by_id: userId,
+        });
+      }
+    });
+  };
+
   const notifyActiveQueueEntry = async (queueList, deviceId, reason) => {
     if (deviceId == null) return;
     const activeEntry = getActiveQueueEntry(queueList);
@@ -372,6 +422,10 @@ function DeviceMonitor() {
 
     const entries = getQueueNoticeEntries();
     const noticeEntry = entries.find(item => item.id === activeId)
+      || entries.find(item => item.created_by_id
+        && activeEntry?.created_by_id
+        && item.device_id === deviceId
+        && item.created_by_id === activeEntry.created_by_id)
       || entries.find(item => item.device_id === deviceId && item.inspector_name === activeEntry.inspector_name);
     if (!noticeEntry) {
       return;
@@ -586,7 +640,8 @@ function DeviceMonitor() {
       const records = await queueApi.join({
         inspector_name: values.inspector_name,
         device_id: selectedDeviceId,
-        copies: values.copies || 1
+        copies: values.copies || 1,
+        created_by_id: queueUserIdRef.current,
       });
 
       const copies = values.copies || 1;
@@ -597,6 +652,7 @@ function DeviceMonitor() {
             id: records[i].id,
             device_id: selectedDeviceId,
             inspector_name: values.inspector_name,
+            created_by_id: queueUserIdRef.current,
           });
         }
       }
@@ -625,7 +681,8 @@ function DeviceMonitor() {
           await queueApi.updatePosition(record.id, {
             new_position: newPosition,
             changed_by: changedBy,
-            version: record.version
+            version: record.version,
+            changed_by_id: queueUserIdRef.current,
           });
           message.success('修改位置成功');
           fetchQueue(selectedDeviceId, { notify: true, reason: 'position_change' });
@@ -720,6 +777,7 @@ function DeviceMonitor() {
     },
     { title: '检验员', dataIndex: 'inspector_name', key: 'inspector_name' },
     { title: '加入时间', dataIndex: 'submitted_at', key: 'submitted_at', render: formatTime },
+    { title: 'ID', dataIndex: 'created_by_id', key: 'created_by_id', width: 90, align: 'center', render: renderUserId },
     {
       title: '操作',
       key: 'actions',
@@ -1029,7 +1087,7 @@ function DeviceMonitor() {
                             <List.Item>
                               <div style={{ width: '100%' }}>
                                 <div style={{ fontSize: '12px', color: '#999' }}>
-                                  {formatDateTime(log.change_time)} - {log.changed_by}
+                                  {formatDateTime(log.change_time)} - {renderUserLabel(log.changed_by, log.changed_by_id)}
                                 </div>
                                 {isCompletionLog ? (
                                   <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>

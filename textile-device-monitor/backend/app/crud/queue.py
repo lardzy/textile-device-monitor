@@ -60,6 +60,7 @@ def join_queue(db: Session, queue: QueueCreate) -> List[QueueRecord]:
                 inspector_name=queue.inspector_name,
                 device_id=queue.device_id,
                 position=position,
+                created_by_id=queue.created_by_id,
             )
             db.add(db_queue)
             records.append(db_queue)
@@ -129,6 +130,7 @@ def update_queue_position(
             old_position=old_position,
             new_position=new_position,
             changed_by=queue.inspector_name,
+            changed_by_id=change.changed_by_id,
         )
         db.add(log)
 
@@ -179,6 +181,7 @@ def complete_first_in_queue(db: Session, device_id: int) -> Optional[QueueRecord
         old_position=old_position,
         new_position=0,
         changed_by=first_record.inspector_name,
+        changed_by_id=first_record.created_by_id,
     )
     db.add(completion_log)
 
@@ -205,6 +208,7 @@ def delete_queue(db: Session, queue_id: int) -> bool:
         old_position=old_position,
         new_position=-1,
         changed_by=queue.inspector_name,
+        changed_by_id=queue.created_by_id,
     )
     db.add(leave_log)
 

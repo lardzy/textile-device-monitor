@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
-import { Card, Form, Input, Button, Table, List, Select, message, Modal, Row, Col } from 'antd';
+import { useState, useEffect, useRef } from 'react';
+import { Card, Form, Input, Button, Table, List, Select, message, Modal, Row, Col, Tooltip } from 'antd';
 import { PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined } from '@ant-design/icons';
 import { queueApi } from '../api/queue';
 import { deviceApi } from '../api/devices';
 import wsClient from '../websocket/client';
-import { addQueueNoticeEntry, getInspectorName, removeQueueNoticeEntry, saveInspectorName } from '../utils/localStorage';
+import { addQueueNoticeEntry, getInspectorName, getOrCreateQueueUserId, removeQueueNoticeEntry, saveInspectorName } from '../utils/localStorage';
 import { formatDateTime, formatTime } from '../utils/dateHelper';
 
 const getQueuePositionDisplay = (position) => {
@@ -19,12 +19,45 @@ const getQueuePositionLabel = (position) => {
   return `位置 ${position - 1}`;
 };
 
+const formatUserIdShort = (value) => {
+  if (!value) return '-';
+  const text = String(value);
+  if (text.length <= 10) return text;
+  return text.slice(0, 8);
+};
+
+const renderUserId = (value) => {
+  if (!value) return '-';
+  const shortId = formatUserIdShort(value);
+  return (
+    <Tooltip title={String(value)}>
+      <span>{shortId}</span>
+    </Tooltip>
+  );
+};
+
+const renderUserLabel = (name, userId) => {
+  const label = name || '-';
+  if (!userId) return label;
+  const shortId = formatUserIdShort(userId);
+  return (
+    <span>
+      {label} (
+      <Tooltip title={String(userId)}>
+        <span>{shortId}</span>
+      </Tooltip>
+      )
+    </span>
+  );
+};
+
 function QueueAssistant() {
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [queue, setQueue] = useState([]);
   const [logs, setLogs] = useState([]);
   const [inspectorName, setInspectorName] = useState(getInspectorName());
+  const queueUserIdRef = useRef(getOrCreateQueueUserId());
   const [form] = Form.useForm();
 
   const fetchDevices = async () => {
@@ -65,7 +98,8 @@ function QueueAssistant() {
     try {
       const queueRecord = await queueApi.join({
         inspector_name: values.inspector_name,
-        device_id: values.device_id
+        device_id: values.device_id,
+        created_by_id: queueUserIdRef.current,
       });
       message.success('加入排队成功');
       saveInspectorName(values.inspector_name);
@@ -74,6 +108,7 @@ function QueueAssistant() {
           id: queueRecord.id,
           device_id: queueRecord.device_id,
           inspector_name: queueRecord.inspector_name,
+          created_by_id: queueUserIdRef.current,
         });
       }
       fetchQueue(values.device_id);
@@ -87,7 +122,8 @@ function QueueAssistant() {
     try {
       await queueApi.updatePosition(queueId, {
         new_position: newPosition,
-        changed_by: inspectorName
+        changed_by: inspectorName,
+        changed_by_id: queueUserIdRef.current,
       });
       message.success('修改位置成功');
       fetchQueue(selectedDevice);
@@ -127,6 +163,7 @@ function QueueAssistant() {
     },
     { title: '检验员', dataIndex: 'inspector_name', key: 'inspector_name' },
     { title: '加入时间', dataIndex: 'submitted_at', key: 'submitted_at', render: formatTime },
+    { title: 'ID', dataIndex: 'created_by_id', key: 'created_by_id', width: 90, align: 'center', render: renderUserId },
     {
       title: '操作',
       key: 'actions',
@@ -236,7 +273,7 @@ function QueueAssistant() {
                   <List.Item>
                     <div style={{ width: '100%' }}>
                       <div style={{ fontSize: '12px', color: '#999' }}>
-                        {formatDateTime(log.change_time)} - {log.changed_by}
+                        {formatDateTime(log.change_time)} - {renderUserLabel(log.changed_by, log.changed_by_id)}
                       </div>
                       {isCompletionLog ? (
                         <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>
