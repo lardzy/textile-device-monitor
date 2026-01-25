@@ -10,7 +10,7 @@ import ResultsModal from '../components/ResultsModal';
 import ResultsImages from './ResultsImages';
 import wsClient from '../websocket/client';
 import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHelper';
-import { addQueueNoticeEntry, getInspectorName, getOrCreateQueueUserId, getQueueNoticeEntries, getQueueNoticeModes, removeQueueNoticeEntry, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
+import { addQueueNoticeEntry, getInspectorName, getOrCreateQueueUserId, getQueueNoticeModes, removeQueueNoticeEntry, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
 
 
 const statusConfig = {
@@ -420,30 +420,25 @@ function DeviceMonitor() {
       return;
     }
 
-    const entries = getQueueNoticeEntries();
-    const noticeEntry = entries.find(item => item.id === activeId)
-      || entries.find(item => item.created_by_id
-        && activeEntry?.created_by_id
-        && item.device_id === deviceId
-        && item.created_by_id === activeEntry.created_by_id)
-      || entries.find(item => item.device_id === deviceId && item.inspector_name === activeEntry.inspector_name);
-    if (!noticeEntry) {
+    const userId = queueUserIdRef.current;
+    if (!userId || activeEntry.created_by_id !== userId) {
       return;
     }
 
-    removeQueueNoticeEntry(noticeEntry.id);
+    removeQueueNoticeEntry(activeId);
 
     const deviceName = devicesRef.current.find(device => device.id === deviceId)?.name || '';
+    const inspectorName = activeEntry.inspector_name || '检验员';
     showPersistentNotice(
       '排队提醒',
-      `${deviceName || '设备'} - ${noticeEntry.inspector_name || '检验员'} 已轮到`
+      `${deviceName || '设备'} - ${inspectorName} 已轮到`
     );
 
     const permitted = await requestNotificationPermission();
     if (!permitted) {
       return;
     }
-    sendQueueNotification(noticeEntry, deviceName);
+    sendQueueNotification(activeEntry, deviceName);
 
     if (reason === 'complete') {
       lastQueueCompletionRef.current.set(deviceId, Date.now());
