@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas import (
@@ -95,7 +95,11 @@ async def change_queue_position(
 
 
 @router.delete("/{queue_id}")
-async def leave_queue(queue_id: int, db: Session = Depends(get_db)):
+async def leave_queue(
+    queue_id: int,
+    changed_by_id: str | None = Query(default=None, max_length=64),
+    db: Session = Depends(get_db),
+):
     """离开排队"""
     queue_record = queue_crud.get_queue_record(db, queue_id)
 
@@ -105,7 +109,7 @@ async def leave_queue(queue_id: int, db: Session = Depends(get_db)):
         )
 
     device_id = queue_record.device_id
-    success = queue_crud.delete_queue(db, queue_id)
+    success = queue_crud.delete_queue(db, queue_id, changed_by_id)
 
     if success:
         queue_count = queue_crud.get_queue_count(db, device_id)

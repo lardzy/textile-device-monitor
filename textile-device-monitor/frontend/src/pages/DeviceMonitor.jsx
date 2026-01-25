@@ -707,7 +707,7 @@ function DeviceMonitor() {
       okButtonProps: { danger: true },
       onOk: async () => {
         try {
-          await queueApi.leave(record.id);
+          await queueApi.leave(record.id, { changed_by_id: queueUserIdRef.current });
           message.success('离开排队成功');
           removeQueueNoticeEntry(record.id);
           fetchQueue(selectedDeviceId, { notify: true, reason: 'leave' });

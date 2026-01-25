@@ -181,7 +181,7 @@ def complete_first_in_queue(db: Session, device_id: int) -> Optional[QueueRecord
         old_position=old_position,
         new_position=0,
         changed_by=first_record.inspector_name,
-        changed_by_id=first_record.created_by_id,
+        changed_by_id=None,
     )
     db.add(completion_log)
 
@@ -192,7 +192,9 @@ def complete_first_in_queue(db: Session, device_id: int) -> Optional[QueueRecord
     return first_record
 
 
-def delete_queue(db: Session, queue_id: int) -> bool:
+def delete_queue(
+    db: Session, queue_id: int, changed_by_id: Optional[str] = None
+) -> bool:
     queue = get_queue_record(db, queue_id)
     if not queue:
         return False
@@ -208,7 +210,7 @@ def delete_queue(db: Session, queue_id: int) -> bool:
         old_position=old_position,
         new_position=-1,
         changed_by=queue.inspector_name,
-        changed_by_id=queue.created_by_id,
+        changed_by_id=changed_by_id,
     )
     db.add(leave_log)
 

@@ -138,7 +138,7 @@ function QueueAssistant() {
       content: '确定要离开排队吗？',
       onOk: async () => {
         try {
-          await queueApi.leave(queueId);
+          await queueApi.leave(queueId, { changed_by_id: queueUserIdRef.current });
           message.success('离开排队成功');
           removeQueueNoticeEntry(queueId);
           fetchQueue(selectedDevice);
