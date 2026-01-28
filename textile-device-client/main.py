@@ -7,6 +7,7 @@ import time
 import os
 import ctypes
 import threading
+import queue
 from typing import Optional
 from modules.config import Config
 from modules.logger import Logger
@@ -51,6 +52,62 @@ def show_console():
             pass
 
 
+def input_with_timeout(timeout=None, exit_check=None):
+    """带超时的输入函数
+
+    Args:
+        timeout: 超时时间（秒），None 表示无超时
+        exit_check: 退出检查函数，返回 True 表示应该退出
+
+    Returns:
+        str: 用户输入的字符串，超时或退出时返回 None
+    """
+    try:
+        import msvcrt
+
+        result = []
+        start_time = time.time()
+        first_char_printed = False
+
+        while True:
+            if exit_check and exit_check():
+                return None
+
+            if timeout and (time.time() - start_time) > timeout:
+                return None
+
+            if msvcrt.kbhit():
+                ch = msvcrt.getch()
+
+                if ch == b"\r":  # Enter
+                    print()
+                    return "".join(result)
+                elif ch == b"\x03":  # Ctrl+C
+                    raise KeyboardInterrupt()
+                elif ch == b"\x08":  # Backspace
+                    if result:
+                        result.pop()
+                        print("\b \b", end="", flush=True)
+                else:
+                    try:
+                        char = ch.decode("utf-8")
+                        if char.isprintable():
+                            result.append(char)
+                            if not first_char_printed:
+                                print("> ", end="", flush=True)
+                                first_char_printed = True
+                            print(char, end="", flush=True)
+                    except:
+                        pass
+
+            time.sleep(0.01)
+
+    except ImportError:
+        if exit_check and exit_check():
+            return None
+        return input()
+
+
 try:
     from modules.status_reporter import StatusReporter
 except:
@@ -79,6 +136,10 @@ class TextileDeviceClient:
         self.status_reporter = None
         self.results_server = None
         self.tray_icon = None
+        self._config_dialog_open = False
+        self._config_lock = threading.Lock()
+        self._config_watcher = None
+        self._should_exit = False
 
     def initialize(self):
         """初始化客户端"""
@@ -174,6 +235,8 @@ class TextileDeviceClient:
             if self.tray_icon:
                 self.tray_icon.start()
 
+            self._start_config_watcher()
+
             print("\n" + "=" * 60)
             print("客户端已启动")
             print("=" * 60)
@@ -200,9 +263,20 @@ class TextileDeviceClient:
 
             self.logger.info("客户端已启动，进入交互模式")
 
+            self.config.set_last_mtime()
+
             while True:
                 try:
-                    cmd = input("\n> ").strip().lower()
+                    cmd = input_with_timeout(
+                        timeout=0.5, exit_check=lambda: self._should_exit
+                    )
+
+                    if cmd is None:
+                        if self._should_exit:
+                            break
+                        continue
+
+                    cmd = cmd.strip().lower()
 
                     if cmd == "q":
                         break
@@ -231,11 +305,17 @@ class TextileDeviceClient:
                 except KeyboardInterrupt:
                     print("\n")
                     break
+                except EOFError:
+                    if self._should_exit:
+                        print("\n检测到退出请求")
+                        break
+                    continue
                 except Exception as e:
                     print(f"命令执行失败: {e}")
 
             print("\n正在退出...")
-            self._exit()
+            if not self._should_exit:
+                self._exit()
 
         except KeyboardInterrupt:
             self.logger.info("用户中断，程序退出")
@@ -376,57 +456,104 @@ class TextileDeviceClient:
         else:
             return False
 
+    def _start_config_watcher(self):
+        """启动配置文件监控线程"""
+
+        def watcher():
+            self.config.set_last_mtime()
+            while True:
+                try:
+                    time.sleep(2)
+                    if self.config.is_config_changed():
+                        self.logger.info("检测到配置文件变更，重新加载...")
+                        self._reload_config()
+                        self.config.set_last_mtime()
+                except Exception as e:
+                    self.logger.error(f"配置文件监控错误: {e}")
+
+        self._config_watcher = threading.Thread(target=watcher, daemon=True)
+        self._config_watcher.start()
+        self.logger.info("配置文件监控已启动")
+
+    def _reload_config(self):
+        """重新加载配置"""
+        old_device_code = self.config.get_device_code()
+        old_server_url = self.config.get_server_url()
+        old_working_path = self.config.get_working_path()
+        old_log_path = self.config.get_log_path()
+        old_is_confocal = self.config.is_laser_confocal()
+        old_port = self.config.get_results_port()
+
+        self.config.load()
+
+        new_device_code = self.config.get_device_code()
+        new_server_url = self.config.get_server_url()
+        new_working_path = self.config.get_working_path()
+        new_log_path = self.config.get_log_path()
+        new_is_confocal = self.config.is_laser_confocal()
+        new_port = self.config.get_results_port()
+
+        if (
+            old_device_code != new_device_code
+            or old_server_url != new_server_url
+            or old_working_path != new_working_path
+            or old_log_path != new_log_path
+            or old_is_confocal != new_is_confocal
+            or old_port != new_port
+        ):
+            self.logger.info("配置已更改，需要重新初始化")
+            if self.status_reporter:
+                self.status_reporter.stop()
+            if self.results_server:
+                self.results_server.stop()
+            self.initialize()
+            self._register_device()
+            if self.status_reporter:
+                self.status_reporter.set_manual_status(self.config.get_manual_status())
+                self.status_reporter.start()
+            if self.results_server:
+                server_thread = threading.Thread(
+                    target=self.results_server.start, daemon=True
+                )
+                server_thread.start()
+            if self.tray_icon:
+                self.tray_icon.show_notification("配置已更新", "新配置已自动应用")
+        else:
+            self.logger.info("配置已更新")
+
     def _open_config(self):
         """打开配置窗口"""
+        with self._config_lock:
+            if self._config_dialog_open:
+                self.logger.warning("配置窗口已打开，忽略重复请求")
+                return
+
+            self._config_dialog_open = True
+
         self.logger.info("打开配置窗口")
-        from PyQt6.QtWidgets import QApplication
-        from modules.config_window import ConfigWindow
-
-        if not QApplication.instance():
-            app = QApplication(sys.argv)
-
-        current_config = self.config.get_all()
 
         try:
-            new_config = ConfigWindow.show_config_dialog(current_config, [])
-            if new_config:
-                old_device_code = self.config.get_device_code()
-                old_server_url = self.config.get_server_url()
-                old_working_path = self.config.get_working_path()
-                old_log_path = self.config.get_log_path()
-                old_is_confocal = self.config.is_laser_confocal()
+            import subprocess
 
-                self.config.update(new_config)
+            script_path = os.path.join(os.path.dirname(__file__), "config_tool.py")
 
-                if (
-                    old_device_code != new_config["device_code"]
-                    or old_server_url != new_config["server_url"]
-                    or old_working_path != new_config["working_path"]
-                    or old_log_path != new_config.get("log_path", "")
-                    or old_is_confocal != new_config.get("is_laser_confocal", False)
-                    or self.config.get_results_port()
-                    != new_config.get("results_port", 9100)
-                ):
-                    self.logger.info("配置已更改，需要重新初始化")
-                    if self.status_reporter:
-                        self.status_reporter.stop()
-                    self.initialize()
-                    self._register_device()
-                    if self.status_reporter:
-                        self.status_reporter.set_manual_status(
-                            self.config.get_manual_status()
-                        )
-                        self.status_reporter.start()
-                else:
-                    self.logger.info("配置已更新")
-
+            if os.path.exists(script_path):
+                subprocess.Popen([sys.executable, script_path])
+                self.logger.info("配置窗口已启动")
             else:
-                self.logger.info("配置未更改")
+                self.logger.error(f"配置工具不存在: {script_path}")
+                if self.tray_icon:
+                    self.tray_icon.show_notification(
+                        "配置窗口", "配置工具文件不存在，请使用命令行方式"
+                    )
 
         except Exception as e:
-            self.logger.error(f"配置更新失败: {e}")
+            self.logger.exception(f"启动配置窗口失败: {e}")
             if self.tray_icon:
-                self.tray_icon.show_notification("配置更新失败", str(e))
+                self.tray_icon.show_notification("配置窗口启动失败", str(e))
+        finally:
+            with self._config_lock:
+                self._config_dialog_open = False
 
     def _toggle_maintenance(self, status: Optional[str]):
         """切换维护模式
@@ -438,6 +565,8 @@ class TextileDeviceClient:
         self.config.set_manual_status(status)
         if self.status_reporter:
             self.status_reporter.set_manual_status(status)
+        if self.tray_icon:
+            self.tray_icon.update_status(status or "idle")
 
     def _view_logs(self):
         """查看日志（命令行）"""
@@ -474,18 +603,18 @@ class TextileDeviceClient:
     def _exit(self):
         """退出程序"""
         self.logger.info("正在退出程序...")
+        self._should_exit = True
 
         if self.status_reporter:
             self.status_reporter.stop()
-
-        if self.tray_icon:
-            self.tray_icon.stop()
 
         if self.results_server:
             self.results_server.stop()
 
         self.logger.info("程序已退出")
-        os._exit(0)
+
+        if self.tray_icon:
+            self.tray_icon.stop()
 
     def _show_error_and_exit(self, message: str):
         """显示错误并退出

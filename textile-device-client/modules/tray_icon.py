@@ -89,6 +89,21 @@ class TrayIcon:
         if self.tray:
             self.tray.icon = self.icon
 
+    def _rebuild_menu(self):
+        """重建菜单（用于更新菜单项文本）"""
+        menu = pystray.Menu(
+            pystray.MenuItem("打开配置", self._open_config),
+            pystray.MenuItem(
+                "维护模式" if not self.is_maintenance else "正常模式",
+                self._toggle_maintenance,
+            ),
+            pystray.MenuItem("查看日志", self._view_logs),
+            pystray.MenuItem("重新连接", self._reconnect),
+            pystray.MenuItem("退出", self._exit),
+        )
+        if self.tray:
+            self.tray.menu = menu
+
     def _open_config(self):
         """打开配置窗口"""
         self.logger.info("打开配置窗口")
@@ -101,6 +116,7 @@ class TrayIcon:
         status = "maintenance" if self.is_maintenance else "idle"
         self.logger.info(f"切换到 {status} 模式")
         self._update_icon()
+        self._rebuild_menu()
 
         if self.on_toggle_maintenance:
             self.on_toggle_maintenance(status if self.is_maintenance else None)
@@ -178,9 +194,19 @@ class TrayIcon:
         """
         if status == "maintenance":
             self.is_maintenance = True
-        elif status == "idle" and not self.is_maintenance:
+        elif status == "error":
             self.is_maintenance = False
-        elif status == "busy" and not self.is_maintenance:
+            self.icon = self._create_icon("error")
+            if self.tray:
+                self.tray.icon = self.icon
+            return
+        elif status == "offline":
+            self.is_maintenance = False
+            self.icon = self._create_icon("offline")
+            if self.tray:
+                self.tray.icon = self.icon
+            return
+        elif status in ("idle", "busy") and not self.is_maintenance:
             self.is_maintenance = False
 
         self._update_icon()

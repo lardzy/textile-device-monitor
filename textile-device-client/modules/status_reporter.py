@@ -58,7 +58,10 @@ class StatusReporter:
         self.is_running = False
         if self.thread:
             self.thread.join(timeout=5)
-            self.logger.info("状态上报器已停止")
+            if self.thread.is_alive():
+                self.logger.warning("状态上报器停止超时，线程仍在运行")
+            self.thread = None
+        self.logger.info("状态上报器已停止")
 
     def _report_loop(self):
         """上报循环"""
@@ -124,7 +127,9 @@ class StatusReporter:
         if self.manual_status:
             return self.manual_status
 
-        if self.progress_reader and getattr(self.progress_reader, "is_laser_confocal", False):
+        if self.progress_reader and getattr(
+            self.progress_reader, "is_laser_confocal", False
+        ):
             state_getter = getattr(self.progress_reader, "get_device_state", None)
             active_getter = getattr(self.progress_reader, "is_task_active", None)
             state = None
@@ -134,7 +139,11 @@ class StatusReporter:
             if callable(active_getter):
                 is_active = bool(active_getter())
             progress = self.progress_reader.read_progress()
-            if state in ("StateRepeatRunning", "StateRepeatStarting", "StateRepeatStopping"):
+            if state in (
+                "StateRepeatRunning",
+                "StateRepeatStarting",
+                "StateRepeatStopping",
+            ):
                 return "busy"
             if is_active:
                 return "busy"

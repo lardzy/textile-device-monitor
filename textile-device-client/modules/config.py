@@ -67,6 +67,21 @@ class Config:
         """获取所有配置"""
         return self.config.copy()
 
+    def _get_config_mtime(self) -> float:
+        """获取配置文件修改时间"""
+        config_path = os.path.abspath(self.config_file)
+        if os.path.exists(config_path):
+            return os.path.getmtime(config_path)
+        return 0
+
+    def is_config_changed(self) -> bool:
+        """检查配置文件是否被外部修改"""
+        return self._get_config_mtime() != getattr(self, "_last_mtime", 0)
+
+    def set_last_mtime(self):
+        """更新最后修改时间"""
+        self._last_mtime = self._get_config_mtime()
+
     def update(self, updates: Dict[str, Any]) -> bool:
         """批量更新配置"""
         self.config.update(updates)
