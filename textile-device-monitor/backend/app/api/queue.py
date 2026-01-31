@@ -149,6 +149,7 @@ async def complete_task(device_id: int, db: Session = Depends(get_db)):
                     "action": "complete",
                     "queue_id": completed_record.id,
                     "completed_by": completed_record.inspector_name,
+                    "completed_by_id": completed_record.created_by_id,
                     "queue_count": queue_count,
                 },
             }

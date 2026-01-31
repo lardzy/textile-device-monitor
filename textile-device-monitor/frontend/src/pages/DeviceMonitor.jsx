@@ -591,6 +591,22 @@ function DeviceMonitor() {
     }
   };
 
+  const notifyQueueCompletion = async (payload) => {
+    if (!payload) return;
+    const userId = queueUserIdRef.current;
+    if (!userId) return;
+    if (payload.completed_by_id && payload.completed_by_id === userId) {
+      const deviceName = payload.device_name || '设备';
+      const inspectorName = payload.completed_by || '检验员';
+      const content = `${deviceName} 检测完成，${inspectorName} 已从排队移除`;
+      showPersistentNotice('检测完成提醒', content);
+      const permitted = await requestNotificationPermission();
+      if (permitted) {
+        sendCustomNotification('检测完成提醒', content);
+      }
+    }
+  };
+
   useEffect(() => {
     const progressMap = lastProgressRef.current;
     devices.forEach(device => {
@@ -677,6 +693,9 @@ function DeviceMonitor() {
 
     wsClient.on('queue_update', (data) => {
       if (!data || data.device_id == null) return;
+      if (data.action === 'complete') {
+        notifyQueueCompletion(data);
+      }
       if (data.action === 'leave' && data.queue_id) {
         removeQueueNoticeEntry(data.queue_id);
       }

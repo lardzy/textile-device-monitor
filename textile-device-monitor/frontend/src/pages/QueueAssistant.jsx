@@ -60,6 +60,62 @@ function QueueAssistant() {
   const queueUserIdRef = useRef(getOrCreateQueueUserId());
   const [form] = Form.useForm();
 
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      message.warning('当前浏览器不支持系统通知');
+      return false;
+    }
+    if (Notification.permission === 'granted') {
+      return true;
+    }
+    if (Notification.permission === 'denied') {
+      message.warning('系统通知已被禁用，请在浏览器设置中开启');
+      return false;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      message.warning('未获得系统通知权限');
+      return false;
+    }
+    return true;
+  };
+
+  const showPersistentNotice = (title, content) => {
+    Modal.confirm({
+      title,
+      content,
+      okText: '我知道了',
+      cancelButtonProps: { style: { display: 'none' } },
+      maskClosable: false,
+      closable: false,
+      keyboard: false,
+      centered: true,
+    });
+  };
+
+  const sendCustomNotification = (title, body) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      return;
+    }
+    new Notification(title, { body });
+  };
+
+  const notifyQueueCompletion = async (payload) => {
+    if (!payload) return;
+    const userId = queueUserIdRef.current;
+    if (!userId) return;
+    if (payload.completed_by_id && payload.completed_by_id === userId) {
+      const deviceName = payload.device_name || '设备';
+      const inspectorName = payload.completed_by || '检验员';
+      const content = `${deviceName} 检测完成，${inspectorName} 已从排队移除`;
+      showPersistentNotice('检测完成提醒', content);
+      const permitted = await requestNotificationPermission();
+      if (permitted) {
+        sendCustomNotification('检测完成提醒', content);
+      }
+    }
+  };
+
   const fetchDevices = async () => {
     try {
       const data = await deviceApi.getAll();
@@ -84,6 +140,9 @@ function QueueAssistant() {
     fetchDevices();
 
     wsClient.on('queue_update', (data) => {
+      if (data?.action === 'complete') {
+        notifyQueueCompletion(data);
+      }
       if (data.device_id === selectedDevice) {
         fetchQueue(selectedDevice);
       }
