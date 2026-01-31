@@ -208,10 +208,16 @@ async def extend_queue_timeout(
             status_code=status.HTTP_409_CONFLICT, detail="倒计时已到期，无法延长"
         )
 
+    current_extended_count = device.queue_timeout_extended_count or 0
+    if current_extended_count >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="延长次数已达上限（最多3次）"
+        )
+
     device.queue_timeout_deadline_at = deadline + timedelta(
         seconds=settings.QUEUE_IDLE_EXTEND_SECONDS
     )
-    device.queue_timeout_extended_count = (device.queue_timeout_extended_count or 0) + 1
+    device.queue_timeout_extended_count = current_extended_count + 1
 
     changed_by = payload.changed_by.strip() if payload.changed_by else "系统"
     remark = f"设备超时被延长5分钟（操作人ID: {payload.changed_by_id or '-'}）"

@@ -945,6 +945,9 @@ function DeviceMonitor() {
           const timeoutRemainingSeconds = getQueueTimeoutRemainingSeconds(device, nowTime);
           const showTimeoutCountdown = timeoutRemainingSeconds != null;
           const isTimeoutWarning = showTimeoutCountdown && timeoutRemainingSeconds <= 60;
+          const extendedCount = device.queue_timeout_extended_count || 0;
+          const remainingExtends = Math.max(0, 3 - extendedCount);
+          const canExtend = remainingExtends > 0;
           return (
             <Col xs={24} sm={12} md={8} lg={6} key={device.id}>
               <Card 
@@ -1032,13 +1035,14 @@ function DeviceMonitor() {
                         <Button
                           size="small"
                           type="link"
-                          disabled={timeoutRemainingSeconds <= 0}
+                          disabled={timeoutRemainingSeconds <= 0 || !canExtend}
                           onClick={(event) => {
                             event.stopPropagation();
                             handleExtendTimeout(device.id);
                           }}
+                          title={canExtend ? `还能延长${remainingExtends}次` : '延长次数已达上限'}
                         >
-                          延长5分钟
+                          延长5分钟{!canExtend ? '(已达上限)' : `(${remainingExtends})`}
                         </Button>
                       </span>
                     )}
