@@ -99,6 +99,26 @@ const getActiveQueueEntry = (queueList) => {
   return queueList.find(item => item.position === 1) || null;
 };
 
+const formatCountdown = (totalSeconds) => {
+  if (totalSeconds == null) return '-';
+  const safeSeconds = Math.max(0, totalSeconds);
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+};
+
+const getQueueTimeoutRemainingSeconds = (device, nowMs) => {
+  if (!device?.queue_timeout_deadline_at) return null;
+  if (device.status !== 'idle') return null;
+  const queueCount = Number(device.queue_count || 0);
+  if (!Number.isFinite(queueCount) || queueCount < 2) return null;
+  if (!device.queue_timeout_active_id) return null;
+  const deadlineMs = new Date(device.queue_timeout_deadline_at).getTime();
+  if (!Number.isFinite(deadlineMs)) return null;
+  const remainingMs = deadlineMs - nowMs;
+  return Math.max(0, Math.floor(remainingMs / 1000));
+};
+
 const type = 'queue-row';
 
 const isConfocalDevice = (device) => {
@@ -230,6 +250,7 @@ function DeviceMonitor() {
   const [imagesModal, setImagesModal] = useState({ open: false, folder: null });
   const [recentResults, setRecentResults] = useState([]);
   const [notifyModes, setNotifyModes] = useState(() => getQueueNoticeModes());
+  const [nowTime, setNowTime] = useState(Date.now());
   const [form] = Form.useForm();
   const devicesRef = useRef([]);
   const notifyModesRef = useRef(notifyModes);
@@ -253,6 +274,13 @@ function DeviceMonitor() {
     notifyModesRef.current = notifyModes;
     saveQueueNoticeModes(notifyModes);
   }, [notifyModes]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTime(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchDevices = async () => {
     try {
@@ -381,6 +409,13 @@ function DeviceMonitor() {
     new Notification(title, { body });
   };
 
+  const sendCustomNotification = (title, body) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      return;
+    }
+    new Notification(title, { body });
+  };
+
   const getNotifyModeByDevice = (deviceId) => {
     if (deviceId == null) return 'off';
     const key = String(deviceId);
@@ -484,6 +519,78 @@ function DeviceMonitor() {
     timers.set(device.id, timerId);
   };
 
+  const handleExtendTimeout = async (deviceId) => {
+    if (!deviceId) return;
+    const changedBy = inspectorName?.trim() || '系统';
+    try {
+      const response = await queueApi.extendTimeout(deviceId, {
+        changed_by: changedBy,
+        changed_by_id: queueUserIdRef.current,
+      });
+      const deadlineAt = response?.data?.queue_timeout_deadline_at;
+      const extendedCount = response?.data?.queue_timeout_extended_count;
+      const activeId = response?.data?.queue_timeout_active_id;
+      if (deadlineAt) {
+        setDevices(prev => prev.map(device =>
+          device.id === deviceId
+            ? {
+              ...device,
+              queue_timeout_deadline_at: deadlineAt,
+              queue_timeout_extended_count: extendedCount ?? device.queue_timeout_extended_count,
+              queue_timeout_active_id: activeId ?? device.queue_timeout_active_id,
+            }
+            : device
+        ));
+      }
+      message.success('已延长5分钟');
+      if (selectedDeviceId === deviceId) {
+        fetchQueue(deviceId);
+      }
+    } catch (error) {
+      message.error(error.message || '延长超时失败');
+    }
+  };
+
+  const notifyQueueTimeoutReminder = async (payload) => {
+    if (!payload) return;
+    const userId = queueUserIdRef.current;
+    if (!userId) return;
+    const deviceName = payload.device_name || '设备';
+
+    if (payload.active_created_by_id && payload.active_created_by_id === userId) {
+      const content = `${deviceName} 已空闲超过1分钟，请尽快开始使用`;
+      showPersistentNotice('排队提醒', content);
+      const permitted = await requestNotificationPermission();
+      if (permitted) {
+        sendCustomNotification('排队提醒', content);
+      }
+    }
+
+    if (payload.next_created_by_id && payload.next_created_by_id === userId) {
+      const content = `${deviceName} 当前使用人未开始，请注意顺位变化`;
+      showPersistentNotice('排队提醒', content);
+      const permitted = await requestNotificationPermission();
+      if (permitted) {
+        sendCustomNotification('排队提醒', content);
+      }
+    }
+  };
+
+  const notifyQueueTimeoutShift = async (payload) => {
+    if (!payload) return;
+    const userId = queueUserIdRef.current;
+    if (!userId) return;
+    if (payload.timed_out_created_by_id && payload.timed_out_created_by_id === userId) {
+      const deviceName = payload.device_name || '设备';
+      const content = `${deviceName} 超时未开始使用，系统已将你与下一位互换顺序`;
+      showPersistentNotice('排队提醒', content);
+      const permitted = await requestNotificationPermission();
+      if (permitted) {
+        sendCustomNotification('排队提醒', content);
+      }
+    }
+  };
+
   useEffect(() => {
     const progressMap = lastProgressRef.current;
     devices.forEach(device => {
@@ -506,6 +613,24 @@ function DeviceMonitor() {
           ? { ...device, ...data }
           : device
       ));
+    });
+
+    wsClient.on('queue_timeout_update', (data) => {
+      if (!data || data.device_id == null) return;
+      const { device_id: deviceId, ...timeoutData } = data;
+      setDevices(prev => prev.map(device =>
+        device.id === deviceId
+          ? { ...device, ...timeoutData }
+          : device
+      ));
+    });
+
+    wsClient.on('queue_timeout_reminder', (data) => {
+      notifyQueueTimeoutReminder(data);
+    });
+
+    wsClient.on('queue_timeout_shift', (data) => {
+      notifyQueueTimeoutShift(data);
     });
 
     const sortDevices = (items) => {
@@ -581,6 +706,9 @@ function DeviceMonitor() {
       wsClient.off('device_list_update');
       wsClient.off('device_offline');
       wsClient.off('queue_update');
+      wsClient.off('queue_timeout_update');
+      wsClient.off('queue_timeout_reminder');
+      wsClient.off('queue_timeout_shift');
       clearInterval(pollId);
     };
   }, [selectedDeviceId]);
@@ -814,6 +942,9 @@ function DeviceMonitor() {
           const xyPosition = olympus.xy_position;
           const zPosition = olympus.z_position;
           const zRange = olympus.z_range;
+          const timeoutRemainingSeconds = getQueueTimeoutRemainingSeconds(device, nowTime);
+          const showTimeoutCountdown = timeoutRemainingSeconds != null;
+          const isTimeoutWarning = showTimeoutCountdown && timeoutRemainingSeconds <= 60;
           return (
             <Col xs={24} sm={12} md={8} lg={6} key={device.id}>
               <Card 
@@ -886,7 +1017,32 @@ function DeviceMonitor() {
                 )}
 
                 <div style={{ fontSize: '13px', color: '#666' }}>
-                  <div>心跳: {device.last_heartbeat ? formatRelativeTime(device.last_heartbeat) : '-'}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span>心跳: {device.last_heartbeat ? formatRelativeTime(device.last_heartbeat) : '-'}</span>
+                    {showTimeoutCountdown && (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span
+                          style={{
+                            color: isTimeoutWarning ? '#cf1322' : '#fa8c16',
+                            fontWeight: isTimeoutWarning ? 600 : 500,
+                          }}
+                        >
+                          超时倒计时: {formatCountdown(timeoutRemainingSeconds)}
+                        </span>
+                        <Button
+                          size="small"
+                          type="link"
+                          disabled={timeoutRemainingSeconds <= 0}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleExtendTimeout(device.id);
+                          }}
+                        >
+                          延长5分钟
+                        </Button>
+                      </span>
+                    )}
+                  </div>
                   <div>
                     {device.metrics?.temperature && <span>温度: {device.metrics.temperature}°C</span>}
                     {device.metrics?.temperature && device.task_elapsed_seconds != null && <span> | </span>}
@@ -1078,13 +1234,23 @@ function DeviceMonitor() {
                         renderItem={log => {
                           const isCompletionLog = log.new_position === 0;
                           const isLeaveLog = log.new_position === -1;
+                          const isTimeoutShiftLog = log.change_type === 'timeout_shift';
+                          const isTimeoutExtendLog = log.change_type === 'timeout_extend';
                           return (
                             <List.Item>
                               <div style={{ width: '100%' }}>
                                 <div style={{ fontSize: '12px', color: '#999' }}>
                                   {formatDateTime(log.change_time)} - {renderUserLabel(log.changed_by, log.changed_by_id)}
                                 </div>
-                                {isCompletionLog ? (
+                                {isTimeoutShiftLog ? (
+                                  <div style={{ color: '#ff4d4f', fontWeight: 600 }}>
+                                    {log.remark || '超时未使用设备，已顺延'}
+                                  </div>
+                                ) : isTimeoutExtendLog ? (
+                                  <div style={{ color: '#fa8c16', fontWeight: 600 }}>
+                                    {log.remark || '设备超时已延长'}
+                                  </div>
+                                ) : isCompletionLog ? (
                                   <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>
                                 ) : isLeaveLog ? (
                                   <div style={{ color: '#ff4d4f', fontWeight: 600 }}>离开排队</div>

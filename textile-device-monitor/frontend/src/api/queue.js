@@ -7,4 +7,5 @@ export const queueApi = {
   leave: (id, params) => api.delete(`/queue/${id}`, { params }),
   complete: (deviceId) => api.post(`/queue/${deviceId}/complete`),
   getCount: (deviceId) => api.get(`/queue/count/${deviceId}`),
+  extendTimeout: (deviceId, data) => api.post(`/queue/${deviceId}/timeout/extend`, data),
 };

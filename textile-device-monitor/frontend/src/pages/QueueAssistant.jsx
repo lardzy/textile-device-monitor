@@ -269,13 +269,23 @@ function QueueAssistant() {
               renderItem={log => {
                 const isCompletionLog = log.new_position === 0;
                 const isLeaveLog = log.new_position === -1;
+                const isTimeoutShiftLog = log.change_type === 'timeout_shift';
+                const isTimeoutExtendLog = log.change_type === 'timeout_extend';
                 return (
                   <List.Item>
                     <div style={{ width: '100%' }}>
                       <div style={{ fontSize: '12px', color: '#999' }}>
                         {formatDateTime(log.change_time)} - {renderUserLabel(log.changed_by, log.changed_by_id)}
                       </div>
-                      {isCompletionLog ? (
+                      {isTimeoutShiftLog ? (
+                        <div style={{ color: '#ff4d4f', fontWeight: 600 }}>
+                          {log.remark || '超时未使用设备，已顺延'}
+                        </div>
+                      ) : isTimeoutExtendLog ? (
+                        <div style={{ color: '#fa8c16', fontWeight: 600 }}>
+                          {log.remark || '设备超时已延长'}
+                        </div>
+                      ) : isCompletionLog ? (
                         <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>
                       ) : isLeaveLog ? (
                         <div style={{ color: '#ff4d4f', fontWeight: 600 }}>离开排队</div>

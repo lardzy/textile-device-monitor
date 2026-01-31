@@ -48,6 +48,11 @@ class Device(Base):
     task_elapsed_seconds = Column(Integer)
     metrics = Column(JSONB)
     client_base_url = Column(String(200))
+    queue_timeout_active_id = Column(Integer)
+    queue_timeout_started_at = Column(DateTime(timezone=True))
+    queue_timeout_deadline_at = Column(DateTime(timezone=True))
+    queue_timeout_reminded_at = Column(DateTime(timezone=True))
+    queue_timeout_extended_count = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -106,6 +111,8 @@ class QueueChangeLog(Base):
     new_position = Column(Integer)
     changed_by = Column(String(50))
     changed_by_id = Column(String(64))
+    change_type = Column(String(50))
+    remark = Column(Text)
     change_time = Column(DateTime(timezone=True), server_default=func.now())
 
     queue_record = relationship("QueueRecord", back_populates="change_logs")

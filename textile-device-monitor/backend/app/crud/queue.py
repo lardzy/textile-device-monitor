@@ -148,6 +148,43 @@ def update_queue_position(
         raise e
 
 
+def swap_first_two_in_queue(
+    db: Session, device_id: int, changed_by: str, changed_by_id: Optional[str]
+) -> Optional[tuple[QueueRecord, QueueRecord]]:
+    queue = get_queue_by_device(db, device_id)
+    if len(queue) < 2:
+        return None
+
+    first_record = queue[0]
+    second_record = queue[1]
+
+    old_first_position = first_record.position
+    old_second_position = second_record.position
+
+    first_record.position = old_second_position
+    second_record.position = old_first_position
+
+    first_record.version += 1
+    second_record.version += 1
+
+    remark = f"{first_record.inspector_name} 超时未使用设备，已顺延"
+    timeout_log = QueueChangeLog(
+        queue_id=first_record.id,
+        old_position=old_first_position,
+        new_position=old_second_position,
+        changed_by=changed_by,
+        changed_by_id=changed_by_id,
+        change_type="timeout_shift",
+        remark=remark,
+    )
+    db.add(timeout_log)
+
+    db.commit()
+    db.refresh(first_record)
+    db.refresh(second_record)
+    return first_record, second_record
+
+
 def normalize_queue_positions(db: Session, device_id: int) -> None:
     queue = (
         db.query(QueueRecord)

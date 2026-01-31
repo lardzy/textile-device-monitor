@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas import (
@@ -7,8 +8,12 @@ from app.schemas import (
     PositionChange,
     MessageResponse,
     QueueWithLogs,
+    QueueTimeoutExtend,
 )
 from app.crud import queue as queue_crud
+from app.crud import devices as device_crud
+from app.models import QueueChangeLog, DeviceStatus as ModelDeviceStatus
+from app.config import settings
 from app.websocket.manager import websocket_manager
 
 router = APIRouter(prefix="/queue", tags=["queue"])
@@ -155,6 +160,96 @@ async def complete_task(device_id: int, db: Session = Depends(get_db)):
         data={
             "device_id": device_id,
             "queue_count": queue_count,
+        },
+    )
+
+
+@router.post("/{device_id}/timeout/extend", response_model=MessageResponse)
+async def extend_queue_timeout(
+    device_id: int, payload: QueueTimeoutExtend, db: Session = Depends(get_db)
+):
+    """延长排队超时计时（+5分钟）"""
+    device = device_crud.get_device(db, device_id)
+    if not device:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
+        )
+
+    if device.status != ModelDeviceStatus.IDLE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="设备未处于空闲状态"
+        )
+
+    queue = queue_crud.get_queue_by_device(db, device_id)
+    if len(queue) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="排队人数不足"
+        )
+
+    active_record = queue[0]
+    now = datetime.now(timezone.utc)
+
+    if device.queue_timeout_active_id != active_record.id:
+        device.queue_timeout_active_id = active_record.id
+        if device.queue_timeout_started_at is None:
+            device.queue_timeout_started_at = now
+
+    if device.queue_timeout_deadline_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="当前没有可延长的倒计时"
+        )
+
+    deadline = device.queue_timeout_deadline_at
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+
+    if now >= deadline:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="倒计时已到期，无法延长"
+        )
+
+    device.queue_timeout_deadline_at = deadline + timedelta(
+        seconds=settings.QUEUE_IDLE_EXTEND_SECONDS
+    )
+    device.queue_timeout_extended_count = (device.queue_timeout_extended_count or 0) + 1
+
+    changed_by = payload.changed_by.strip() if payload.changed_by else "系统"
+    remark = f"设备超时被延长5分钟（操作人ID: {payload.changed_by_id or '-'}）"
+    timeout_log = QueueChangeLog(
+        queue_id=active_record.id,
+        old_position=active_record.position,
+        new_position=active_record.position,
+        changed_by=changed_by,
+        changed_by_id=payload.changed_by_id,
+        change_type="timeout_extend",
+        remark=remark,
+    )
+    db.add(timeout_log)
+    db.commit()
+    db.refresh(device)
+
+    await websocket_manager.broadcast(
+        {
+            "type": "queue_timeout_update",
+            "data": {
+                "device_id": device.id,
+                "queue_timeout_active_id": device.queue_timeout_active_id,
+                "queue_timeout_started_at": device.queue_timeout_started_at,
+                "queue_timeout_deadline_at": device.queue_timeout_deadline_at,
+                "queue_timeout_reminded_at": device.queue_timeout_reminded_at,
+                "queue_timeout_extended_count": device.queue_timeout_extended_count,
+            },
+        }
+    )
+
+    return MessageResponse(
+        success=True,
+        message="Queue timeout extended",
+        data={
+            "device_id": device_id,
+            "queue_timeout_deadline_at": device.queue_timeout_deadline_at,
+            "queue_timeout_extended_count": device.queue_timeout_extended_count,
+            "queue_timeout_active_id": device.queue_timeout_active_id,
         },
     )
 

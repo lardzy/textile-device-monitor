@@ -12,6 +12,7 @@ from app.config import settings
 from app.api import devices, history, queue, stats, results
 from app.websocket.manager import websocket_manager
 from app.tasks.device_monitor import start_heartbeat_monitor
+from app.tasks.queue_timeout import start_queue_timeout_monitor
 from app.tasks.data_cleanup import start_cleanup_scheduler
 import asyncio
 
@@ -89,6 +90,9 @@ async def startup_event():
 
     print("Starting cleanup scheduler...")
     asyncio.create_task(start_cleanup_scheduler())
+
+    print("Starting queue timeout monitor...")
+    asyncio.create_task(start_queue_timeout_monitor())
 
     print("Application started successfully!")
 

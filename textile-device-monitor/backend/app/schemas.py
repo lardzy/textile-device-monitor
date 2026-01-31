@@ -49,6 +49,11 @@ class Device(DeviceBase):
     task_elapsed_seconds: Optional[int]
     metrics: Optional[Dict[str, Any]]
     last_heartbeat: Optional[datetime]
+    queue_timeout_active_id: Optional[int] = None
+    queue_timeout_started_at: Optional[datetime] = None
+    queue_timeout_deadline_at: Optional[datetime] = None
+    queue_timeout_reminded_at: Optional[datetime] = None
+    queue_timeout_extended_count: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -116,6 +121,8 @@ class QueueChangeLog(BaseModel):
     new_position: int
     changed_by: str
     changed_by_id: Optional[str] = None
+    change_type: Optional[str] = None
+    remark: Optional[str] = None
     change_time: datetime
 
     class Config:
@@ -125,6 +132,11 @@ class QueueChangeLog(BaseModel):
 class QueueWithLogs(BaseModel):
     queue: list[QueueRecord]
     logs: list[QueueChangeLog]
+
+
+class QueueTimeoutExtend(BaseModel):
+    changed_by: Optional[str] = Field(None, max_length=50)
+    changed_by_id: Optional[str] = Field(None, max_length=64)
 
 
 class Statistic(BaseModel):
