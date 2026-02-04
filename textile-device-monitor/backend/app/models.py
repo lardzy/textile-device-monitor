@@ -15,6 +15,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 import enum
+import uuid
 
 
 class DeviceStatus(str, enum.Enum):
@@ -28,6 +29,13 @@ class DeviceStatus(str, enum.Enum):
 class TaskStatus(str, enum.Enum):
     WAITING = "waiting"
     COMPLETED = "completed"
+
+
+class ConversionTaskStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class Device(Base):
@@ -134,3 +142,20 @@ class Statistic(Base):
     utilization_rate = Column(Float)
 
     device = relationship("Device", back_populates="statistics")
+
+
+class ConversionTask(Base):
+    __tablename__ = "conversion_tasks"
+
+    id = Column(String(36), primary_key=True)
+    original_filename = Column(String(255), nullable=False)
+    output_format = Column(String(20), nullable=False)  # markdown, docx
+    language = Column(String(10), default="auto")
+    status = Column(SQLEnum(ConversionTaskStatus), default=ConversionTaskStatus.PENDING)
+    file_path = Column(String(500))  # 上传文件的路径
+    result_path = Column(String(500))  # 结果文件的路径
+    error_message = Column(Text)
+    processing_time = Column(Float)  # 处理时间（秒）
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True))
+    expires_at = Column(DateTime(timezone=True))  # 结果文件过期时间

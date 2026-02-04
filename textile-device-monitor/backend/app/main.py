@@ -9,7 +9,7 @@ from app.database import engine, get_db
 from app.models import Base
 from sqlalchemy.exc import OperationalError
 from app.config import settings
-from app.api import devices, history, queue, stats, results
+from app.api import devices, history, queue, stats, results, efficiency
 from app.websocket.manager import websocket_manager
 from app.tasks.device_monitor import start_heartbeat_monitor
 from app.tasks.queue_timeout import start_queue_timeout_monitor
@@ -54,6 +54,7 @@ app.include_router(history.router, prefix="/api")
 app.include_router(queue.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(results.router, prefix="/api")
+app.include_router(efficiency.router, prefix="/api")
 
 
 @app.get("/")

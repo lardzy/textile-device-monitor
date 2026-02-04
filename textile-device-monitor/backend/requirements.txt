@@ -13,3 +13,14 @@ websockets==12.0
 python-dateutil==2.8.2
 apscheduler==3.10.4
 requests==2.31.0
+
+# OCR and document conversion
+# Compatible versions for CPU deployment
+# Note: paddlepaddle must be installed before paddleocr
+paddlepaddle==2.6.2
+# Use paddleocr[all] to ensure all dependencies including PaddleOCR-VL are installed
+# For GPU deployment, change to paddlepaddle-gpu==2.6.1
+paddleocr[all]==3.3.0
+pypandoc>=1.13
+python-docx>=1.1.0
+python-magic>=0.4.27

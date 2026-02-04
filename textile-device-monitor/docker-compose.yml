@@ -17,7 +17,9 @@ services:
       - textile-net
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.gpu
     container_name: textile-monitor-backend
     restart: unless-stopped
     environment:
@@ -25,9 +27,27 @@ services:
       SECRET_KEY: your-secret-key-change-in-production
       HEARTBEAT_TIMEOUT: 30
       DATA_RETENTION_DAYS: 30
+      QUEUE_IDLE_REMIND_SECONDS: 60
+      QUEUE_IDLE_TIMEOUT_SECONDS: 300
+      QUEUE_IDLE_EXTEND_SECONDS: 300
+      QUEUE_IDLE_CHECK_INTERVAL: 10
       CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
+      CUDA_VISIBLE_DEVICES: 0
+      PADDLE_USE_GPU: 1
+      LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
+      CUDA_HOME: /usr/local/cuda
     ports:
       - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./results:/app/results
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       - postgres
     networks:

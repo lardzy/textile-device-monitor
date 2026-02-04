@@ -1,12 +1,14 @@
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Layout, Menu } from 'antd';
-import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined } from '@ant-design/icons';
+import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined, ToolOutlined } from '@ant-design/icons';
 import DeviceMonitor from './pages/DeviceMonitor';
 import HistoryQuery from './pages/HistoryQuery';
 import Statistics from './pages/Statistics';
 import DeviceManagement from './pages/DeviceManagement';
 import ResultsTable from './pages/ResultsTable';
 import ResultsImages from './pages/ResultsImages';
+import EfficiencyTools from './pages/EfficiencyTools';
+import DocumentConverter from './pages/DocumentConverter';
 import wsClient from './websocket/client';
 import { useState, useEffect } from 'react';
 
@@ -17,6 +19,7 @@ const menuItems = [
   { key: 'history', icon: <HistoryOutlined />, label: '历史记录', path: '/history' },
   { key: 'statistics', icon: <BarChartOutlined />, label: '数据统计', path: '/statistics' },
   { key: 'management', icon: <SettingOutlined />, label: '设备管理', path: '/management' },
+  { key: 'efficiency', icon: <ToolOutlined />, label: '效率工具', path: '/efficiency' },
 ];
 
 const appRoutes = (
@@ -25,6 +28,8 @@ const appRoutes = (
     <Route path="/history" element={<HistoryQuery />} />
     <Route path="/statistics" element={<Statistics />} />
     <Route path="/management" element={<DeviceManagement />} />
+    <Route path="/efficiency" element={<EfficiencyTools />} />
+    <Route path="/efficiency/document-converter" element={<DocumentConverter />} />
     <Route path="/results/table" element={<ResultsTable />} />
     <Route path="/results/images" element={<ResultsImages />} />
   </Routes>
@@ -35,7 +40,26 @@ function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const selectedKey = menuItems.find(item => item.path === location.pathname)?.key || 'monitor';
+  // 计算选中的菜单项
+  const getSelectedKey = () => {
+    const path = location.pathname;
+
+    // 检查是否是效率工具相关路径
+    if (path.startsWith('/efficiency')) {
+      return 'efficiency';
+    }
+
+    // 检查是否是结果相关路径
+    if (path.startsWith('/results')) {
+      return null; // 不显示任何菜单项选中
+    }
+
+    // 精确匹配路径
+    const matched = menuItems.find(item => item.path === path);
+    return matched?.key || 'monitor';
+  };
+
+  const selectedKey = getSelectedKey();
   const isResults = location.pathname.startsWith('/results');
 
   useEffect(() => {
@@ -75,7 +99,7 @@ function AppLayout() {
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[selectedKey]}
+          selectedKeys={selectedKey ? [selectedKey] : []}
           items={menuItems}
           onClick={handleMenuClick}
         />
