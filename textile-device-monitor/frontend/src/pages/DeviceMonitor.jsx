@@ -715,8 +715,6 @@ function DeviceMonitor() {
       fetchDevices();
       if (selectedDeviceId) {
         fetchQueue(selectedDeviceId);
-        const device = devicesRef.current.find(item => item.id === selectedDeviceId);
-        fetchRecentResults(device);
       }
     }, 8000);
 
@@ -740,6 +738,15 @@ function DeviceMonitor() {
     }
     setTableModal({ open: false, folder: null });
     setImagesModal({ open: false, folder: null });
+  }, [selectedDeviceId]);
+
+  useEffect(() => {
+    if (!selectedDeviceId) return;
+    const pollId = setInterval(() => {
+      const device = devicesRef.current.find(item => item.id === selectedDeviceId);
+      fetchRecentResults(device);
+    }, 60000);
+    return () => clearInterval(pollId);
   }, [selectedDeviceId]);
 
   const buildResultsUrl = (type, folder) => {

@@ -152,6 +152,31 @@ def update_device_status(  # 更新设备状态
         and task_name is None
         and task_progress is None
     )
+    adjusted_status = status
+    adjusted_task_progress = task_progress
+
+    if not preserve_task_fields:
+        if (
+            task_id
+            and device.task_id
+            and task_id == device.task_id
+            and task_progress is not None
+            and device.task_progress is not None
+            and task_progress < device.task_progress
+        ):
+            # Ignore progress rollback for the same task to avoid out-of-order updates.
+            adjusted_task_progress = device.task_progress
+
+        if (
+            adjusted_task_progress is not None
+            and 0 < adjusted_task_progress < 100
+            and adjusted_status == DeviceStatus.IDLE
+        ):
+            # Progress indicates the device is working; ensure status is consistent.
+            adjusted_status = DeviceStatus.BUSY
+
+    status = adjusted_status
+    task_progress = adjusted_task_progress
 
     if status == DeviceStatus.BUSY and device.task_started_at is None:
         device.task_started_at = now
