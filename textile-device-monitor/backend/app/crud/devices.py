@@ -152,6 +152,7 @@ def update_device_status(  # 更新设备状态
         and task_name is None
         and task_progress is None
     )
+    preserve_metrics = status == DeviceStatus.OFFLINE and metrics is None
     adjusted_status = status
     adjusted_task_progress = task_progress
 
@@ -216,7 +217,8 @@ def update_device_status(  # 更新设备状态
         device.task_id = task_id
         device.task_name = task_name
         device.task_progress = task_progress
-    device.metrics = filter_output_paths_in_metrics(metrics)
+    if not preserve_metrics:
+        device.metrics = filter_output_paths_in_metrics(metrics)
     if client_base_url is not None and str(client_base_url).strip():
         device.client_base_url = client_base_url
 
