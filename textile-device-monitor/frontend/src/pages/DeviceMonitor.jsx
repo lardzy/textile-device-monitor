@@ -793,10 +793,11 @@ function DeviceMonitor() {
         created_by_id: queueUserIdRef.current,
       });
 
-      const copies = values.copies || 1;
+      const requestedCopies = values.copies || 1;
+      const actualCopies = Array.isArray(records) ? records.length : 0;
 
       if (records && records.length > 0) {
-        for (let i = 0; i < Math.min(records.length, copies); i++) {
+        for (let i = 0; i < records.length; i++) {
           addQueueNoticeEntry({
             id: records[i].id,
             device_id: selectedDeviceId,
@@ -806,7 +807,12 @@ function DeviceMonitor() {
         }
       }
 
-      message.success(`加入排队成功 (${copies}份)`);
+      if (actualCopies > 0) {
+        message.success(`加入排队成功 (${actualCopies}份)`);
+      }
+      if (actualCopies > 0 && actualCopies < requestedCopies) {
+        message.info(`已按配额加入 ${actualCopies} 份（超出部分忽略）`);
+      }
       saveInspectorName(values.inspector_name);
       form.resetFields();
       setInspectorName('');

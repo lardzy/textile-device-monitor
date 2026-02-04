@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, text
 from typing import List, Optional
-from app.models import QueueRecord, QueueChangeLog, TaskStatus
+from app.models import QueueRecord, QueueChangeLog, TaskStatus, Device
 from app.schemas import QueueCreate, PositionChange
 from datetime import datetime, date
 from sqlalchemy.exc import IntegrityError
@@ -265,3 +265,32 @@ def get_queue_count(db: Session, device_id: int) -> int:
         )
         .count()
     )
+
+
+def count_user_quota(db: Session, created_by_id: str, confocal: bool) -> int:
+    if not created_by_id:
+        return 0
+
+    query = (
+        db.query(QueueRecord)
+        .join(Device, QueueRecord.device_id == Device.id)
+        .filter(
+            QueueRecord.status == TaskStatus.WAITING,
+            QueueRecord.created_by_id == created_by_id,
+        )
+    )
+
+    confocal_expr = Device.metrics["device_type"].astext == "laser_confocal"
+
+    if confocal:
+        query = query.filter(confocal_expr)
+    else:
+        query = query.filter(
+            or_(
+                Device.metrics.is_(None),
+                Device.metrics["device_type"].astext.is_(None),
+                Device.metrics["device_type"].astext != "laser_confocal",
+            )
+        )
+
+    return query.count()
