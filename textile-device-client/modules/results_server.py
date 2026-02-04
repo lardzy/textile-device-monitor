@@ -27,6 +27,10 @@ class ResultsHandler(BaseHTTPRequestHandler):
     _formula_cache_lock = threading.Lock()
     _formula_in_progress = set()
     _formula_cache_limit = 6
+    _recent_cache_lock = threading.Lock()
+    _recent_cache: Dict[str, object] = {}
+    _recent_cache_ttl = 30
+    _recent_cache_max_items = 20
 
     @classmethod
     def _process_xlsx_with_formulas(cls, xlsx_path: str) -> Optional[bytes]:
@@ -163,6 +167,49 @@ class ResultsHandler(BaseHTTPRequestHandler):
     def schedule_formula_cache_for_path(cls, file_path: str) -> None:
         cls._schedule_formula_cache(file_path)
 
+    @classmethod
+    def invalidate_recent_cache(cls) -> None:
+        with cls._recent_cache_lock:
+            cls._recent_cache = {}
+
+    @classmethod
+    def _get_recent_cache(cls, limit: int, working_path: str) -> Optional[List[Dict]]:
+        import time
+
+        with cls._recent_cache_lock:
+            if not cls._recent_cache:
+                return None
+            cached_at = cls._recent_cache.get("cached_at")
+            cached_items = cls._recent_cache.get("items")
+            max_items = cls._recent_cache.get("max_items")
+            cached_path = cls._recent_cache.get("working_path")
+            if (
+                cached_at is None
+                or cached_items is None
+                or max_items is None
+                or cached_path != working_path
+            ):
+                return None
+            if time.time() - float(cached_at) > cls._recent_cache_ttl:
+                return None
+            if int(max_items) < limit:
+                return None
+            return list(cached_items)[:limit]
+
+    @classmethod
+    def _set_recent_cache(
+        cls, items: List[Dict], max_items: int, working_path: str
+    ) -> None:
+        import time
+
+        with cls._recent_cache_lock:
+            cls._recent_cache = {
+                "items": items,
+                "max_items": max_items,
+                "working_path": working_path,
+                "cached_at": time.time(),
+            }
+
     def _is_confocal(self) -> bool:
         return bool(getattr(self.reader, "is_laser_confocal", False))
 
@@ -220,6 +267,9 @@ class ResultsHandler(BaseHTTPRequestHandler):
     def _get_recent_results(self, limit: int) -> List[Dict]:
         if not self.reader:
             return []
+        cached = self._get_recent_cache(limit, self.reader.working_path)
+        if cached is not None:
+            return cached
         recent_getter = getattr(self.reader, "get_recent_results", None)
         if callable(recent_getter):
             try:
@@ -288,7 +338,10 @@ class ResultsHandler(BaseHTTPRequestHandler):
             )
 
         candidates.sort(key=lambda item: item[0], reverse=True)
-        return [item for _, item in candidates[:limit]]
+        max_items = max(limit, self._recent_cache_max_items)
+        cached_items = [item for _, item in candidates[:max_items]]
+        self._set_recent_cache(cached_items, max_items, self.reader.working_path)
+        return cached_items[:limit]
 
     def _send_json(self, status: int, payload: Dict):
         import json
@@ -847,6 +900,7 @@ class ResultsServer:
             return
         if getattr(self.reader, "is_laser_confocal", False):
             return
+        ResultsHandler.invalidate_recent_cache()
         try:
             latest_folder = self.reader._get_latest_modified_folder(
                 self.reader.working_path
