@@ -245,7 +245,10 @@ class ResultsHandler(BaseHTTPRequestHandler):
     def _cleanup_confocal_images(
         self, folder_path: str
     ) -> Dict[str, Optional[str] | int]:
-        recycle_dir = os.path.join(folder_path, ".recycle")
+        parent_dir = os.path.dirname(folder_path.rstrip("\\/"))
+        if not parent_dir or not os.path.isdir(parent_dir):
+            raise RuntimeError("output_parent_missing")
+        recycle_dir = os.path.join(parent_dir, ".recycle")
         os.makedirs(recycle_dir, exist_ok=True)
         moved = 0
         for name in os.listdir(folder_path):
@@ -861,7 +864,10 @@ class ResultsHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 if self.logger:
                     self.logger.error(f"清理图片失败: {exc}")
-                self._send_json(500, {"error": "cleanup_failed"})
+                if str(exc) == "output_parent_missing":
+                    self._send_json(400, {"error": "output_parent_missing"})
+                else:
+                    self._send_json(500, {"error": "cleanup_failed"})
                 return
             self._send_json(200, result)
             return

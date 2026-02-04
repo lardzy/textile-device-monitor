@@ -773,6 +773,8 @@ function DeviceMonitor() {
           const msg = error?.message || '';
           if (msg.includes('folder_not_found')) {
             message.error('输出路径不存在，无法清理');
+          } else if (msg.includes('output_parent_missing')) {
+            message.error('输出路径缺少父级目录，无法清理');
           } else if (msg.includes('cleanup_not_supported')) {
             message.error('当前设备不支持清理');
           } else {
