@@ -255,7 +255,6 @@ class ResultsHandler(BaseHTTPRequestHandler):
             files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
             xlsx_name = files[-1]
             xlsx_path = os.path.join(result_dir, xlsx_name)
-            self._schedule_formula_cache(xlsx_path)
 
             cut_pic_dir = os.path.join(folder_path, "cut_pic", "1")
             image_count = 0
