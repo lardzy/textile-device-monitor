@@ -146,6 +146,12 @@ def update_device_status(  # 更新设备状态
 ) -> Device:
     now = datetime.now(timezone.utc)
     new_task = False
+    preserve_task_fields = (
+        status == DeviceStatus.OFFLINE
+        and task_id is None
+        and task_name is None
+        and task_progress is None
+    )
 
     if status == DeviceStatus.BUSY and device.task_started_at is None:
         device.task_started_at = now
@@ -181,9 +187,10 @@ def update_device_status(  # 更新设备状态
     previous_progress = device.task_progress
 
     device.status = status
-    device.task_id = task_id
-    device.task_name = task_name
-    device.task_progress = task_progress
+    if not preserve_task_fields:
+        device.task_id = task_id
+        device.task_name = task_name
+        device.task_progress = task_progress
     device.metrics = filter_output_paths_in_metrics(metrics)
     if client_base_url is not None and str(client_base_url).strip():
         device.client_base_url = client_base_url

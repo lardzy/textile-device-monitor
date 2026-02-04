@@ -4,8 +4,82 @@ import requests
 from urllib.parse import quote
 from app.database import get_db
 from app.crud import devices as device_crud
+from app.config import settings
+from threading import Lock, Event
+from time import monotonic
+from typing import Any
 
 router = APIRouter(prefix="/results", tags=["results"])
+
+_RECENT_CACHE_LOCK = Lock()
+_RECENT_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _get_recent_cache_key(device_id: int, limit: int) -> str:
+    return f"recent:{device_id}:{limit}"
+
+
+def _get_recent_cached_value(key: str) -> Any | None:
+    now = monotonic()
+    with _RECENT_CACHE_LOCK:
+        entry = _RECENT_CACHE.get(key)
+        if not entry:
+            return None
+        expires_at = entry.get("expires_at", 0)
+        if expires_at and expires_at > now and "value" in entry:
+            return entry["value"]
+    return None
+
+
+def _get_recent_stale_value(key: str) -> Any | None:
+    now = monotonic()
+    with _RECENT_CACHE_LOCK:
+        entry = _RECENT_CACHE.get(key)
+        if not entry:
+            return None
+        stale_expires_at = entry.get("stale_expires_at", 0)
+        if stale_expires_at and stale_expires_at > now and "stale_value" in entry:
+            return entry["stale_value"]
+    return None
+
+
+def _get_recent_inflight_state(key: str) -> tuple[Event | None, float | None]:
+    with _RECENT_CACHE_LOCK:
+        entry = _RECENT_CACHE.get(key)
+        if not entry or not entry.get("in_flight"):
+            return None, None
+        event = entry.get("event")
+        started_at = entry.get("started_at")
+        if isinstance(event, Event):
+            return event, started_at if isinstance(started_at, (int, float)) else None
+    return None, None
+
+
+def _mark_recent_inflight(key: str) -> Event:
+    event = Event()
+    with _RECENT_CACHE_LOCK:
+        entry = _RECENT_CACHE.get(key, {})
+        entry["in_flight"] = True
+        entry["event"] = event
+        entry["started_at"] = monotonic()
+        _RECENT_CACHE[key] = entry
+    return event
+
+
+def _finish_recent_inflight(key: str, value: Any | None) -> None:
+    now = monotonic()
+    with _RECENT_CACHE_LOCK:
+        entry = _RECENT_CACHE.get(key, {})
+        if value is not None:
+            entry["value"] = value
+            entry["expires_at"] = now + settings.RESULTS_RECENT_CACHE_TTL
+            entry["stale_value"] = value
+            entry["stale_expires_at"] = now + settings.RESULTS_RECENT_CACHE_STALE_TTL
+        entry["in_flight"] = False
+        event = entry.get("event")
+        _RECENT_CACHE[key] = entry
+        if isinstance(event, Event):
+            event.set()
 
 
 def _extract_client_error(resp: requests.Response) -> str:
@@ -168,6 +242,25 @@ def get_recent(
     limit: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
 ):
+    cache_key = _get_recent_cache_key(device_id, limit)
+    cached = _get_recent_cached_value(cache_key)
+    if cached is not None:
+        return cached
+
+    inflight_event, _ = _get_recent_inflight_state(cache_key)
+    if inflight_event is not None:
+        inflight_event.wait(timeout=settings.RESULTS_RECENT_INFLIGHT_WAIT_SECONDS)
+        cached = _get_recent_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        stale = _get_recent_stale_value(cache_key)
+        if stale is not None:
+            return stale
+        inflight_event, _ = _get_recent_inflight_state(cache_key)
+        if inflight_event is not None:
+            raise HTTPException(status_code=502, detail="Client unreachable")
+
+    inflight_event = _mark_recent_inflight(cache_key)
     base_url = _get_client_base_url(db, device_id)
     try:
         resp = requests.get(
@@ -176,10 +269,20 @@ def get_recent(
             timeout=10,
         )
     except requests.RequestException as exc:
+        _finish_recent_inflight(cache_key, None)
+        stale = _get_recent_stale_value(cache_key)
+        if stale is not None:
+            return stale
         raise HTTPException(status_code=502, detail="Client unreachable") from exc
     if resp.status_code != 200:
+        _finish_recent_inflight(cache_key, None)
+        stale = _get_recent_stale_value(cache_key)
+        if stale is not None:
+            return stale
         raise HTTPException(status_code=resp.status_code, detail="Client error")
-    return resp.json()
+    payload = resp.json()
+    _finish_recent_inflight(cache_key, payload)
+    return payload
 
 
 @router.get("/image/{filename}")

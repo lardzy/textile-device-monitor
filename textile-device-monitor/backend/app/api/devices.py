@@ -135,11 +135,21 @@ async def report_device_status(
 
     completed_record = None
     device_id = int(device.id)  # type: ignore[arg-type]
-    if (
+    should_complete = (
         status_report.task_progress is not None
         and status_report.task_progress == 100
         and previous_progress != 100
-    ):  # type: ignore[truthy-bool]
+    )
+    if should_complete and status_report.task_id:
+        latest = history_crud.get_latest_status(db, device_id)
+        if (
+            latest
+            and latest.task_id == status_report.task_id
+            and latest.task_progress == 100
+        ):
+            should_complete = False
+
+    if should_complete:  # type: ignore[truthy-bool]
         task_duration_seconds = (
             int(device.task_elapsed_seconds)  # type: ignore[arg-type]
             if device.task_elapsed_seconds is not None
