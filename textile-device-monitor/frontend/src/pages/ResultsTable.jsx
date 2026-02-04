@@ -124,8 +124,8 @@ function ResultsTable() {
         return;
       }
 
-      const maxAttempts = 40;
-      const retryDelayMs = 3000;
+      const maxAttempts = 15;
+      const retryDelayMs = 5000;
       let attempt = 0;
       let notified = false;
       setLoading(true);

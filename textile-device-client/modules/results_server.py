@@ -27,8 +27,13 @@ class ResultsHandler(BaseHTTPRequestHandler):
     _formula_cache_lock = threading.Lock()
     _formula_in_progress = set()
     _formula_cache_limit = 6
+    _recent_cache_lock = threading.Lock()
+    _recent_cache: Dict[str, object] = {}
+    _recent_cache_ttl = 30
+    _recent_cache_max_items = 20
 
-    def _process_xlsx_with_formulas(self, xlsx_path: str) -> Optional[bytes]:
+    @classmethod
+    def _process_xlsx_with_formulas(cls, xlsx_path: str) -> Optional[bytes]:
         temp_dir = tempfile.mkdtemp()
         try:
             try:
@@ -49,12 +54,13 @@ class ResultsHandler(BaseHTTPRequestHandler):
             finally:
                 shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception as exc:
-            if self.logger:
-                self.logger.error(f"使用formulas计算失败: {exc}, 降级到openpyxl")
+            if cls.logger:
+                cls.logger.error(f"使用formulas计算失败: {exc}, 降级到openpyxl")
 
-        return self._process_xlsx_preview(xlsx_path)
+        return cls._process_xlsx_preview(xlsx_path)
 
-    def _process_xlsx_preview(self, xlsx_path: str) -> Optional[bytes]:
+    @classmethod
+    def _process_xlsx_preview(cls, xlsx_path: str) -> Optional[bytes]:
         try:
             wb = openpyxl.load_workbook(xlsx_path, data_only=True)
             output = io.BytesIO()
@@ -63,8 +69,8 @@ class ResultsHandler(BaseHTTPRequestHandler):
             wb.close()
             return output.read()
         except Exception as exc:
-            if self.logger:
-                self.logger.error(f"处理xlsx文件失败: {exc}")
+            if cls.logger:
+                cls.logger.error(f"处理xlsx文件失败: {exc}")
             return None
 
     def _build_thumbnail(
@@ -90,37 +96,41 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 self.logger.error(f"生成缩略图失败: {exc}")
             return None
 
-    def _get_cache_key(self, file_path: str) -> str:
+    @classmethod
+    def _get_cache_key(cls, file_path: str) -> str:
         return os.path.abspath(file_path)
 
-    def _get_cached_formula(self, file_path: str) -> Optional[bytes]:
+    @classmethod
+    def _get_cached_formula(cls, file_path: str) -> Optional[bytes]:
         try:
             mtime = os.path.getmtime(file_path)
         except OSError:
             return None
-        key = self._get_cache_key(file_path)
-        with self._formula_cache_lock:
-            entry = self._formula_cache.get(key)
+        key = cls._get_cache_key(file_path)
+        with cls._formula_cache_lock:
+            entry = cls._formula_cache.get(key)
             if entry and entry.get("mtime") == mtime:
-                self._formula_cache.move_to_end(key)
+                cls._formula_cache.move_to_end(key)
                 return entry.get("data")
             if entry:
-                self._formula_cache.pop(key, None)
+                cls._formula_cache.pop(key, None)
         return None
 
-    def _store_cached_formula(self, file_path: str, mtime: float, data: bytes) -> None:
-        key = self._get_cache_key(file_path)
-        with self._formula_cache_lock:
-            self._formula_cache[key] = {"mtime": mtime, "data": data}
-            self._formula_cache.move_to_end(key)
-            while len(self._formula_cache) > self._formula_cache_limit:
-                self._formula_cache.popitem(last=False)
+    @classmethod
+    def _store_cached_formula(cls, file_path: str, mtime: float, data: bytes) -> None:
+        key = cls._get_cache_key(file_path)
+        with cls._formula_cache_lock:
+            cls._formula_cache[key] = {"mtime": mtime, "data": data}
+            cls._formula_cache.move_to_end(key)
+            while len(cls._formula_cache) > cls._formula_cache_limit:
+                cls._formula_cache.popitem(last=False)
 
-    def _build_formula_cache(self, file_path: str, mtime: float) -> None:
-        data = self._process_xlsx_with_formulas(file_path)
-        key = self._get_cache_key(file_path)
-        with self._formula_cache_lock:
-            self._formula_in_progress.discard(key)
+    @classmethod
+    def _build_formula_cache(cls, file_path: str, mtime: float) -> None:
+        data = cls._process_xlsx_with_formulas(file_path)
+        key = cls._get_cache_key(file_path)
+        with cls._formula_cache_lock:
+            cls._formula_in_progress.discard(key)
         if not data:
             return
         try:
@@ -129,28 +139,76 @@ class ResultsHandler(BaseHTTPRequestHandler):
             return
         if current_mtime != mtime:
             return
-        self._store_cached_formula(file_path, mtime, data)
+        cls._store_cached_formula(file_path, mtime, data)
 
-    def _schedule_formula_cache(self, file_path: str) -> None:
+    @classmethod
+    def _schedule_formula_cache(cls, file_path: str) -> None:
         try:
             mtime = os.path.getmtime(file_path)
         except OSError:
             return
-        key = self._get_cache_key(file_path)
-        with self._formula_cache_lock:
-            entry = self._formula_cache.get(key)
+        key = cls._get_cache_key(file_path)
+        with cls._formula_cache_lock:
+            entry = cls._formula_cache.get(key)
             if entry and entry.get("mtime") == mtime:
-                self._formula_cache.move_to_end(key)
+                cls._formula_cache.move_to_end(key)
                 return
-            if key in self._formula_in_progress:
+            if key in cls._formula_in_progress:
                 return
-            self._formula_in_progress.add(key)
+            cls._formula_in_progress.add(key)
         worker = threading.Thread(
-            target=self._build_formula_cache,
+            target=cls._build_formula_cache,
             args=(file_path, mtime),
             daemon=True,
         )
         worker.start()
+
+    @classmethod
+    def schedule_formula_cache_for_path(cls, file_path: str) -> None:
+        cls._schedule_formula_cache(file_path)
+
+    @classmethod
+    def invalidate_recent_cache(cls) -> None:
+        with cls._recent_cache_lock:
+            cls._recent_cache = {}
+
+    @classmethod
+    def _get_recent_cache(cls, limit: int, working_path: str) -> Optional[List[Dict]]:
+        import time
+
+        with cls._recent_cache_lock:
+            if not cls._recent_cache:
+                return None
+            cached_at = cls._recent_cache.get("cached_at")
+            cached_items = cls._recent_cache.get("items")
+            max_items = cls._recent_cache.get("max_items")
+            cached_path = cls._recent_cache.get("working_path")
+            if (
+                cached_at is None
+                or cached_items is None
+                or max_items is None
+                or cached_path != working_path
+            ):
+                return None
+            if time.time() - float(cached_at) > cls._recent_cache_ttl:
+                return None
+            if int(max_items) < limit:
+                return None
+            return list(cached_items)[:limit]
+
+    @classmethod
+    def _set_recent_cache(
+        cls, items: List[Dict], max_items: int, working_path: str
+    ) -> None:
+        import time
+
+        with cls._recent_cache_lock:
+            cls._recent_cache = {
+                "items": items,
+                "max_items": max_items,
+                "working_path": working_path,
+                "cached_at": time.time(),
+            }
 
     def _is_confocal(self) -> bool:
         return bool(getattr(self.reader, "is_laser_confocal", False))
@@ -209,6 +267,9 @@ class ResultsHandler(BaseHTTPRequestHandler):
     def _get_recent_results(self, limit: int) -> List[Dict]:
         if not self.reader:
             return []
+        cached = self._get_recent_cache(limit, self.reader.working_path)
+        if cached is not None:
+            return cached
         recent_getter = getattr(self.reader, "get_recent_results", None)
         if callable(recent_getter):
             try:
@@ -277,7 +338,10 @@ class ResultsHandler(BaseHTTPRequestHandler):
             )
 
         candidates.sort(key=lambda item: item[0], reverse=True)
-        return [item for _, item in candidates[:limit]]
+        max_items = max(limit, self._recent_cache_max_items)
+        cached_items = [item for _, item in candidates[:max_items]]
+        self._set_recent_cache(cached_items, max_items, self.reader.working_path)
+        return cached_items[:limit]
 
     def _send_json(self, status: int, payload: Dict):
         import json
@@ -394,8 +458,6 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
                 if files:
                     xlsx_name = files[-1]
-                    xlsx_path = os.path.join(result_dir, xlsx_name)
-                    self._schedule_formula_cache(xlsx_path)
 
             image_count = 0
             if os.path.exists(cut_pic_dir):
@@ -832,3 +894,30 @@ class ResultsServer:
         if self.httpd:
             self.httpd.shutdown()
             self.httpd = None
+
+    def prewarm_latest_formulas(self) -> None:
+        if not self.reader:
+            return
+        if getattr(self.reader, "is_laser_confocal", False):
+            return
+        ResultsHandler.invalidate_recent_cache()
+        try:
+            latest_folder = self.reader._get_latest_modified_folder(
+                self.reader.working_path
+            )
+            if not latest_folder:
+                return
+            result_dir = os.path.join(latest_folder, "result")
+            if not os.path.exists(result_dir):
+                return
+            files = [
+                f for f in os.listdir(result_dir) if f.lower().endswith(".xlsx")
+            ]
+            if not files:
+                return
+            files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
+            xlsx_path = os.path.join(result_dir, files[-1])
+            ResultsHandler.schedule_formula_cache_for_path(xlsx_path)
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"预计算结果表格失败: {exc}")
