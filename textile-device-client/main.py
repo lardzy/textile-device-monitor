@@ -185,6 +185,11 @@ class TextileDeviceClient:
                 device_code=config["device_code"],
                 logger=self.logger,
                 report_interval=config["report_interval"],
+                on_task_completed=(
+                    self.results_server.prewarm_latest_formulas
+                    if self.results_server
+                    else None
+                ),
             )
 
         if TrayIcon:

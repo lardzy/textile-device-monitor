@@ -28,7 +28,8 @@ class ResultsHandler(BaseHTTPRequestHandler):
     _formula_in_progress = set()
     _formula_cache_limit = 6
 
-    def _process_xlsx_with_formulas(self, xlsx_path: str) -> Optional[bytes]:
+    @classmethod
+    def _process_xlsx_with_formulas(cls, xlsx_path: str) -> Optional[bytes]:
         temp_dir = tempfile.mkdtemp()
         try:
             try:
@@ -49,12 +50,13 @@ class ResultsHandler(BaseHTTPRequestHandler):
             finally:
                 shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception as exc:
-            if self.logger:
-                self.logger.error(f"使用formulas计算失败: {exc}, 降级到openpyxl")
+            if cls.logger:
+                cls.logger.error(f"使用formulas计算失败: {exc}, 降级到openpyxl")
 
-        return self._process_xlsx_preview(xlsx_path)
+        return cls._process_xlsx_preview(xlsx_path)
 
-    def _process_xlsx_preview(self, xlsx_path: str) -> Optional[bytes]:
+    @classmethod
+    def _process_xlsx_preview(cls, xlsx_path: str) -> Optional[bytes]:
         try:
             wb = openpyxl.load_workbook(xlsx_path, data_only=True)
             output = io.BytesIO()
@@ -63,8 +65,8 @@ class ResultsHandler(BaseHTTPRequestHandler):
             wb.close()
             return output.read()
         except Exception as exc:
-            if self.logger:
-                self.logger.error(f"处理xlsx文件失败: {exc}")
+            if cls.logger:
+                cls.logger.error(f"处理xlsx文件失败: {exc}")
             return None
 
     def _build_thumbnail(
@@ -90,37 +92,41 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 self.logger.error(f"生成缩略图失败: {exc}")
             return None
 
-    def _get_cache_key(self, file_path: str) -> str:
+    @classmethod
+    def _get_cache_key(cls, file_path: str) -> str:
         return os.path.abspath(file_path)
 
-    def _get_cached_formula(self, file_path: str) -> Optional[bytes]:
+    @classmethod
+    def _get_cached_formula(cls, file_path: str) -> Optional[bytes]:
         try:
             mtime = os.path.getmtime(file_path)
         except OSError:
             return None
-        key = self._get_cache_key(file_path)
-        with self._formula_cache_lock:
-            entry = self._formula_cache.get(key)
+        key = cls._get_cache_key(file_path)
+        with cls._formula_cache_lock:
+            entry = cls._formula_cache.get(key)
             if entry and entry.get("mtime") == mtime:
-                self._formula_cache.move_to_end(key)
+                cls._formula_cache.move_to_end(key)
                 return entry.get("data")
             if entry:
-                self._formula_cache.pop(key, None)
+                cls._formula_cache.pop(key, None)
         return None
 
-    def _store_cached_formula(self, file_path: str, mtime: float, data: bytes) -> None:
-        key = self._get_cache_key(file_path)
-        with self._formula_cache_lock:
-            self._formula_cache[key] = {"mtime": mtime, "data": data}
-            self._formula_cache.move_to_end(key)
-            while len(self._formula_cache) > self._formula_cache_limit:
-                self._formula_cache.popitem(last=False)
+    @classmethod
+    def _store_cached_formula(cls, file_path: str, mtime: float, data: bytes) -> None:
+        key = cls._get_cache_key(file_path)
+        with cls._formula_cache_lock:
+            cls._formula_cache[key] = {"mtime": mtime, "data": data}
+            cls._formula_cache.move_to_end(key)
+            while len(cls._formula_cache) > cls._formula_cache_limit:
+                cls._formula_cache.popitem(last=False)
 
-    def _build_formula_cache(self, file_path: str, mtime: float) -> None:
-        data = self._process_xlsx_with_formulas(file_path)
-        key = self._get_cache_key(file_path)
-        with self._formula_cache_lock:
-            self._formula_in_progress.discard(key)
+    @classmethod
+    def _build_formula_cache(cls, file_path: str, mtime: float) -> None:
+        data = cls._process_xlsx_with_formulas(file_path)
+        key = cls._get_cache_key(file_path)
+        with cls._formula_cache_lock:
+            cls._formula_in_progress.discard(key)
         if not data:
             return
         try:
@@ -129,28 +135,33 @@ class ResultsHandler(BaseHTTPRequestHandler):
             return
         if current_mtime != mtime:
             return
-        self._store_cached_formula(file_path, mtime, data)
+        cls._store_cached_formula(file_path, mtime, data)
 
-    def _schedule_formula_cache(self, file_path: str) -> None:
+    @classmethod
+    def _schedule_formula_cache(cls, file_path: str) -> None:
         try:
             mtime = os.path.getmtime(file_path)
         except OSError:
             return
-        key = self._get_cache_key(file_path)
-        with self._formula_cache_lock:
-            entry = self._formula_cache.get(key)
+        key = cls._get_cache_key(file_path)
+        with cls._formula_cache_lock:
+            entry = cls._formula_cache.get(key)
             if entry and entry.get("mtime") == mtime:
-                self._formula_cache.move_to_end(key)
+                cls._formula_cache.move_to_end(key)
                 return
-            if key in self._formula_in_progress:
+            if key in cls._formula_in_progress:
                 return
-            self._formula_in_progress.add(key)
+            cls._formula_in_progress.add(key)
         worker = threading.Thread(
-            target=self._build_formula_cache,
+            target=cls._build_formula_cache,
             args=(file_path, mtime),
             daemon=True,
         )
         worker.start()
+
+    @classmethod
+    def schedule_formula_cache_for_path(cls, file_path: str) -> None:
+        cls._schedule_formula_cache(file_path)
 
     def _is_confocal(self) -> bool:
         return bool(getattr(self.reader, "is_laser_confocal", False))
@@ -394,8 +405,6 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
                 if files:
                     xlsx_name = files[-1]
-                    xlsx_path = os.path.join(result_dir, xlsx_name)
-                    self._schedule_formula_cache(xlsx_path)
 
             image_count = 0
             if os.path.exists(cut_pic_dir):
@@ -832,3 +841,29 @@ class ResultsServer:
         if self.httpd:
             self.httpd.shutdown()
             self.httpd = None
+
+    def prewarm_latest_formulas(self) -> None:
+        if not self.reader:
+            return
+        if getattr(self.reader, "is_laser_confocal", False):
+            return
+        try:
+            latest_folder = self.reader._get_latest_modified_folder(
+                self.reader.working_path
+            )
+            if not latest_folder:
+                return
+            result_dir = os.path.join(latest_folder, "result")
+            if not os.path.exists(result_dir):
+                return
+            files = [
+                f for f in os.listdir(result_dir) if f.lower().endswith(".xlsx")
+            ]
+            if not files:
+                return
+            files.sort(key=lambda f: os.path.getmtime(os.path.join(result_dir, f)))
+            xlsx_path = os.path.join(result_dir, files[-1])
+            ResultsHandler.schedule_formula_cache_for_path(xlsx_path)
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"预计算结果表格失败: {exc}")

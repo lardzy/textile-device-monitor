@@ -21,6 +21,7 @@ class StatusReporter:
         device_code: str,
         logger: Logger,
         report_interval: int = 5,
+        on_task_completed: Optional[Callable[[], None]] = None,
     ):
         self.api_client = api_client
         self.progress_reader = progress_reader
@@ -28,10 +29,12 @@ class StatusReporter:
         self.device_code = device_code
         self.logger = logger
         self.report_interval = report_interval
+        self.on_task_completed = on_task_completed
 
         self.manual_status: Optional[str] = None
         self.is_running = False
         self.thread: Optional[threading.Thread] = None
+        self._last_progress: Optional[int] = None
 
     def set_manual_status(self, status: Optional[str]):
         """设置手动状态
@@ -97,6 +100,17 @@ class StatusReporter:
         client_base_url = (
             self.progress_reader.get_client_base_url() if self.progress_reader else None
         )
+
+        if (
+            task_progress is not None
+            and self._last_progress is not None
+            and self._last_progress < 100
+            and task_progress == 100
+            and self.on_task_completed
+        ):
+            threading.Thread(target=self.on_task_completed, daemon=True).start()
+        if task_progress is not None:
+            self._last_progress = task_progress
 
         response = self.api_client.report_status(
             device_code=self.device_code,
