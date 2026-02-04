@@ -173,7 +173,7 @@ function QueueAssistant() {
       fetchQueue(values.device_id);
       form.resetFields();
     } catch (error) {
-      message.error(error.response?.data?.detail || '加入排队失败');
+      message.error(error?.message || '加入排队失败');
     }
   };
 
