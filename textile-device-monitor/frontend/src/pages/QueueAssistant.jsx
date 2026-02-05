@@ -246,7 +246,6 @@ function QueueAssistant() {
             danger 
             icon={<DeleteOutlined />} 
             onClick={() => handleDeleteQueue(record.id)}
-            disabled={record.position === 1}
           />
         </div>
       )

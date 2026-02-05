@@ -945,7 +945,6 @@ function DeviceMonitor() {
           danger
           icon={<DeleteOutlined />}
           onClick={() => handleDeleteQueue(record)}
-          disabled={record.position === 1}
         />
       )
     }
