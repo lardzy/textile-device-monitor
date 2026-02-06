@@ -773,6 +773,8 @@ function DeviceMonitor() {
           const msg = error?.message || '';
           if (msg.includes('folder_not_found')) {
             message.error('输出路径不存在，无法清理');
+          } else if (msg.includes('output_parent_missing')) {
+            message.error('输出路径缺少父级目录，无法清理');
           } else if (msg.includes('cleanup_not_supported')) {
             message.error('当前设备不支持清理');
           } else {
@@ -793,10 +795,11 @@ function DeviceMonitor() {
         created_by_id: queueUserIdRef.current,
       });
 
-      const copies = values.copies || 1;
+      const requestedCopies = values.copies || 1;
+      const actualCopies = Array.isArray(records) ? records.length : 0;
 
       if (records && records.length > 0) {
-        for (let i = 0; i < Math.min(records.length, copies); i++) {
+        for (let i = 0; i < records.length; i++) {
           addQueueNoticeEntry({
             id: records[i].id,
             device_id: selectedDeviceId,
@@ -806,13 +809,18 @@ function DeviceMonitor() {
         }
       }
 
-      message.success(`加入排队成功 (${copies}份)`);
+      if (actualCopies > 0) {
+        message.success(`加入排队成功 (${actualCopies}份)`);
+      }
+      if (actualCopies > 0 && actualCopies < requestedCopies) {
+        message.info(`已按配额加入 ${actualCopies} 份（超出部分忽略）`);
+      }
       saveInspectorName(values.inspector_name);
       form.resetFields();
       setInspectorName('');
       fetchQueue(selectedDeviceId, { notify: true, reason: 'join' });
     } catch (error) {
-      message.error(error.response?.data?.detail || '加入排队失败');
+      message.error(error?.message || '加入排队失败');
     }
   };
 
@@ -937,7 +945,6 @@ function DeviceMonitor() {
           danger
           icon={<DeleteOutlined />}
           onClick={() => handleDeleteQueue(record)}
-          disabled={record.position === 1}
         />
       )
     }

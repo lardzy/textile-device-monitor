@@ -29,6 +29,39 @@ def get_queue(device_id: int, db: Session = Depends(get_db)):
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def join_queue(queue: QueueCreate, db: Session = Depends(get_db)):
     """加入排队"""
+    if not queue.created_by_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="缺少浏览器ID，无法加入排队",
+        )
+
+    device = device_crud.get_device(db, queue.device_id)
+    if not device:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
+        )
+
+    device_metrics = device.metrics or {}
+    is_confocal = (
+        isinstance(device_metrics, dict)
+        and device_metrics.get("device_type") == "laser_confocal"
+    )
+    limit = 2 if is_confocal else 3
+    used = queue_crud.count_user_quota(db, queue.created_by_id, is_confocal)
+    remaining = limit - used
+
+    if remaining <= 0:
+        detail = (
+            "已达排队上限（共聚焦设备最多2个）"
+            if is_confocal
+            else "已达排队上限（非共聚焦设备最多3个）"
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+    copies = queue.copies or 1
+    effective_copies = min(copies, remaining)
+    queue.copies = effective_copies
+
     queue_records = queue_crud.join_queue(db, queue)
 
     if queue_records:
