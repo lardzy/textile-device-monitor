@@ -262,32 +262,41 @@ def get_recent(
 
     base_url = _get_client_base_url(db, device_id)
     _mark_recent_inflight(cache_key)
+
+    def _return_stale_or_raise(exc: Exception):
+        stale_value = _get_recent_stale_value(cache_key)
+        if stale_value is not None:
+            return stale_value
+        raise exc
+
     try:
         resp = requests.get(
             f"{base_url}/client/results/recent",
             params={"limit": limit},
             timeout=10,
         )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Client error")
+        payload = resp.json()
     except requests.RequestException as exc:
         _finish_recent_inflight(cache_key, None)
-        stale = _get_recent_stale_value(cache_key)
-        if stale is not None:
-            return stale
-        raise HTTPException(status_code=502, detail="Client unreachable") from exc
-    if resp.status_code != 200:
+        return _return_stale_or_raise(
+            HTTPException(status_code=502, detail="Client unreachable")
+        )
+    except ValueError:
         _finish_recent_inflight(cache_key, None)
-        stale = _get_recent_stale_value(cache_key)
-        if stale is not None:
-            return stale
-        raise HTTPException(status_code=resp.status_code, detail="Client error")
-    try:
-        payload = resp.json()
-    except ValueError as exc:
+        return _return_stale_or_raise(
+            HTTPException(status_code=502, detail="Invalid client payload")
+        )
+    except HTTPException as exc:
         _finish_recent_inflight(cache_key, None)
-        stale = _get_recent_stale_value(cache_key)
-        if stale is not None:
-            return stale
-        raise HTTPException(status_code=502, detail="Invalid client payload") from exc
+        return _return_stale_or_raise(exc)
+    except Exception:
+        _finish_recent_inflight(cache_key, None)
+        return _return_stale_or_raise(
+            HTTPException(status_code=502, detail="Recent query failed")
+        )
+
     _finish_recent_inflight(cache_key, payload)
     return payload
 
