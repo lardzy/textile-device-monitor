@@ -260,8 +260,8 @@ def get_recent(
         if inflight_event is not None:
             raise HTTPException(status_code=502, detail="Client unreachable")
 
-    inflight_event = _mark_recent_inflight(cache_key)
     base_url = _get_client_base_url(db, device_id)
+    _mark_recent_inflight(cache_key)
     try:
         resp = requests.get(
             f"{base_url}/client/results/recent",
@@ -280,7 +280,14 @@ def get_recent(
         if stale is not None:
             return stale
         raise HTTPException(status_code=resp.status_code, detail="Client error")
-    payload = resp.json()
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        _finish_recent_inflight(cache_key, None)
+        stale = _get_recent_stale_value(cache_key)
+        if stale is not None:
+            return stale
+        raise HTTPException(status_code=502, detail="Invalid client payload") from exc
     _finish_recent_inflight(cache_key, payload)
     return payload
 
