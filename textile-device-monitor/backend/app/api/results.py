@@ -359,11 +359,17 @@ def get_thumbnail(
 def cleanup_images(
     device_id: int = Query(...),
     folder: str | None = Query(None),
+    rename_enabled: bool = Query(False),
+    new_folder_name: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
     base_url = _get_client_base_url(db, device_id)
     try:
-        params = {"folder": folder} if folder else None
+        params: dict[str, str | bool] = {"rename_enabled": rename_enabled}
+        if folder:
+            params["folder"] = folder
+        if new_folder_name:
+            params["new_folder_name"] = new_folder_name
         resp = requests.post(
             f"{base_url}/client/results/cleanup",
             params=params,

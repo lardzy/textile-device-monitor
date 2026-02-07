@@ -4,6 +4,7 @@
 
 import os
 import io
+import re
 import threading
 import tempfile
 import shutil
@@ -31,6 +32,7 @@ class ResultsHandler(BaseHTTPRequestHandler):
     _recent_cache: Dict[str, object] = {}
     _recent_cache_ttl = 30
     _recent_cache_max_items = 20
+    _invalid_folder_name_pattern = re.compile(r'[\\/:*?"<>|]')
 
     @classmethod
     def _process_xlsx_with_formulas(cls, xlsx_path: str) -> Optional[bytes]:
@@ -266,6 +268,60 @@ class ResultsHandler(BaseHTTPRequestHandler):
             shutil.move(src, dst)
             moved += 1
         return {"moved": moved, "recycle_dir": recycle_dir}
+
+    def _rename_confocal_folder(self, folder_path: str, new_name: str) -> Dict[str, object]:
+        old_path = os.path.normpath(folder_path)
+        old_folder = os.path.basename(old_path.rstrip("\\/"))
+        candidate_name = (new_name or "").strip()
+        if not candidate_name:
+            raise RuntimeError("rename_name_empty")
+        if candidate_name in {".", ".."}:
+            raise RuntimeError("rename_invalid_name")
+        if self._invalid_folder_name_pattern.search(candidate_name):
+            raise RuntimeError("rename_invalid_name")
+
+        parent_dir = os.path.dirname(old_path.rstrip("\\/"))
+        if not parent_dir or not os.path.isdir(parent_dir):
+            raise RuntimeError("output_parent_missing")
+        new_path = os.path.normpath(os.path.join(parent_dir, candidate_name))
+        new_folder = os.path.basename(new_path.rstrip("\\/"))
+        if not new_folder or new_folder in {".", ".."}:
+            raise RuntimeError("rename_invalid_name")
+
+        if os.path.abspath(new_path) == os.path.abspath(old_path):
+            return {
+                "renamed": False,
+                "old_folder": old_folder,
+                "new_folder": new_folder,
+                "old_path": old_path,
+                "new_path": old_path,
+            }
+        if os.path.exists(new_path):
+            raise RuntimeError("rename_target_exists")
+
+        try:
+            os.rename(old_path, new_path)
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(f"重命名文件夹失败: {exc}")
+            raise RuntimeError("rename_failed") from exc
+
+        reader_sync = getattr(self.reader, "on_output_folder_renamed", None)
+        if callable(reader_sync):
+            try:
+                typed_sync = cast(Callable[[str, str], None], reader_sync)
+                typed_sync(old_path, new_path)
+            except Exception as exc:
+                if self.logger:
+                    self.logger.error(f"同步重命名路径失败: {exc}")
+
+        return {
+            "renamed": True,
+            "old_folder": old_folder,
+            "new_folder": new_folder,
+            "old_path": old_path,
+            "new_path": new_path,
+        }
 
     def _get_recent_results(self, limit: int) -> List[Dict]:
         if not self.reader:
@@ -855,12 +911,24 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 folders = query.get("folder")
                 if folders:
                     folder_param = unquote(folders[0])
+            rename_enabled_raw = query.get("rename_enabled", ["false"])[0]
+            rename_enabled = str(rename_enabled_raw).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            new_folder_name = None
+            if "new_folder_name" in query and query.get("new_folder_name"):
+                names = query.get("new_folder_name")
+                if names:
+                    new_folder_name = unquote(names[0])
             target_folder = self._resolve_confocal_folder(folder_param)
             if not target_folder or not os.path.isdir(target_folder):
                 self._send_json(404, {"error": "folder_not_found"})
                 return
             try:
-                result = self._cleanup_confocal_images(target_folder)
+                cleanup_result = self._cleanup_confocal_images(target_folder)
             except Exception as exc:
                 if self.logger:
                     self.logger.error(f"清理图片失败: {exc}")
@@ -869,7 +937,42 @@ class ResultsHandler(BaseHTTPRequestHandler):
                 else:
                     self._send_json(500, {"error": "cleanup_failed"})
                 return
-            self._send_json(200, result)
+
+            normalized_target = os.path.normpath(target_folder)
+            folder_name = os.path.basename(normalized_target.rstrip("\\/"))
+            result_payload: Dict[str, object] = {
+                **cleanup_result,
+                "rename_enabled": rename_enabled,
+                "renamed": False,
+                "old_folder": folder_name,
+                "new_folder": folder_name,
+                "old_path": normalized_target,
+                "new_path": normalized_target,
+            }
+
+            if rename_enabled:
+                try:
+                    rename_result = self._rename_confocal_folder(
+                        normalized_target, new_folder_name or ""
+                    )
+                    result_payload.update(rename_result)
+                except Exception as exc:
+                    if self.logger:
+                        self.logger.error(f"重命名文件夹失败: {exc}")
+                    error_code = str(exc)
+                    if error_code in {
+                        "rename_name_empty",
+                        "rename_invalid_name",
+                        "output_parent_missing",
+                    }:
+                        self._send_json(400, {"error": error_code})
+                    elif error_code == "rename_target_exists":
+                        self._send_json(409, {"error": error_code})
+                    else:
+                        self._send_json(500, {"error": "rename_failed"})
+                    return
+
+            self._send_json(200, result_payload)
             return
 
         self._send_json(404, {"error": "not_found"})
