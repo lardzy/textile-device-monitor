@@ -885,6 +885,35 @@ class OlympusProgressReader(ProgressReader):
                     return joined
         return self._current_output_path
 
+    def on_output_folder_renamed(self, old_path: str, new_path: str) -> None:
+        if not old_path or not new_path:
+            return
+        old_norm = os.path.normpath(old_path)
+        new_norm = os.path.normpath(new_path)
+
+        with self._lock:
+            if self._current_output_path and os.path.normpath(self._current_output_path) == old_norm:
+                self._current_output_path = new_norm
+                self.working_path = os.path.dirname(new_norm)
+
+            updated_recent = deque(maxlen=self._recent_results.maxlen)
+            for entry in self._recent_results:
+                entry_path = entry.get("path")
+                if isinstance(entry_path, str) and os.path.normpath(entry_path) == old_norm:
+                    updated_recent.append({**entry, "path": new_norm})
+                else:
+                    updated_recent.append(entry)
+            self._recent_results = updated_recent
+
+            updated_candidates: list[str] = []
+            seen: set[str] = set()
+            for candidate in self._output_path_candidates:
+                next_candidate = new_norm if os.path.normpath(candidate) == old_norm else candidate
+                if next_candidate not in seen:
+                    seen.add(next_candidate)
+                    updated_candidates.append(next_candidate)
+            self._output_path_candidates = updated_candidates
+
     def get_recent_results(self, limit: int) -> list[Dict[str, Any]]:
         self._refresh_state()
         today = datetime.now().date()

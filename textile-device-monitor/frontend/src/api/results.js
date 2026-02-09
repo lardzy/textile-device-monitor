@@ -16,10 +16,12 @@ export const resultsApi = {
     const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : '';
     return `/api/results/image/${encodeURIComponent(filename)}?device_id=${deviceId}${folderParam}`;
   },
-  cleanupImages: (deviceId, folder) => api.post('/results/cleanup', null, {
+  cleanupImages: (deviceId, folder, options = {}) => api.post('/results/cleanup', null, {
     params: {
       device_id: deviceId,
-      ...(folder ? { folder } : {})
+      ...(folder ? { folder } : {}),
+      ...(options.renameEnabled != null ? { rename_enabled: options.renameEnabled } : {}),
+      ...(options.newFolderName ? { new_folder_name: options.newFolderName } : {}),
     }
   }),
 };

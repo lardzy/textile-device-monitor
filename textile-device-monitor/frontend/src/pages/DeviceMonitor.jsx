@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
-import { Card, Row, Col, Badge, Tag, Progress, Form, Input, InputNumber, Button, Table, List, Select, message, Modal, Tooltip } from 'antd';
+import { Card, Row, Col, Badge, Tag, Progress, Form, Input, InputNumber, Button, Table, List, Select, message, Modal, Tooltip, Checkbox, Typography } from 'antd';
 import { CheckCircleOutlined, ClockCircleOutlined, ClockCircleFilled, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
@@ -240,6 +240,23 @@ const getValidOutputPath = (outputPath) => {
   return isTempOutputPath(outputPath) ? null : outputPath;
 };
 
+const getFolderNameFromPath = (path) => {
+  if (!path) return '';
+  const normalized = String(path).replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!normalized) return '';
+  const idx = normalized.lastIndexOf('/');
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
+};
+
+const getDefaultRenameName = (folderName) => {
+  const safeName = String(folderName || '').trim();
+  if (!safeName) return '';
+  const [prefix] = safeName.split('_');
+  return prefix || safeName;
+};
+
+const invalidFolderNamePattern = /[\\/:*?"<>|]/;
+
 function DeviceMonitor() {
   const [devices, setDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState(null);
@@ -248,6 +265,14 @@ function DeviceMonitor() {
   const [inspectorName, setInspectorName] = useState(getInspectorName());
   const [tableModal, setTableModal] = useState({ open: false, folder: null });
   const [imagesModal, setImagesModal] = useState({ open: false, folder: null });
+  const [cleanupModal, setCleanupModal] = useState({
+    open: false,
+    folder: null,
+    sourceFolderName: '',
+    renameEnabled: false,
+    newFolderName: '',
+    submitting: false,
+  });
   const [recentResults, setRecentResults] = useState([]);
   const [notifyModes, setNotifyModes] = useState(() => getQueueNoticeModes());
   const [nowTime, setNowTime] = useState(Date.now());
@@ -738,6 +763,7 @@ function DeviceMonitor() {
     }
     setTableModal({ open: false, folder: null });
     setImagesModal({ open: false, folder: null });
+    setCleanupModal(prev => ({ ...prev, open: false, submitting: false }));
   }, [selectedDeviceId]);
 
   useEffect(() => {
@@ -756,33 +782,85 @@ function DeviceMonitor() {
     return `${basePath}?device_id=${selectedDevice.id}${folderParam}`;
   };
 
-  const handleCleanupImages = (folder) => {
+  const openCleanupModal = (folder) => {
     if (!selectedDevice?.id) return;
-    Modal.confirm({
-      title: '删除多余图片',
-      content: '仅保留以“_I.jpg”结尾的图片，其余图片会移动到输出目录的 .recycle 文件夹。',
-      okText: '确认删除',
-      cancelText: '取消',
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          const data = await resultsApi.cleanupImages(selectedDevice.id, folder || undefined);
-          const moved = data?.moved ?? 0;
-          message.success(`已移动 ${moved} 张图片`);
-        } catch (error) {
-          const msg = error?.message || '';
-          if (msg.includes('folder_not_found')) {
-            message.error('输出路径不存在，无法清理');
-          } else if (msg.includes('output_parent_missing')) {
-            message.error('输出路径缺少父级目录，无法清理');
-          } else if (msg.includes('cleanup_not_supported')) {
-            message.error('当前设备不支持清理');
-          } else {
-            message.error('删除多余图片失败');
-          }
-        }
-      }
+    const fallbackFolder = getValidOutputPath(selectedDevice?.metrics?.olympus?.output_path) || '';
+    const sourceFolder = folder || fallbackFolder;
+    const sourceFolderName = getFolderNameFromPath(sourceFolder);
+    setCleanupModal({
+      open: true,
+      folder: folder || null,
+      sourceFolderName,
+      renameEnabled: false,
+      newFolderName: getDefaultRenameName(sourceFolderName),
+      submitting: false,
     });
+  };
+
+  const closeCleanupModal = () => {
+    setCleanupModal(prev => {
+      if (prev.submitting) return prev;
+      return { ...prev, open: false };
+    });
+  };
+
+  const handleCleanupSubmit = async () => {
+    if (!selectedDevice?.id) return;
+
+    const renameName = cleanupModal.newFolderName.trim();
+    if (cleanupModal.renameEnabled) {
+      if (!renameName) {
+        message.error('新文件夹名称不能为空');
+        return;
+      }
+      if (renameName === '.' || renameName === '..' || invalidFolderNamePattern.test(renameName)) {
+        message.error('新文件夹名称不合法，不能包含 \\ / : * ? " < > |');
+        return;
+      }
+    }
+
+    setCleanupModal(prev => ({ ...prev, submitting: true }));
+    try {
+      const data = await resultsApi.cleanupImages(
+        selectedDevice.id,
+        cleanupModal.folder || undefined,
+        {
+          renameEnabled: cleanupModal.renameEnabled,
+          newFolderName: cleanupModal.renameEnabled ? renameName : undefined,
+        }
+      );
+      const moved = data?.moved ?? 0;
+      if (cleanupModal.renameEnabled && data?.renamed) {
+        message.success(`已移动 ${moved} 张图片，文件夹已重命名为 ${data?.new_folder || renameName}`);
+      } else {
+        message.success(`已移动 ${moved} 张图片`);
+      }
+      setCleanupModal(prev => ({ ...prev, open: false, submitting: false }));
+      if (data?.renamed) {
+        setImagesModal({ open: false, folder: null });
+      }
+      fetchRecentResults(selectedDevice);
+    } catch (error) {
+      setCleanupModal(prev => ({ ...prev, submitting: false }));
+      const msg = error?.message || '';
+      if (msg.includes('folder_not_found')) {
+        message.error('输出路径不存在，无法清理');
+      } else if (msg.includes('output_parent_missing')) {
+        message.error('输出路径缺少父级目录，无法清理');
+      } else if (msg.includes('cleanup_not_supported')) {
+        message.error('当前设备不支持清理');
+      } else if (msg.includes('rename_name_empty')) {
+        message.error('新文件夹名称不能为空');
+      } else if (msg.includes('rename_invalid_name')) {
+        message.error('新文件夹名称不合法');
+      } else if (msg.includes('rename_target_exists')) {
+        message.error('目标文件夹已存在，请更换名称');
+      } else if (msg.includes('rename_failed')) {
+        message.error('重命名文件夹失败');
+      } else {
+        message.error('删图/重命名文件夹失败');
+      }
+    }
   };
 
 
@@ -1172,9 +1250,9 @@ function DeviceMonitor() {
                             type="primary"
                             danger
                             disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
-                            onClick={() => handleCleanupImages(null)}
+                            onClick={() => openCleanupModal(null)}
                           >
-                            删除多余图片
+                            删图/重命名文件夹
                           </Button>
                         )}
                         <Button
@@ -1217,9 +1295,9 @@ function DeviceMonitor() {
                                     size="small"
                                     danger
                                     disabled={!item.folder}
-                                    onClick={() => handleCleanupImages(item.folder)}
+                                    onClick={() => openCleanupModal(item.folder)}
                                   >
-                                    删除多余图片
+                                    删图/重命名文件夹
                                   </Button>
                                 )}
                                 <Button
@@ -1242,6 +1320,56 @@ function DeviceMonitor() {
                           onClose={() => setTableModal({ open: false, folder: null })}
                         />
                       )}
+                      <Modal
+                        title="删图/重命名文件夹"
+                        open={cleanupModal.open}
+                        onCancel={closeCleanupModal}
+                        onOk={handleCleanupSubmit}
+                        okText="确认执行"
+                        cancelText="取消"
+                        confirmLoading={cleanupModal.submitting}
+                        okButtonProps={{ danger: true }}
+                        maskClosable={!cleanupModal.submitting}
+                        keyboard={!cleanupModal.submitting}
+                        destroyOnClose={false}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                          <div style={{ color: '#666', fontSize: 12 }}>
+                            仅保留以“_I.jpg”结尾的图片，其余图片会移动到输出目录的 .recycle 文件夹。
+                          </div>
+                          <div>
+                            <div style={{ marginBottom: 4, color: '#555' }}>原文件夹名称（可复制）</div>
+                            <Typography.Text copyable={{ text: cleanupModal.sourceFolderName || '-' }}>
+                              {cleanupModal.sourceFolderName || '-'}
+                            </Typography.Text>
+                          </div>
+                          <Checkbox
+                            checked={cleanupModal.renameEnabled}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setCleanupModal(prev => ({
+                                ...prev,
+                                renameEnabled: checked,
+                                newFolderName: checked && !prev.newFolderName
+                                  ? getDefaultRenameName(prev.sourceFolderName)
+                                  : prev.newFolderName,
+                              }));
+                            }}
+                          >
+                            同时重命名文件夹
+                          </Checkbox>
+                          <Input
+                            placeholder="请输入新文件夹名称"
+                            disabled={!cleanupModal.renameEnabled}
+                            value={cleanupModal.newFolderName}
+                            maxLength={128}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setCleanupModal(prev => ({ ...prev, newFolderName: value }));
+                            }}
+                          />
+                        </div>
+                      </Modal>
                       <Modal
                         title="结果图片"
                         open={imagesModal.open}
