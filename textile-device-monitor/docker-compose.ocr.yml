@@ -32,11 +32,11 @@ services:
       - --served-model-name
       - glm-ocr
       - --gpu-memory-utilization
-      - "0.55"
+      - "0.50"
       - --max-num-seqs
       - "1"
       - --max-model-len
-      - "32768"
+      - "8192"
     volumes:
       - hf_cache:/root/.cache/huggingface
     networks:
