@@ -6,6 +6,11 @@ export const ocrApi = {
       'Content-Type': 'multipart/form-data',
     },
   }),
+  createBatchJobs: (formData) => api.post('/ocr/jobs/batch', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  }),
   getJob: (jobId) => api.get(`/ocr/jobs/${encodeURIComponent(jobId)}`),
   getJobResult: (jobId) => api.get(`/ocr/jobs/${encodeURIComponent(jobId)}/result`),
   downloadArtifact: (jobId, kind) => api.get(`/ocr/jobs/${encodeURIComponent(jobId)}/artifacts/${kind}`, {

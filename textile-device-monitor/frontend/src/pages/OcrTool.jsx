@@ -1,6 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Descriptions, Form, Input, Space, Tabs, Tag, Typography, Upload, message } from 'antd';
-import { CopyOutlined, DownloadOutlined, InboxOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
+import {
+  Alert,
+  Button,
+  Card,
+  Descriptions,
+  Form,
+  Input,
+  Space,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  Upload,
+  message,
+} from 'antd';
+import {
+  CopyOutlined,
+  DownloadOutlined,
+  InboxOutlined,
+  ReloadOutlined,
+  UploadOutlined,
+} from '@ant-design/icons';
 import { saveAs } from 'file-saver';
 import dayjs from 'dayjs';
 import { ocrApi } from '../api/ocr';
@@ -11,6 +31,7 @@ const { Paragraph, Text } = Typography;
 const POLLING_INTERVAL_MS = 2000;
 const POLLING_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_MB = 30;
+const MAX_BATCH_FILES = 10;
 const ALLOWED_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'webp'];
 
 const ERROR_CODE_MESSAGES = {
@@ -22,6 +43,8 @@ const ERROR_CODE_MESSAGES = {
   pdf_page_limit_exceeded: '单次识别页数过多，请缩小页面范围后重试',
   pdf_processing_failed: 'PDF预处理失败，请稍后重试',
   file_too_large: `文件过大，请控制在 ${MAX_UPLOAD_MB}MB 以内`,
+  too_many_files: `一次最多上传 ${MAX_BATCH_FILES} 个文件`,
+  empty_file_list: '请先选择文件',
   ocr_timeout: 'OCR识别超时，请稍后重试',
   ocr_service_unreachable: 'OCR服务不可达，请检查 OCR 服务状态',
   ocr_inference_failed: 'OCR识别失败，请重试',
@@ -71,58 +94,123 @@ function OcrTool() {
   const [pageRange, setPageRange] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [job, setJob] = useState(null);
-  const [result, setResult] = useState(null);
   const [polling, setPolling] = useState(false);
+  const [jobs, setJobs] = useState([]);
+  const [resultsByJobId, setResultsByJobId] = useState({});
+  const [activeJobId, setActiveJobId] = useState(null);
+
   const pollStartedAtRef = useRef(0);
   const pollingBusyRef = useRef(false);
+  const failedNoticeRef = useRef(new Set());
+  const jobsRef = useRef([]);
+  const resultsRef = useRef({});
   const [messageApi, contextHolder] = message.useMessage();
 
-  const selectedFile = fileList[0]?.originFileObj || fileList[0] || null;
-  const statusConfig = STATUS_MAP[job?.status] || STATUS_MAP.queued;
-  const markdownText = result?.markdown_text || '';
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  useEffect(() => {
+    resultsRef.current = resultsByJobId;
+  }, [resultsByJobId]);
+
+  useEffect(() => {
+    if (!jobs.length) {
+      setActiveJobId(null);
+      return;
+    }
+    if (!activeJobId || !jobs.some((item) => item.job_id === activeJobId)) {
+      setActiveJobId(jobs[0].job_id);
+    }
+  }, [jobs, activeJobId]);
+
+  const activeJob = useMemo(
+    () => jobs.find((item) => item.job_id === activeJobId) || null,
+    [jobs, activeJobId],
+  );
+  const activeResult = activeJob ? resultsByJobId[activeJob.job_id] : null;
+  const statusConfig = STATUS_MAP[activeJob?.status] || STATUS_MAP.queued;
+  const markdownText = activeResult?.markdown_text || '';
   const jsonText = useMemo(
-    () => JSON.stringify(result?.json_data ?? {}, null, 2),
-    [result],
+    () => JSON.stringify(activeResult?.json_data ?? {}, null, 2),
+    [activeResult],
   );
 
-  const refreshJobState = async (jobId) => {
-    if (!jobId || pollingBusyRef.current) return;
+  const refreshPendingJobs = async () => {
+    if (pollingBusyRef.current) return;
+
+    const snapshotJobs = jobsRef.current;
+    const pendingJobs = snapshotJobs.filter((job) => ['queued', 'running'].includes(job.status));
+    if (!pendingJobs.length) {
+      setPolling(false);
+      return;
+    }
+
+    if (Date.now() - pollStartedAtRef.current > POLLING_TIMEOUT_MS) {
+      setPolling(false);
+      messageApi.error(getErrorMessage('ocr_timeout'));
+      return;
+    }
+
     pollingBusyRef.current = true;
     try {
-      const latestJob = await ocrApi.getJob(jobId);
-      setJob(latestJob);
-
-      if (latestJob.status === 'succeeded') {
-        const latestResult = await ocrApi.getJobResult(jobId);
-        setResult(latestResult);
-        setPolling(false);
-      } else if (latestJob.status === 'failed') {
-        setPolling(false);
-        messageApi.error(getErrorMessage(pickJobError(latestJob)));
-      } else if (Date.now() - pollStartedAtRef.current > POLLING_TIMEOUT_MS) {
-        setPolling(false);
-        messageApi.error(getErrorMessage('ocr_timeout'));
+      const updatedMap = new Map();
+      for (const pendingJob of pendingJobs) {
+        try {
+          const latestJob = await ocrApi.getJob(pendingJob.job_id);
+          updatedMap.set(pendingJob.job_id, latestJob);
+        } catch (error) {
+          updatedMap.set(pendingJob.job_id, {
+            ...pendingJob,
+            status: 'failed',
+            error_code: error.message,
+            error_message: error.message,
+          });
+        }
       }
-    } catch (error) {
-      setPolling(false);
-      messageApi.error(getErrorMessage(error.message));
+
+      const mergedJobs = snapshotJobs.map((job) => {
+        const updated = updatedMap.get(job.job_id);
+        if (!updated) return job;
+        return { ...job, ...updated };
+      });
+      setJobs(mergedJobs);
+
+      for (const job of mergedJobs) {
+        if (job.status === 'failed' && !failedNoticeRef.current.has(job.job_id)) {
+          failedNoticeRef.current.add(job.job_id);
+          messageApi.error(`[${job.original_filename || job.job_id}] ${getErrorMessage(pickJobError(job))}`);
+        }
+        if (job.status === 'succeeded' && !resultsRef.current[job.job_id]) {
+          try {
+            const result = await ocrApi.getJobResult(job.job_id);
+            setResultsByJobId((prev) => ({ ...prev, [job.job_id]: result }));
+          } catch (error) {
+            if (!failedNoticeRef.current.has(`${job.job_id}:result`)) {
+              failedNoticeRef.current.add(`${job.job_id}:result`);
+              messageApi.error(`[${job.original_filename || job.job_id}] ${getErrorMessage(error.message)}`);
+            }
+          }
+        }
+      }
+
+      const stillPending = mergedJobs.some((job) => ['queued', 'running'].includes(job.status));
+      setPolling(stillPending);
     } finally {
       pollingBusyRef.current = false;
     }
   };
 
   useEffect(() => {
-    if (!polling || !job?.job_id) return undefined;
-    const currentJobId = job.job_id;
-    refreshJobState(currentJobId);
+    if (!polling) return undefined;
+    refreshPendingJobs();
     const timer = window.setInterval(() => {
-      refreshJobState(currentJobId);
+      refreshPendingJobs();
     }, POLLING_INTERVAL_MS);
     return () => {
       window.clearInterval(timer);
     };
-  }, [polling, job?.job_id]);
+  }, [polling]);
 
   const validateFile = (file) => {
     const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -138,35 +226,59 @@ function OcrTool() {
     return false;
   };
 
+  const handleFileChange = ({ fileList: nextFileList }) => {
+    let next = nextFileList;
+    if (next.length > MAX_BATCH_FILES) {
+      messageApi.warning(getErrorMessage('too_many_files'));
+      next = next.slice(0, MAX_BATCH_FILES);
+    }
+    setFileList(next);
+  };
+
   const handleSubmit = async () => {
-    if (!selectedFile) {
+    if (!fileList.length) {
       messageApi.error('请先选择文件');
+      return;
+    }
+    if (fileList.length > MAX_BATCH_FILES) {
+      messageApi.error(getErrorMessage('too_many_files'));
       return;
     }
 
     const formData = new FormData();
-    formData.append('file', selectedFile);
+    fileList.forEach((item) => {
+      const rawFile = item.originFileObj || item;
+      formData.append('files', rawFile);
+    });
     if (pageRange.trim()) formData.append('page_range', pageRange.trim());
     if (note.trim()) formData.append('note', note.trim());
 
     setSubmitting(true);
     try {
-      const data = await ocrApi.createJob(formData);
-      const initialJob = {
-        job_id: data.job_id,
-        status: data.status || 'queued',
-        created_at: dayjs().toISOString(),
+      const data = await ocrApi.createBatchJobs(formData);
+      const nowIso = dayjs().toISOString();
+      const createdJobs = (data.jobs || []).map((job, index) => ({
+        job_id: job.job_id,
+        status: job.status || 'queued',
+        original_filename: job.original_filename || fileList[index]?.name || '-',
+        upload_index: job.upload_index || index + 1,
+        created_at: nowIso,
         started_at: null,
         finished_at: null,
         error_code: null,
         error_message: null,
         queue_position: null,
-      };
-      setJob(initialJob);
-      setResult(null);
-      setPolling(true);
+      }));
+
+      setJobs(createdJobs);
+      setResultsByJobId({});
+      setActiveJobId(createdJobs[0]?.job_id || null);
+      failedNoticeRef.current.clear();
+
+      const hasPending = createdJobs.some((job) => ['queued', 'running'].includes(job.status));
+      setPolling(hasPending);
       pollStartedAtRef.current = Date.now();
-      messageApi.success('OCR任务已提交');
+      messageApi.success(`OCR任务已提交（共 ${createdJobs.length} 个文件）`);
     } catch (error) {
       messageApi.error(getErrorMessage(error.message));
     } finally {
@@ -185,50 +297,90 @@ function OcrTool() {
   };
 
   const handleDownload = async (kind) => {
-    if (!job?.job_id) return;
+    if (!activeJob?.job_id) return;
     try {
-      const blob = await ocrApi.downloadArtifact(job.job_id, kind);
+      const blob = await ocrApi.downloadArtifact(activeJob.job_id, kind);
       const ext = kind === 'md' ? 'md' : 'json';
-      saveAs(blob, `${job.job_id}.${ext}`);
+      saveAs(blob, `${activeJob.job_id}.${ext}`);
     } catch (error) {
       messageApi.error(getErrorMessage(error.message));
     }
   };
 
+  const jobColumns = [
+    {
+      title: '顺序',
+      dataIndex: 'upload_index',
+      key: 'upload_index',
+      width: 72,
+    },
+    {
+      title: '文件名',
+      dataIndex: 'original_filename',
+      key: 'original_filename',
+      ellipsis: true,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 110,
+      render: (status) => {
+        const cfg = STATUS_MAP[status] || STATUS_MAP.queued;
+        return <Tag color={cfg.color}>{cfg.text}</Tag>;
+      },
+    },
+    {
+      title: '排队位置',
+      dataIndex: 'queue_position',
+      key: 'queue_position',
+      width: 94,
+      render: (value) => (value == null ? '-' : value),
+    },
+    {
+      title: '耗时',
+      key: 'duration',
+      width: 110,
+      render: (_, record) => formatDuration(record),
+    },
+  ];
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {contextHolder}
 
-      <Card title="OCR识别">
+      <Card title="OCR识别（多文件顺序处理）">
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Dragger
             fileList={fileList}
-            multiple={false}
-            maxCount={1}
+            multiple
+            maxCount={MAX_BATCH_FILES}
             beforeUpload={validateFile}
-            onChange={({ fileList: nextFileList }) => setFileList(nextFileList.slice(-1))}
-            onRemove={() => setFileList([])}
+            onChange={handleFileChange}
+            onRemove={() => true}
             accept=".pdf,.png,.jpg,.jpeg,.webp"
           >
             <p className="ant-upload-drag-icon">
               <InboxOutlined />
             </p>
             <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
-            <p className="ant-upload-hint">支持 PDF/PNG/JPG/JPEG/WEBP，单文件，最大 30MB</p>
+            <p className="ant-upload-hint">
+              支持 PDF/PNG/JPG/JPEG/WEBP，单文件最大 {MAX_UPLOAD_MB}MB，最多 {MAX_BATCH_FILES} 个文件，按上传顺序逐个处理
+            </p>
           </Dragger>
 
           <Form layout="vertical">
             <Form.Item label="输出格式">
               <Input value="Markdown + JSON" disabled />
             </Form.Item>
-            <Form.Item label="页面范围（可选）">
+            <Form.Item label="页面范围（可选，对本次所有文件生效）">
               <Input
                 value={pageRange}
                 onChange={(event) => setPageRange(event.target.value)}
                 placeholder="例如：1-3,5,8-10"
               />
             </Form.Item>
-            <Form.Item label="任务备注（可选）">
+            <Form.Item label="任务备注（可选，对本次所有文件生效）">
               <Input
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
@@ -244,11 +396,8 @@ function OcrTool() {
               >
                 提交识别
               </Button>
-              {job?.job_id ? (
-                <Button
-                  icon={<ReloadOutlined />}
-                  onClick={() => refreshJobState(job.job_id)}
-                >
+              {jobs.length ? (
+                <Button icon={<ReloadOutlined />} onClick={refreshPendingJobs}>
                   刷新状态
                 </Button>
               ) : null}
@@ -258,44 +407,67 @@ function OcrTool() {
       </Card>
 
       <Card title="任务状态">
-        {!job ? (
+        {!jobs.length ? (
           <Alert type="info" message="尚未提交任务" showIcon />
         ) : (
-          <Descriptions bordered size="small" column={1}>
-            <Descriptions.Item label="任务ID">
-              <Text copyable>{job.job_id}</Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="状态">
-              <Tag color={statusConfig.color}>{statusConfig.text}</Tag>
-              {polling ? <Text type="secondary">（自动轮询中）</Text> : null}
-            </Descriptions.Item>
-            <Descriptions.Item label="排队位置">
-              {job.queue_position == null ? '-' : job.queue_position}
-            </Descriptions.Item>
-            <Descriptions.Item label="创建时间">
-              {formatDateTime(job.created_at)}
-            </Descriptions.Item>
-            <Descriptions.Item label="开始时间">
-              {formatDateTime(job.started_at)}
-            </Descriptions.Item>
-            <Descriptions.Item label="完成时间">
-              {formatDateTime(job.finished_at)}
-            </Descriptions.Item>
-            <Descriptions.Item label="耗时">
-              {formatDuration(job)}
-            </Descriptions.Item>
-            <Descriptions.Item label="失败原因">
-              {job.error_code || job.error_message
-                ? getErrorMessage(pickJobError(job))
-                : '-'}
-            </Descriptions.Item>
-          </Descriptions>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Table
+              size="small"
+              rowKey="job_id"
+              columns={jobColumns}
+              dataSource={jobs}
+              pagination={false}
+              rowClassName={(record) => (record.job_id === activeJobId ? 'ant-table-row-selected' : '')}
+              onRow={(record) => ({
+                onClick: () => setActiveJobId(record.job_id),
+              })}
+            />
+
+            {activeJob ? (
+              <Descriptions bordered size="small" column={1}>
+                <Descriptions.Item label="任务ID">
+                  <Text copyable>{activeJob.job_id}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="当前文件">
+                  {activeJob.original_filename || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  <Tag color={statusConfig.color}>{statusConfig.text}</Tag>
+                  {polling ? <Text type="secondary">（自动轮询中）</Text> : null}
+                </Descriptions.Item>
+                <Descriptions.Item label="排队位置">
+                  {activeJob.queue_position == null ? '-' : activeJob.queue_position}
+                </Descriptions.Item>
+                <Descriptions.Item label="创建时间">
+                  {formatDateTime(activeJob.created_at)}
+                </Descriptions.Item>
+                <Descriptions.Item label="开始时间">
+                  {formatDateTime(activeJob.started_at)}
+                </Descriptions.Item>
+                <Descriptions.Item label="完成时间">
+                  {formatDateTime(activeJob.finished_at)}
+                </Descriptions.Item>
+                <Descriptions.Item label="耗时">
+                  {formatDuration(activeJob)}
+                </Descriptions.Item>
+                <Descriptions.Item label="失败原因">
+                  {activeJob.error_code || activeJob.error_message
+                    ? getErrorMessage(pickJobError(activeJob))
+                    : '-'}
+                </Descriptions.Item>
+              </Descriptions>
+            ) : null}
+          </Space>
         )}
       </Card>
 
       <Card title="识别结果">
-        {!result ? (
-          <Alert type="info" message="任务成功后会在此显示 Markdown 和 JSON 结果" showIcon />
+        {!activeJob ? (
+          <Alert type="info" message="请选择任务查看结果" showIcon />
+        ) : activeJob.status !== 'succeeded' ? (
+          <Alert type="info" message="当前任务尚未成功，完成后会在此显示 Markdown 和 JSON 结果" showIcon />
+        ) : !activeResult ? (
+          <Alert type="info" message="结果加载中，请稍候或点击刷新状态" showIcon />
         ) : (
           <Tabs
             items={[

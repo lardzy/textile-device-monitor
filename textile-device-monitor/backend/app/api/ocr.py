@@ -32,14 +32,7 @@ def _validate_extension(filename: str) -> None:
         raise HTTPException(status_code=400, detail="invalid_file_type")
 
 
-@router.post("/jobs")
-async def create_ocr_job(
-    file: UploadFile = File(...),
-    page_range: str | None = Form(None),
-    note: str | None = Form(None),
-):
-    _ensure_enabled()
-
+async def _save_upload_file(file: UploadFile) -> tuple[Path, str]:
     filename = _normalize_filename(file.filename or "upload")
     _validate_extension(filename)
 
@@ -70,6 +63,18 @@ async def create_ocr_job(
     finally:
         await file.close()
 
+    return upload_path, filename
+
+
+@router.post("/jobs")
+async def create_ocr_job(
+    file: UploadFile = File(...),
+    page_range: str | None = Form(None),
+    note: str | None = Form(None),
+):
+    _ensure_enabled()
+    upload_path, filename = await _save_upload_file(file)
+
     try:
         job = ocr_job_manager.create_job(
             upload_path=str(upload_path),
@@ -81,7 +86,64 @@ async def create_ocr_job(
         upload_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="ocr_inference_failed") from exc
 
-    return {"job_id": job["job_id"], "status": job["status"]}
+    return {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "original_filename": job.get("original_filename") or filename,
+    }
+
+
+@router.post("/jobs/batch")
+async def create_ocr_jobs_batch(
+    files: list[UploadFile] = File(...),
+    page_range: str | None = Form(None),
+    note: str | None = Form(None),
+):
+    _ensure_enabled()
+
+    if not files:
+        raise HTTPException(status_code=400, detail="empty_file_list")
+
+    max_batch_files = max(1, settings.OCR_MAX_BATCH_FILES)
+    if len(files) > max_batch_files:
+        raise HTTPException(status_code=400, detail="too_many_files")
+
+    saved_uploads: list[tuple[Path, str]] = []
+    try:
+        for file in files:
+            upload_path, filename = await _save_upload_file(file)
+            saved_uploads.append((upload_path, filename))
+    except Exception:
+        for upload_path, _ in saved_uploads:
+            upload_path.unlink(missing_ok=True)
+        raise
+
+    created_jobs: list[dict[str, str | int]] = []
+    try:
+        for index, (upload_path, filename) in enumerate(saved_uploads, start=1):
+            job = ocr_job_manager.create_job(
+                upload_path=str(upload_path),
+                original_filename=filename,
+                page_range=page_range,
+                note=note,
+            )
+            created_jobs.append(
+                {
+                    "job_id": job["job_id"],
+                    "status": job["status"],
+                    "original_filename": job.get("original_filename") or filename,
+                    "upload_index": index,
+                }
+            )
+    except Exception as exc:
+        for upload_path, _ in saved_uploads[len(created_jobs) :]:
+            upload_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="ocr_inference_failed") from exc
+
+    return {
+        "jobs": created_jobs,
+        "total": len(created_jobs),
+    }
 
 
 @router.get("/jobs/{job_id}")

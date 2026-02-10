@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     OCR_UPLOAD_DIR: str = "/tmp/ocr_uploads"
     OCR_OUTPUT_DIR: str = "/tmp/ocr_outputs"
     OCR_MAX_UPLOAD_MB: int = 30
+    OCR_MAX_BATCH_FILES: int = 10
     OCR_JOB_TIMEOUT_SECONDS: int = 600
     OCR_MAX_CONCURRENT_JOBS: int = 1
     OCR_RETENTION_HOURS: int = 24
