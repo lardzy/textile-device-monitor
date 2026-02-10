@@ -1,7 +1,7 @@
 [Setup]
 AppId={{C12E1D9A-9B3B-4A2B-9E5A-1E2D8B08C6C1}
 AppName=Textile Device Client (Console)
-AppVersion=1.0.0
+AppVersion=1.0.1
 AppPublisher=Textile Device Monitor
 DefaultDirName={localappdata}\TextileDeviceClient
 DefaultGroupName=Textile Device Client
