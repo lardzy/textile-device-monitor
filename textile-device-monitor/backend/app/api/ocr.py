@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.config import settings
 from app.services.ocr_jobs import ocr_job_manager
@@ -14,6 +15,10 @@ router = APIRouter(prefix="/ocr", tags=["ocr"])
 
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
 INVALID_FILENAME_CHARS = re.compile(r"[^\w.\- ]+")
+
+
+class OcrDocxExportRequest(BaseModel):
+    job_ids: list[str]
 
 
 def _ensure_enabled() -> None:
@@ -193,3 +198,23 @@ def download_artifact(job_id: str, kind: str):
     media_type = "text/markdown; charset=utf-8" if kind == "md" else "application/json"
     filename = f"{job_id}.{kind}"
     return FileResponse(path=artifact_path, media_type=media_type, filename=filename)
+
+
+@router.post("/jobs/export/docx")
+def export_docx(payload: OcrDocxExportRequest):
+    _ensure_enabled()
+    try:
+        artifact_path, filename = ocr_job_manager.export_jobs_docx(payload.job_ids)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {"empty_job_ids", "job_not_found", "job_not_completed"}:
+            raise HTTPException(status_code=400, detail=detail) from exc
+        raise HTTPException(status_code=500, detail="ocr_inference_failed") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="ocr_inference_failed") from exc
+
+    return FileResponse(
+        path=artifact_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=filename,
+    )

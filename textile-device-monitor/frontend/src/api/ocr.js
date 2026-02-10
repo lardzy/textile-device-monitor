@@ -13,6 +13,11 @@ export const ocrApi = {
   }),
   getJob: (jobId) => api.get(`/ocr/jobs/${encodeURIComponent(jobId)}`),
   getJobResult: (jobId) => api.get(`/ocr/jobs/${encodeURIComponent(jobId)}/result`),
+  exportBatchDocx: (jobIds) => api.post('/ocr/jobs/export/docx', {
+    job_ids: jobIds,
+  }, {
+    responseType: 'blob',
+  }),
   downloadArtifact: (jobId, kind) => api.get(`/ocr/jobs/${encodeURIComponent(jobId)}/artifacts/${kind}`, {
     responseType: 'blob',
   }),

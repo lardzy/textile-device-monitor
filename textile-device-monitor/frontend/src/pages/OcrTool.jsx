@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Card,
-  Descriptions,
   Form,
   Input,
   Space,
@@ -15,18 +14,25 @@ import {
   message,
 } from 'antd';
 import {
+  ClearOutlined,
   CopyOutlined,
   DownloadOutlined,
+  FileWordOutlined,
   InboxOutlined,
   ReloadOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import { saveAs } from 'file-saver';
 import dayjs from 'dayjs';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { ocrApi } from '../api/ocr';
 
 const { Dragger } = Upload;
-const { Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 const POLLING_INTERVAL_MS = 2000;
 const POLLING_TIMEOUT_MS = 10 * 60 * 1000;
@@ -74,12 +80,6 @@ const pickJobError = (job) => {
   return job.error_code || job.error_message || '';
 };
 
-const formatDateTime = (value) => {
-  if (!value) return '-';
-  const m = dayjs(value);
-  return m.isValid() ? m.format('YYYY-MM-DD HH:mm:ss') : '-';
-};
-
 const formatDuration = (job) => {
   if (!job?.started_at || !job?.finished_at) return '-';
   const start = dayjs(job.started_at);
@@ -89,15 +89,58 @@ const formatDuration = (job) => {
   return `${(ms / 1000).toFixed(1)} 秒`;
 };
 
+const isBBox = (value) => (
+  Array.isArray(value)
+  && value.length >= 4
+  && value.slice(0, 4).every((item) => Number.isFinite(Number(item)))
+);
+
+const collectDetectionRows = (jsonData, ctx, rows) => {
+  if (Array.isArray(jsonData)) {
+    jsonData.forEach((item) => collectDetectionRows(item, ctx, rows));
+    return;
+  }
+  if (!jsonData || typeof jsonData !== 'object') {
+    return;
+  }
+
+  const pages = jsonData.pages;
+  if (Array.isArray(pages)) {
+    pages.forEach((pageObj, pageIndex) => {
+      const pageNumber = Number(pageObj?.page_number) || pageIndex + 1;
+      collectDetectionRows(pageObj?.data, { ...ctx, pageNumber }, rows);
+    });
+  }
+
+  if (isBBox(jsonData.bbox_2d)) {
+    const bbox = jsonData.bbox_2d.slice(0, 4).map((item) => Number(item));
+    rows.push({
+      key: `${ctx.jobId}-${ctx.fileIndex}-${rows.length}`,
+      fileIndex: ctx.fileIndex,
+      filename: ctx.filename,
+      pageNumber: ctx.pageNumber || 1,
+      label: jsonData.label || jsonData.native_label || '-',
+      content: typeof jsonData.content === 'string' ? jsonData.content : '-',
+      bboxText: `[${bbox.map((item) => Math.round(item)).join(', ')}]`,
+    });
+  }
+
+  Object.values(jsonData).forEach((value) => {
+    if (value !== pages) {
+      collectDetectionRows(value, ctx, rows);
+    }
+  });
+};
+
 function OcrTool() {
   const [fileList, setFileList] = useState([]);
   const [pageRange, setPageRange] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [exportingDocx, setExportingDocx] = useState(false);
   const [polling, setPolling] = useState(false);
   const [jobs, setJobs] = useState([]);
   const [resultsByJobId, setResultsByJobId] = useState({});
-  const [activeJobId, setActiveJobId] = useState(null);
 
   const pollStartedAtRef = useRef(0);
   const pollingBusyRef = useRef(false);
@@ -114,27 +157,76 @@ function OcrTool() {
     resultsRef.current = resultsByJobId;
   }, [resultsByJobId]);
 
-  useEffect(() => {
-    if (!jobs.length) {
-      setActiveJobId(null);
-      return;
-    }
-    if (!activeJobId || !jobs.some((item) => item.job_id === activeJobId)) {
-      setActiveJobId(jobs[0].job_id);
-    }
-  }, [jobs, activeJobId]);
+  const orderedJobs = useMemo(
+    () => [...jobs].sort((a, b) => (a.upload_index || 0) - (b.upload_index || 0)),
+    [jobs],
+  );
 
-  const activeJob = useMemo(
-    () => jobs.find((item) => item.job_id === activeJobId) || null,
-    [jobs, activeJobId],
-  );
-  const activeResult = activeJob ? resultsByJobId[activeJob.job_id] : null;
-  const statusConfig = STATUS_MAP[activeJob?.status] || STATUS_MAP.queued;
-  const markdownText = activeResult?.markdown_text || '';
-  const jsonText = useMemo(
-    () => JSON.stringify(activeResult?.json_data ?? {}, null, 2),
-    [activeResult],
-  );
+  const summary = useMemo(() => {
+    const total = orderedJobs.length;
+    const succeeded = orderedJobs.filter((job) => job.status === 'succeeded').length;
+    const failed = orderedJobs.filter((job) => job.status === 'failed').length;
+    const running = orderedJobs.filter((job) => ['queued', 'running'].includes(job.status)).length;
+    return { total, succeeded, failed, running };
+  }, [orderedJobs]);
+
+  const mergedResult = useMemo(() => {
+    const markdownParts = [];
+    const files = [];
+
+    orderedJobs.forEach((job) => {
+      const sectionTitle = `## ${job.upload_index || '-'} - ${job.original_filename || job.job_id}`;
+      const result = resultsByJobId[job.job_id];
+      const errorText = getErrorMessage(pickJobError(job));
+
+      if (job.status === 'succeeded' && result) {
+        markdownParts.push(sectionTitle);
+        markdownParts.push('');
+        markdownParts.push(result.markdown_text || '(空)');
+      } else if (job.status === 'failed') {
+        markdownParts.push(sectionTitle);
+        markdownParts.push('');
+        markdownParts.push(`> 识别失败：${errorText}`);
+      } else {
+        markdownParts.push(sectionTitle);
+        markdownParts.push('');
+        markdownParts.push('> 处理中...');
+      }
+
+      files.push({
+        upload_index: job.upload_index,
+        job_id: job.job_id,
+        filename: job.original_filename,
+        status: job.status,
+        error: job.status === 'failed' ? errorText : null,
+        json_data: result?.json_data ?? null,
+      });
+    });
+
+    const mergedJson = {
+      generated_at: dayjs().toISOString(),
+      total_files: files.length,
+      files,
+    };
+
+    const detectionRows = [];
+    files.forEach((item, index) => {
+      if (item.status === 'succeeded' && item.json_data != null) {
+        collectDetectionRows(item.json_data, {
+          fileIndex: item.upload_index || index + 1,
+          filename: item.filename || '-',
+          pageNumber: 1,
+          jobId: item.job_id,
+        }, detectionRows);
+      }
+    });
+
+    return {
+      markdown: markdownParts.join('\n\n').trim(),
+      json: mergedJson,
+      detectionRows,
+    };
+  }, [orderedJobs, resultsByJobId]);
 
   const refreshPendingJobs = async () => {
     if (pollingBusyRef.current) return;
@@ -235,6 +327,10 @@ function OcrTool() {
     setFileList(next);
   };
 
+  const handleClearUploads = () => {
+    setFileList([]);
+  };
+
   const handleSubmit = async () => {
     if (!fileList.length) {
       messageApi.error('请先选择文件');
@@ -272,7 +368,6 @@ function OcrTool() {
 
       setJobs(createdJobs);
       setResultsByJobId({});
-      setActiveJobId(createdJobs[0]?.job_id || null);
       failedNoticeRef.current.clear();
 
       const hasPending = createdJobs.some((job) => ['queued', 'running'].includes(job.status));
@@ -287,27 +382,53 @@ function OcrTool() {
   };
 
   const handleCopyMarkdown = async () => {
-    if (!markdownText) return;
+    if (!mergedResult.markdown) return;
     try {
-      await navigator.clipboard.writeText(markdownText);
+      await navigator.clipboard.writeText(mergedResult.markdown);
       messageApi.success('Markdown 已复制');
     } catch (error) {
       messageApi.error('复制失败，请手动复制');
     }
   };
 
-  const handleDownload = async (kind) => {
-    if (!activeJob?.job_id) return;
+  const handleDownloadMerged = (kind) => {
+    if (!orderedJobs.length) return;
+    const firstName = orderedJobs[0]?.original_filename || 'ocr-result';
+    const baseName = firstName.replace(/\.[^.]+$/, '');
+    if (kind === 'md') {
+      const blob = new Blob([mergedResult.markdown || ''], { type: 'text/markdown;charset=utf-8' });
+      saveAs(blob, `${baseName}-batch.md`);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(mergedResult.json, null, 2)], { type: 'application/json;charset=utf-8' });
+    saveAs(blob, `${baseName}-batch.json`);
+  };
+
+  const handleExportDocx = async () => {
+    const jobIds = orderedJobs
+      .filter((job) => job.status === 'succeeded')
+      .sort((a, b) => (a.upload_index || 0) - (b.upload_index || 0))
+      .map((job) => job.job_id);
+
+    if (!jobIds.length) {
+      messageApi.error('暂无可导出的成功任务');
+      return;
+    }
+
+    setExportingDocx(true);
     try {
-      const blob = await ocrApi.downloadArtifact(activeJob.job_id, kind);
-      const ext = kind === 'md' ? 'md' : 'json';
-      saveAs(blob, `${activeJob.job_id}.${ext}`);
+      const blob = await ocrApi.exportBatchDocx(jobIds);
+      const name = `ocr-batch-${dayjs().format('YYYYMMDD-HHmmss')}.docx`;
+      saveAs(blob, name);
+      messageApi.success('Word 导出成功');
     } catch (error) {
       messageApi.error(getErrorMessage(error.message));
+    } finally {
+      setExportingDocx(false);
     }
   };
 
-  const jobColumns = [
+  const statusColumns = [
     {
       title: '顺序',
       dataIndex: 'upload_index',
@@ -343,6 +464,20 @@ function OcrTool() {
       width: 110,
       render: (_, record) => formatDuration(record),
     },
+    {
+      title: '失败原因',
+      key: 'error',
+      render: (_, record) => (record.status === 'failed' ? getErrorMessage(pickJobError(record)) : '-'),
+    },
+  ];
+
+  const detectionColumns = [
+    { title: '文件序号', dataIndex: 'fileIndex', key: 'fileIndex', width: 90 },
+    { title: '文件名', dataIndex: 'filename', key: 'filename', width: 200, ellipsis: true },
+    { title: '页码', dataIndex: 'pageNumber', key: 'pageNumber', width: 80 },
+    { title: '标签', dataIndex: 'label', key: 'label', width: 130, ellipsis: true },
+    { title: '坐标框', dataIndex: 'bboxText', key: 'bboxText', width: 180 },
+    { title: '内容预览', dataIndex: 'content', key: 'content', ellipsis: true },
   ];
 
   return (
@@ -371,7 +506,7 @@ function OcrTool() {
 
           <Form layout="vertical">
             <Form.Item label="输出格式">
-              <Input value="Markdown + JSON" disabled />
+              <Input value="Markdown + JSON + Word 导出" disabled />
             </Form.Item>
             <Form.Item label="页面范围（可选，对本次所有文件生效）">
               <Input
@@ -396,6 +531,13 @@ function OcrTool() {
               >
                 提交识别
               </Button>
+              <Button
+                icon={<ClearOutlined />}
+                disabled={!fileList.length || submitting}
+                onClick={handleClearUploads}
+              >
+                清空上传
+              </Button>
               {jobs.length ? (
                 <Button icon={<ReloadOutlined />} onClick={refreshPendingJobs}>
                   刷新状态
@@ -407,100 +549,95 @@ function OcrTool() {
       </Card>
 
       <Card title="任务状态">
-        {!jobs.length ? (
+        {!orderedJobs.length ? (
           <Alert type="info" message="尚未提交任务" showIcon />
         ) : (
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Space wrap>
+              <Tag color="blue">总数 {summary.total}</Tag>
+              <Tag color="success">成功 {summary.succeeded}</Tag>
+              <Tag color="error">失败 {summary.failed}</Tag>
+              <Tag color="processing">处理中 {summary.running}</Tag>
+              {polling ? <Text type="secondary">自动轮询中</Text> : null}
+            </Space>
             <Table
               size="small"
               rowKey="job_id"
-              columns={jobColumns}
-              dataSource={jobs}
+              columns={statusColumns}
+              dataSource={orderedJobs}
               pagination={false}
-              rowClassName={(record) => (record.job_id === activeJobId ? 'ant-table-row-selected' : '')}
-              onRow={(record) => ({
-                onClick: () => setActiveJobId(record.job_id),
-              })}
             />
-
-            {activeJob ? (
-              <Descriptions bordered size="small" column={1}>
-                <Descriptions.Item label="任务ID">
-                  <Text copyable>{activeJob.job_id}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="当前文件">
-                  {activeJob.original_filename || '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="状态">
-                  <Tag color={statusConfig.color}>{statusConfig.text}</Tag>
-                  {polling ? <Text type="secondary">（自动轮询中）</Text> : null}
-                </Descriptions.Item>
-                <Descriptions.Item label="排队位置">
-                  {activeJob.queue_position == null ? '-' : activeJob.queue_position}
-                </Descriptions.Item>
-                <Descriptions.Item label="创建时间">
-                  {formatDateTime(activeJob.created_at)}
-                </Descriptions.Item>
-                <Descriptions.Item label="开始时间">
-                  {formatDateTime(activeJob.started_at)}
-                </Descriptions.Item>
-                <Descriptions.Item label="完成时间">
-                  {formatDateTime(activeJob.finished_at)}
-                </Descriptions.Item>
-                <Descriptions.Item label="耗时">
-                  {formatDuration(activeJob)}
-                </Descriptions.Item>
-                <Descriptions.Item label="失败原因">
-                  {activeJob.error_code || activeJob.error_message
-                    ? getErrorMessage(pickJobError(activeJob))
-                    : '-'}
-                </Descriptions.Item>
-              </Descriptions>
-            ) : null}
           </Space>
         )}
       </Card>
 
-      <Card title="识别结果">
-        {!activeJob ? (
-          <Alert type="info" message="请选择任务查看结果" showIcon />
-        ) : activeJob.status !== 'succeeded' ? (
-          <Alert type="info" message="当前任务尚未成功，完成后会在此显示 Markdown 和 JSON 结果" showIcon />
-        ) : !activeResult ? (
-          <Alert type="info" message="结果加载中，请稍候或点击刷新状态" showIcon />
+      <Card title="识别结果（按上传顺序拼接）">
+        {!orderedJobs.length ? (
+          <Alert type="info" message="提交任务后会在此显示合并结果" showIcon />
         ) : (
           <Tabs
             items={[
               {
                 key: 'markdown',
-                label: 'Markdown',
+                label: 'Markdown 渲染',
                 children: (
                   <Space direction="vertical" style={{ width: '100%' }}>
                     <Space>
-                      <Button icon={<CopyOutlined />} onClick={handleCopyMarkdown}>
-                        复制
-                      </Button>
-                      <Button icon={<DownloadOutlined />} onClick={() => handleDownload('md')}>
-                        下载 .md
+                      <Button icon={<CopyOutlined />} onClick={handleCopyMarkdown}>复制</Button>
+                      <Button icon={<DownloadOutlined />} onClick={() => handleDownloadMerged('md')}>下载 .md</Button>
+                      <Button
+                        type="primary"
+                        icon={<FileWordOutlined />}
+                        loading={exportingDocx}
+                        onClick={handleExportDocx}
+                      >
+                        导出 Word
                       </Button>
                     </Space>
-                    <Paragraph style={{ maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', marginBottom: 0 }}>
-                      {markdownText || '(空)'}
-                    </Paragraph>
+                    <div
+                      style={{
+                        maxHeight: 560,
+                        overflow: 'auto',
+                        border: '1px solid #f0f0f0',
+                        borderRadius: 8,
+                        padding: 16,
+                        background: '#fff',
+                      }}
+                    >
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeKatex]}
+                      >
+                        {mergedResult.markdown || '(空)'}
+                      </ReactMarkdown>
+                    </div>
                   </Space>
                 ),
               },
               {
                 key: 'json',
-                label: 'JSON',
+                label: 'JSON 渲染',
                 children: (
                   <Space direction="vertical" style={{ width: '100%' }}>
-                    <Button icon={<DownloadOutlined />} onClick={() => handleDownload('json')}>
-                      下载 .json
-                    </Button>
-                    <Paragraph style={{ maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', marginBottom: 0 }}>
-                      {jsonText}
-                    </Paragraph>
+                    <Space>
+                      <Button icon={<DownloadOutlined />} onClick={() => handleDownloadMerged('json')}>下载 .json</Button>
+                    </Space>
+                    <Card size="small" title="结构化检测框视图">
+                      <Table
+                        size="small"
+                        rowKey="key"
+                        columns={detectionColumns}
+                        dataSource={mergedResult.detectionRows}
+                        pagination={{ pageSize: 10, showSizeChanger: false }}
+                        locale={{ emptyText: '无可展示的检测框数据' }}
+                        scroll={{ x: 980 }}
+                      />
+                    </Card>
+                    <Card size="small" title="原始 JSON（合并）">
+                      <pre style={{ maxHeight: 360, overflow: 'auto', margin: 0 }}>
+                        {JSON.stringify(mergedResult.json, null, 2)}
+                      </pre>
+                    </Card>
                   </Space>
                 ),
               },
