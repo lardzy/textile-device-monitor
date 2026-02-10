@@ -4,6 +4,12 @@ WORKDIR /opt
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    libglib2.0-0 \
+    libgl1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libxcb1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth=1 https://github.com/zai-org/GLM-OCR.git /opt/GLM-OCR
