@@ -6,13 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir uv
-
 RUN git clone --depth=1 https://github.com/zai-org/GLM-OCR.git /opt/GLM-OCR
 
 WORKDIR /opt/GLM-OCR
 
-RUN uv venv --python 3.12 --seed && uv pip install -e .
+RUN pip install --no-cache-dir -e ".[all]"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh \

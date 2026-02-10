@@ -19,4 +19,4 @@ text = re.sub(r"(?m)^(\s*port:\s*).*$", r"\g<1>5002", text, count=1)
 config_path.write_text(text, encoding="utf-8")
 PY
 
-exec uv run python -m glmocr.server
+exec python -m glmocr.server
