@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 from pathlib import Path
 import os
 from typing import Any
@@ -110,7 +111,9 @@ def _parse_pdf_page_range(page_range: str | None, total_pages: int) -> list[int]
     return sorted(result)
 
 
-def _pdf_to_image_data_uris(content: bytes, page_range: str | None) -> list[str]:
+def _pdf_to_page_images(
+    content: bytes, page_range: str | None
+) -> list[tuple[int, str]]:
     try:
         document = pdfium.PdfDocument(io.BytesIO(content))
     except Exception as exc:  # pragma: no cover - defensive
@@ -125,7 +128,7 @@ def _pdf_to_image_data_uris(content: bytes, page_range: str | None) -> list[str]
         if len(selected_pages) > _max_pdf_pages():
             raise ValueError("pdf_page_limit_exceeded")
 
-        images: list[str] = []
+        images: list[tuple[int, str]] = []
         for page_index in selected_pages:
             page = document[page_index]
             bitmap = page.render(scale=2.0)
@@ -133,7 +136,7 @@ def _pdf_to_image_data_uris(content: bytes, page_range: str | None) -> list[str]
             output = io.BytesIO()
             pil_image.save(output, format="PNG", optimize=True)
             encoded = base64.b64encode(output.getvalue()).decode("ascii")
-            images.append(f"data:image/png;base64,{encoded}")
+            images.append((page_index + 1, f"data:image/png;base64,{encoded}"))
             pil_image.close()
             page.close()
         if not images:
@@ -141,6 +144,103 @@ def _pdf_to_image_data_uris(content: bytes, page_range: str | None) -> list[str]
         return images
     finally:
         document.close()
+
+
+def _call_upstream(
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    upstream_url = _upstream_url().strip()
+    if not upstream_url:
+        return None, _error_response(
+            status_code=503,
+            error="ocr_service_unreachable",
+            message="GLM_OCR_UPSTREAM_URL is empty",
+        )
+
+    try:
+        upstream_resp = requests.post(
+            upstream_url,
+            json=payload,
+            timeout=_timeout_seconds(),
+        )
+    except requests.Timeout:
+        return None, _error_response(504, "ocr_timeout", "Upstream OCR timeout")
+    except requests.RequestException as exc:
+        return None, _error_response(502, "ocr_service_unreachable", str(exc))
+
+    if upstream_resp.status_code != 200:
+        error_code = "ocr_inference_failed"
+        error_message = f"Upstream OCR status: {upstream_resp.status_code}"
+        try:
+            upstream_payload = upstream_resp.json()
+            if isinstance(upstream_payload, dict):
+                raw_error = (
+                    upstream_payload.get("error_code")
+                    or upstream_payload.get("error")
+                    or upstream_payload.get("detail")
+                    or upstream_payload.get("message")
+                )
+                if raw_error:
+                    if str(raw_error).lower() == "oom":
+                        error_code = "oom"
+                    error_message = str(raw_error)
+        except ValueError:
+            if upstream_resp.text:
+                error_message = upstream_resp.text
+        return None, _error_response(
+            upstream_resp.status_code, error_code, error_message
+        )
+
+    try:
+        upstream_payload = upstream_resp.json()
+    except ValueError:
+        return None, _error_response(
+            502, "ocr_inference_failed", "Invalid upstream payload"
+        )
+
+    return _normalize_upstream_payload(upstream_payload), None
+
+
+def _prefix_error_with_page(
+    error_response: JSONResponse, page_number: int
+) -> JSONResponse:
+    try:
+        payload = json.loads(bytes(error_response.body).decode("utf-8"))
+    except Exception:
+        return error_response
+
+    if isinstance(payload, dict):
+        message = str(
+            payload.get("message") or payload.get("error") or "ocr_inference_failed"
+        )
+        payload["message"] = f"page_{page_number}: {message}"
+        return JSONResponse(status_code=error_response.status_code, content=payload)
+    return error_response
+
+
+def _merge_page_results(
+    page_results: list[tuple[int, dict[str, Any]]],
+) -> dict[str, Any]:
+    if len(page_results) == 1:
+        _, result = page_results[0]
+        return result
+
+    markdown_parts = []
+    json_pages = []
+    for page_number, result in page_results:
+        markdown_parts.append(result.get("markdown_text") or "")
+        json_pages.append(
+            {
+                "page_number": page_number,
+                "data": result.get("json_data"),
+            }
+        )
+
+    merged_markdown = "\n\n".join(part for part in markdown_parts if part)
+    return {
+        "markdown_text": merged_markdown,
+        "json_data": {"pages": json_pages},
+    }
 
 
 def _normalize_upstream_payload(payload: Any) -> dict[str, Any]:
@@ -195,18 +295,11 @@ async def parse_document(
     if len(content) > _max_upload_mb() * 1024 * 1024:
         raise HTTPException(status_code=413, detail="file_too_large")
 
-    upstream_url = _upstream_url().strip()
-    if not upstream_url:
-        return _error_response(
-            status_code=503,
-            error="ocr_service_unreachable",
-            message="GLM_OCR_UPSTREAM_URL is empty",
-        )
-
     payload: dict[str, Any]
+    normalized: dict[str, Any] | None = None
     if extension == ".pdf":
         try:
-            payload = {"images": _pdf_to_image_data_uris(content, page_range)}
+            page_images = _pdf_to_page_images(content, page_range)
         except ValueError as exc:
             error = str(exc)
             if error in {
@@ -222,54 +315,39 @@ async def parse_document(
             return _error_response(
                 500, "pdf_processing_failed", "pdf_processing_failed"
             )
+
+        page_results: list[tuple[int, dict[str, Any]]] = []
+        for page_number, data_uri in page_images:
+            payload = {"images": [data_uri]}
+            if note:
+                payload["note"] = note
+            if output_format:
+                payload["output_format"] = output_format
+            page_result, error_response = _call_upstream(payload)
+            if error_response is not None:
+                return _prefix_error_with_page(error_response, page_number)
+            if page_result is None:
+                return _error_response(
+                    500, "ocr_inference_failed", "ocr_inference_failed"
+                )
+            page_results.append((page_number, page_result))
+
+        normalized = _merge_page_results(page_results)
     else:
         content_type = _resolve_content_type(filename, file.content_type)
         encoded = base64.b64encode(content).decode("ascii")
         data_uri = f"data:{content_type};base64,{encoded}"
         payload = {"images": [data_uri]}
+        if note:
+            payload["note"] = note
+        if output_format:
+            payload["output_format"] = output_format
+        normalized, error_response = _call_upstream(payload)
+        if error_response is not None:
+            return error_response
 
-    if note:
-        payload["note"] = note
-    if output_format:
-        payload["output_format"] = output_format
+    if normalized is None:
+        return _error_response(500, "ocr_inference_failed", "ocr_inference_failed")
 
-    try:
-        upstream_resp = requests.post(
-            upstream_url,
-            json=payload,
-            timeout=_timeout_seconds(),
-        )
-    except requests.Timeout:
-        return _error_response(504, "ocr_timeout", "Upstream OCR timeout")
-    except requests.RequestException as exc:
-        return _error_response(502, "ocr_service_unreachable", str(exc))
-
-    if upstream_resp.status_code != 200:
-        error_code = "ocr_inference_failed"
-        error_message = f"Upstream OCR status: {upstream_resp.status_code}"
-        try:
-            payload = upstream_resp.json()
-            if isinstance(payload, dict):
-                raw_error = (
-                    payload.get("error_code")
-                    or payload.get("error")
-                    or payload.get("detail")
-                    or payload.get("message")
-                )
-                if raw_error:
-                    if str(raw_error).lower() == "oom":
-                        error_code = "oom"
-                    error_message = str(raw_error)
-        except ValueError:
-            if upstream_resp.text:
-                error_message = upstream_resp.text
-        return _error_response(upstream_resp.status_code, error_code, error_message)
-
-    try:
-        payload = upstream_resp.json()
-    except ValueError:
-        return _error_response(502, "ocr_inference_failed", "Invalid upstream payload")
-
-    normalized = _normalize_upstream_payload(payload)
     normalized["meta"] = {"source": "glm-ocr-adapter"}
     return normalized
