@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 import os
 from typing import Any
@@ -18,7 +19,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
 
 
 def _upstream_url() -> str:
-    return os.getenv("GLM_OCR_UPSTREAM_URL", "http://glm-ocr-runtime:5002/v1/ocr/parse")
+    return os.getenv("GLM_OCR_UPSTREAM_URL", "http://glm-ocr-runtime:5002/glmocr/parse")
 
 
 def _timeout_seconds() -> int:
@@ -44,6 +45,8 @@ def _normalize_upstream_payload(payload: Any) -> dict[str, Any]:
     if markdown_text is None:
         markdown_text = payload.get("markdown")
     if markdown_text is None:
+        markdown_text = payload.get("markdown_result")
+    if markdown_text is None:
         markdown_text = payload.get("text", "")
     if not isinstance(markdown_text, str):
         markdown_text = str(markdown_text)
@@ -51,6 +54,8 @@ def _normalize_upstream_payload(payload: Any) -> dict[str, Any]:
     json_data = payload.get("json_data")
     if json_data is None:
         json_data = payload.get("json")
+    if json_data is None:
+        json_data = payload.get("json_result")
     if json_data is None:
         json_data = payload.get("structured")
     if json_data is None:
@@ -92,19 +97,22 @@ async def parse_document(
             message="GLM_OCR_UPSTREAM_URL is empty",
         )
 
-    data: dict[str, str] = {}
+    content_type = file.content_type or "application/octet-stream"
+    encoded = base64.b64encode(content).decode("ascii")
+    data_uri = f"data:{content_type};base64,{encoded}"
+
+    payload: dict[str, Any] = {"images": [data_uri]}
     if page_range:
-        data["page_range"] = page_range
+        payload["page_range"] = page_range
     if note:
-        data["note"] = note
+        payload["note"] = note
     if output_format:
-        data["output_format"] = output_format
+        payload["output_format"] = output_format
 
     try:
         upstream_resp = requests.post(
             upstream_url,
-            files={"file": (filename, content, file.content_type or "application/octet-stream")},
-            data=data,
+            json=payload,
             timeout=_timeout_seconds(),
         )
     except requests.Timeout:

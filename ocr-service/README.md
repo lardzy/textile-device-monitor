@@ -14,7 +14,7 @@ payloads to:
 
 ## Environment
 
-- `GLM_OCR_UPSTREAM_URL`: upstream endpoint, default `http://glm-ocr-runtime:5002/v1/ocr/parse`
+- `GLM_OCR_UPSTREAM_URL`: upstream endpoint, default `http://glm-ocr-runtime:5002/glmocr/parse`
 - `OCR_ADAPTER_TIMEOUT_SECONDS`: request timeout, default `600`
 - `OCR_ADAPTER_MAX_UPLOAD_MB`: max upload size, default `30`
 
@@ -23,6 +23,6 @@ payloads to:
 ```bash
 docker build -t textile-ocr-adapter .
 docker run --rm -p 5002:5002 \
-  -e GLM_OCR_UPSTREAM_URL=http://glm-ocr-runtime:5002/v1/ocr/parse \
+  -e GLM_OCR_UPSTREAM_URL=http://glm-ocr-runtime:5002/glmocr/parse \
   textile-ocr-adapter
 ```

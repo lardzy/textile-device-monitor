@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   ocr-adapter:
     build:
@@ -7,7 +5,7 @@ services:
     container_name: textile-ocr-adapter
     restart: unless-stopped
     environment:
-      GLM_OCR_UPSTREAM_URL: http://glm-ocr-runtime:5002/v1/ocr/parse
+      GLM_OCR_UPSTREAM_URL: http://glm-ocr-runtime:5002/glmocr/parse
       OCR_ADAPTER_TIMEOUT_SECONDS: 600
       OCR_ADAPTER_MAX_UPLOAD_MB: 30
     ports:
@@ -18,34 +16,27 @@ services:
       - textile-net
 
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:nightly
     container_name: textile-vllm
     restart: unless-stopped
     gpus: all
     environment:
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
-    command:
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --model
-      - zai-org/GLM-4.1V-9B-Thinking
-      - --max-model-len
-      - "4096"
+    command: >
+      sh -lc "pip install --no-cache-dir git+https://github.com/huggingface/transformers.git &&
+      vllm serve zai-org/GLM-OCR --allowed-local-media-path / --port 8080 --served-model-name glm-ocr --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":1}'"
     volumes:
       - hf_cache:/root/.cache/huggingface
     networks:
       - textile-net
 
   glm-ocr-runtime:
-    image: python:3.11-slim
+    build:
+      context: ../ocr-runtime
     container_name: textile-glm-ocr-runtime
     restart: unless-stopped
     depends_on:
       - vllm
-    command: >
-      sh -lc "pip install --no-cache-dir glm-ocr && python -m glmocr.server --vllm-server http://vllm:8000 --server-port 5002"
     networks:
       - textile-net
 
