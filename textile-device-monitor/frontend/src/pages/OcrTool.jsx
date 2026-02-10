@@ -16,6 +16,11 @@ const ALLOWED_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'webp'];
 const ERROR_CODE_MESSAGES = {
   ocr_disabled: 'OCR服务未启用',
   invalid_file_type: '文件类型不支持，仅支持 PDF/PNG/JPG/JPEG/WEBP',
+  invalid_pdf: 'PDF文件无效或已损坏，请检查后重试',
+  invalid_page_range: '页面范围格式无效，请使用例如 1-3,5',
+  page_range_out_of_bounds: '页面范围超出PDF总页数，请重新填写',
+  pdf_page_limit_exceeded: '单次识别页数过多，请缩小页面范围后重试',
+  pdf_processing_failed: 'PDF预处理失败，请稍后重试',
   file_too_large: `文件过大，请控制在 ${MAX_UPLOAD_MB}MB 以内`,
   ocr_timeout: 'OCR识别超时，请稍后重试',
   ocr_service_unreachable: 'OCR服务不可达，请检查 OCR 服务状态',
@@ -36,6 +41,14 @@ const STATUS_MAP = {
 const getErrorMessage = (codeOrMessage) => {
   if (!codeOrMessage) return '请求失败';
   return ERROR_CODE_MESSAGES[codeOrMessage] || codeOrMessage;
+};
+
+const pickJobError = (job) => {
+  if (!job) return '';
+  if (job.error_message && job.error_message !== job.error_code) {
+    return job.error_message;
+  }
+  return job.error_code || job.error_message || '';
 };
 
 const formatDateTime = (value) => {
@@ -86,7 +99,7 @@ function OcrTool() {
         setPolling(false);
       } else if (latestJob.status === 'failed') {
         setPolling(false);
-        messageApi.error(getErrorMessage(latestJob.error_code || latestJob.error_message));
+        messageApi.error(getErrorMessage(pickJobError(latestJob)));
       } else if (Date.now() - pollStartedAtRef.current > POLLING_TIMEOUT_MS) {
         setPolling(false);
         messageApi.error(getErrorMessage('ocr_timeout'));
@@ -273,7 +286,7 @@ function OcrTool() {
             </Descriptions.Item>
             <Descriptions.Item label="失败原因">
               {job.error_code || job.error_message
-                ? getErrorMessage(job.error_code || job.error_message)
+                ? getErrorMessage(pickJobError(job))
                 : '-'}
             </Descriptions.Item>
           </Descriptions>

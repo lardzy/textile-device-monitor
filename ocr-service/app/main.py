@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import base64
+import io
 from pathlib import Path
 import os
 from typing import Any
 import mimetypes
+import re
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 import requests
+import pypdfium2 as pdfium
 
 app = FastAPI(
     title="OCR Adapter Service",
@@ -39,6 +42,10 @@ def _max_upload_mb() -> int:
     return max(1, int(os.getenv("OCR_ADAPTER_MAX_UPLOAD_MB", "30")))
 
 
+def _max_pdf_pages() -> int:
+    return max(1, int(os.getenv("OCR_ADAPTER_MAX_PDF_PAGES", "30")))
+
+
 def _error_response(status_code: int, error: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -61,6 +68,79 @@ def _resolve_content_type(filename: str, incoming_content_type: str | None) -> s
         return guessed
 
     return "application/octet-stream"
+
+
+def _parse_pdf_page_range(page_range: str | None, total_pages: int) -> list[int]:
+    if total_pages <= 0:
+        return []
+    if not page_range or not page_range.strip():
+        return list(range(total_pages))
+
+    result: list[int] = []
+    for part in page_range.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        if "-" in item:
+            match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", item)
+            if not match:
+                raise ValueError("invalid_page_range")
+            start = int(match.group(1))
+            end = int(match.group(2))
+            if start <= 0 or end <= 0 or start > end:
+                raise ValueError("invalid_page_range")
+            for page in range(start, end + 1):
+                if page <= total_pages:
+                    idx = page - 1
+                    if idx not in result:
+                        result.append(idx)
+        else:
+            if not item.isdigit():
+                raise ValueError("invalid_page_range")
+            page = int(item)
+            if page <= 0:
+                raise ValueError("invalid_page_range")
+            if page <= total_pages:
+                idx = page - 1
+                if idx not in result:
+                    result.append(idx)
+
+    if not result:
+        raise ValueError("page_range_out_of_bounds")
+    return sorted(result)
+
+
+def _pdf_to_image_data_uris(content: bytes, page_range: str | None) -> list[str]:
+    try:
+        document = pdfium.PdfDocument(io.BytesIO(content))
+    except Exception as exc:  # pragma: no cover - defensive
+        raise ValueError("invalid_pdf") from exc
+
+    try:
+        total_pages = len(document)
+        if total_pages <= 0:
+            raise ValueError("invalid_pdf")
+
+        selected_pages = _parse_pdf_page_range(page_range, total_pages)
+        if len(selected_pages) > _max_pdf_pages():
+            raise ValueError("pdf_page_limit_exceeded")
+
+        images: list[str] = []
+        for page_index in selected_pages:
+            page = document[page_index]
+            bitmap = page.render(scale=2.0)
+            pil_image = bitmap.to_pil()
+            output = io.BytesIO()
+            pil_image.save(output, format="PNG", optimize=True)
+            encoded = base64.b64encode(output.getvalue()).decode("ascii")
+            images.append(f"data:image/png;base64,{encoded}")
+            pil_image.close()
+            page.close()
+        if not images:
+            raise ValueError("invalid_pdf")
+        return images
+    finally:
+        document.close()
 
 
 def _normalize_upstream_payload(payload: Any) -> dict[str, Any]:
@@ -123,13 +203,31 @@ async def parse_document(
             message="GLM_OCR_UPSTREAM_URL is empty",
         )
 
-    content_type = _resolve_content_type(filename, file.content_type)
-    encoded = base64.b64encode(content).decode("ascii")
-    data_uri = f"data:{content_type};base64,{encoded}"
+    payload: dict[str, Any]
+    if extension == ".pdf":
+        try:
+            payload = {"images": _pdf_to_image_data_uris(content, page_range)}
+        except ValueError as exc:
+            error = str(exc)
+            if error in {
+                "invalid_pdf",
+                "invalid_page_range",
+                "page_range_out_of_bounds",
+            }:
+                return _error_response(400, error, error)
+            if error == "pdf_page_limit_exceeded":
+                return _error_response(413, error, error)
+            return _error_response(500, "pdf_processing_failed", error)
+        except Exception:
+            return _error_response(
+                500, "pdf_processing_failed", "pdf_processing_failed"
+            )
+    else:
+        content_type = _resolve_content_type(filename, file.content_type)
+        encoded = base64.b64encode(content).decode("ascii")
+        data_uri = f"data:{content_type};base64,{encoded}"
+        payload = {"images": [data_uri]}
 
-    payload: dict[str, Any] = {"images": [data_uri]}
-    if page_range:
-        payload["page_range"] = page_range
     if note:
         payload["note"] = note
     if output_format:
@@ -156,6 +254,7 @@ async def parse_document(
                     payload.get("error_code")
                     or payload.get("error")
                     or payload.get("detail")
+                    or payload.get("message")
                 )
                 if raw_error:
                     if str(raw_error).lower() == "oom":
