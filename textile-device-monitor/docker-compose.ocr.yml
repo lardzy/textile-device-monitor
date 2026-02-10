@@ -16,15 +16,24 @@ services:
       - textile-net
 
   vllm:
-    image: vllm/vllm-openai:nightly
+    build:
+      context: ../ocr-vllm
     container_name: textile-vllm
     restart: unless-stopped
     gpus: all
     environment:
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
-    command: >
-      sh -lc "pip install --no-cache-dir git+https://github.com/huggingface/transformers.git &&
-      vllm serve zai-org/GLM-OCR --allowed-local-media-path / --port 8080 --served-model-name glm-ocr --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":1}'"
+    command:
+      - serve
+      - zai-org/GLM-OCR
+      - --allowed-local-media-path
+      - /
+      - --port
+      - "8080"
+      - --served-model-name
+      - glm-ocr
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":1}'
     volumes:
       - hf_cache:/root/.cache/huggingface
     networks:
