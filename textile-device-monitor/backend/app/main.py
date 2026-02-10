@@ -9,11 +9,12 @@ from app.database import engine, get_db
 from app.models import Base
 from sqlalchemy.exc import OperationalError
 from app.config import settings
-from app.api import devices, history, queue, stats, results
+from app.api import devices, history, queue, stats, results, ocr
 from app.websocket.manager import websocket_manager
 from app.tasks.device_monitor import start_heartbeat_monitor
 from app.tasks.queue_timeout import start_queue_timeout_monitor
 from app.tasks.data_cleanup import start_cleanup_scheduler
+from app.services.ocr_jobs import ocr_job_manager
 import asyncio
 
 
@@ -54,6 +55,7 @@ app.include_router(history.router, prefix="/api")
 app.include_router(queue.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(results.router, prefix="/api")
+app.include_router(ocr.router, prefix="/api")
 
 
 @app.get("/")
@@ -94,7 +96,18 @@ async def startup_event():
     print("Starting queue timeout monitor...")
     asyncio.create_task(start_queue_timeout_monitor())
 
+    if settings.OCR_ENABLED:
+        print("Starting OCR job manager...")
+        ocr_job_manager.start()
+    else:
+        print("OCR job manager disabled by config")
+
     print("Application started successfully!")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    ocr_job_manager.stop()
 
 
 if __name__ == "__main__":

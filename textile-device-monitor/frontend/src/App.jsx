@@ -1,12 +1,13 @@
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Layout, Menu } from 'antd';
-import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined } from '@ant-design/icons';
+import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined, ToolOutlined, ScanOutlined } from '@ant-design/icons';
 import DeviceMonitor from './pages/DeviceMonitor';
 import HistoryQuery from './pages/HistoryQuery';
 import Statistics from './pages/Statistics';
 import DeviceManagement from './pages/DeviceManagement';
 import ResultsTable from './pages/ResultsTable';
 import ResultsImages from './pages/ResultsImages';
+import OcrTool from './pages/OcrTool';
 import wsClient from './websocket/client';
 import { useState, useEffect } from 'react';
 
@@ -17,7 +18,31 @@ const menuItems = [
   { key: 'history', icon: <HistoryOutlined />, label: '历史记录', path: '/history' },
   { key: 'statistics', icon: <BarChartOutlined />, label: '数据统计', path: '/statistics' },
   { key: 'management', icon: <SettingOutlined />, label: '设备管理', path: '/management' },
+  {
+    key: 'tools',
+    icon: <ToolOutlined />,
+    label: '效率工具',
+    children: [
+      { key: 'tools-ocr', icon: <ScanOutlined />, label: 'OCR识别', path: '/tools/ocr' },
+    ],
+  },
 ];
+
+const flattenMenuItems = (items) =>
+  items.flatMap(item => (item.children ? flattenMenuItems(item.children) : [item]));
+
+const leafMenuItems = flattenMenuItems(menuItems).filter(item => Boolean(item.path));
+
+const findMenuItemByPath = (pathname) => {
+  const exactMatch = leafMenuItems.find(item => item.path === pathname);
+  if (exactMatch) {
+    return exactMatch;
+  }
+  return leafMenuItems
+    .filter(item => item.path !== '/')
+    .sort((a, b) => b.path.length - a.path.length)
+    .find(item => pathname.startsWith(item.path)) || null;
+};
 
 const appRoutes = (
   <Routes>
@@ -25,6 +50,7 @@ const appRoutes = (
     <Route path="/history" element={<HistoryQuery />} />
     <Route path="/statistics" element={<Statistics />} />
     <Route path="/management" element={<DeviceManagement />} />
+    <Route path="/tools/ocr" element={<OcrTool />} />
     <Route path="/results/table" element={<ResultsTable />} />
     <Route path="/results/images" element={<ResultsImages />} />
   </Routes>
@@ -35,7 +61,9 @@ function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const selectedKey = menuItems.find(item => item.path === location.pathname)?.key || 'monitor';
+  const selectedMenuItem = findMenuItemByPath(location.pathname);
+  const selectedKey = selectedMenuItem?.key || 'monitor';
+  const currentTitle = selectedMenuItem?.label || '纺织品检测系统';
   const isResults = location.pathname.startsWith('/results');
 
   useEffect(() => {
@@ -50,7 +78,7 @@ function AppLayout() {
   }, []);
 
   const handleMenuClick = ({ key }) => {
-    const target = menuItems.find(item => item.key === key);
+    const target = leafMenuItems.find(item => item.key === key);
     if (target) {
       navigate(target.path);
     }
@@ -82,7 +110,7 @@ function AppLayout() {
       </Sider>
       <Layout>
         <Header style={{ background: '#fff', display: 'flex', alignItems: 'center', padding: '0 24px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-          <h2 style={{ margin: 0 }}>{menuItems.find(item => item.key === selectedKey)?.label}</h2>
+          <h2 style={{ margin: 0 }}>{currentTitle}</h2>
         </Header>
         <Content style={{ margin: '24px 16px', padding: 24, background: '#fff', borderRadius: '8px' }}>
           {appRoutes}

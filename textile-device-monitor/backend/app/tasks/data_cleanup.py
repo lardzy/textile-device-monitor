@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import DeviceStatusHistory, QueueChangeLog
 from app.config import settings
+from app.services.ocr_jobs import cleanup_expired_ocr_jobs
 from datetime import datetime, date, timedelta
 import asyncio
 
@@ -32,8 +33,13 @@ async def cleanup_old_data():
 
         db.commit()
 
+        deleted_ocr_jobs = cleanup_expired_ocr_jobs(settings.OCR_RETENTION_HOURS)
+
         print(
-            f"Cleaned up {deleted_history} history records and {deleted_logs} log records"
+            "Cleaned up "
+            f"{deleted_history} history records, "
+            f"{deleted_logs} log records, "
+            f"{deleted_ocr_jobs} OCR job artifacts"
         )
 
     except Exception as e:
