@@ -31,8 +31,12 @@ services:
       - "8080"
       - --served-model-name
       - glm-ocr
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":1}'
+      - --gpu-memory-utilization
+      - "0.55"
+      - --max-num-seqs
+      - "1"
+      - --max-model-len
+      - "32768"
     volumes:
       - hf_cache:/root/.cache/huggingface
     networks:
@@ -43,6 +47,8 @@ services:
       context: ../ocr-runtime
     container_name: textile-glm-ocr-runtime
     restart: unless-stopped
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
     depends_on:
       - vllm
     networks:
