@@ -4,6 +4,7 @@ import base64
 from pathlib import Path
 import os
 from typing import Any
+import mimetypes
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
@@ -16,6 +17,14 @@ app = FastAPI(
 )
 
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+
+EXTENSION_CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
 
 
 def _upstream_url() -> str:
@@ -35,6 +44,23 @@ def _error_response(status_code: int, error: str, message: str) -> JSONResponse:
         status_code=status_code,
         content={"error": error, "error_code": error, "message": message},
     )
+
+
+def _resolve_content_type(filename: str, incoming_content_type: str | None) -> str:
+    incoming = (incoming_content_type or "").split(";", 1)[0].strip().lower()
+    if incoming and incoming != "application/octet-stream":
+        return incoming
+
+    ext = Path(filename).suffix.lower()
+    mapped = EXTENSION_CONTENT_TYPES.get(ext)
+    if mapped:
+        return mapped
+
+    guessed, _ = mimetypes.guess_type(filename)
+    if guessed:
+        return guessed
+
+    return "application/octet-stream"
 
 
 def _normalize_upstream_payload(payload: Any) -> dict[str, Any]:
@@ -97,7 +123,7 @@ async def parse_document(
             message="GLM_OCR_UPSTREAM_URL is empty",
         )
 
-    content_type = file.content_type or "application/octet-stream"
+    content_type = _resolve_content_type(filename, file.content_type)
     encoded = base64.b64encode(content).decode("ascii")
     data_uri = f"data:{content_type};base64,{encoded}"
 
@@ -126,7 +152,11 @@ async def parse_document(
         try:
             payload = upstream_resp.json()
             if isinstance(payload, dict):
-                raw_error = payload.get("error_code") or payload.get("error") or payload.get("detail")
+                raw_error = (
+                    payload.get("error_code")
+                    or payload.get("error")
+                    or payload.get("detail")
+                )
                 if raw_error:
                     if str(raw_error).lower() == "oom":
                         error_code = "oom"

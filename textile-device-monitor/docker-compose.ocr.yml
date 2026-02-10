@@ -24,8 +24,6 @@ services:
     environment:
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
     command:
-      - serve
-      - --model
       - zai-org/GLM-OCR
       - --allowed-local-media-path
       - /
