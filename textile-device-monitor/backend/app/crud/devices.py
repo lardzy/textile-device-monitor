@@ -25,7 +25,7 @@ def get_device_by_code(db: Session, device_code: str) -> Optional[Device]:
 
 
 def get_devices(db: Session, skip: int = 0, limit: int = 100) -> List[Device]:
-    return db.query(Device).offset(skip).limit(limit).all()
+    return db.query(Device).order_by(Device.id.asc()).offset(skip).limit(limit).all()
 
 
 def create_device(db: Session, device: DeviceCreate) -> Device:
