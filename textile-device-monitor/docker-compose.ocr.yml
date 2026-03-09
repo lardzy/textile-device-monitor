@@ -1,0 +1,62 @@
+services:
+  ocr-adapter:
+    build:
+      context: ../ocr-service
+    container_name: textile-ocr-adapter
+    restart: unless-stopped
+    environment:
+      GLM_OCR_UPSTREAM_URL: http://glm-ocr-runtime:5002/glmocr/parse
+      OCR_ADAPTER_TIMEOUT_SECONDS: 600
+      OCR_ADAPTER_MAX_UPLOAD_MB: 30
+    ports:
+      - "5002:5002"
+    depends_on:
+      - glm-ocr-runtime
+    networks:
+      - textile-net
+
+  vllm:
+    build:
+      context: ../ocr-vllm
+    container_name: textile-vllm
+    restart: unless-stopped
+    gpus: all
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    command:
+      - zai-org/GLM-OCR
+      - --allowed-local-media-path
+      - /
+      - --port
+      - "8080"
+      - --served-model-name
+      - glm-ocr
+      - --gpu-memory-utilization
+      - "0.50"
+      - --max-num-seqs
+      - "1"
+      - --max-model-len
+      - "8192"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    networks:
+      - textile-net
+
+  glm-ocr-runtime:
+    build:
+      context: ../ocr-runtime
+    container_name: textile-glm-ocr-runtime
+    restart: unless-stopped
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+    depends_on:
+      - vllm
+    networks:
+      - textile-net
+
+volumes:
+  hf_cache:
+
+networks:
+  textile-net:
+    driver: bridge
