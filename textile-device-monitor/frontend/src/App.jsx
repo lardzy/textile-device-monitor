@@ -1,6 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Layout, Menu } from 'antd';
-import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined, ToolOutlined, ScanOutlined } from '@ant-design/icons';
+import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined, ToolOutlined, ScanOutlined, PieChartOutlined } from '@ant-design/icons';
 import DeviceMonitor from './pages/DeviceMonitor';
 import HistoryQuery from './pages/HistoryQuery';
 import Statistics from './pages/Statistics';
@@ -8,6 +8,7 @@ import DeviceManagement from './pages/DeviceManagement';
 import ResultsTable from './pages/ResultsTable';
 import ResultsImages from './pages/ResultsImages';
 import OcrTool from './pages/OcrTool';
+import AreaRecognition from './pages/AreaRecognition';
 import wsClient from './websocket/client';
 import { useState, useEffect } from 'react';
 
@@ -24,6 +25,7 @@ const menuItems = [
     label: '效率工具',
     children: [
       { key: 'tools-ocr', icon: <ScanOutlined />, label: 'OCR识别', path: '/tools/ocr' },
+      { key: 'tools-area', icon: <PieChartOutlined />, label: '面积识别', path: '/tools/area' },
     ],
   },
 ];
@@ -51,6 +53,7 @@ const appRoutes = (
     <Route path="/statistics" element={<Statistics />} />
     <Route path="/management" element={<DeviceManagement />} />
     <Route path="/tools/ocr" element={<OcrTool />} />
+    <Route path="/tools/area" element={<AreaRecognition />} />
     <Route path="/results/table" element={<ResultsTable />} />
     <Route path="/results/images" element={<ResultsImages />} />
   </Routes>

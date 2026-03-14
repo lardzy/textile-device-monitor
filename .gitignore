@@ -3,3 +3,9 @@
 /textile-device-client/dist/
 /textile-device-client/logs/
 /.venv/
+/reference-document/
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     OCR_JOB_TIMEOUT_SECONDS: int = 600
     OCR_MAX_CONCURRENT_JOBS: int = 1
     OCR_RETENTION_HOURS: int = 24
+    AREA_ENABLED: bool = True
+    AREA_OUTPUT_DIR: str = "/tmp/area_outputs"
+    AREA_MAX_CONCURRENT_JOBS: int = 1
+    AREA_ROOT_PATH_DEFAULT: str = "/tmp/area_inputs"
+    AREA_WEIGHTS_DIR: str = "reference-document/new_cross/weights"
     CORS_ORIGINS: str = "http://localhost,http://localhost:80,http://backend:8000"
 
     class Config:

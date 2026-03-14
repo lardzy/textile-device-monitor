@@ -9,12 +9,13 @@ from app.database import engine, get_db
 from app.models import Base
 from sqlalchemy.exc import OperationalError
 from app.config import settings
-from app.api import devices, history, queue, stats, results, ocr
+from app.api import devices, history, queue, stats, results, ocr, area
 from app.websocket.manager import websocket_manager
 from app.tasks.device_monitor import start_heartbeat_monitor
 from app.tasks.queue_timeout import start_queue_timeout_monitor
 from app.tasks.data_cleanup import start_cleanup_scheduler
 from app.services.ocr_jobs import ocr_job_manager
+from app.services.area_jobs import area_job_manager
 import asyncio
 
 
@@ -56,6 +57,7 @@ app.include_router(queue.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(results.router, prefix="/api")
 app.include_router(ocr.router, prefix="/api")
+app.include_router(area.router, prefix="/api")
 
 
 @app.get("/")
@@ -102,12 +104,19 @@ async def startup_event():
     else:
         print("OCR job manager disabled by config")
 
+    if settings.AREA_ENABLED:
+        print("Starting area job manager...")
+        area_job_manager.start()
+    else:
+        print("Area job manager disabled by config")
+
     print("Application started successfully!")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     ocr_job_manager.stop()
+    area_job_manager.stop()
 
 
 if __name__ == "__main__":

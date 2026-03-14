@@ -134,3 +134,15 @@ class Statistic(Base):
     utilization_rate = Column(Float)
 
     device = relationship("Device", back_populates="statistics")
+
+
+class SystemConfig(Base):
+    __tablename__ = "system_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    config_key = Column(String(100), unique=True, nullable=False, index=True)
+    value_text = Column(Text)
+    value_json = Column(JSONB)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
