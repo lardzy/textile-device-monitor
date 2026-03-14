@@ -43,12 +43,27 @@ class AreaImageInferenceResult:
     overlay_image: Image.Image
 
 
+@dataclass
+class _ScoredComponent:
+    component_idx: int
+    class_name: str
+    area_px: int
+    bbox: tuple[int, int, int, int]
+    pixels: np.ndarray
+    score: float
+
+
 DEFAULT_INFER_OPTIONS: dict[str, Any] = {
     "threshold_bias": 0,
     "mask_mode": "auto",  # auto | dark | light
     "smooth_min_neighbors": 3,
     "min_pixels": 64,
     "overlay_alpha": 0.45,
+    "score_threshold": 0.15,
+    "top_k": 200,
+    "nms_top_k": 200,
+    "nms_conf_thresh": 0.05,
+    "nms_thresh": 0.5,
 }
 
 
@@ -148,14 +163,23 @@ def _find_components(
     return components
 
 
+def _resolve_global_threshold(gray: np.ndarray, threshold_bias: int = 0) -> int:
+    threshold = _otsu_threshold(gray)
+    return max(0, min(255, int(threshold + int(threshold_bias))))
+
+
 def _pick_mask(
     gray: np.ndarray,
     threshold_bias: int = 0,
     mask_mode: str = "auto",
     smooth_min_neighbors: int = 3,
+    global_threshold: int | None = None,
 ) -> np.ndarray:
-    threshold = _otsu_threshold(gray)
-    threshold = max(0, min(255, int(threshold + int(threshold_bias))))
+    threshold = (
+        max(0, min(255, int(global_threshold)))
+        if global_threshold is not None
+        else _resolve_global_threshold(gray, threshold_bias=threshold_bias)
+    )
     mask_dark = gray < threshold
     mode = str(mask_mode or "auto").strip().lower()
     if mode == "dark":
@@ -194,6 +218,117 @@ def _assign_classes(
         class_idx = min(cls_total - 1, int(rank * cls_total / total))
         assigned[comp_idx] = classes[class_idx]
     return assigned
+
+
+def _bbox_iou(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw = max(0, ix2 - ix1 + 1)
+    ih = max(0, iy2 - iy1 + 1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+
+    area_a = max(1, (ax2 - ax1 + 1) * (ay2 - ay1 + 1))
+    area_b = max(1, (bx2 - bx1 + 1) * (by2 - by1 + 1))
+    union = max(1, area_a + area_b - inter)
+    return float(inter) / float(union)
+
+
+def _build_scored_components(
+    components: list[np.ndarray],
+    class_map: dict[int, str],
+    gray: np.ndarray,
+    classes: list[str],
+    global_threshold: int,
+    min_pixels: int,
+) -> list[_ScoredComponent]:
+    scored: list[_ScoredComponent] = []
+    area_ref = max(1, int(min_pixels) * 4)
+    threshold_f = float(global_threshold)
+
+    for idx, comp in enumerate(components):
+        cls_name = class_map.get(idx, classes[0] if classes else "未分类")
+        area_px = int(comp.shape[0])
+        ys = comp[:, 0]
+        xs = comp[:, 1]
+        y1, y2 = int(ys.min()), int(ys.max())
+        x1, x2 = int(xs.min()), int(xs.max())
+
+        mean_gray = float(np.mean(gray[ys, xs])) if area_px > 0 else 0.0
+        contrast_score = min(1.0, max(0.0, abs(mean_gray - threshold_f) / 255.0))
+        area_score = min(1.0, float(area_px) / float(area_ref))
+        score = 0.7 * contrast_score + 0.3 * area_score
+        score = min(1.0, max(0.0, float(score)))
+
+        scored.append(
+            _ScoredComponent(
+                component_idx=idx,
+                class_name=cls_name,
+                area_px=area_px,
+                bbox=(x1, y1, x2, y2),
+                pixels=comp,
+                score=score,
+            )
+        )
+    return scored
+
+
+def _filter_scored_components(
+    scored_components: list[_ScoredComponent],
+    options: dict[str, Any],
+) -> list[_ScoredComponent]:
+    nms_conf_thresh = float(options.get("nms_conf_thresh", 0.05))
+    nms_top_k = int(options.get("nms_top_k", 200))
+    nms_thresh = float(options.get("nms_thresh", 0.5))
+    score_threshold = float(options.get("score_threshold", 0.15))
+    top_k = int(options.get("top_k", 200))
+
+    # 1) score >= nms_conf_thresh
+    stage1 = [item for item in scored_components if item.score >= nms_conf_thresh]
+
+    # 2) per-class top nms_top_k
+    by_class: dict[str, list[_ScoredComponent]] = {}
+    for item in stage1:
+        by_class.setdefault(item.class_name, []).append(item)
+    stage2: list[_ScoredComponent] = []
+    for class_name in by_class:
+        sorted_items = sorted(
+            by_class[class_name],
+            key=lambda item: (-item.score, -item.area_px, item.component_idx),
+        )
+        stage2.extend(sorted_items[: max(1, nms_top_k)])
+
+    # 3) per-class bbox IoU NMS with nms_thresh
+    by_class_stage2: dict[str, list[_ScoredComponent]] = {}
+    for item in stage2:
+        by_class_stage2.setdefault(item.class_name, []).append(item)
+
+    stage3: list[_ScoredComponent] = []
+    for class_name in by_class_stage2:
+        candidates = sorted(
+            by_class_stage2[class_name],
+            key=lambda item: (-item.score, -item.area_px, item.component_idx),
+        )
+        kept: list[_ScoredComponent] = []
+        for cand in candidates:
+            suppressed = False
+            for picked in kept:
+                if _bbox_iou(cand.bbox, picked.bbox) > nms_thresh:
+                    suppressed = True
+                    break
+            if not suppressed:
+                kept.append(cand)
+        stage3.extend(kept)
+
+    # 4) score >= score_threshold
+    stage4 = [item for item in stage3 if item.score >= score_threshold]
+
+    # 5) global top_k by score
+    stage4.sort(key=lambda item: (-item.score, -item.area_px, item.component_idx))
+    return stage4[: max(1, top_k)]
 
 
 class AreaPredictor:
@@ -240,17 +375,33 @@ class AreaPredictor:
         image = Image.open(image_path).convert("RGB")
         image_np = np.array(image, dtype=np.uint8)
         gray = np.mean(image_np, axis=2).astype(np.uint8)
+        threshold_bias = int(options.get("threshold_bias", 0))
+        min_pixels = max(1, int(options.get("min_pixels", 64)))
+        global_threshold = _resolve_global_threshold(gray, threshold_bias=threshold_bias)
         mask = _pick_mask(
             gray,
-            threshold_bias=int(options.get("threshold_bias", 0)),
+            threshold_bias=threshold_bias,
             mask_mode=str(options.get("mask_mode", "auto")),
             smooth_min_neighbors=int(options.get("smooth_min_neighbors", 3)),
+            global_threshold=global_threshold,
         )
         components = _find_components(
             mask,
-            min_pixels=max(1, int(options.get("min_pixels", 64))),
+            min_pixels=min_pixels,
         )
         class_map = _assign_classes(components, gray, classes)
+        scored_components = _build_scored_components(
+            components=components,
+            class_map=class_map,
+            gray=gray,
+            classes=classes,
+            global_threshold=global_threshold,
+            min_pixels=min_pixels,
+        )
+        filtered_components = _filter_scored_components(
+            scored_components=scored_components,
+            options=options,
+        )
 
         per_class = {name: 0 for name in classes}
         instances: list[AreaInstance] = []
@@ -263,16 +414,21 @@ class AreaPredictor:
         }
         class_codes = {class_name: f"C{idx + 1}" for idx, class_name in enumerate(classes)}
 
-        for idx, comp in enumerate(components):
-            cls_name = class_map.get(idx, classes[0])
-            area = int(comp.shape[0])
+        for scored in filtered_components:
+            cls_name = scored.class_name
+            area = int(scored.area_px)
             per_class[cls_name] = per_class.get(cls_name, 0) + area
 
-            ys = comp[:, 0]
-            xs = comp[:, 1]
-            y1, y2 = int(ys.min()), int(ys.max())
-            x1, x2 = int(xs.min()), int(xs.max())
-            instances.append(AreaInstance(class_name=cls_name, area_px=area, bbox=(x1, y1, x2, y2)))
+            ys = scored.pixels[:, 0]
+            xs = scored.pixels[:, 1]
+            x1, y1, x2, y2 = scored.bbox
+            instances.append(
+                AreaInstance(
+                    class_name=cls_name,
+                    area_px=area,
+                    bbox=(x1, y1, x2, y2),
+                )
+            )
 
             color = class_colors.get(cls_name, np.array(PALETTE[0], dtype=np.float32))
             overlay[ys, xs] = overlay[ys, xs] * (1 - alpha) + color * alpha

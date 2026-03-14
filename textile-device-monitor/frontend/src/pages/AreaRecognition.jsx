@@ -24,6 +24,11 @@ const DEFAULT_INFERENCE_OPTIONS = {
   smooth_min_neighbors: 3,
   min_pixels: 64,
   overlay_alpha: 0.45,
+  score_threshold: 0.15,
+  top_k: 200,
+  nms_top_k: 200,
+  nms_conf_thresh: 0.05,
+  nms_thresh: 0.5,
 };
 
 const statusColorMap = {
@@ -221,11 +226,16 @@ function AreaRecognition() {
         folder_name: folderName.trim(),
         model_name: modelName,
         inference_options: {
-          threshold_bias: Number(inferenceOptions.threshold_bias || 0),
+          threshold_bias: Number(inferenceOptions.threshold_bias ?? 0),
           mask_mode: String(inferenceOptions.mask_mode || 'auto'),
-          smooth_min_neighbors: Number(inferenceOptions.smooth_min_neighbors || 3),
-          min_pixels: Number(inferenceOptions.min_pixels || 64),
-          overlay_alpha: Number(inferenceOptions.overlay_alpha || 0.45),
+          smooth_min_neighbors: Number(inferenceOptions.smooth_min_neighbors ?? 3),
+          min_pixels: Number(inferenceOptions.min_pixels ?? 64),
+          overlay_alpha: Number(inferenceOptions.overlay_alpha ?? 0.45),
+          score_threshold: Number(inferenceOptions.score_threshold ?? 0.15),
+          top_k: Number(inferenceOptions.top_k ?? 200),
+          nms_top_k: Number(inferenceOptions.nms_top_k ?? 200),
+          nms_conf_thresh: Number(inferenceOptions.nms_conf_thresh ?? 0.05),
+          nms_thresh: Number(inferenceOptions.nms_thresh ?? 0.5),
         },
       });
       message.success(`任务已创建: ${job.job_id}`);
@@ -381,7 +391,8 @@ function AreaRecognition() {
           </Space>
 
           <Card size="small" type="inner" title="测试参数（推理可调）">
-            <Space wrap size={12}>
+            <div style={{ marginBottom: 8, color: '#555', fontSize: 12 }}>当前重建参数组</div>
+            <Space wrap size={12} style={{ marginBottom: 10 }}>
               <Select
                 size="small"
                 style={{ width: 170 }}
@@ -431,6 +442,59 @@ function AreaRecognition() {
                 onChange={(value) => setInferenceOptions((prev) => ({ ...prev, overlay_alpha: value ?? 0.45 }))}
               />
             </Space>
+            <div style={{ marginBottom: 8, color: '#555', fontSize: 12 }}>
+              原命名参数（近似映射，便于对齐原程序调参习惯）
+            </div>
+            <Space wrap size={12}>
+              <InputNumber
+                size="small"
+                style={{ width: 210 }}
+                addonBefore="score_threshold"
+                min={0}
+                max={1}
+                step={0.01}
+                value={inferenceOptions.score_threshold}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, score_threshold: value ?? 0.15 }))}
+              />
+              <InputNumber
+                size="small"
+                style={{ width: 160 }}
+                addonBefore="top_k"
+                min={1}
+                max={1000}
+                value={inferenceOptions.top_k}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, top_k: value ?? 200 }))}
+              />
+              <InputNumber
+                size="small"
+                style={{ width: 170 }}
+                addonBefore="nms_top_k"
+                min={1}
+                max={1000}
+                value={inferenceOptions.nms_top_k}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, nms_top_k: value ?? 200 }))}
+              />
+              <InputNumber
+                size="small"
+                style={{ width: 220 }}
+                addonBefore="nms_conf_thresh"
+                min={0}
+                max={1}
+                step={0.01}
+                value={inferenceOptions.nms_conf_thresh}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, nms_conf_thresh: value ?? 0.05 }))}
+              />
+              <InputNumber
+                size="small"
+                style={{ width: 180 }}
+                addonBefore="nms_thresh"
+                min={0}
+                max={1}
+                step={0.01}
+                value={inferenceOptions.nms_thresh}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, nms_thresh: value ?? 0.5 }))}
+              />
+            </Space>
           </Card>
         </Space>
       </Card>
@@ -459,6 +523,15 @@ function AreaRecognition() {
       >
         <Card loading={detailsLoading} bordered={false} bodyStyle={{ padding: 0 }}>
           <Row gutter={[16, 16]}>
+            <Col span={24}>
+              <Card type="inner" size="small" title="任务参数快照">
+                <Space wrap size={[8, 8]}>
+                  {Object.entries(selectedJob?.inference_options || {}).map(([key, value]) => (
+                    <Tag key={key}>{`${key}: ${String(value)}`}</Tag>
+                  ))}
+                </Space>
+              </Card>
+            </Col>
             <Col span={24}>
               <Table
                 rowKey={(row) => row.class_name}

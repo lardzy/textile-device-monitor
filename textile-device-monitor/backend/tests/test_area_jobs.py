@@ -14,7 +14,13 @@ from app.services.area_jobs import AreaJobManager
 
 
 class _FakePredictor:
-    def predict(self, image_path: Path, model_name: str, weight_path: Path):
+    def predict(
+        self,
+        image_path: Path,
+        model_name: str,
+        weight_path: Path,
+        inference_options: dict | None = None,
+    ):
         overlay = Image.open(image_path).convert("RGB")
         return AreaImageInferenceResult(
             image_name=image_path.name,
@@ -26,7 +32,13 @@ class _FakePredictor:
 
 
 class _ErrorPredictor:
-    def predict(self, image_path: Path, model_name: str, weight_path: Path):
+    def predict(
+        self,
+        image_path: Path,
+        model_name: str,
+        weight_path: Path,
+        inference_options: dict | None = None,
+    ):
         raise RuntimeError("mock_error")
 
 
@@ -67,6 +79,11 @@ class AreaJobsTests(unittest.TestCase):
                 payload = manager.get_job(job["job_id"])
                 self.assertIsNotNone(payload)
                 self.assertIn(payload["status"], {"succeeded", "succeeded_with_errors"})
+                self.assertIn("score_threshold", payload["inference_options"])
+                self.assertIn("top_k", payload["inference_options"])
+                self.assertIn("nms_top_k", payload["inference_options"])
+                self.assertIn("nms_conf_thresh", payload["inference_options"])
+                self.assertIn("nms_thresh", payload["inference_options"])
                 excel_path = manager.get_excel_path(job["job_id"])
                 self.assertIsNotNone(excel_path)
                 self.assertTrue(excel_path.exists())
@@ -154,6 +171,41 @@ class AreaJobsTests(unittest.TestCase):
             resolved = manager._resolve_target_folder(root_backslash, "sample")
             self.assertEqual(resolved.name, "sample")
             manager.stop()
+
+    def test_inference_option_new_fields_validated(self):
+        manager = AreaJobManager()
+        valid = manager._normalize_inference_options(
+            {
+                "score_threshold": 0.2,
+                "top_k": 100,
+                "nms_top_k": 120,
+                "nms_conf_thresh": 0.1,
+                "nms_thresh": 0.6,
+            }
+        )
+        self.assertEqual(valid["score_threshold"], 0.2)
+        self.assertEqual(valid["top_k"], 100)
+        self.assertEqual(valid["nms_top_k"], 120)
+        self.assertEqual(valid["nms_conf_thresh"], 0.1)
+        self.assertEqual(valid["nms_thresh"], 0.6)
+
+        invalid_cases = [
+            {"score_threshold": -0.1},
+            {"score_threshold": 1.1},
+            {"top_k": 0},
+            {"top_k": 1001},
+            {"nms_top_k": 0},
+            {"nms_top_k": 1001},
+            {"nms_conf_thresh": -0.1},
+            {"nms_conf_thresh": 1.1},
+            {"nms_thresh": -0.1},
+            {"nms_thresh": 1.1},
+        ]
+        for case in invalid_cases:
+            with self.assertRaises(ValueError) as ctx:
+                manager._normalize_inference_options(case)
+            self.assertEqual(str(ctx.exception), "invalid_inference_options")
+        manager.stop()
 
 
 if __name__ == "__main__":

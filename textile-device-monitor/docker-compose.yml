@@ -26,6 +26,10 @@ services:
       HEARTBEAT_TIMEOUT: 30
       DATA_RETENTION_DAYS: 30
       CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
+      AREA_WEIGHTS_DIR: /opt/area_weights
+    volumes:
+      - /Volumes/LARD/Cache:/Volumes/LARD/Cache:ro
+      - ../reference-document/new_cross/weights:/opt/area_weights:ro
     ports:
       - "8000:8000"
     depends_on:

@@ -286,6 +286,36 @@ class AreaJobManager:
             if "overlay_alpha" in options:
                 value = float(options.get("overlay_alpha", 0.45))
                 normalized["overlay_alpha"] = max(0.05, min(0.95, value))
+
+            if "score_threshold" in options:
+                value = float(options.get("score_threshold", 0.15))
+                if value < 0.0 or value > 1.0:
+                    raise ValueError("invalid_score_threshold")
+                normalized["score_threshold"] = value
+
+            if "top_k" in options:
+                value = int(options.get("top_k", 200))
+                if value < 1 or value > 1000:
+                    raise ValueError("invalid_top_k")
+                normalized["top_k"] = value
+
+            if "nms_top_k" in options:
+                value = int(options.get("nms_top_k", 200))
+                if value < 1 or value > 1000:
+                    raise ValueError("invalid_nms_top_k")
+                normalized["nms_top_k"] = value
+
+            if "nms_conf_thresh" in options:
+                value = float(options.get("nms_conf_thresh", 0.05))
+                if value < 0.0 or value > 1.0:
+                    raise ValueError("invalid_nms_conf_thresh")
+                normalized["nms_conf_thresh"] = value
+
+            if "nms_thresh" in options:
+                value = float(options.get("nms_thresh", 0.5))
+                if value < 0.0 or value > 1.0:
+                    raise ValueError("invalid_nms_thresh")
+                normalized["nms_thresh"] = value
         except (TypeError, ValueError) as exc:
             if str(exc) == "invalid_mask_mode":
                 raise ValueError("invalid_inference_options") from exc
