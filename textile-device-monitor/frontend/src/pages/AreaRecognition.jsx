@@ -3,10 +3,10 @@ import {
   Button,
   Card,
   Col,
-  Form,
   Image,
   Input,
   InputNumber,
+  Modal,
   Row,
   Select,
   Space,
@@ -18,6 +18,13 @@ import { DownloadOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icon
 import { areaApi } from '../api/area';
 
 const POLL_INTERVAL_MS = 2000;
+const DEFAULT_INFERENCE_OPTIONS = {
+  threshold_bias: 0,
+  mask_mode: 'auto',
+  smooth_min_neighbors: 3,
+  min_pixels: 64,
+  overlay_alpha: 0.45,
+};
 
 const statusColorMap = {
   queued: 'default',
@@ -39,12 +46,14 @@ function AreaRecognition() {
   const [modelName, setModelName] = useState('');
   const [jobs, setJobs] = useState([]);
   const [selectedJobId, setSelectedJobId] = useState('');
+  const [detailsVisible, setDetailsVisible] = useState(false);
   const [resultSummary, setResultSummary] = useState([]);
   const [resultDetails, setResultDetails] = useState([]);
   const [imageItems, setImageItems] = useState([]);
   const [imagesTotal, setImagesTotal] = useState(0);
   const [imagePage, setImagePage] = useState(1);
   const [imagePageSize, setImagePageSize] = useState(20);
+  const [inferenceOptions, setInferenceOptions] = useState(DEFAULT_INFERENCE_OPTIONS);
 
   const modelOptions = useMemo(
     () => mappingRows.map((item) => item.model_name).filter(Boolean),
@@ -72,6 +81,10 @@ function AreaRecognition() {
         model_file: file,
       }));
       setMappingRows(rows);
+      setInferenceOptions((prev) => ({
+        ...prev,
+        ...(data.inference_defaults || {}),
+      }));
       if (!modelName && rows.length > 0) {
         setModelName(rows[0].model_name);
       }
@@ -143,12 +156,24 @@ function AreaRecognition() {
     if (!runningJobs.length) return undefined;
     const timer = setInterval(() => {
       fetchJobs(true);
-      if (selectedJobId) {
+      if (selectedJobId && detailsVisible) {
         fetchJobDetails(selectedJobId, imagePage, imagePageSize);
       }
     }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [runningJobs.length, selectedJobId, imagePage, imagePageSize]);
+  }, [runningJobs.length, selectedJobId, detailsVisible, imagePage, imagePageSize]);
+
+  const getCreateJobErrorMessage = (raw) => {
+    const code = String(raw || '').trim();
+    if (code === 'folder_not_found') return '文件夹不存在，请检查根路径和文件夹名称（精确匹配）';
+    if (code === 'root_path_not_found') return '根路径不可访问，请检查本地路径或局域网路径配置';
+    if (code === 'empty_image_list') return '该文件夹没有可处理的 jpg/png 图片';
+    if (code === 'invalid_model_name') return '模型名称无效，请重新选择';
+    if (code === 'invalid_folder_name') return '文件夹名称无效，请仅填写目录名';
+    if (code === 'invalid_root_path') return '根路径无效，请先保存正确的全局配置';
+    if (code === 'invalid_inference_options') return '推理参数无效，请检查测试参数设置';
+    return code || '创建任务失败';
+  };
 
   const handleSaveConfig = async () => {
     const modelMapping = {};
@@ -195,6 +220,13 @@ function AreaRecognition() {
       const job = await areaApi.createJob({
         folder_name: folderName.trim(),
         model_name: modelName,
+        inference_options: {
+          threshold_bias: Number(inferenceOptions.threshold_bias || 0),
+          mask_mode: String(inferenceOptions.mask_mode || 'auto'),
+          smooth_min_neighbors: Number(inferenceOptions.smooth_min_neighbors || 3),
+          min_pixels: Number(inferenceOptions.min_pixels || 64),
+          overlay_alpha: Number(inferenceOptions.overlay_alpha || 0.45),
+        },
       });
       message.success(`任务已创建: ${job.job_id}`);
       setFolderName('');
@@ -203,7 +235,7 @@ function AreaRecognition() {
       setImagePage(1);
       await fetchJobDetails(job.job_id, 1, imagePageSize);
     } catch (error) {
-      message.error(error.message || '创建任务失败');
+      message.error(getCreateJobErrorMessage(error.message));
     } finally {
       setJobCreating(false);
     }
@@ -224,6 +256,7 @@ function AreaRecognition() {
       width: 240,
       render: (_, row, index) => (
         <Input
+          size="small"
           value={row.model_name}
           onChange={(event) => {
             const next = [...mappingRows];
@@ -238,6 +271,7 @@ function AreaRecognition() {
       dataIndex: 'model_file',
       render: (_, row, index) => (
         <Input
+          size="small"
           value={row.model_file}
           onChange={(event) => {
             const next = [...mappingRows];
@@ -284,7 +318,17 @@ function AreaRecognition() {
       width: 220,
       render: (_, row) => (
         <Space>
-          <Button size="small" onClick={() => setSelectedJobId(row.job_id)}>查看</Button>
+          <Button
+            size="small"
+            onClick={() => {
+              setSelectedJobId(row.job_id);
+              setImagePage(1);
+              setDetailsVisible(true);
+              fetchJobDetails(row.job_id, 1, imagePageSize);
+            }}
+          >
+            查看
+          </Button>
           <Button
             size="small"
             icon={<DownloadOutlined />}
@@ -317,48 +361,77 @@ function AreaRecognition() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card
-        title="全局配置（对所有用户生效）"
-        extra={(
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={fetchConfig} loading={configLoading}>刷新</Button>
-            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveConfig} loading={configSaving}>保存配置</Button>
-          </Space>
-        )}
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
-          <Input
-            addonBefore="根路径"
-            value={rootPath}
-            onChange={(event) => setRootPath(event.target.value)}
-            placeholder="输入服务器可访问的根路径"
-          />
-          <Table
-            rowKey={(row) => row.key}
-            columns={mappingColumns}
-            dataSource={mappingRows}
-            pagination={false}
-            size="small"
-          />
-        </Space>
-      </Card>
-
       <Card title="创建任务">
-        <Space wrap>
-          <Input
-            style={{ width: 280 }}
-            placeholder="文件夹名称（精确匹配）"
-            value={folderName}
-            onChange={(event) => setFolderName(event.target.value)}
-          />
-          <Select
-            style={{ width: 260 }}
-            value={modelName || undefined}
-            onChange={setModelName}
-            options={modelOptions.map((item) => ({ value: item, label: item }))}
-            placeholder="选择模型"
-          />
-          <Button type="primary" onClick={handleCreateJob} loading={jobCreating}>开始处理</Button>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Space wrap>
+            <Input
+              style={{ width: 280 }}
+              placeholder="文件夹名称（精确匹配）"
+              value={folderName}
+              onChange={(event) => setFolderName(event.target.value)}
+            />
+            <Select
+              style={{ width: 260 }}
+              value={modelName || undefined}
+              onChange={setModelName}
+              options={modelOptions.map((item) => ({ value: item, label: item }))}
+              placeholder="选择模型"
+            />
+            <Button type="primary" onClick={handleCreateJob} loading={jobCreating}>开始处理</Button>
+          </Space>
+
+          <Card size="small" type="inner" title="测试参数（推理可调）">
+            <Space wrap size={12}>
+              <Select
+                size="small"
+                style={{ width: 170 }}
+                value={inferenceOptions.mask_mode}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, mask_mode: value }))}
+                options={[
+                  { value: 'auto', label: '前景模式: 自动' },
+                  { value: 'dark', label: '前景模式: 深色' },
+                  { value: 'light', label: '前景模式: 浅色' },
+                ]}
+              />
+              <InputNumber
+                size="small"
+                style={{ width: 160 }}
+                addonBefore="阈值偏移"
+                min={-128}
+                max={128}
+                value={inferenceOptions.threshold_bias}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, threshold_bias: value ?? 0 }))}
+              />
+              <InputNumber
+                size="small"
+                style={{ width: 160 }}
+                addonBefore="最小像素"
+                min={1}
+                max={100000}
+                value={inferenceOptions.min_pixels}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, min_pixels: value ?? 64 }))}
+              />
+              <InputNumber
+                size="small"
+                style={{ width: 170 }}
+                addonBefore="平滑邻域阈值"
+                min={1}
+                max={5}
+                value={inferenceOptions.smooth_min_neighbors}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, smooth_min_neighbors: value ?? 3 }))}
+              />
+              <InputNumber
+                size="small"
+                style={{ width: 190 }}
+                addonBefore="叠加透明度"
+                min={0.05}
+                max={0.95}
+                step={0.05}
+                value={inferenceOptions.overlay_alpha}
+                onChange={(value) => setInferenceOptions((prev) => ({ ...prev, overlay_alpha: value ?? 0.45 }))}
+              />
+            </Space>
+          </Card>
         </Space>
       </Card>
 
@@ -376,80 +449,124 @@ function AreaRecognition() {
         />
       </Card>
 
-      <Card title={`任务详情 ${selectedJob ? `(${selectedJob.job_id})` : ''}`} loading={detailsLoading}>
-        <Row gutter={[16, 16]}>
-          <Col span={24}>
-            <Table
-              rowKey={(row) => row.class_name}
-              size="small"
-              columns={summaryColumns}
-              dataSource={resultSummary}
-              pagination={false}
-            />
-          </Col>
-          <Col span={24}>
-            <Table
-              rowKey={(row, index) => `${row.image_name}-${row.class_name}-${index}`}
-              size="small"
-              columns={detailColumns}
-              dataSource={resultDetails}
-              pagination={{ pageSize: 10 }}
-              scroll={{ x: 900 }}
-            />
-          </Col>
-          <Col span={24}>
-            <Card
-              type="inner"
-              title="分割叠加图预览"
-              extra={(
-                <Space>
-                  <span>总数: {imagesTotal}</span>
-                  <InputNumber
-                    min={1}
-                    max={200}
-                    value={imagePageSize}
-                    onChange={(value) => setImagePageSize(value || 20)}
-                  />
+      <Modal
+        title={`任务详情 ${selectedJob ? `(${selectedJob.job_id})` : ''}`}
+        open={detailsVisible}
+        onCancel={() => setDetailsVisible(false)}
+        footer={null}
+        width={1200}
+        destroyOnClose
+      >
+        <Card loading={detailsLoading} bordered={false} bodyStyle={{ padding: 0 }}>
+          <Row gutter={[16, 16]}>
+            <Col span={24}>
+              <Table
+                rowKey={(row) => row.class_name}
+                size="small"
+                columns={summaryColumns}
+                dataSource={resultSummary}
+                pagination={false}
+              />
+            </Col>
+            <Col span={24}>
+              <Table
+                rowKey={(row, index) => `${row.image_name}-${row.class_name}-${index}`}
+                size="small"
+                columns={detailColumns}
+                dataSource={resultDetails}
+                pagination={{ pageSize: 10 }}
+                scroll={{ x: 900 }}
+              />
+            </Col>
+            <Col span={24}>
+              <Card
+                type="inner"
+                title="分割叠加图预览"
+                extra={(
+                  <Space>
+                    <span>总数: {imagesTotal}</span>
+                    <InputNumber
+                      min={1}
+                      max={200}
+                      value={imagePageSize}
+                      onChange={(value) => setImagePageSize(value || 20)}
+                    />
+                    <Button
+                      onClick={() => handleImagePageChange(1, imagePageSize)}
+                      disabled={!selectedJobId}
+                    >
+                      应用分页
+                    </Button>
+                  </Space>
+                )}
+              >
+                <div style={{ marginBottom: 8, color: '#666', fontSize: 12 }}>
+                  叠加框角标使用 `C1/C2/...`（对应模型类别顺序）以避免中文字体缺失导致乱码方块。
+                </div>
+                <Row gutter={[12, 12]}>
+                  {imageItems.map((item) => (
+                    <Col key={`${item.image_name}-${item.overlay_filename}`} xs={24} sm={12} md={8} lg={6}>
+                      <Card size="small" title={item.image_name}>
+                        <Image
+                          width="100%"
+                          src={areaApi.getImageUrl(selectedJobId, item.overlay_filename)}
+                          alt={item.image_name}
+                        />
+                      </Card>
+                    </Col>
+                  ))}
+                </Row>
+                <Space style={{ marginTop: 12 }}>
                   <Button
-                    onClick={() => handleImagePageChange(1, imagePageSize)}
-                    disabled={!selectedJobId}
+                    disabled={imagePage <= 1}
+                    onClick={() => handleImagePageChange(imagePage - 1, imagePageSize)}
                   >
-                    应用分页
+                    上一页
+                  </Button>
+                  <span>第 {imagePage} 页</span>
+                  <Button
+                    disabled={imagePage * imagePageSize >= imagesTotal}
+                    onClick={() => handleImagePageChange(imagePage + 1, imagePageSize)}
+                  >
+                    下一页
                   </Button>
                 </Space>
-              )}
-            >
-              <Row gutter={[12, 12]}>
-                {imageItems.map((item) => (
-                  <Col key={`${item.image_name}-${item.overlay_filename}`} xs={24} sm={12} md={8} lg={6}>
-                    <Card size="small" title={item.image_name}>
-                      <Image
-                        width="100%"
-                        src={areaApi.getImageUrl(selectedJobId, item.overlay_filename)}
-                        alt={item.image_name}
-                      />
-                    </Card>
-                  </Col>
-                ))}
-              </Row>
-              <Space style={{ marginTop: 12 }}>
-                <Button
-                  disabled={imagePage <= 1}
-                  onClick={() => handleImagePageChange(imagePage - 1, imagePageSize)}
-                >
-                  上一页
-                </Button>
-                <span>第 {imagePage} 页</span>
-                <Button
-                  disabled={imagePage * imagePageSize >= imagesTotal}
-                  onClick={() => handleImagePageChange(imagePage + 1, imagePageSize)}
-                >
-                  下一页
-                </Button>
-              </Space>
-            </Card>
-          </Col>
-        </Row>
+              </Card>
+            </Col>
+          </Row>
+        </Card>
+      </Modal>
+
+      <Card
+        size="small"
+        title="全局配置（对所有用户生效）"
+        style={{ maxWidth: 920 }}
+        extra={(
+          <Space>
+            <Button size="small" icon={<ReloadOutlined />} onClick={fetchConfig} loading={configLoading}>刷新</Button>
+            <Button size="small" type="primary" icon={<SaveOutlined />} onClick={handleSaveConfig} loading={configSaving}>保存配置</Button>
+          </Space>
+        )}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={8}>
+          <span style={{ color: '#999', fontSize: 12 }}>
+            通常仅在文件服务器地址变更时调整。支持本地路径和局域网路径（如 \\\\192.168.105.66\\共享目录）。
+          </span>
+          <Input
+            size="small"
+            addonBefore="根路径"
+            value={rootPath}
+            onChange={(event) => setRootPath(event.target.value)}
+            placeholder="例如：/mnt/share/cross 或 \\\\192.168.105.66\\17检验八部\\10特纤\\02-检验\\横截面"
+          />
+          <Table
+            rowKey={(row) => row.key}
+            columns={mappingColumns}
+            dataSource={mappingRows}
+            pagination={false}
+            size="small"
+          />
+        </Space>
       </Card>
     </Space>
   );

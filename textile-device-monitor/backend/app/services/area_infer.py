@@ -43,6 +43,15 @@ class AreaImageInferenceResult:
     overlay_image: Image.Image
 
 
+DEFAULT_INFER_OPTIONS: dict[str, Any] = {
+    "threshold_bias": 0,
+    "mask_mode": "auto",  # auto | dark | light
+    "smooth_min_neighbors": 3,
+    "min_pixels": 64,
+    "overlay_alpha": 0.45,
+}
+
+
 def parse_model_classes(model_name: str) -> list[str]:
     classes: list[str] = []
     for item in model_name.split("-"):
@@ -84,7 +93,7 @@ def _otsu_threshold(gray: np.ndarray) -> int:
     return int(threshold)
 
 
-def _smooth_binary(mask: np.ndarray) -> np.ndarray:
+def _smooth_binary(mask: np.ndarray, min_neighbors: int = 3) -> np.ndarray:
     padded = np.pad(mask.astype(np.uint8), ((1, 1), (1, 1)), mode="constant")
     neighbors = (
         padded[1:-1, 1:-1]
@@ -93,7 +102,8 @@ def _smooth_binary(mask: np.ndarray) -> np.ndarray:
         + padded[1:-1, :-2]
         + padded[1:-1, 2:]
     )
-    return neighbors >= 3
+    threshold = max(1, min(5, int(min_neighbors)))
+    return neighbors >= threshold
 
 
 def _find_components(
@@ -138,15 +148,27 @@ def _find_components(
     return components
 
 
-def _pick_mask(gray: np.ndarray) -> np.ndarray:
+def _pick_mask(
+    gray: np.ndarray,
+    threshold_bias: int = 0,
+    mask_mode: str = "auto",
+    smooth_min_neighbors: int = 3,
+) -> np.ndarray:
     threshold = _otsu_threshold(gray)
+    threshold = max(0, min(255, int(threshold + int(threshold_bias))))
     mask_dark = gray < threshold
-    dark_ratio = float(mask_dark.mean())
-    if 0.02 <= dark_ratio <= 0.75:
+    mode = str(mask_mode or "auto").strip().lower()
+    if mode == "dark":
         picked = mask_dark
-    else:
+    elif mode == "light":
         picked = ~mask_dark
-    return _smooth_binary(picked)
+    else:
+        dark_ratio = float(mask_dark.mean())
+        if 0.02 <= dark_ratio <= 0.75:
+            picked = mask_dark
+        else:
+            picked = ~mask_dark
+    return _smooth_binary(picked, min_neighbors=smooth_min_neighbors)
 
 
 def _assign_classes(
@@ -205,22 +227,41 @@ class AreaPredictor:
         image_path: Path,
         model_name: str,
         weight_path: Path,
+        inference_options: dict[str, Any] | None = None,
     ) -> AreaImageInferenceResult:
         with self._lock:
             self._ensure_weight_readable(weight_path)
+
+        options = dict(DEFAULT_INFER_OPTIONS)
+        if isinstance(inference_options, dict):
+            options.update(inference_options)
 
         classes = parse_model_classes(model_name)
         image = Image.open(image_path).convert("RGB")
         image_np = np.array(image, dtype=np.uint8)
         gray = np.mean(image_np, axis=2).astype(np.uint8)
-        mask = _pick_mask(gray)
-        components = _find_components(mask)
+        mask = _pick_mask(
+            gray,
+            threshold_bias=int(options.get("threshold_bias", 0)),
+            mask_mode=str(options.get("mask_mode", "auto")),
+            smooth_min_neighbors=int(options.get("smooth_min_neighbors", 3)),
+        )
+        components = _find_components(
+            mask,
+            min_pixels=max(1, int(options.get("min_pixels", 64))),
+        )
         class_map = _assign_classes(components, gray, classes)
 
         per_class = {name: 0 for name in classes}
         instances: list[AreaInstance] = []
         overlay = image_np.astype(np.float32).copy()
-        alpha = 0.45
+        alpha = float(options.get("overlay_alpha", 0.45))
+        alpha = max(0.05, min(0.95, alpha))
+        class_colors = {
+            class_name: np.array(PALETTE[idx % len(PALETTE)], dtype=np.float32)
+            for idx, class_name in enumerate(classes)
+        }
+        class_codes = {class_name: f"C{idx + 1}" for idx, class_name in enumerate(classes)}
 
         for idx, comp in enumerate(components):
             cls_name = class_map.get(idx, classes[0])
@@ -233,7 +274,7 @@ class AreaPredictor:
             x1, x2 = int(xs.min()), int(xs.max())
             instances.append(AreaInstance(class_name=cls_name, area_px=area, bbox=(x1, y1, x2, y2)))
 
-            color = np.array(PALETTE[idx % len(PALETTE)], dtype=np.float32)
+            color = class_colors.get(cls_name, np.array(PALETTE[0], dtype=np.float32))
             overlay[ys, xs] = overlay[ys, xs] * (1 - alpha) + color * alpha
 
         overlay_image = Image.fromarray(np.clip(overlay, 0, 255).astype(np.uint8))
@@ -241,8 +282,11 @@ class AreaPredictor:
             draw = ImageDraw.Draw(overlay_image)
             for item in instances[:80]:
                 x1, y1, x2, y2 = item.bbox
-                draw.rectangle((x1, y1, x2, y2), outline=(255, 255, 255), width=1)
-                draw.text((x1 + 2, y1 + 2), item.class_name, fill=(255, 255, 255))
+                box_color_arr = class_colors.get(item.class_name, np.array(PALETTE[0], dtype=np.float32))
+                box_color = tuple(int(v) for v in box_color_arr.tolist())
+                draw.rectangle((x1, y1, x2, y2), outline=box_color, width=1)
+                # Use ASCII code labels to avoid missing CJK fonts showing squares.
+                draw.text((x1 + 2, y1 + 2), class_codes.get(item.class_name, "C1"), fill=(255, 255, 255))
 
         total_area = int(sum(per_class.values()))
         return AreaImageInferenceResult(

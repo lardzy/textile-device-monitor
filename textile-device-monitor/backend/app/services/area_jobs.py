@@ -12,7 +12,11 @@ from uuid import uuid4
 from openpyxl import Workbook
 
 from app.config import settings
-from app.services.area_infer import AreaPredictor, parse_model_classes
+from app.services.area_infer import (
+    DEFAULT_INFER_OPTIONS,
+    AreaPredictor,
+    parse_model_classes,
+)
 
 ALLOWED_IMAGE_SUFFIXES = {".jpg", ".png"}
 
@@ -29,6 +33,7 @@ class AreaJobRecord:
     overlay_dir: str
     result_json_path: str
     excel_path: str
+    inference_options: dict[str, Any] = field(default_factory=dict)
     status: str = "queued"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: datetime | None = None
@@ -90,20 +95,37 @@ class AreaJobManager:
         root_path: str,
         model_mapping: dict[str, str],
         weights_dir: str,
+        inference_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.start()
 
         normalized_folder = folder_name.strip()
+        normalized_root = root_path.strip()
         if not normalized_folder:
             raise ValueError("invalid_folder_name")
         if "/" in normalized_folder or "\\" in normalized_folder:
             raise ValueError("invalid_folder_name")
         if normalized_folder in {".", ".."}:
             raise ValueError("invalid_folder_name")
+        if not normalized_root:
+            raise ValueError("invalid_root_path")
 
         model_file = model_mapping.get(model_name)
         if not model_file:
             raise ValueError("invalid_model_name")
+        normalized_options = self._normalize_inference_options(inference_options)
+        try:
+            target_folder = self._resolve_target_folder(normalized_root, normalized_folder)
+        except FileNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+
+        image_paths = [
+            path
+            for path in target_folder.iterdir()
+            if path.is_file() and path.suffix.lower() in ALLOWED_IMAGE_SUFFIXES
+        ]
+        if not image_paths:
+            raise ValueError("empty_image_list")
 
         job_id = uuid4().hex
         output_dir = Path(settings.AREA_OUTPUT_DIR) / job_id
@@ -115,13 +137,14 @@ class AreaJobManager:
             job_id=job_id,
             folder_name=normalized_folder,
             model_name=model_name,
-            root_path=root_path.strip(),
+            root_path=normalized_root,
             model_file=model_file,
             weight_path=str((Path(weights_dir) / model_file).resolve()),
             output_dir=str(output_dir),
             overlay_dir=str(overlay_dir),
             result_json_path=str(output_dir / "result.json"),
             excel_path=str(output_dir / "result.xlsx"),
+            inference_options=normalized_options,
         )
 
         with self._lock:
@@ -203,6 +226,7 @@ class AreaJobManager:
             "folder_name": record.folder_name,
             "model_name": record.model_name,
             "model_file": record.model_file,
+            "inference_options": record.inference_options,
             "created_at": record.created_at.isoformat(),
             "started_at": record.started_at.isoformat() if record.started_at else None,
             "finished_at": record.finished_at.isoformat() if record.finished_at else None,
@@ -232,14 +256,74 @@ class AreaJobManager:
             record.error_message = message
             record.finished_at = datetime.now(timezone.utc)
 
+    def _normalize_inference_options(
+        self,
+        options: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        normalized = dict(DEFAULT_INFER_OPTIONS)
+        if not isinstance(options, dict):
+            return normalized
+
+        try:
+            if "threshold_bias" in options:
+                value = int(options.get("threshold_bias", 0))
+                normalized["threshold_bias"] = max(-128, min(128, value))
+
+            if "mask_mode" in options:
+                mode = str(options.get("mask_mode", "auto")).strip().lower()
+                if mode not in {"auto", "dark", "light"}:
+                    raise ValueError("invalid_mask_mode")
+                normalized["mask_mode"] = mode
+
+            if "smooth_min_neighbors" in options:
+                value = int(options.get("smooth_min_neighbors", 3))
+                normalized["smooth_min_neighbors"] = max(1, min(5, value))
+
+            if "min_pixels" in options:
+                value = int(options.get("min_pixels", 64))
+                normalized["min_pixels"] = max(1, min(100000, value))
+
+            if "overlay_alpha" in options:
+                value = float(options.get("overlay_alpha", 0.45))
+                normalized["overlay_alpha"] = max(0.05, min(0.95, value))
+        except (TypeError, ValueError) as exc:
+            if str(exc) == "invalid_mask_mode":
+                raise ValueError("invalid_inference_options") from exc
+            raise ValueError("invalid_inference_options") from exc
+
+        return normalized
+
+    def _root_path_candidates(self, root_path: str) -> list[Path]:
+        raw = root_path.strip()
+        if not raw:
+            return []
+        candidates: list[Path] = [Path(raw)]
+        if "\\" in raw:
+            normalized = raw.replace("\\", "/")
+            if normalized and normalized != raw:
+                candidates.append(Path(normalized))
+        deduped: list[Path] = []
+        seen: set[str] = set()
+        for item in candidates:
+            key = str(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
     def _resolve_target_folder(self, root_path: str, folder_name: str) -> Path:
-        root = Path(root_path)
-        if not root.exists() or not root.is_dir():
+        roots = self._root_path_candidates(root_path)
+        if not roots:
             raise FileNotFoundError("root_path_not_found")
-        target = root / folder_name
-        if not target.exists() or not target.is_dir():
-            raise FileNotFoundError("folder_not_found")
-        return target
+        existing_roots = [root for root in roots if root.exists() and root.is_dir()]
+        if not existing_roots:
+            raise FileNotFoundError("root_path_not_found")
+        for root in existing_roots:
+            target = root / folder_name
+            if target.exists() and target.is_dir():
+                return target
+        raise FileNotFoundError("folder_not_found")
 
     def _build_excel(
         self,
@@ -328,6 +412,7 @@ class AreaJobManager:
                         image_path=image_path,
                         model_name=record.model_name,
                         weight_path=Path(record.weight_path),
+                        inference_options=record.inference_options,
                     )
                     overlay_filename = f"{image_path.stem}_overlay.png"
                     overlay_save_path = Path(record.overlay_dir) / overlay_filename

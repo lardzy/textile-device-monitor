@@ -123,6 +123,38 @@ class AreaJobsTests(unittest.TestCase):
             )
         manager.stop()
 
+    def test_folder_not_found_rejected_before_enqueue(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            root.mkdir(parents=True, exist_ok=True)
+            weights_dir = Path(tmpdir) / "weights"
+            weights_dir.mkdir(parents=True, exist_ok=True)
+            (weights_dir / "b_c1_1.3.pth").write_bytes(b"mock")
+
+            manager = AreaJobManager()
+            with self.assertRaises(ValueError) as ctx:
+                manager.create_job(
+                    folder_name="not-exists",
+                    model_name="棉-莱赛尔",
+                    root_path=str(root),
+                    model_mapping={"棉-莱赛尔": "b_c1_1.3.pth"},
+                    weights_dir=str(weights_dir),
+                )
+            self.assertEqual(str(ctx.exception), "folder_not_found")
+            manager.stop()
+
+    def test_root_path_backslash_style_supported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            target = root / "sample"
+            target.mkdir(parents=True, exist_ok=True)
+
+            manager = AreaJobManager()
+            root_backslash = str(root).replace("/", "\\")
+            resolved = manager._resolve_target_folder(root_backslash, "sample")
+            self.assertEqual(resolved.name, "sample")
+            manager.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

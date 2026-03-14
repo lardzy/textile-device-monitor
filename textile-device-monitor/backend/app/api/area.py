@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.crud import area as area_crud
 from app.database import get_db
+from app.services.area_infer import DEFAULT_INFER_OPTIONS
 from app.services.area_jobs import area_job_manager
 
 router = APIRouter(prefix="/area", tags=["area"])
@@ -23,6 +24,7 @@ class AreaConfigPayload(BaseModel):
 class AreaJobCreatePayload(BaseModel):
     folder_name: str = Field(..., min_length=1, max_length=255)
     model_name: str = Field(..., min_length=1, max_length=200)
+    inference_options: dict[str, object] | None = None
 
 
 def _ensure_enabled() -> None:
@@ -52,6 +54,7 @@ def get_area_config(db: Session = Depends(get_db)):
         "root_path": config.get("root_path"),
         "model_mapping": model_mapping,
         "model_options": model_options,
+        "inference_defaults": DEFAULT_INFER_OPTIONS,
     }
 
 
@@ -82,6 +85,7 @@ def create_area_job(payload: AreaJobCreatePayload, db: Session = Depends(get_db)
             root_path=str(config.get("root_path") or ""),
             model_mapping=dict(config.get("model_mapping") or {}),
             weights_dir=settings.AREA_WEIGHTS_DIR,
+            inference_options=payload.inference_options,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
