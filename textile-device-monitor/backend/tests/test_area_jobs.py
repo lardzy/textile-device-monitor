@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 import time
@@ -14,32 +13,60 @@ from app.services.area_jobs import AreaJobManager
 
 
 class _FakePredictor:
+    def check_service_health(self, *, infer_url: str | None = None, timeout_sec: int | None = None):
+        return {"status": "ok", "infer_url": infer_url, "timeout_sec": timeout_sec}
+
+    def warmup_model(
+        self,
+        *,
+        model_name: str,
+        model_file: str,
+        infer_url: str | None = None,
+        timeout_sec: int | None = None,
+    ):
+        return {"status": "ok", "model_name": model_name, "model_file": model_file}
+
     def predict(
         self,
         image_path: Path,
         model_name: str,
         weight_path: Path,
         inference_options: dict | None = None,
+        *,
+        infer_url: str | None = None,
+        timeout_sec: int | None = None,
+        model_file: str | None = None,
     ):
         overlay = Image.open(image_path).convert("RGB")
+        class_name = parse_model_classes(model_name)[0]
         return AreaImageInferenceResult(
             image_name=image_path.name,
             total_area_px=120,
-            per_class_area_px={model_name.split("-")[0]: 120},
-            instances=[AreaInstance(class_name=model_name.split("-")[0], area_px=120, bbox=(1, 1, 5, 5))],
+            per_class_area_px={class_name: 120},
+            instances=[AreaInstance(class_name=class_name, area_px=120, bbox=(1, 1, 5, 5))],
             overlay_image=overlay,
+            engine_meta={"engine": "mock-native"},
         )
 
 
-class _ErrorPredictor:
+class _ErrorPredictor(_FakePredictor):
     def predict(
         self,
         image_path: Path,
         model_name: str,
         weight_path: Path,
         inference_options: dict | None = None,
+        *,
+        infer_url: str | None = None,
+        timeout_sec: int | None = None,
+        model_file: str | None = None,
     ):
         raise RuntimeError("mock_error")
+
+
+class _ServiceDownPredictor(_FakePredictor):
+    def check_service_health(self, *, infer_url: str | None = None, timeout_sec: int | None = None):
+        raise RuntimeError("infer_service_unavailable")
 
 
 class AreaJobsTests(unittest.TestCase):
@@ -52,8 +79,7 @@ class AreaJobsTests(unittest.TestCase):
             root.mkdir(parents=True, exist_ok=True)
             target = root / "sample-001"
             target.mkdir(parents=True, exist_ok=True)
-            img_path = target / "a.png"
-            Image.new("RGB", (48, 48), color=(255, 255, 255)).save(img_path)
+            Image.new("RGB", (48, 48), color=(255, 255, 255)).save(target / "a.png")
 
             weights_dir = Path(tmpdir) / "weights"
             weights_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +96,8 @@ class AreaJobsTests(unittest.TestCase):
                     root_path=str(root),
                     model_mapping={"棉-莱赛尔": "b_c1_1.3.pth"},
                     weights_dir=str(weights_dir),
+                    infer_url="http://area-infer:9001",
+                    infer_timeout_sec=20,
                 )
                 for _ in range(50):
                     payload = manager.get_job(job["job_id"])
@@ -84,6 +112,9 @@ class AreaJobsTests(unittest.TestCase):
                 self.assertIn("nms_top_k", payload["inference_options"])
                 self.assertIn("nms_conf_thresh", payload["inference_options"])
                 self.assertIn("nms_thresh", payload["inference_options"])
+                result = manager.get_result(job["job_id"])
+                self.assertIsNotNone(result)
+                self.assertEqual((result or {}).get("engine_meta", {}).get("engine"), "mock-native")
                 excel_path = manager.get_excel_path(job["job_id"])
                 self.assertIsNotNone(excel_path)
                 self.assertTrue(excel_path.exists())
@@ -97,8 +128,7 @@ class AreaJobsTests(unittest.TestCase):
             root.mkdir(parents=True, exist_ok=True)
             target = root / "sample-err"
             target.mkdir(parents=True, exist_ok=True)
-            img_path = target / "a.jpg"
-            Image.new("RGB", (32, 32), color=(128, 128, 128)).save(img_path)
+            Image.new("RGB", (32, 32), color=(128, 128, 128)).save(target / "a.jpg")
 
             weights_dir = Path(tmpdir) / "weights"
             weights_dir.mkdir(parents=True, exist_ok=True)
@@ -115,6 +145,8 @@ class AreaJobsTests(unittest.TestCase):
                     root_path=str(root),
                     model_mapping={"粘纤-莱赛尔": "b_v1_1.3.pth"},
                     weights_dir=str(weights_dir),
+                    infer_url="http://area-infer:9001",
+                    infer_timeout_sec=20,
                 )
                 for _ in range(50):
                     payload = manager.get_job(job["job_id"])
@@ -130,6 +162,7 @@ class AreaJobsTests(unittest.TestCase):
 
     def test_invalid_folder_name(self):
         manager = AreaJobManager()
+        manager._predictor = _FakePredictor()
         with self.assertRaises(ValueError):
             manager.create_job(
                 folder_name="../bad",
@@ -137,6 +170,8 @@ class AreaJobsTests(unittest.TestCase):
                 root_path="/tmp",
                 model_mapping={"棉-莫代尔": "b_cm_1.3.pth"},
                 weights_dir="/tmp",
+                infer_url="http://area-infer:9001",
+                infer_timeout_sec=20,
             )
         manager.stop()
 
@@ -149,6 +184,7 @@ class AreaJobsTests(unittest.TestCase):
             (weights_dir / "b_c1_1.3.pth").write_bytes(b"mock")
 
             manager = AreaJobManager()
+            manager._predictor = _FakePredictor()
             with self.assertRaises(ValueError) as ctx:
                 manager.create_job(
                     folder_name="not-exists",
@@ -156,6 +192,8 @@ class AreaJobsTests(unittest.TestCase):
                     root_path=str(root),
                     model_mapping={"棉-莱赛尔": "b_c1_1.3.pth"},
                     weights_dir=str(weights_dir),
+                    infer_url="http://area-infer:9001",
+                    infer_timeout_sec=20,
                 )
             self.assertEqual(str(ctx.exception), "folder_not_found")
             manager.stop()
@@ -206,6 +244,33 @@ class AreaJobsTests(unittest.TestCase):
                 manager._normalize_inference_options(case)
             self.assertEqual(str(ctx.exception), "invalid_inference_options")
         manager.stop()
+
+    def test_infer_precheck_failure_rejected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            root.mkdir(parents=True, exist_ok=True)
+            target = root / "sample-001"
+            target.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (32, 32), color=(255, 255, 255)).save(target / "a.png")
+
+            weights_dir = Path(tmpdir) / "weights"
+            weights_dir.mkdir(parents=True, exist_ok=True)
+            (weights_dir / "b_c1_1.3.pth").write_bytes(b"mock")
+
+            manager = AreaJobManager()
+            manager._predictor = _ServiceDownPredictor()
+            with self.assertRaises(ValueError) as ctx:
+                manager.create_job(
+                    folder_name="sample-001",
+                    model_name="棉-莱赛尔",
+                    root_path=str(root),
+                    model_mapping={"棉-莱赛尔": "b_c1_1.3.pth"},
+                    weights_dir=str(weights_dir),
+                    infer_url="http://area-infer:9001",
+                    infer_timeout_sec=20,
+                )
+            self.assertEqual(str(ctx.exception), "infer_service_unavailable")
+            manager.stop()
 
 
 if __name__ == "__main__":

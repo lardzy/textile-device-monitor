@@ -177,6 +177,10 @@ function AreaRecognition() {
     if (code === 'invalid_folder_name') return '文件夹名称无效，请仅填写目录名';
     if (code === 'invalid_root_path') return '根路径无效，请先保存正确的全局配置';
     if (code === 'invalid_inference_options') return '推理参数无效，请检查测试参数设置';
+    if (code === 'infer_service_unavailable') return '原生推理服务不可用，请稍后重试或联系管理员';
+    if (code === 'infer_timeout') return '原生推理服务超时，请稍后重试';
+    if (code === 'infer_model_load_failed') return '模型加载失败，请检查权重文件与模型映射';
+    if (code === 'infer_bad_response') return '原生推理服务返回异常，请联系管理员排查';
     return code || '创建任务失败';
   };
 

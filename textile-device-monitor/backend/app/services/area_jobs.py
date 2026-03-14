@@ -33,6 +33,8 @@ class AreaJobRecord:
     overlay_dir: str
     result_json_path: str
     excel_path: str
+    infer_url: str
+    infer_timeout_sec: int
     inference_options: dict[str, Any] = field(default_factory=dict)
     status: str = "queued"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -47,6 +49,7 @@ class AreaJobRecord:
     result_summary: list[dict[str, Any]] = field(default_factory=list)
     result_rows: list[dict[str, Any]] = field(default_factory=list)
     image_items: list[dict[str, str]] = field(default_factory=list)
+    engine_meta: dict[str, Any] = field(default_factory=dict)
 
 
 class AreaJobManager:
@@ -57,7 +60,10 @@ class AreaJobManager:
         self._shutdown_event = threading.Event()
         self._workers: list[threading.Thread] = []
         self._started = False
-        self._predictor = AreaPredictor()
+        self._predictor = AreaPredictor(
+            infer_url=settings.AREA_INFER_URL,
+            timeout_sec=settings.AREA_INFER_TIMEOUT_SEC,
+        )
 
     def start(self) -> None:
         with self._lock:
@@ -96,6 +102,8 @@ class AreaJobManager:
         model_mapping: dict[str, str],
         weights_dir: str,
         inference_options: dict[str, Any] | None = None,
+        infer_url: str | None = None,
+        infer_timeout_sec: int | None = None,
     ) -> dict[str, Any]:
         self.start()
 
@@ -114,6 +122,8 @@ class AreaJobManager:
         if not model_file:
             raise ValueError("invalid_model_name")
         normalized_options = self._normalize_inference_options(inference_options)
+        normalized_infer_url = str(infer_url or settings.AREA_INFER_URL).strip()
+        normalized_infer_timeout = max(1, int(infer_timeout_sec or settings.AREA_INFER_TIMEOUT_SEC))
         try:
             target_folder = self._resolve_target_folder(normalized_root, normalized_folder)
         except FileNotFoundError as exc:
@@ -126,6 +136,28 @@ class AreaJobManager:
         ]
         if not image_paths:
             raise ValueError("empty_image_list")
+
+        try:
+            self._predictor.check_service_health(
+                infer_url=normalized_infer_url,
+                timeout_sec=normalized_infer_timeout,
+            )
+            self._predictor.warmup_model(
+                model_name=model_name,
+                model_file=model_file,
+                infer_url=normalized_infer_url,
+                timeout_sec=normalized_infer_timeout,
+            )
+        except RuntimeError as exc:
+            code = str(exc).strip() or "infer_service_unavailable"
+            if code not in {
+                "infer_service_unavailable",
+                "infer_model_load_failed",
+                "infer_timeout",
+                "infer_bad_response",
+            }:
+                code = "infer_service_unavailable"
+            raise ValueError(code) from exc
 
         job_id = uuid4().hex
         output_dir = Path(settings.AREA_OUTPUT_DIR) / job_id
@@ -144,6 +176,8 @@ class AreaJobManager:
             overlay_dir=str(overlay_dir),
             result_json_path=str(output_dir / "result.json"),
             excel_path=str(output_dir / "result.xlsx"),
+            infer_url=normalized_infer_url,
+            infer_timeout_sec=normalized_infer_timeout,
             inference_options=normalized_options,
         )
 
@@ -177,6 +211,7 @@ class AreaJobManager:
             return {
                 "job_id": record.job_id,
                 "status": record.status,
+                "engine_meta": record.engine_meta,
                 "summary": record.result_summary,
                 "per_image": record.result_rows,
             }
@@ -227,6 +262,8 @@ class AreaJobManager:
             "model_name": record.model_name,
             "model_file": record.model_file,
             "inference_options": record.inference_options,
+            "infer_url": record.infer_url,
+            "infer_timeout_sec": record.infer_timeout_sec,
             "created_at": record.created_at.isoformat(),
             "started_at": record.started_at.isoformat() if record.started_at else None,
             "finished_at": record.finished_at.isoformat() if record.finished_at else None,
@@ -432,6 +469,8 @@ class AreaJobManager:
             class_image_counts = {name: 0 for name in classes}
             detail_rows: list[dict[str, Any]] = []
             image_items: list[dict[str, str]] = []
+            engine_meta_snapshot: dict[str, Any] = {}
+            infer_error_code: str | None = None
 
             with self._lock:
                 record.total_images = len(image_paths)
@@ -443,7 +482,12 @@ class AreaJobManager:
                         model_name=record.model_name,
                         weight_path=Path(record.weight_path),
                         inference_options=record.inference_options,
+                        infer_url=record.infer_url,
+                        timeout_sec=record.infer_timeout_sec,
+                        model_file=record.model_file,
                     )
+                    if not engine_meta_snapshot and isinstance(prediction.engine_meta, dict):
+                        engine_meta_snapshot = dict(prediction.engine_meta)
                     overlay_filename = f"{image_path.stem}_overlay.png"
                     overlay_save_path = Path(record.overlay_dir) / overlay_filename
                     if overlay_save_path.exists():
@@ -484,6 +528,14 @@ class AreaJobManager:
                     with self._lock:
                         record.succeeded_images += 1
                 except Exception as exc:
+                    raw_error = str(exc).strip()
+                    if raw_error in {
+                        "infer_service_unavailable",
+                        "infer_model_load_failed",
+                        "infer_timeout",
+                        "infer_bad_response",
+                    } and infer_error_code is None:
+                        infer_error_code = raw_error
                     detail_rows.append(
                         {
                             "image_name": image_path.name,
@@ -492,7 +544,7 @@ class AreaJobManager:
                             "area_px": 0,
                             "ratio_percent": 0.0,
                             "overlay_filename": "",
-                            "error": str(exc),
+                            "error": raw_error or "area_inference_failed",
                         }
                     )
                     with self._lock:
@@ -502,7 +554,7 @@ class AreaJobManager:
                         record.processed_images += 1
 
             if record.succeeded_images <= 0:
-                raise RuntimeError("all_images_failed")
+                raise RuntimeError(infer_error_code or "all_images_failed")
 
             total_area_all = max(1, int(sum(class_totals.values())))
             summary_rows: list[dict[str, Any]] = []
@@ -537,6 +589,7 @@ class AreaJobManager:
                 record.result_summary = summary_rows
                 record.result_rows = detail_rows
                 record.image_items = image_items
+                record.engine_meta = engine_meta_snapshot
                 record.error_code = None
                 record.error_message = None
         except FileNotFoundError as exc:
@@ -544,7 +597,17 @@ class AreaJobManager:
         except ValueError as exc:
             self._set_job_failed(record, str(exc), str(exc))
         except Exception as exc:
-            self._set_job_failed(record, "area_inference_failed", str(exc))
+            code = str(exc).strip()
+            if code in {
+                "infer_service_unavailable",
+                "infer_model_load_failed",
+                "infer_timeout",
+                "infer_bad_response",
+                "all_images_failed",
+            }:
+                self._set_job_failed(record, code, code)
+            else:
+                self._set_job_failed(record, "area_inference_failed", str(exc))
 
 
 area_job_manager = AreaJobManager()

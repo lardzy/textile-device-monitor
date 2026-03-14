@@ -86,6 +86,8 @@ def create_area_job(payload: AreaJobCreatePayload, db: Session = Depends(get_db)
             model_mapping=dict(config.get("model_mapping") or {}),
             weights_dir=settings.AREA_WEIGHTS_DIR,
             inference_options=payload.inference_options,
+            infer_url=settings.AREA_INFER_URL,
+            infer_timeout_sec=settings.AREA_INFER_TIMEOUT_SEC,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

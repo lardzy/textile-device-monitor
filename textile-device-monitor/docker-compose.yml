@@ -16,6 +16,20 @@ services:
     networks:
       - textile-net
 
+  area-infer:
+    build: ./area-infer
+    container_name: textile-area-infer
+    restart: unless-stopped
+    environment:
+      AREA_WEIGHTS_DIR: /opt/area_weights
+      AREA_YOLACT_VENDOR_ROOT: /app/vendor/yolact
+    volumes:
+      - ../reference-document/new_cross/weights:/opt/area_weights:ro
+    ports:
+      - "9001:9001"
+    networks:
+      - textile-net
+
   backend:
     build: ./backend
     container_name: textile-monitor-backend
@@ -27,6 +41,8 @@ services:
       DATA_RETENTION_DAYS: 30
       CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
       AREA_WEIGHTS_DIR: /opt/area_weights
+      AREA_INFER_URL: http://area-infer:9001
+      AREA_INFER_TIMEOUT_SEC: 60
     volumes:
       - /Volumes/LARD/Cache:/Volumes/LARD/Cache:ro
       - ../reference-document/new_cross/weights:/opt/area_weights:ro
@@ -34,6 +50,7 @@ services:
       - "8000:8000"
     depends_on:
       - postgres
+      - area-infer
     networks:
       - textile-net
 
