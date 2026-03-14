@@ -9,3 +9,5 @@
 ._*
 .Spotlight-V100
 .Trashes
+/textile-device-monitor/frontend/node_modules/
+/textile-device-monitor/frontend/dist/

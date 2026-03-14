@@ -16,6 +16,7 @@ const { Header, Content, Sider } = Layout;
 
 const menuItems = [
   { key: 'monitor', icon: <MonitorOutlined />, label: '设备监控', path: '/' },
+  { key: 'area', icon: <PieChartOutlined />, label: '面积识别', path: '/tools/area' },
   { key: 'history', icon: <HistoryOutlined />, label: '历史记录', path: '/history' },
   { key: 'statistics', icon: <BarChartOutlined />, label: '数据统计', path: '/statistics' },
   { key: 'management', icon: <SettingOutlined />, label: '设备管理', path: '/management' },
@@ -25,7 +26,6 @@ const menuItems = [
     label: '效率工具',
     children: [
       { key: 'tools-ocr', icon: <ScanOutlined />, label: 'OCR识别', path: '/tools/ocr' },
-      { key: 'tools-area', icon: <PieChartOutlined />, label: '面积识别', path: '/tools/area' },
     ],
   },
 ];
