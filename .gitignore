@@ -11,3 +11,4 @@
 .Trashes
 /textile-device-monitor/frontend/node_modules/
 /textile-device-monitor/frontend/dist/
+/textile-device-monitor/runtime/

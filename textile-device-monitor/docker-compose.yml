@@ -24,7 +24,7 @@ services:
       AREA_WEIGHTS_DIR: /opt/area_weights
       AREA_YOLACT_VENDOR_ROOT: /app/vendor/yolact
     volumes:
-      - ../reference-document/new_cross/weights:/opt/area_weights:ro
+      - ./runtime/area-models:/opt/area_weights:ro
     ports:
       - "9001:9001"
     networks:
@@ -44,8 +44,8 @@ services:
       AREA_INFER_URL: http://area-infer:9001
       AREA_INFER_TIMEOUT_SEC: 60
     volumes:
-      - /Volumes/LARD/Cache:/Volumes/LARD/Cache:ro
-      - ../reference-document/new_cross/weights:/opt/area_weights:ro
+      - /Volumes/LARD/Cache:/Volumes/LARD/Cache
+      - ./runtime/area-models:/opt/area_weights:ro
     ports:
       - "8000:8000"
     depends_on:

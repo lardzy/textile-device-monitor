@@ -14,6 +14,7 @@ from app.websocket.manager import websocket_manager
 from app.tasks.device_monitor import start_heartbeat_monitor
 from app.tasks.queue_timeout import start_queue_timeout_monitor
 from app.tasks.data_cleanup import start_cleanup_scheduler
+from app.tasks.area_archive import start_area_archive_scheduler
 from app.services.ocr_jobs import ocr_job_manager
 from app.services.area_jobs import area_job_manager
 import asyncio
@@ -94,6 +95,9 @@ async def startup_event():
 
     print("Starting cleanup scheduler...")
     asyncio.create_task(start_cleanup_scheduler())
+
+    print("Starting area archive scheduler...")
+    asyncio.create_task(start_area_archive_scheduler())
 
     print("Starting queue timeout monitor...")
     asyncio.create_task(start_queue_timeout_monitor())

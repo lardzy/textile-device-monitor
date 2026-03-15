@@ -96,6 +96,7 @@ class AreaJobsTests(unittest.TestCase):
                     root_path=str(root),
                     model_mapping={"棉-莱赛尔": "b_c1_1.3.pth"},
                     weights_dir=str(weights_dir),
+                    output_root=str(Path(tmpdir) / "out"),
                     infer_url="http://area-infer:9001",
                     infer_timeout_sec=20,
                 )
@@ -145,6 +146,7 @@ class AreaJobsTests(unittest.TestCase):
                     root_path=str(root),
                     model_mapping={"粘纤-莱赛尔": "b_v1_1.3.pth"},
                     weights_dir=str(weights_dir),
+                    output_root=str(Path(tmpdir) / "out"),
                     infer_url="http://area-infer:9001",
                     infer_timeout_sec=20,
                 )
@@ -170,6 +172,7 @@ class AreaJobsTests(unittest.TestCase):
                 root_path="/tmp",
                 model_mapping={"棉-莫代尔": "b_cm_1.3.pth"},
                 weights_dir="/tmp",
+                output_root="/tmp",
                 infer_url="http://area-infer:9001",
                 infer_timeout_sec=20,
             )
@@ -192,6 +195,7 @@ class AreaJobsTests(unittest.TestCase):
                     root_path=str(root),
                     model_mapping={"棉-莱赛尔": "b_c1_1.3.pth"},
                     weights_dir=str(weights_dir),
+                    output_root=str(Path(tmpdir) / "out"),
                     infer_url="http://area-infer:9001",
                     infer_timeout_sec=20,
                 )
@@ -266,6 +270,7 @@ class AreaJobsTests(unittest.TestCase):
                     root_path=str(root),
                     model_mapping={"棉-莱赛尔": "b_c1_1.3.pth"},
                     weights_dir=str(weights_dir),
+                    output_root=str(Path(tmpdir) / "out"),
                     infer_url="http://area-infer:9001",
                     infer_timeout_sec=20,
                 )

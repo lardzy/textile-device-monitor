@@ -8,6 +8,7 @@ from sqlalchemy import (
     Float,
     Date,
     Boolean,
+    UniqueConstraint,
     Enum as SQLEnum,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -146,3 +147,102 @@ class SystemConfig(Base):
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class AreaJob(Base):
+    __tablename__ = "area_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String(64), unique=True, nullable=False, index=True)
+    folder_name = Column(String(255), nullable=False, index=True)
+    model_name = Column(String(200), nullable=False)
+    model_file = Column(String(255), nullable=False)
+    root_path = Column(Text, nullable=False)
+    output_dir = Column(Text, nullable=False)
+    overlay_dir = Column(Text, nullable=False)
+    result_json_path = Column(Text, nullable=False)
+    excel_path = Column(Text, nullable=False)
+    infer_url = Column(String(500), nullable=False)
+    infer_timeout_sec = Column(Integer, nullable=False, default=60)
+    inference_options = Column(JSONB)
+    status = Column(String(32), nullable=False, default="queued", index=True)
+    error_code = Column(String(128))
+    error_message = Column(Text)
+    total_images = Column(Integer, nullable=False, default=0)
+    processed_images = Column(Integer, nullable=False, default=0)
+    succeeded_images = Column(Integer, nullable=False, default=0)
+    failed_images = Column(Integer, nullable=False, default=0)
+    engine_meta = Column(JSONB)
+    summary_json = Column(JSONB)
+    detail_json = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    images = relationship(
+        "AreaJobImage",
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+
+
+class AreaJobImage(Base):
+    __tablename__ = "area_job_images"
+    __table_args__ = (UniqueConstraint("job_id", "image_name", name="uq_area_job_image"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey("area_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    image_name = Column(String(255), nullable=False)
+    overlay_filename = Column(String(255), nullable=False, default="")
+    source_image_path = Column(Text, nullable=False)
+    width = Column(Integer, nullable=False, default=0)
+    height = Column(Integer, nullable=False, default=0)
+    total_area_px = Column(Integer, nullable=False, default=0)
+    per_class_area_px = Column(JSONB)
+    error_message = Column(Text)
+    edited_by_id = Column(String(64))
+    edited_at = Column(DateTime(timezone=True))
+    edit_version = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    job = relationship("AreaJob", back_populates="images")
+    instances = relationship(
+        "AreaJobInstance",
+        back_populates="image",
+        cascade="all, delete-orphan",
+    )
+
+
+class AreaJobInstance(Base):
+    __tablename__ = "area_job_instances"
+
+    id = Column(Integer, primary_key=True, index=True)
+    image_id = Column(
+        Integer,
+        ForeignKey("area_job_images.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    class_name = Column(String(100), nullable=False)
+    score = Column(Float)
+    bbox = Column(JSONB)
+    polygon = Column(JSONB)
+    area_px = Column(Integer, nullable=False, default=0)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    sort_index = Column(Integer, nullable=False, default=0)
+    initial_bbox = Column(JSONB)
+    initial_polygon = Column(JSONB)
+    initial_area_px = Column(Integer, nullable=False, default=0)
+    initial_is_deleted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    image = relationship("AreaJobImage", back_populates="instances")

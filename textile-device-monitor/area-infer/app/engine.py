@@ -166,6 +166,36 @@ class AreaNativeEngine:
             raise InferServiceError("infer_bad_response", "invalid_image_decode")
         return image_bgr
 
+    def _mask_to_polygon(self, mask_bool: np.ndarray | None) -> list[list[int]]:
+        if not isinstance(mask_bool, np.ndarray):
+            return []
+        if mask_bool.dtype != np.uint8:
+            mask_u8 = mask_bool.astype(np.uint8) * 255
+        else:
+            mask_u8 = mask_bool
+        if mask_u8.ndim != 2:
+            return []
+        contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return []
+        largest = max(contours, key=cv2.contourArea)
+        if largest is None or len(largest) < 3:
+            return []
+        perimeter = cv2.arcLength(largest, True)
+        epsilon = max(1.0, 0.0035 * perimeter)
+        approx = cv2.approxPolyDP(largest, epsilon, True)
+        points = approx[:, 0, :] if approx.ndim == 3 and approx.shape[1] == 1 else approx
+        polygon: list[list[int]] = []
+        if not isinstance(points, np.ndarray):
+            return []
+        for p in points.tolist():
+            if not isinstance(p, (list, tuple)) or len(p) != 2:
+                continue
+            polygon.append([int(p[0]), int(p[1])])
+        if len(polygon) < 3:
+            return []
+        return polygon
+
     def _resolve_weight_path(self, model_file: str) -> Path:
         model_key = Path(str(model_file or "").strip()).name
         if not model_key:
@@ -357,6 +387,7 @@ class AreaNativeEngine:
                     raw_mask = masks_np[i]
                     mask_bool = (raw_mask > 0.5) if isinstance(raw_mask, np.ndarray) else None
                     area_px = int(mask_bool.sum()) if isinstance(mask_bool, np.ndarray) else max(0, (x2 - x1 + 1) * (y2 - y1 + 1))
+                    polygon = self._mask_to_polygon(mask_bool)
 
                     per_class_area_px[cls_name] = per_class_area_px.get(cls_name, 0) + area_px
                     instances.append(
@@ -365,6 +396,7 @@ class AreaNativeEngine:
                             "score": score,
                             "bbox": [x1, y1, x2, y2],
                             "area_px": area_px,
+                            "polygon": polygon,
                             "mask": mask_bool,
                         }
                     )

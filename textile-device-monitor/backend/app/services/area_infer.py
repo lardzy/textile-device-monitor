@@ -23,6 +23,7 @@ class AreaInstance:
     area_px: int
     bbox: tuple[int, int, int, int]
     score: float | None = None
+    polygon: list[list[int]] = field(default_factory=list)
 
 
 @dataclass
@@ -265,12 +266,25 @@ class AreaPredictor:
                     score = float(raw_score) if raw_score is not None else None
                 except (TypeError, ValueError):
                     score = None
+                polygon: list[list[int]] = []
+                raw_polygon = item.get("polygon")
+                if isinstance(raw_polygon, list):
+                    for point in raw_polygon:
+                        if not isinstance(point, (list, tuple)) or len(point) != 2:
+                            continue
+                        try:
+                            px = int(point[0])
+                            py = int(point[1])
+                        except (TypeError, ValueError):
+                            continue
+                        polygon.append([px, py])
                 instances.append(
                     AreaInstance(
                         class_name=class_name,
                         area_px=max(0, area_px),
                         bbox=bbox,
                         score=score,
+                        polygon=polygon,
                     )
                 )
                 if class_name not in per_class:
