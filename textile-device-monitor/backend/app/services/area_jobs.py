@@ -299,7 +299,24 @@ class AreaJobManager:
                 return None
             path = Path(job.overlay_dir) / filename
             if not path.exists() or not path.is_file():
-                return None
+                image_row = (
+                    db.query(AreaJobImage)
+                    .filter(
+                        AreaJobImage.job_id == job.id,
+                        AreaJobImage.overlay_filename == filename,
+                    )
+                    .first()
+                )
+                if image_row is not None and not (image_row.error_message or "").strip():
+                    rows = (
+                        db.query(AreaJobInstance)
+                        .filter(AreaJobInstance.image_id == image_row.id)
+                        .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
+                        .all()
+                    )
+                    self._render_overlay_for_image(job, image_row, rows)
+                if not path.exists() or not path.is_file():
+                    return None
             return path
         finally:
             db.close()
@@ -388,6 +405,15 @@ class AreaJobManager:
                 .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
                 .all()
             )
+            overlay_filename = str(image_row.overlay_filename or "")
+            overlay_exists = False
+            if overlay_filename:
+                overlay_path = Path(job.overlay_dir) / overlay_filename
+                if not overlay_path.exists() or not overlay_path.is_file():
+                    self._render_overlay_for_image(job, image_row, instances)
+                overlay_exists = overlay_path.exists() and overlay_path.is_file()
+            if not overlay_exists:
+                overlay_filename = ""
             return {
                 "job_id": job.job_id,
                 "job_created_at": job.created_at.isoformat() if job.created_at else None,
@@ -396,7 +422,8 @@ class AreaJobManager:
                     "image_id": image_row.id,
                     "image_name": image_row.image_name,
                     "source_image_path": image_row.source_image_path,
-                    "overlay_filename": image_row.overlay_filename,
+                    "overlay_filename": overlay_filename,
+                    "overlay_exists": overlay_exists,
                     "width": int(image_row.width or 0),
                     "height": int(image_row.height or 0),
                     "edited_at": image_row.edited_at.isoformat() if image_row.edited_at else None,
@@ -1442,7 +1469,7 @@ class AreaJobManager:
                         job_row.processed_images = record.processed_images
                         job_row.succeeded_images = record.succeeded_images
                         job_row.failed_images = record.failed_images
-                        db.flush()
+                        db.commit()
 
                 if record.succeeded_images <= 0:
                     raise RuntimeError(infer_error_code or "all_images_failed")

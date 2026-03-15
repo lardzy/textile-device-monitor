@@ -4,14 +4,13 @@ import {
   Card,
   Checkbox,
   Collapse,
-  Col,
   Form,
   Image,
   Input,
   InputNumber,
   Modal,
   Pagination,
-  Row,
+  Progress,
   Select,
   Space,
   Spin,
@@ -131,13 +130,17 @@ const computeBBoxFromPolygon = (polygon, fallback = []) => {
 function AreaRecognition() {
   const queueUserIdRef = useRef(getOrCreateQueueUserId());
   const editorCanvasRef = useRef(null);
+  const folderRequestSeqRef = useRef(0);
+  const editorImagesRequestSeqRef = useRef(0);
+  const editorDetailRequestSeqRef = useRef(0);
+  const editorImagesRef = useRef([]);
+  const initializedEditorJobRef = useRef('');
 
   const [configLoading, setConfigLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [jobCreating, setJobCreating] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [folderLoading, setFolderLoading] = useState(false);
-  const [detailsLoading, setDetailsLoading] = useState(false);
   const [editorImagesLoading, setEditorImagesLoading] = useState(false);
   const [editorImageLoading, setEditorImageLoading] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
@@ -167,6 +170,7 @@ function AreaRecognition() {
   const [jobPage, setJobPage] = useState(1);
   const [jobPageSize, setJobPageSize] = useState(5);
   const [selectedJobId, setSelectedJobId] = useState('');
+  const [selectedJobSnapshot, setSelectedJobSnapshot] = useState(null);
 
   const [resultSummary, setResultSummary] = useState([]);
   const [editorImages, setEditorImages] = useState([]);
@@ -179,6 +183,7 @@ function AreaRecognition() {
   const [selectedInstanceId, setSelectedInstanceId] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [editorOverlayLoadFailed, setEditorOverlayLoadFailed] = useState(false);
 
   const [dragState, setDragState] = useState(null);
   const [imageNaturalSize, setImageNaturalSize] = useState({ width: 0, height: 0 });
@@ -208,10 +213,14 @@ function AreaRecognition() {
     [mappingRows],
   );
 
-  const selectedJob = useMemo(
-    () => jobs.find((item) => item.job_id === selectedJobId) || null,
-    [jobs, selectedJobId],
-  );
+  const selectedJob = useMemo(() => {
+    const fromCurrentList = jobs.find((item) => item.job_id === selectedJobId) || null;
+    if (fromCurrentList) return fromCurrentList;
+    if (selectedJobSnapshot && selectedJobSnapshot.job_id === selectedJobId) return selectedJobSnapshot;
+    return null;
+  }, [jobs, selectedJobId, selectedJobSnapshot]);
+  const selectedJobStatus = String(selectedJob?.status || '').toLowerCase();
+  const isSelectedJobEditable = selectedJobStatus === 'succeeded' || selectedJobStatus === 'succeeded_with_errors';
 
   const runningJobs = useMemo(
     () => jobs.filter((item) => ['queued', 'running'].includes(item.status)),
@@ -224,6 +233,13 @@ function AreaRecognition() {
     () => workingInstances.find((item) => item.instance_id === selectedInstanceId) || null,
     [workingInstances, selectedInstanceId],
   );
+  const editorOverlayUrl = useMemo(() => {
+    const apiUrl = String(editorDetail?.image?.overlay_url || "").trim();
+    if (apiUrl) return apiUrl;
+    const filename = String(editorDetail?.image?.overlay_filename || "").trim();
+    if (!selectedJobId || !filename) return "";
+    return areaApi.getImageUrl(selectedJobId, filename);
+  }, [editorDetail?.image?.overlay_filename, editorDetail?.image?.overlay_url, selectedJobId]);
 
   const updateDisplaySize = useCallback(() => {
     if (!editorCanvasRef.current) return;
@@ -325,6 +341,41 @@ function AreaRecognition() {
     });
   }, [dirty]);
 
+  const clearEditorDetailState = useCallback(() => {
+    setEditorDetail(null);
+    setWorkingInstances([]);
+    setSelectedInstanceId(null);
+    setDirty(false);
+    setIsEditing(false);
+    setEditorOverlayLoadFailed(false);
+    setEditorImageLoading(false);
+    setImageNaturalSize({ width: 0, height: 0 });
+    setImageDisplaySize({ width: 0, height: 0 });
+  }, []);
+
+  const clearEditorContextState = useCallback(() => {
+    clearEditorDetailState();
+    setSelectedEditorImageId(null);
+    setEditorImages([]);
+    setEditorImagesTotal(0);
+    setEditorImagePage(1);
+    setResultSummary([]);
+  }, [clearEditorDetailState]);
+
+  useEffect(() => {
+    setEditorOverlayLoadFailed(false);
+  }, [editorOverlayUrl, selectedEditorImageId, selectedJobId]);
+
+  useEffect(() => {
+    editorImagesRef.current = editorImages;
+  }, [editorImages]);
+
+  useEffect(() => {
+    if (editorOverlayUrl) return;
+    setImageNaturalSize({ width: 0, height: 0 });
+    setImageDisplaySize({ width: 0, height: 0 });
+  }, [editorOverlayUrl]);
+
   const fetchConfig = useCallback(async () => {
     setConfigLoading(true);
     try {
@@ -357,18 +408,25 @@ function AreaRecognition() {
   const fetchFolders = useCallback(async ({ query, page, resetPage = false } = {}) => {
     const nextPage = resetPage ? 1 : (page || folderPage);
     const limit = clamp(Number(folderLimit || 5), 1, 100);
+    const requestSeq = ++folderRequestSeqRef.current;
     setFolderLoading(true);
     try {
       const normalizedQuery = String(query != null ? query : folderQueryUsed || '').trim();
       if (normalizedQuery) {
         const data = await areaApi.searchFolders({ q: normalizedQuery, limit });
-        const items = Array.isArray(data.items) ? data.items : [];
-        setFolderItems(items);
-        setFolderTotal(items.length);
+        if (requestSeq !== folderRequestSeqRef.current) return;
+        const queryLower = normalizedQuery.toLowerCase();
+        const rawItems = Array.isArray(data.items) ? data.items : [];
+        const filteredItems = rawItems
+          .filter((item) => String(item?.folder_name || '').toLowerCase().includes(queryLower))
+          .slice(0, limit);
+        setFolderItems(filteredItems);
+        setFolderTotal(filteredItems.length);
         setFolderPage(1);
         setFolderQueryUsed(normalizedQuery);
       } else {
         const data = await areaApi.listRecentFolders({ limit, page: nextPage, page_size: 5 });
+        if (requestSeq !== folderRequestSeqRef.current) return;
         setFolderItems(Array.isArray(data.items) ? data.items : []);
         setFolderTotal(Number(data.total || 0));
         setFolderPage(Number(data.page || nextPage));
@@ -377,6 +435,7 @@ function AreaRecognition() {
     } catch (error) {
       message.error(error.message || '读取文件夹列表失败');
     } finally {
+      if (requestSeq !== folderRequestSeqRef.current) return;
       setFolderLoading(false);
     }
   }, [folderLimit, folderPage, folderQueryUsed]);
@@ -400,8 +459,11 @@ function AreaRecognition() {
       if (!keepSelection && items.length > 0) {
         setSelectedJobId(items[0].job_id);
       }
-      if (keepSelection && selectedJobId && !items.some((item) => item.job_id === selectedJobId)) {
-        setSelectedJobId('');
+      if (selectedJobId) {
+        const selected = items.find((item) => item.job_id === selectedJobId);
+        if (selected) {
+          setSelectedJobSnapshot(selected);
+        }
       }
     } catch (error) {
       message.error(error.message || '读取任务列表失败');
@@ -410,6 +472,20 @@ function AreaRecognition() {
     }
   }, [jobPage, jobPageSize, jobSearchQuery, selectedJobId]);
 
+  const fetchSelectedJobSnapshot = useCallback(async (jobId) => {
+    const targetJobId = String(jobId || '').trim();
+    if (!targetJobId) {
+      setSelectedJobSnapshot(null);
+      return;
+    }
+    try {
+      const data = await areaApi.getJob(targetJobId);
+      setSelectedJobSnapshot(data || null);
+    } catch (_error) {
+      setSelectedJobSnapshot((prev) => (prev?.job_id === targetJobId ? prev : null));
+    }
+  }, []);
+
   const fetchEditorImages = useCallback(async (jobId, page = 1, pageSize = editorImagePageSize) => {
     if (!jobId) {
       setEditorImages([]);
@@ -417,31 +493,34 @@ function AreaRecognition() {
       setSelectedEditorImageId(null);
       return;
     }
+    const requestSeq = ++editorImagesRequestSeqRef.current;
     setEditorImagesLoading(true);
     try {
       const data = await areaApi.getEditorImages(jobId, { page, page_size: pageSize });
+      if (requestSeq !== editorImagesRequestSeqRef.current) return;
       const items = Array.isArray(data.items) ? data.items : [];
       setEditorImages(items);
       setEditorImagesTotal(Number(data.total || 0));
       setEditorImagePage(Number(data.page || page));
       setEditorImagePageSize(Number(data.page_size || pageSize));
       if (items.length > 0) {
-        const stillExists = items.some((item) => item.image_id === selectedEditorImageId);
-        if (!stillExists) {
-          setSelectedEditorImageId(items[0].image_id);
-        }
+        setSelectedEditorImageId((prev) => {
+          const stillExists = items.some((item) => item.image_id === prev);
+          return stillExists ? prev : items[0].image_id;
+        });
       } else {
         setSelectedEditorImageId(null);
       }
     } catch (error) {
       message.error(error.message || '读取结果编辑图片列表失败');
     } finally {
+      if (requestSeq !== editorImagesRequestSeqRef.current) return;
       setEditorImagesLoading(false);
     }
-  }, [editorImagePageSize, selectedEditorImageId]);
+  }, [editorImagePageSize]);
 
-  const fetchResultSummary = useCallback(async (jobId) => {
-    if (!jobId) {
+  const fetchResultSummary = useCallback(async (jobId, shouldFetch = true) => {
+    if (!jobId || !shouldFetch) {
       setResultSummary([]);
       return;
     }
@@ -453,18 +532,16 @@ function AreaRecognition() {
     }
   }, []);
 
-  const fetchEditorImageDetail = useCallback(async (jobId, imageId) => {
-    if (!jobId || !imageId) {
-      setEditorDetail(null);
-      setWorkingInstances([]);
-      setSelectedInstanceId(null);
-      setDirty(false);
-      setIsEditing(false);
+  const fetchEditorImageDetail = useCallback(async (jobId, imageId, shouldFetch = true) => {
+    if (!jobId || !imageId || !shouldFetch) {
+      clearEditorDetailState();
       return;
     }
+    const requestSeq = ++editorDetailRequestSeqRef.current;
     setEditorImageLoading(true);
     try {
       const data = await areaApi.getEditorImage(jobId, imageId);
+      if (requestSeq !== editorDetailRequestSeqRef.current) return;
       setEditorDetail(data);
       const instances = Array.isArray(data.instances) ? data.instances : [];
       setWorkingInstances(instances.map((item) => ({ ...item })));
@@ -472,16 +549,36 @@ function AreaRecognition() {
       setDirty(false);
       setIsEditing(false);
     } catch (error) {
-      message.error(error.message || '读取图片编辑详情失败');
-      setEditorDetail(null);
-      setWorkingInstances([]);
-      setSelectedInstanceId(null);
-      setDirty(false);
-      setIsEditing(false);
+      const code = String(error?.message || '').trim();
+      if (code === 'image_not_found') {
+        const imageItem = editorImagesRef.current.find((item) => item.image_id === imageId);
+        setEditorDetail({
+          job_id: jobId,
+          image: {
+            image_id: imageId,
+            image_name: imageItem?.image_name || '',
+            overlay_filename: '',
+            overlay_url: '',
+            edited_at: imageItem?.edited_at || null,
+            edited_by_id: imageItem?.edited_by_id || '',
+            edit_version: imageItem?.edit_version || 0,
+          },
+          instances: [],
+        });
+        setWorkingInstances([]);
+        setSelectedInstanceId(null);
+        setDirty(false);
+        setIsEditing(false);
+        setEditorOverlayLoadFailed(true);
+      } else {
+        message.error(error.message || '读取图片编辑详情失败');
+        clearEditorDetailState();
+      }
     } finally {
+      if (requestSeq !== editorDetailRequestSeqRef.current) return;
       setEditorImageLoading(false);
     }
-  }, []);
+  }, [clearEditorDetailState]);
 
   const refreshAll = useCallback(async ({ resetFolderLimit = false } = {}) => {
     if (resetFolderLimit) {
@@ -492,10 +589,17 @@ function AreaRecognition() {
     }
     await fetchJobs({ keepSelection: true });
     if (selectedJobId) {
-      await fetchEditorImages(selectedJobId, editorImagePage, editorImagePageSize);
-      await fetchResultSummary(selectedJobId);
-      if (selectedEditorImageId) {
-        await fetchEditorImageDetail(selectedJobId, selectedEditorImageId);
+      await fetchSelectedJobSnapshot(selectedJobId);
+      await fetchResultSummary(selectedJobId, isSelectedJobEditable);
+      if (isSelectedJobEditable) {
+        await fetchEditorImages(selectedJobId, editorImagePage, editorImagePageSize);
+        if (selectedEditorImageId) {
+          await fetchEditorImageDetail(selectedJobId, selectedEditorImageId, true);
+        } else {
+          clearEditorDetailState();
+        }
+      } else {
+        clearEditorDetailState();
       }
     }
     try {
@@ -504,7 +608,7 @@ function AreaRecognition() {
     } catch (_error) {
       // ignore
     }
-  }, [editorImagePage, editorImagePageSize, fetchEditorImageDetail, fetchEditorImages, fetchFolders, fetchJobs, fetchResultSummary, folderPage, folderQueryUsed, selectedEditorImageId, selectedJobId]);
+  }, [clearEditorDetailState, editorImagePage, editorImagePageSize, fetchEditorImageDetail, fetchEditorImages, fetchFolders, fetchJobs, fetchResultSummary, fetchSelectedJobSnapshot, folderPage, folderQueryUsed, isSelectedJobEditable, selectedEditorImageId, selectedJobId]);
 
   useEffect(() => {
     const initialize = async () => {
@@ -517,39 +621,58 @@ function AreaRecognition() {
 
   useEffect(() => {
     if (!selectedJobId) {
+      initializedEditorJobRef.current = '';
+      clearEditorContextState();
+      setSelectedJobSnapshot(null);
+      return;
+    }
+    if (initializedEditorJobRef.current !== selectedJobId) {
+      initializedEditorJobRef.current = selectedJobId;
+      clearEditorContextState();
+    }
+    fetchSelectedJobSnapshot(selectedJobId);
+  }, [clearEditorContextState, fetchSelectedJobSnapshot, selectedJobId]);
+
+  useEffect(() => {
+    if (!selectedJobId) return;
+    fetchResultSummary(selectedJobId, isSelectedJobEditable);
+    if (!isSelectedJobEditable) {
       setEditorImages([]);
       setEditorImagesTotal(0);
       setSelectedEditorImageId(null);
-      setEditorDetail(null);
-      setWorkingInstances([]);
-      setResultSummary([]);
+      clearEditorDetailState();
       return;
     }
-    fetchResultSummary(selectedJobId);
-    fetchEditorImages(selectedJobId, 1, editorImagePageSize);
-  }, [editorImagePageSize, fetchEditorImages, fetchResultSummary, selectedJobId]);
+    fetchEditorImages(selectedJobId, editorImagePage, editorImagePageSize);
+  }, [
+    clearEditorDetailState,
+    editorImagePage,
+    editorImagePageSize,
+    fetchEditorImages,
+    fetchResultSummary,
+    isSelectedJobEditable,
+    selectedJobId,
+  ]);
 
   useEffect(() => {
     if (!selectedJobId || !selectedEditorImageId) {
-      setEditorDetail(null);
-      setWorkingInstances([]);
-      setSelectedInstanceId(null);
+      clearEditorDetailState();
       return;
     }
-    fetchEditorImageDetail(selectedJobId, selectedEditorImageId);
-  }, [fetchEditorImageDetail, selectedEditorImageId, selectedJobId]);
+    if (!isSelectedJobEditable) return;
+    fetchEditorImageDetail(selectedJobId, selectedEditorImageId, true);
+  }, [clearEditorDetailState, fetchEditorImageDetail, isSelectedJobEditable, selectedEditorImageId, selectedJobId]);
 
   useEffect(() => {
     if (!runningJobs.length) return undefined;
     const timer = setInterval(() => {
       fetchJobs({ keepSelection: true });
       if (selectedJobId) {
-        fetchEditorImages(selectedJobId, editorImagePage, editorImagePageSize);
-        fetchResultSummary(selectedJobId);
+        fetchSelectedJobSnapshot(selectedJobId);
       }
     }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [editorImagePage, editorImagePageSize, fetchEditorImages, fetchJobs, fetchResultSummary, runningJobs.length, selectedJobId]);
+  }, [fetchJobs, fetchSelectedJobSnapshot, runningJobs.length, selectedJobId]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -695,7 +818,9 @@ function AreaRecognition() {
       await fetchFolders({ query: '', page: 1, resetPage: true });
       return;
     }
-    await fetchFolders({ query: folderQueryInput.trim(), page: 1, resetPage: true });
+    const query = folderQueryInput.trim();
+    setFolderQueryUsed(query);
+    await fetchFolders({ query, page: 1, resetPage: true });
   };
 
   const handleRefreshFolders = async () => {
@@ -795,7 +920,7 @@ function AreaRecognition() {
     }
   };
 
-  const handleCreateJob = async () => {
+  const handleCreateJob = useCallback(async () => {
     if (!folderName.trim()) {
       message.error('请输入文件夹名称');
       return;
@@ -813,6 +938,8 @@ function AreaRecognition() {
       message.success(`任务已创建: ${job.job_id}`);
       await fetchJobs({ keepSelection: true, page: 1 });
       withDiscardConfirm(() => {
+        clearEditorContextState();
+        setSelectedJobSnapshot(job);
         setSelectedJobId(job.job_id);
       });
     } catch (error) {
@@ -820,13 +947,17 @@ function AreaRecognition() {
     } finally {
       setJobCreating(false);
     }
-  };
+  }, [clearEditorContextState, fetchJobs, folderName, modelName, withDiscardConfirm]);
 
-  const handleSelectJob = (jobId) => {
+  const handleSelectJob = useCallback((jobId, jobPayload = null) => {
     withDiscardConfirm(() => {
+      clearEditorContextState();
+      if (jobPayload) {
+        setSelectedJobSnapshot(jobPayload);
+      }
       setSelectedJobId(jobId);
     });
-  };
+  }, [clearEditorContextState, withDiscardConfirm]);
 
   const handleToggleDelete = () => {
     if (!selectedInstance) return;
@@ -971,8 +1102,18 @@ function AreaRecognition() {
     {
       title: '进度',
       key: 'progress',
-      width: 120,
-      render: (_, row) => `${row.processed_images || 0}/${row.total_images || 0}`,
+      width: 180,
+      render: (_, row) => {
+        const total = Math.max(0, Number(row.total_images || 0));
+        const done = Math.max(0, Number(row.processed_images || 0));
+        const percent = total > 0 ? Math.min(100, Math.round((done * 100) / total)) : 0;
+        return (
+          <Space direction="vertical" size={2} style={{ width: '100%' }}>
+            <Progress percent={percent} size="small" showInfo={false} />
+            <Typography.Text type="secondary">{`${done}/${total}`}</Typography.Text>
+          </Space>
+        );
+      },
     },
     {
       title: '操作',
@@ -980,7 +1121,7 @@ function AreaRecognition() {
       width: 220,
       render: (_, row) => (
         <Space>
-          <Button size="small" onClick={() => handleSelectJob(row.job_id)}>查看</Button>
+          <Button size="small" onClick={() => handleSelectJob(row.job_id, row)}>查看</Button>
           <Button
             size="small"
             icon={<DownloadOutlined />}
@@ -1089,6 +1230,12 @@ function AreaRecognition() {
           </Space>
         </Space>
 
+        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+          {folderQueryUsed
+            ? `当前筛选：${folderQueryUsed}（命中 ${folderItems.length} 条）`
+            : `当前展示：最近目录（共 ${folderTotal} 条，分页）`}
+        </Typography.Text>
+
         <Table
           rowKey={(row) => row.folder_name}
           style={{ marginTop: 12 }}
@@ -1169,12 +1316,12 @@ function AreaRecognition() {
             showSizeChanger: false,
           }}
           onRow={(record) => ({
-            onDoubleClick: () => handleSelectJob(record.job_id),
+            onDoubleClick: () => handleSelectJob(record.job_id, record),
           })}
         />
       </Card>
 
-      <Card title="结果编辑栏" loading={detailsLoading || editorImagesLoading || editorImageLoading}>
+      <Card title="结果编辑栏">
         {!selectedJobId ? (
           <Typography.Text type="secondary">请在任务列表中点击“查看”或双击任务行。</Typography.Text>
         ) : (
@@ -1193,188 +1340,229 @@ function AreaRecognition() {
               </Space>
             </Card>
 
-            <Row gutter={12}>
-              <Col span={8}>
-                <Card size="small" title="图片列表" bodyStyle={{ padding: 8 }}>
-                  <Table
-                    rowKey={(row) => row.image_id}
-                    columns={editorImageColumns}
-                    dataSource={editorImages}
-                    size="small"
-                    pagination={{
-                      current: editorImagePage,
-                      pageSize: editorImagePageSize,
-                      total: editorImagesTotal,
-                      onChange: (page) => {
-                        fetchEditorImages(selectedJobId, page, editorImagePageSize);
-                      },
-                      showSizeChanger: false,
-                    }}
-                    onRow={(record) => ({
-                      onClick: () => {
-                        withDiscardConfirm(() => {
-                          setSelectedEditorImageId(record.image_id);
-                        });
-                      },
-                      onDoubleClick: () => {
-                        withDiscardConfirm(() => {
-                          setSelectedEditorImageId(record.image_id);
-                        });
-                      },
-                    })}
-                    rowClassName={(row) => (row.image_id === selectedEditorImageId ? 'ant-table-row-selected' : '')}
-                  />
-                </Card>
+            <Card size="small" title="图片列表" bodyStyle={{ padding: 8 }}>
+              <Table
+                rowKey={(row) => row.image_id}
+                columns={editorImageColumns}
+                dataSource={editorImages}
+                size="small"
+                loading={editorImagesLoading}
+                pagination={{
+                  current: editorImagePage,
+                  pageSize: editorImagePageSize,
+                  total: editorImagesTotal,
+                  onChange: (page) => {
+                    withDiscardConfirm(() => {
+                      setEditorImagePage(page);
+                    });
+                  },
+                  showSizeChanger: false,
+                }}
+                onRow={(record) => ({
+                  style: {
+                    cursor: 'pointer',
+                    background: record.image_id === selectedEditorImageId ? '#e6f4ff' : undefined,
+                  },
+                  onClick: () => {
+                    withDiscardConfirm(() => {
+                      setSelectedEditorImageId(record.image_id);
+                    });
+                  },
+                  onDoubleClick: () => {
+                    withDiscardConfirm(() => {
+                      setSelectedEditorImageId(record.image_id);
+                    });
+                  },
+                })}
+              />
+            </Card>
 
-                <Card size="small" title="汇总" style={{ marginTop: 12 }} bodyStyle={{ padding: 8 }}>
-                  <Table
-                    rowKey={(row) => row.class_name}
-                    size="small"
-                    columns={summaryColumns}
-                    dataSource={resultSummary}
-                    pagination={false}
-                  />
-                </Card>
-              </Col>
-
-              <Col span={16}>
-                <Card
-                  size="small"
-                  title={`编辑画布 ${editorDetail?.image?.image_name ? `(${editorDetail.image.image_name})` : ''}`}
-                  extra={(
-                    <Space direction="vertical" align="end" size={8}>
-                      <Button onClick={handleToggleDelete} disabled={!selectedInstance}>弃用/加回</Button>
-                      <Button icon={<EditOutlined />} onClick={() => setIsEditing((prev) => !prev)} disabled={!selectedInstance || selectedInstance?.is_deleted}>编辑</Button>
-                      <Button onClick={handleResetEditor} disabled={!selectedEditorImageId}>重置</Button>
-                    </Space>
-                  )}
-                >
-                  <div style={{ marginBottom: 8, color: '#666', fontSize: 12 }}>
-                    快捷键：`Space` 编辑模式，`D` 弃用/加回，`←/→` 切换图片（仅非编辑状态）
+            <Card
+              size="small"
+              title={`编辑画布 ${editorDetail?.image?.image_name ? `(${editorDetail.image.image_name})` : ''}`}
+              extra={(
+                <Space direction="vertical" align="end" size={8}>
+                  <Button onClick={handleToggleDelete} disabled={!selectedInstance}>弃用/加回</Button>
+                  <Button icon={<EditOutlined />} onClick={() => setIsEditing((prev) => !prev)} disabled={!selectedInstance || selectedInstance?.is_deleted}>编辑</Button>
+                  <Button onClick={handleResetEditor} disabled={!selectedEditorImageId}>重置</Button>
+                </Space>
+              )}
+            >
+              <div style={{ marginBottom: 8, color: '#666', fontSize: 12 }}>
+                快捷键：`Space` 编辑模式，`D` 弃用/加回，`←/→` 切换图片（仅非编辑状态）
+              </div>
+              <Space size={8} style={{ marginBottom: 8 }}>
+                <Tag color="blue">选中实例</Tag>
+                <Tag color="default">普通实例</Tag>
+                <Tag color="orange">弃用实例（虚线）</Tag>
+              </Space>
+              <div
+                ref={editorCanvasRef}
+                style={{
+                  position: 'relative',
+                  width: '100%',
+                  border: '1px solid #e5e5e5',
+                  borderRadius: 6,
+                  minHeight: 360,
+                  overflow: 'hidden',
+                  background: '#fafafa',
+                }}
+              >
+                {editorImageLoading ? (
+                  <div style={{ minHeight: 360, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Spin />
                   </div>
-                  <div
-                    ref={editorCanvasRef}
+                ) : editorOverlayUrl && !editorOverlayLoadFailed ? (
+                  <img
+                    src={editorOverlayUrl}
+                    alt={editorDetail?.image?.image_name || 'overlay'}
+                    style={{ width: '100%', display: 'block' }}
+                    onLoad={onCanvasImageLoad}
+                    onError={() => {
+                      setEditorOverlayLoadFailed(true);
+                      setImageNaturalSize({ width: 0, height: 0 });
+                      setImageDisplaySize({ width: 0, height: 0 });
+                    }}
+                  />
+                ) : (
+                  <div style={{ minHeight: 360, padding: 24, color: '#999', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    当前图片无叠加图可编辑（可能是历史产物已清理或结果路径不可访问）
+                  </div>
+                )}
+                {imageDisplaySize.width > 0 && imageDisplaySize.height > 0 && (
+                  <svg
+                    width={imageDisplaySize.width}
+                    height={imageDisplaySize.height}
                     style={{
-                      position: 'relative',
-                      width: '100%',
-                      border: '1px solid #e5e5e5',
-                      borderRadius: 6,
-                      minHeight: 300,
-                      overflow: 'hidden',
-                      background: '#fafafa',
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      pointerEvents: 'auto',
                     }}
                   >
-                    {editorDetail?.image?.overlay_filename ? (
-                      <img
-                        src={areaApi.getImageUrl(selectedJobId, editorDetail.image.overlay_filename)}
-                        alt={editorDetail.image.image_name || 'overlay'}
-                        style={{ width: '100%', display: 'block' }}
-                        onLoad={onCanvasImageLoad}
-                      />
-                    ) : (
-                      <div style={{ padding: 24, color: '#999' }}>当前图片无叠加图可编辑</div>
-                    )}
-                    {imageDisplaySize.width > 0 && imageDisplaySize.height > 0 && (
-                      <svg
-                        width={imageDisplaySize.width}
-                        height={imageDisplaySize.height}
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          pointerEvents: 'auto',
-                        }}
-                      >
-                        {workingInstances.map((item, idx) => {
-                          const colorIdx = Math.max(0, classNames.indexOf(item.class_name));
-                          const fill = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, item.is_deleted ? 0.05 : 0.32);
-                          const stroke = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, item.is_deleted ? 0.25 : 0.85);
-                          const points = displayPolygon(item.polygon);
-                          const selected = item.instance_id === selectedInstanceId;
-                          return (
-                            <g key={item.instance_id}>
-                              {points ? (
+                    {workingInstances.map((item, idx) => {
+                      const colorIdx = Math.max(0, classNames.indexOf(item.class_name));
+                      const selected = item.instance_id === selectedInstanceId;
+                      const points = displayPolygon(item.polygon);
+                      let fill = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, 0.25);
+                      let stroke = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, 0.9);
+                      let strokeWidth = selected ? 3 : 1.5;
+                      let strokeDasharray;
+                      if (item.is_deleted) {
+                        fill = selected ? 'rgba(250, 173, 20, 0.14)' : 'rgba(120, 120, 120, 0.08)';
+                        stroke = selected ? 'rgba(250, 173, 20, 0.95)' : 'rgba(255, 77, 79, 0.85)';
+                        strokeDasharray = '8 4';
+                      } else if (selected) {
+                        fill = 'rgba(22, 119, 255, 0.24)';
+                        stroke = 'rgba(22, 119, 255, 0.98)';
+                      }
+                      return (
+                        <g key={item.instance_id}>
+                          {points ? (
+                            <>
+                              {selected ? (
                                 <polygon
                                   points={points}
-                                  fill={fill}
-                                  stroke={stroke}
-                                  strokeWidth={selected ? 2 : 1}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    setSelectedInstanceId(item.instance_id);
-                                  }}
+                                  fill="none"
+                                  stroke="rgba(255, 255, 255, 0.95)"
+                                  strokeWidth={1}
+                                  pointerEvents="none"
+                                />
+                              ) : null}
+                              <polygon
+                                points={points}
+                                fill={fill}
+                                stroke={stroke}
+                                strokeWidth={strokeWidth}
+                                strokeDasharray={strokeDasharray}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSelectedInstanceId(item.instance_id);
+                                }}
+                                onMouseDown={(event) => {
+                                  if (!isEditing || item.is_deleted || !selected) return;
+                                  event.preventDefault();
+                                  const p = pointFromEvent(event);
+                                  if (!p) return;
+                                  setDragState({
+                                    type: 'polygon',
+                                    instanceId: item.instance_id,
+                                    startPoint: { x: p.x, y: p.y },
+                                    originPolygon: Array.isArray(item.polygon) ? item.polygon.map((point) => [...point]) : [],
+                                  });
+                                }}
+                              />
+                            </>
+                          ) : null}
+
+                          {isEditing && selected && !item.is_deleted && Array.isArray(item.polygon)
+                            ? item.polygon.map((point, vertexIdx) => {
+                              const display = displayPoint(point);
+                              return (
+                                <circle
+                                  key={`${item.instance_id}-${vertexIdx}`}
+                                  cx={display.x}
+                                  cy={display.y}
+                                  r={5}
+                                  fill="rgba(22, 119, 255, 0.98)"
+                                  stroke="#fff"
+                                  strokeWidth={1.5}
                                   onMouseDown={(event) => {
-                                    if (!isEditing || item.is_deleted || !selected) return;
                                     event.preventDefault();
-                                    const p = pointFromEvent(event);
-                                    if (!p) return;
+                                    event.stopPropagation();
                                     setDragState({
-                                      type: 'polygon',
+                                      type: 'vertex',
                                       instanceId: item.instance_id,
-                                      startPoint: { x: p.x, y: p.y },
-                                      originPolygon: Array.isArray(item.polygon) ? item.polygon.map((point) => [...point]) : [],
+                                      vertexIndex: vertexIdx,
                                     });
                                   }}
                                 />
-                              ) : null}
-
-                              {isEditing && selected && !item.is_deleted && Array.isArray(item.polygon)
-                                ? item.polygon.map((point, vertexIdx) => {
-                                  const display = displayPoint(point);
-                                  return (
-                                    <circle
-                                      key={`${item.instance_id}-${vertexIdx}`}
-                                      cx={display.x}
-                                      cy={display.y}
-                                      r={4}
-                                      fill={stroke}
-                                      stroke="#fff"
-                                      strokeWidth={1}
-                                      onMouseDown={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        setDragState({
-                                          type: 'vertex',
-                                          instanceId: item.instance_id,
-                                          vertexIndex: vertexIdx,
-                                        });
-                                      }}
-                                    />
-                                  );
-                                })
-                                : null}
-                            </g>
-                          );
-                        })}
-                      </svg>
-                    )}
-                  </div>
-
-                  <Table
-                    style={{ marginTop: 12 }}
-                    rowKey={(row) => row.instance_id}
-                    size="small"
-                    columns={[
-                      { title: '实例ID', dataIndex: 'instance_id', width: 90 },
-                      { title: '类别', dataIndex: 'class_name', width: 130 },
-                      { title: '面积(px)', dataIndex: 'area_px', width: 110 },
-                      {
-                        title: '状态',
-                        key: 'state',
-                        width: 90,
-                        render: (_, row) => (row.is_deleted ? <Tag color="default">已弃用</Tag> : <Tag color="success">启用</Tag>),
-                      },
-                    ]}
-                    dataSource={workingInstances}
-                    pagination={{ pageSize: 6 }}
-                    onRow={(record) => ({
-                      onClick: () => setSelectedInstanceId(record.instance_id),
+                              );
+                            })
+                            : null}
+                        </g>
+                      );
                     })}
-                    rowClassName={(row) => (row.instance_id === selectedInstanceId ? 'ant-table-row-selected' : '')}
-                  />
-                </Card>
-              </Col>
-            </Row>
+                  </svg>
+                )}
+              </div>
+
+              <Table
+                style={{ marginTop: 12 }}
+                rowKey={(row) => row.instance_id}
+                size="small"
+                columns={[
+                  { title: '实例ID', dataIndex: 'instance_id', width: 90 },
+                  { title: '类别', dataIndex: 'class_name', width: 130 },
+                  { title: '面积(px)', dataIndex: 'area_px', width: 110 },
+                  {
+                    title: '状态',
+                    key: 'state',
+                    width: 90,
+                    render: (_, row) => (row.is_deleted ? <Tag color="warning">已弃用</Tag> : <Tag color="success">启用</Tag>),
+                  },
+                ]}
+                dataSource={workingInstances}
+                pagination={{ pageSize: 8 }}
+                onRow={(record) => ({
+                  style: {
+                    cursor: 'pointer',
+                    background: record.instance_id === selectedInstanceId ? '#e6f4ff' : undefined,
+                  },
+                  onClick: () => setSelectedInstanceId(record.instance_id),
+                })}
+              />
+            </Card>
+
+            <Card size="small" title="汇总" bodyStyle={{ padding: 8 }}>
+              <Table
+                rowKey={(row) => row.class_name}
+                size="small"
+                columns={summaryColumns}
+                dataSource={resultSummary}
+                pagination={false}
+              />
+            </Card>
           </Space>
         )}
       </Card>
