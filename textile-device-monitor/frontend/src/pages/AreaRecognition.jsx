@@ -1381,7 +1381,7 @@ function AreaRecognition() {
               size="small"
               title={`编辑画布 ${editorDetail?.image?.image_name ? `(${editorDetail.image.image_name})` : ''}`}
               extra={(
-                <Space direction="vertical" align="end" size={8}>
+                <Space wrap size={8}>
                   <Button onClick={handleToggleDelete} disabled={!selectedInstance}>弃用/加回</Button>
                   <Button icon={<EditOutlined />} onClick={() => setIsEditing((prev) => !prev)} disabled={!selectedInstance || selectedInstance?.is_deleted}>编辑</Button>
                   <Button onClick={handleResetEditor} disabled={!selectedEditorImageId}>重置</Button>
