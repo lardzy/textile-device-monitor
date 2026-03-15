@@ -1080,29 +1080,31 @@ function AreaRecognition() {
     {
       title: '任务ID',
       dataIndex: 'job_id',
-      width: 220,
+      width: 190,
       ellipsis: true,
     },
     {
       title: '文件夹',
       dataIndex: 'folder_name',
-      width: 160,
+      width: 140,
+      ellipsis: true,
     },
     {
       title: '模型',
       dataIndex: 'model_name',
-      width: 180,
+      width: 150,
+      ellipsis: true,
     },
     {
       title: '状态',
       dataIndex: 'status',
-      width: 160,
+      width: 120,
       render: (value) => <Tag color={statusColorMap[value] || 'default'}>{value}</Tag>,
     },
     {
       title: '进度',
       key: 'progress',
-      width: 180,
+      width: 150,
       render: (_, row) => {
         const total = Math.max(0, Number(row.total_images || 0));
         const done = Math.max(0, Number(row.processed_images || 0));
@@ -1118,19 +1120,19 @@ function AreaRecognition() {
     {
       title: '操作',
       key: 'actions',
-      width: 220,
+      width: 130,
       render: (_, row) => (
-        <Space>
+        <Space size={6}>
           <Button size="small" onClick={() => handleSelectJob(row.job_id, row)}>查看</Button>
-          <Button
-            size="small"
-            icon={<DownloadOutlined />}
-            disabled={!['succeeded', 'succeeded_with_errors'].includes(row.status)}
-            href={areaApi.getExcelUrl(row.job_id)}
-            target="_blank"
-          >
-            Excel
-          </Button>
+          <Tooltip title="导出 Excel">
+            <Button
+              size="small"
+              icon={<DownloadOutlined />}
+              disabled={!['succeeded', 'succeeded_with_errors'].includes(row.status)}
+              href={areaApi.getExcelUrl(row.job_id)}
+              target="_blank"
+            />
+          </Tooltip>
         </Space>
       ),
     },
@@ -1304,6 +1306,8 @@ function AreaRecognition() {
           dataSource={jobs}
           loading={jobsLoading}
           size="small"
+          tableLayout="fixed"
+          scroll={{ x: 900 }}
           pagination={{
             current: jobPage,
             pageSize: jobPageSize,
