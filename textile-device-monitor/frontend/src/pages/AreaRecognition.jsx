@@ -82,6 +82,8 @@ const getCreateJobErrorMessage = (raw) => {
   return code || '创建任务失败';
 };
 
+const isEditableJobStatus = (status) => ['succeeded', 'succeeded_with_errors'].includes(String(status || '').toLowerCase());
+
 const parseModelClasses = (modelName) => {
   const deduped = [];
   String(modelName || '').split('-').forEach((item) => {
@@ -135,6 +137,7 @@ function AreaRecognition() {
   const editorDetailRequestSeqRef = useRef(0);
   const editorImagesRef = useRef([]);
   const initializedEditorJobRef = useRef('');
+  const selectedJobIdRef = useRef('');
 
   const [configLoading, setConfigLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
@@ -354,6 +357,8 @@ function AreaRecognition() {
   }, []);
 
   const clearEditorContextState = useCallback(() => {
+    editorImagesRequestSeqRef.current += 1;
+    editorDetailRequestSeqRef.current += 1;
     clearEditorDetailState();
     setSelectedEditorImageId(null);
     setEditorImages([]);
@@ -369,6 +374,10 @@ function AreaRecognition() {
   useEffect(() => {
     editorImagesRef.current = editorImages;
   }, [editorImages]);
+
+  useEffect(() => {
+    selectedJobIdRef.current = selectedJobId;
+  }, [selectedJobId]);
 
   useEffect(() => {
     if (editorOverlayUrl) return;
@@ -498,6 +507,7 @@ function AreaRecognition() {
     try {
       const data = await areaApi.getEditorImages(jobId, { page, page_size: pageSize });
       if (requestSeq !== editorImagesRequestSeqRef.current) return;
+      if (String(selectedJobIdRef.current || '') !== String(jobId || '')) return;
       const items = Array.isArray(data.items) ? data.items : [];
       setEditorImages(items);
       setEditorImagesTotal(Number(data.total || 0));
@@ -542,6 +552,7 @@ function AreaRecognition() {
     try {
       const data = await areaApi.getEditorImage(jobId, imageId);
       if (requestSeq !== editorDetailRequestSeqRef.current) return;
+      if (String(selectedJobIdRef.current || '') !== String(jobId || '')) return;
       setEditorDetail(data);
       const instances = Array.isArray(data.instances) ? data.instances : [];
       setWorkingInstances(instances.map((item) => ({ ...item })));
@@ -551,7 +562,12 @@ function AreaRecognition() {
     } catch (error) {
       const code = String(error?.message || '').trim();
       if (code === 'image_not_found') {
+        if (String(selectedJobIdRef.current || '') !== String(jobId || '')) return;
         const imageItem = editorImagesRef.current.find((item) => item.image_id === imageId);
+        if (!imageItem) {
+          clearEditorDetailState();
+          return;
+        }
         setEditorDetail({
           job_id: jobId,
           image: {
@@ -950,14 +966,41 @@ function AreaRecognition() {
   }, [clearEditorContextState, fetchJobs, folderName, modelName, withDiscardConfirm]);
 
   const handleSelectJob = useCallback((jobId, jobPayload = null) => {
+    const targetJobId = String(jobId || '').trim();
+    if (!targetJobId) return;
     withDiscardConfirm(() => {
+      if (targetJobId === selectedJobId) {
+        if (jobPayload) {
+          setSelectedJobSnapshot(jobPayload);
+        }
+        const editable = isEditableJobStatus(jobPayload?.status || selectedJobStatus);
+        fetchSelectedJobSnapshot(targetJobId);
+        fetchResultSummary(targetJobId, editable);
+        if (editable) {
+          setSelectedEditorImageId(null);
+          setEditorImagePage(1);
+          fetchEditorImages(targetJobId, 1, editorImagePageSize);
+        } else {
+          clearEditorContextState();
+        }
+        return;
+      }
       clearEditorContextState();
       if (jobPayload) {
         setSelectedJobSnapshot(jobPayload);
       }
-      setSelectedJobId(jobId);
+      setSelectedJobId(targetJobId);
     });
-  }, [clearEditorContextState, withDiscardConfirm]);
+  }, [
+    clearEditorContextState,
+    editorImagePageSize,
+    fetchEditorImages,
+    fetchResultSummary,
+    fetchSelectedJobSnapshot,
+    selectedJobId,
+    selectedJobStatus,
+    withDiscardConfirm,
+  ]);
 
   const handleToggleDelete = () => {
     if (!selectedInstance) return;

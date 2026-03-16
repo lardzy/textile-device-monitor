@@ -484,7 +484,7 @@ class AreaJobManager:
             image_row.edited_at = datetime.now(timezone.utc)
             image_row.edit_version = int(image_row.edit_version or 0) + 1
             self._refresh_image_area_stats(db, image_row)
-            self._render_overlay_for_image(job, image_row, db_instances)
+            self._rerender_all_overlays_for_job(db, job)
             self._rebuild_job_outputs(db, job)
             db.commit()
             return {
@@ -528,7 +528,7 @@ class AreaJobManager:
             image_row.edited_at = datetime.now(timezone.utc)
             image_row.edit_version = int(image_row.edit_version or 0) + 1
             self._refresh_image_area_stats(db, image_row)
-            self._render_overlay_for_image(job, image_row, db_instances)
+            self._rerender_all_overlays_for_job(db, job)
             self._rebuild_job_outputs(db, job)
             db.commit()
             return {
@@ -1231,6 +1231,22 @@ class AreaJobManager:
         target.parent.mkdir(parents=True, exist_ok=True)
         out.save(target)
 
+    def _rerender_all_overlays_for_job(self, db, job: AreaJob) -> None:
+        image_rows = (
+            db.query(AreaJobImage)
+            .filter(AreaJobImage.job_id == job.id)
+            .order_by(AreaJobImage.image_name.asc())
+            .all()
+        )
+        for image_row in image_rows:
+            instances = (
+                db.query(AreaJobInstance)
+                .filter(AreaJobInstance.image_id == image_row.id)
+                .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
+                .all()
+            )
+            self._render_overlay_for_image(job, image_row, instances)
+
     def _rebuild_job_outputs(self, db, job: AreaJob) -> None:
         classes = parse_model_classes(job.model_name)
         image_rows = (
@@ -1386,11 +1402,8 @@ class AreaJobManager:
                         if not engine_meta_snapshot and isinstance(prediction.engine_meta, dict):
                             engine_meta_snapshot = dict(prediction.engine_meta)
                         overlay_filename = f"{image_path.stem}_overlay.png"
-                        overlay_save_path = Path(record.overlay_dir) / overlay_filename
-                        if overlay_save_path.exists():
+                        if (Path(record.overlay_dir) / overlay_filename).exists():
                             overlay_filename = f"{image_path.stem}_{uuid4().hex[:6]}_overlay.png"
-                            overlay_save_path = Path(record.overlay_dir) / overlay_filename
-                        prediction.overlay_image.save(overlay_save_path)
 
                         width, height = prediction.overlay_image.size
                         per_class_area = {
@@ -1437,6 +1450,14 @@ class AreaJobManager:
                                 initial_is_deleted=False,
                             )
                             db.add(row)
+                        db.flush()
+                        instances_for_render = (
+                            db.query(AreaJobInstance)
+                            .filter(AreaJobInstance.image_id == image_row.id)
+                            .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
+                            .all()
+                        )
+                        self._render_overlay_for_image(job_row, image_row, instances_for_render)
 
                         with self._lock:
                             record.succeeded_images += 1
