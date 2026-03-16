@@ -14,6 +14,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Table,
   Tag,
   Tooltip,
@@ -152,10 +153,11 @@ function AreaRecognition() {
 
   const [rootPath, setRootPath] = useState('');
   const [oldRootPath, setOldRootPath] = useState('');
-  const [resultOutputRoot, setResultOutputRoot] = useState('/tmp/area_outputs');
+  const [resultOutputRoot, setResultOutputRoot] = useState('/data/area_outputs');
   const [mappingRows, setMappingRows] = useState([]);
   const [configInferenceOptions, setConfigInferenceOptions] = useState(DEFAULT_INFERENCE_OPTIONS);
   const [archiveStatus, setArchiveStatus] = useState(null);
+  const [archiveEnabled, setArchiveEnabled] = useState(false);
   const [configOpenKeys, setConfigOpenKeys] = useState([]);
 
   const [folderLimit, setFolderLimit] = useState(5);
@@ -394,7 +396,8 @@ function AreaRecognition() {
       const data = await areaApi.getConfig();
       setRootPath(data.root_path || '');
       setOldRootPath(data.old_root_path || '');
-      setResultOutputRoot(data.result_output_root || '/tmp/area_outputs');
+      setResultOutputRoot(data.result_output_root || '/data/area_outputs');
+      setArchiveEnabled(Boolean(data.archive_enabled));
       const rows = Object.entries(data.model_mapping || {}).map(([name, file]) => ({
         key: name,
         model_name: name,
@@ -834,6 +837,7 @@ function AreaRecognition() {
         old_root_path: oldRootPath.trim(),
         result_output_root: resultOutputRoot.trim(),
         model_mapping: modelMapping,
+        archive_enabled: !!archiveEnabled,
         inference_defaults: {
           threshold_bias: Number(configInferenceOptions.threshold_bias ?? 0),
           mask_mode: String(configInferenceOptions.mask_mode || 'auto'),
@@ -1702,6 +1706,16 @@ function AreaRecognition() {
                     <Button size="small" icon={<ReloadOutlined />} onClick={fetchConfig} loading={configLoading}>刷新配置</Button>
                     <Button size="small" type="primary" icon={<SaveOutlined />} onClick={handleSaveConfig} loading={configSaving}>保存配置</Button>
                     <Button size="small" onClick={handleManualArchive}>立即归档旧文件</Button>
+                    <Space size={6}>
+                      <Typography.Text type="secondary">定期归档</Typography.Text>
+                      <Switch
+                        size="small"
+                        checked={archiveEnabled}
+                        checkedChildren="开"
+                        unCheckedChildren="关"
+                        onChange={setArchiveEnabled}
+                      />
+                    </Space>
                   </Space>
 
                   <Space direction="vertical" size={8} style={{ width: '100%' }}>
@@ -1721,9 +1735,10 @@ function AreaRecognition() {
                       addonBefore="结果输出路径"
                       value={resultOutputRoot}
                       onChange={(event) => setResultOutputRoot(event.target.value)}
-                      placeholder="例如：/tmp/area_outputs 或局域网挂载路径"
+                      placeholder="例如：/data/area_outputs 或局域网挂载路径"
                     />
                     <Typography.Text type="secondary">
+                      定期归档：{archiveEnabled ? '开启' : '关闭'}（每 48 小时检查一次）；
                       归档状态：上次执行 {archiveStatus?.last_run_at ? String(archiveStatus.last_run_at).replace('T', ' ').slice(0, 19) : '未执行'}，
                       当前 {archiveStatus?.is_due ? '已到执行窗口' : '未到执行窗口'}。
                     </Typography.Text>

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     OCR_MAX_CONCURRENT_JOBS: int = 1
     OCR_RETENTION_HOURS: int = 24
     AREA_ENABLED: bool = True
-    AREA_OUTPUT_DIR: str = "/tmp/area_outputs"
+    AREA_OUTPUT_DIR: str = "/data/area_outputs"
     AREA_MAX_CONCURRENT_JOBS: int = 1
     AREA_ROOT_PATH_DEFAULT: str = "/tmp/area_inputs"
     AREA_WEIGHTS_DIR: str = "runtime/area-models"

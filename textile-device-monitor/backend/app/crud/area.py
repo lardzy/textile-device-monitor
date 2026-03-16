@@ -15,6 +15,7 @@ AREA_OLD_ROOT_PATH_KEY = "area_old_root_path"
 AREA_RESULT_OUTPUT_ROOT_KEY = "area_result_output_root"
 AREA_INFERENCE_DEFAULTS_KEY = "area_inference_defaults"
 AREA_ARCHIVE_LAST_RUN_AT_KEY = "area_archive_last_run_at"
+AREA_ARCHIVE_ENABLED_KEY = "area_archive_enabled"
 
 DEFAULT_OLD_ROOT_PATH = r"\\192.168.105.82\材料检测中心\10特纤\02-检验"
 
@@ -48,6 +49,29 @@ def _set_json_value(db: Session, key: str, value: dict[str, Any]) -> None:
         db.add(row)
     else:
         row.value_json = value
+
+
+def _set_bool_value(db: Session, key: str, value: bool) -> None:
+    row = _get_config_row(db, key)
+    if row is None:
+        row = SystemConfig(config_key=key, value_json=bool(value))
+        db.add(row)
+    else:
+        row.value_json = bool(value)
+
+
+def _normalize_bool(raw: Any, default: bool = False) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        token = raw.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    return default
 
 
 def _normalize_mapping(raw_mapping: Any) -> dict[str, str]:
@@ -103,6 +127,7 @@ def ensure_area_config(db: Session) -> None:
     output_root_row = _get_config_row(db, AREA_RESULT_OUTPUT_ROOT_KEY)
     infer_defaults_row = _get_config_row(db, AREA_INFERENCE_DEFAULTS_KEY)
     archive_last_run_row = _get_config_row(db, AREA_ARCHIVE_LAST_RUN_AT_KEY)
+    archive_enabled_row = _get_config_row(db, AREA_ARCHIVE_ENABLED_KEY)
     changed = False
 
     if root_row is None or not (root_row.value_text or "").strip():
@@ -129,6 +154,10 @@ def ensure_area_config(db: Session) -> None:
         _set_text_value(db, AREA_ARCHIVE_LAST_RUN_AT_KEY, "")
         changed = True
 
+    if archive_enabled_row is None:
+        _set_bool_value(db, AREA_ARCHIVE_ENABLED_KEY, False)
+        changed = True
+
     if changed:
         db.commit()
 
@@ -141,6 +170,7 @@ def get_area_config(db: Session) -> dict[str, object]:
     output_root_row = _get_config_row(db, AREA_RESULT_OUTPUT_ROOT_KEY)
     infer_defaults_row = _get_config_row(db, AREA_INFERENCE_DEFAULTS_KEY)
     archive_last_run_row = _get_config_row(db, AREA_ARCHIVE_LAST_RUN_AT_KEY)
+    archive_enabled_row = _get_config_row(db, AREA_ARCHIVE_ENABLED_KEY)
 
     root_path = ((root_row.value_text if root_row else "") or settings.AREA_ROOT_PATH_DEFAULT).strip()
     old_root_path = ((old_root_row.value_text if old_root_row else "") or DEFAULT_OLD_ROOT_PATH).strip()
@@ -152,6 +182,7 @@ def get_area_config(db: Session) -> dict[str, object]:
         infer_defaults_row.value_json if infer_defaults_row else {}
     )
     archive_last_run_at = (archive_last_run_row.value_text if archive_last_run_row else "") or ""
+    archive_enabled = _normalize_bool(archive_enabled_row.value_json if archive_enabled_row else False, False)
 
     return {
         "root_path": root_path,
@@ -160,6 +191,7 @@ def get_area_config(db: Session) -> dict[str, object]:
         "model_mapping": mapping,
         "inference_defaults": inference_defaults,
         "archive_last_run_at": archive_last_run_at.strip(),
+        "archive_enabled": archive_enabled,
     }
 
 
@@ -170,6 +202,7 @@ def update_area_config(
     result_output_root: str,
     model_mapping: dict[str, str],
     inference_defaults: dict[str, Any],
+    archive_enabled: bool = False,
 ) -> dict[str, object]:
     normalized_root = root_path.strip()
     normalized_old_root = old_root_path.strip()
@@ -188,6 +221,7 @@ def update_area_config(
     _set_text_value(db, AREA_RESULT_OUTPUT_ROOT_KEY, normalized_result_output_root)
     _set_json_value(db, AREA_MODEL_MAPPING_KEY, normalized_mapping)
     _set_json_value(db, AREA_INFERENCE_DEFAULTS_KEY, normalized_defaults)
+    _set_bool_value(db, AREA_ARCHIVE_ENABLED_KEY, archive_enabled)
     db.commit()
     return get_area_config(db)
 

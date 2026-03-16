@@ -17,6 +17,13 @@ async def run_area_archive_if_due(force: bool = False) -> dict[str, object]:
     db = SessionLocal()
     try:
         config = area_crud.get_area_config(db)
+        archive_enabled = bool(config.get("archive_enabled"))
+        if not force and not archive_enabled:
+            return {
+                "status": "skipped",
+                "reason": "disabled",
+                "enabled": False,
+            }
         last_run = area_crud.get_archive_last_run_at(db)
         now = datetime.now(timezone.utc)
         due = force or last_run is None or (now - last_run) >= timedelta(hours=ARCHIVE_INTERVAL_HOURS)
@@ -24,6 +31,7 @@ async def run_area_archive_if_due(force: bool = False) -> dict[str, object]:
             return {
                 "status": "skipped",
                 "reason": "not_due",
+                "enabled": archive_enabled,
                 "last_run_at": last_run.isoformat() if last_run else None,
             }
         result = area_job_manager.run_archive(
@@ -34,6 +42,7 @@ async def run_area_archive_if_due(force: bool = False) -> dict[str, object]:
         area_crud.set_archive_last_run_at(db, now)
         return {
             "status": "ok",
+            "enabled": archive_enabled,
             "ran_at": now.isoformat(),
             **result,
         }
@@ -54,4 +63,3 @@ async def start_area_archive_scheduler() -> None:
         except Exception as exc:
             print(f"Area archive scheduler error: {exc}")
         await asyncio.sleep(ARCHIVE_CHECK_INTERVAL_SECONDS)
-

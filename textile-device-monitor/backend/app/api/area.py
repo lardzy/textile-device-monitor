@@ -23,6 +23,7 @@ class AreaConfigPayload(BaseModel):
     result_output_root: str = Field(..., min_length=1, max_length=1000)
     model_mapping: dict[str, str]
     inference_defaults: dict[str, Any] = Field(default_factory=dict)
+    archive_enabled: bool = False
 
 
 class AreaJobCreatePayload(BaseModel):
@@ -77,6 +78,7 @@ def get_area_config(db: Session = Depends(get_db)):
         "model_options": model_options,
         "inference_defaults": config.get("inference_defaults", {}),
         "archive_last_run_at": config.get("archive_last_run_at"),
+        "archive_enabled": bool(config.get("archive_enabled")),
     }
 
 
@@ -101,6 +103,7 @@ def update_area_config(payload: AreaConfigPayload, db: Session = Depends(get_db)
         result_output_root,
         payload.model_mapping,
         payload.inference_defaults,
+        payload.archive_enabled,
     )
     return {
         "root_path": updated.get("root_path"),
@@ -110,6 +113,7 @@ def update_area_config(payload: AreaConfigPayload, db: Session = Depends(get_db)
         "model_options": sorted((updated.get("model_mapping") or {}).keys()),
         "inference_defaults": updated.get("inference_defaults", {}),
         "archive_last_run_at": updated.get("archive_last_run_at"),
+        "archive_enabled": bool(updated.get("archive_enabled")),
     }
 
 
@@ -424,10 +428,13 @@ def cleanup_area_folder(
 @router.get("/archive/status")
 def get_area_archive_status(db: Session = Depends(get_db)):
     _ensure_enabled()
+    config = area_crud.get_area_config(db)
+    enabled = bool(config.get("archive_enabled"))
     last_run = area_crud.get_archive_last_run_at(db)
     now = datetime.now(timezone.utc)
     due = last_run is None or (now - last_run) >= timedelta(hours=48)
     return {
+        "enabled": enabled,
         "last_run_at": last_run.isoformat() if last_run else None,
         "is_due": due,
         "interval_hours": 48,

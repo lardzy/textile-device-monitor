@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   postgres:
@@ -24,7 +24,7 @@ services:
       AREA_WEIGHTS_DIR: /opt/area_weights
       AREA_YOLACT_VENDOR_ROOT: /app/vendor/yolact
     volumes:
-      - ./runtime/area-models:/opt/area_weights:ro
+      - "D:/textile-device-monitor/runtime/area-models:/opt/area_weights:ro"
     ports:
       - "9001:9001"
     networks:
@@ -44,10 +44,24 @@ services:
       AREA_INFER_URL: http://area-infer:9001
       AREA_INFER_TIMEOUT_SEC: 60
       AREA_OUTPUT_DIR: /data/area_outputs
+      # 在面积识别页面中请填写：
+      # root_path=/data/area_root
+      # old_root_path=/data/area_old
+      # result_output_root=/data/area_outputs
     volumes:
-      - /Volumes/LARD/Cache:/Volumes/LARD/Cache
-      - ./runtime/area-models:/opt/area_weights:ro
-      - ./runtime/area-outputs:/data/area_outputs
+      - type: bind
+        source: '\\192.168.105.66\17检验八部\10特纤\02-检验\横截面'
+        target: /data/area_root
+      - type: bind
+        source: '\\192.168.105.82\材料检测中心\10特纤\02-检验'
+        target: /data/area_old
+      - type: bind
+        source: '\\192.168.105.66\17检验八部\10特纤\02-检验\横截面_结果'
+        target: /data/area_outputs
+      - type: bind
+        source: 'D:/textile-device-monitor/runtime/area-models'
+        target: /opt/area_weights
+        read_only: true
     ports:
       - "8000:8000"
     depends_on:
