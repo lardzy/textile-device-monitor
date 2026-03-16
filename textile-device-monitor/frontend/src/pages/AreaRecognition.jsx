@@ -136,6 +136,8 @@ function AreaRecognition() {
   const editorImagesRequestSeqRef = useRef(0);
   const editorDetailRequestSeqRef = useRef(0);
   const editorImagesRef = useRef([]);
+  const pendingEditorImageSelectRef = useRef('');
+  const initLoadedRef = useRef(false);
   const initializedEditorJobRef = useRef('');
   const selectedJobIdRef = useRef('');
 
@@ -359,6 +361,7 @@ function AreaRecognition() {
   const clearEditorContextState = useCallback(() => {
     editorImagesRequestSeqRef.current += 1;
     editorDetailRequestSeqRef.current += 1;
+    pendingEditorImageSelectRef.current = '';
     clearEditorDetailState();
     setSelectedEditorImageId(null);
     setEditorImages([]);
@@ -466,10 +469,12 @@ function AreaRecognition() {
       setJobPage(Number(data.page || nextPage));
 
       if (!keepSelection && items.length > 0) {
+        selectedJobIdRef.current = items[0].job_id;
         setSelectedJobId(items[0].job_id);
       }
-      if (selectedJobId) {
-        const selected = items.find((item) => item.job_id === selectedJobId);
+      const selectedId = String(selectedJobIdRef.current || '').trim();
+      if (selectedId) {
+        const selected = items.find((item) => item.job_id === selectedId);
         if (selected) {
           setSelectedJobSnapshot(selected);
         }
@@ -479,7 +484,7 @@ function AreaRecognition() {
     } finally {
       setJobsLoading(false);
     }
-  }, [jobPage, jobPageSize, jobSearchQuery, selectedJobId]);
+  }, [jobPage, jobPageSize, jobSearchQuery]);
 
   const fetchSelectedJobSnapshot = useCallback(async (jobId) => {
     const targetJobId = String(jobId || '').trim();
@@ -509,12 +514,16 @@ function AreaRecognition() {
       if (requestSeq !== editorImagesRequestSeqRef.current) return;
       if (String(selectedJobIdRef.current || '') !== String(jobId || '')) return;
       const items = Array.isArray(data.items) ? data.items : [];
+      const pendingSelect = pendingEditorImageSelectRef.current;
+      pendingEditorImageSelectRef.current = '';
       setEditorImages(items);
       setEditorImagesTotal(Number(data.total || 0));
       setEditorImagePage(Number(data.page || page));
       setEditorImagePageSize(Number(data.page_size || pageSize));
       if (items.length > 0) {
         setSelectedEditorImageId((prev) => {
+          if (pendingSelect === 'first') return items[0].image_id;
+          if (pendingSelect === 'last') return items[items.length - 1].image_id;
           const stillExists = items.some((item) => item.image_id === prev);
           return stillExists ? prev : items[0].image_id;
         });
@@ -627,6 +636,8 @@ function AreaRecognition() {
   }, [clearEditorDetailState, editorImagePage, editorImagePageSize, fetchEditorImageDetail, fetchEditorImages, fetchFolders, fetchJobs, fetchResultSummary, fetchSelectedJobSnapshot, folderPage, folderQueryUsed, isSelectedJobEditable, selectedEditorImageId, selectedJobId]);
 
   useEffect(() => {
+    if (initLoadedRef.current) return;
+    initLoadedRef.current = true;
     const initialize = async () => {
       await fetchConfig();
       await fetchFolders({ query: '', page: 1, resetPage: true });
@@ -751,16 +762,45 @@ function AreaRecognition() {
         if (!editorImages.length || !selectedEditorImageId) return;
         const idx = editorImages.findIndex((item) => item.image_id === selectedEditorImageId);
         if (idx < 0) return;
-        const nextIdx = event.key === 'ArrowLeft' ? idx - 1 : idx + 1;
-        if (nextIdx < 0 || nextIdx >= editorImages.length) return;
+        const goPrev = event.key === 'ArrowLeft';
+        const nextIdx = goPrev ? idx - 1 : idx + 1;
+        if (nextIdx >= 0 && nextIdx < editorImages.length) {
+          withDiscardConfirm(() => {
+            setSelectedEditorImageId(editorImages[nextIdx].image_id);
+          });
+          return;
+        }
+        if (goPrev) {
+          if (editorImagePage <= 1) return;
+          withDiscardConfirm(() => {
+            pendingEditorImageSelectRef.current = 'last';
+            setEditorImagePage(editorImagePage - 1);
+          });
+          return;
+        }
+        const hasNextPage = editorImagePage * editorImagePageSize < editorImagesTotal;
+        if (!hasNextPage) return;
         withDiscardConfirm(() => {
-          setSelectedEditorImageId(editorImages[nextIdx].image_id);
+          pendingEditorImageSelectRef.current = 'first';
+          setEditorImagePage(editorImagePage + 1);
         });
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [editorImages, folderImagesModal.open, isEditing, selectedEditorImageId, selectedInstance, selectedJobId, updateInstanceById, withDiscardConfirm]);
+  }, [
+    editorImagePage,
+    editorImagePageSize,
+    editorImages,
+    editorImagesTotal,
+    folderImagesModal.open,
+    isEditing,
+    selectedEditorImageId,
+    selectedInstance,
+    selectedJobId,
+    updateInstanceById,
+    withDiscardConfirm,
+  ]);
 
   const handleSaveConfig = async () => {
     const modelMapping = {};
@@ -989,6 +1029,7 @@ function AreaRecognition() {
       if (jobPayload) {
         setSelectedJobSnapshot(jobPayload);
       }
+      selectedJobIdRef.current = targetJobId;
       setSelectedJobId(targetJobId);
     });
   }, [
@@ -1377,8 +1418,6 @@ function AreaRecognition() {
               <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
                 <Space wrap>
                   <Typography.Text>创建日期：{selectedJob?.created_at ? String(selectedJob.created_at).replace('T', ' ').slice(0, 19) : '-'}</Typography.Text>
-                  <Typography.Text>编辑日期：{editorDetail?.image?.edited_at ? String(editorDetail.image.edited_at).replace('T', ' ').slice(0, 19) : '-'}</Typography.Text>
-                  <Typography.Text>ID：{editorDetail?.image?.edited_by_id || '-'}</Typography.Text>
                 </Space>
                 <Space>
                   <Button type="primary" icon={<SaveOutlined />} loading={editorSaving} onClick={handleSaveEditor} disabled={!selectedEditorImageId}>保存</Button>
@@ -1387,40 +1426,52 @@ function AreaRecognition() {
               </Space>
             </Card>
 
-            <Card size="small" title="图片列表" bodyStyle={{ padding: 8 }}>
-              <Table
-                rowKey={(row) => row.image_id}
-                columns={editorImageColumns}
-                dataSource={editorImages}
+            <Card size="small" bodyStyle={{ padding: 8 }}>
+              <Collapse
                 size="small"
-                loading={editorImagesLoading}
-                pagination={{
-                  current: editorImagePage,
-                  pageSize: editorImagePageSize,
-                  total: editorImagesTotal,
-                  onChange: (page) => {
-                    withDiscardConfirm(() => {
-                      setEditorImagePage(page);
-                    });
+                defaultActiveKey={[]}
+                items={[
+                  {
+                    key: 'editor-image-list',
+                    label: '图片列表',
+                    children: (
+                      <Table
+                        rowKey={(row) => row.image_id}
+                        columns={editorImageColumns}
+                        dataSource={editorImages}
+                        size="small"
+                        loading={editorImagesLoading}
+                        pagination={{
+                          current: editorImagePage,
+                          pageSize: editorImagePageSize,
+                          total: editorImagesTotal,
+                          onChange: (page) => {
+                            withDiscardConfirm(() => {
+                              setEditorImagePage(page);
+                            });
+                          },
+                          showSizeChanger: false,
+                        }}
+                        onRow={(record) => ({
+                          style: {
+                            cursor: 'pointer',
+                            background: record.image_id === selectedEditorImageId ? '#e6f4ff' : undefined,
+                          },
+                          onClick: () => {
+                            withDiscardConfirm(() => {
+                              setSelectedEditorImageId(record.image_id);
+                            });
+                          },
+                          onDoubleClick: () => {
+                            withDiscardConfirm(() => {
+                              setSelectedEditorImageId(record.image_id);
+                            });
+                          },
+                        })}
+                      />
+                    ),
                   },
-                  showSizeChanger: false,
-                }}
-                onRow={(record) => ({
-                  style: {
-                    cursor: 'pointer',
-                    background: record.image_id === selectedEditorImageId ? '#e6f4ff' : undefined,
-                  },
-                  onClick: () => {
-                    withDiscardConfirm(() => {
-                      setSelectedEditorImageId(record.image_id);
-                    });
-                  },
-                  onDoubleClick: () => {
-                    withDiscardConfirm(() => {
-                      setSelectedEditorImageId(record.image_id);
-                    });
-                  },
-                })}
+                ]}
               />
             </Card>
 
@@ -1574,30 +1625,42 @@ function AreaRecognition() {
                 )}
               </div>
 
-              <Table
+              <Collapse
                 style={{ marginTop: 12 }}
-                rowKey={(row) => row.instance_id}
                 size="small"
-                columns={[
-                  { title: '实例ID', dataIndex: 'instance_id', width: 90 },
-                  { title: '类别', dataIndex: 'class_name', width: 130 },
-                  { title: '面积(px)', dataIndex: 'area_px', width: 110 },
+                defaultActiveKey={[]}
+                items={[
                   {
-                    title: '状态',
-                    key: 'state',
-                    width: 90,
-                    render: (_, row) => (row.is_deleted ? <Tag color="warning">已弃用</Tag> : <Tag color="success">启用</Tag>),
+                    key: 'editor-instance-list',
+                    label: '实例ID列表',
+                    children: (
+                      <Table
+                        rowKey={(row) => row.instance_id}
+                        size="small"
+                        columns={[
+                          { title: '实例ID', dataIndex: 'instance_id', width: 90 },
+                          { title: '类别', dataIndex: 'class_name', width: 130 },
+                          { title: '面积(px)', dataIndex: 'area_px', width: 110 },
+                          {
+                            title: '状态',
+                            key: 'state',
+                            width: 90,
+                            render: (_, row) => (row.is_deleted ? <Tag color="warning">已弃用</Tag> : <Tag color="success">启用</Tag>),
+                          },
+                        ]}
+                        dataSource={workingInstances}
+                        pagination={{ pageSize: 8 }}
+                        onRow={(record) => ({
+                          style: {
+                            cursor: 'pointer',
+                            background: record.instance_id === selectedInstanceId ? '#e6f4ff' : undefined,
+                          },
+                          onClick: () => setSelectedInstanceId(record.instance_id),
+                        })}
+                      />
+                    ),
                   },
                 ]}
-                dataSource={workingInstances}
-                pagination={{ pageSize: 8 }}
-                onRow={(record) => ({
-                  style: {
-                    cursor: 'pointer',
-                    background: record.instance_id === selectedInstanceId ? '#e6f4ff' : undefined,
-                  },
-                  onClick: () => setSelectedInstanceId(record.instance_id),
-                })}
               />
             </Card>
 
@@ -1837,6 +1900,7 @@ function AreaRecognition() {
           ) : folderImagesModal.items.length ? (
             <>
               <div
+                className="area-folder-main-preview-container"
                 style={{
                   flex: 1,
                   minHeight: 0,
@@ -1848,13 +1912,29 @@ function AreaRecognition() {
                   justifyContent: 'center',
                 }}
               >
-                <img
+                <Image
+                  className="area-folder-main-preview"
                   src={areaApi.getFolderImageUrl(
                     folderImagesModal.folderName,
                     folderImagesModal.items[folderImagesModal.currentIndex]?.name || '',
                   )}
                   alt={folderImagesModal.items[folderImagesModal.currentIndex]?.name || 'preview'}
-                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                  preview={{
+                    mask: null,
+                    maskClassName: 'area-folder-main-preview-mask',
+                  }}
+                  wrapperStyle={{
+                    width: '100%',
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                  }}
                 />
               </div>
               <Typography.Text style={{ textAlign: 'center' }}>
