@@ -712,6 +712,9 @@ class AreaJobManager:
                     continue
             except OSError:
                 continue
+            lower_name = item.name.lower()
+            if lower_name.endswith("_i.jpg") or lower_name.endswith("_i.jpeg"):
+                continue
             dst = recycle_dir / item.name
             if dst.exists():
                 dst = recycle_dir / f"{item.stem}_{uuid4().hex[:8]}{item.suffix}"

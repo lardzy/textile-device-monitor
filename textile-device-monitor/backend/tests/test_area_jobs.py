@@ -214,6 +214,38 @@ class AreaJobsTests(unittest.TestCase):
             self.assertEqual(resolved.name, "sample")
             manager.stop()
 
+    def test_cleanup_folder_keeps_i_suffix_images(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            target = root / "sample"
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "keep_I.jpg").write_bytes(b"x")
+            (target / "keep_i.jpeg").write_bytes(b"x")
+            (target / "move_a.jpg").write_bytes(b"x")
+            (target / "move_b.png").write_bytes(b"x")
+            (target / "note.txt").write_text("keep", encoding="utf-8")
+
+            manager = AreaJobManager()
+            try:
+                payload = manager.cleanup_folder(
+                    root_path=str(root),
+                    folder_name="sample",
+                    rename_enabled=False,
+                    new_folder_name=None,
+                )
+                self.assertEqual(payload.get("moved"), 2)
+                self.assertTrue((target / "keep_I.jpg").exists())
+                self.assertTrue((target / "keep_i.jpeg").exists())
+                self.assertTrue((target / "note.txt").exists())
+                self.assertFalse((target / "move_a.jpg").exists())
+                self.assertFalse((target / "move_b.png").exists())
+
+                recycle = root / ".recycle"
+                self.assertTrue((recycle / "move_a.jpg").exists())
+                self.assertTrue((recycle / "move_b.png").exists())
+            finally:
+                manager.stop()
+
     def test_inference_option_new_fields_validated(self):
         manager = AreaJobManager()
         valid = manager._normalize_inference_options(

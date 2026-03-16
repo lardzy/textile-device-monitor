@@ -1962,6 +1962,9 @@ function AreaRecognition() {
         confirmLoading={cleanupModal.submitting}
       >
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text type="secondary">
+            仅保留以“_I.jpg / _I.jpeg”结尾的图片，其余 jpg/jpeg/png 会移动到同级 .recycle 文件夹。
+          </Typography.Text>
           <div>
             <Typography.Text type="secondary">源文件夹：</Typography.Text>
             <Typography.Text copyable={{ text: cleanupModal.folderName || '-' }} style={{ marginLeft: 8 }}>
