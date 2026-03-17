@@ -45,6 +45,16 @@ OVERLAY_CLASS_LABEL_EN: dict[str, str] = {
     "再生纤维素纤维": "RCF",
     "未分类": "Unknown",
 }
+OVERLAY_LABEL_CLASS_SWAP_BY_MODEL: dict[str, dict[str, str]] = {
+    "棉-莱赛尔": {
+        "棉": "莱赛尔",
+        "莱赛尔": "棉",
+    },
+    "粘纤-莱赛尔": {
+        "粘纤": "莱赛尔",
+        "莱赛尔": "粘纤",
+    },
+}
 
 INVALID_OUTPUT_CHARS_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 MAX_TEMPLATE_INSTANCE_ROWS = 2990
@@ -1303,6 +1313,8 @@ class AreaJobManager:
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay, "RGBA")
         classes = parse_model_classes(job.model_name)
+        normalized_model_name = str(job.model_name or "").replace(" ", "")
+        overlay_label_swap = OVERLAY_LABEL_CLASS_SWAP_BY_MODEL.get(normalized_model_name, {})
         class_to_color: dict[str, tuple[int, int, int]] = {}
         for idx, name in enumerate(classes):
             class_to_color[name] = PALETTE[idx % len(PALETTE)]
@@ -1333,7 +1345,8 @@ class AreaJobManager:
                     x1 = 0
                     y1 = 0
 
-            label = OVERLAY_CLASS_LABEL_EN.get(cls_name)
+            label_class_name = overlay_label_swap.get(cls_name, cls_name)
+            label = OVERLAY_CLASS_LABEL_EN.get(label_class_name)
             if not label:
                 label = "C1"
                 if cls_name in classes:
