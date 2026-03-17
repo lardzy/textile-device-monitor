@@ -1,5 +1,4 @@
-version: "3.8"
-
+# docker-compose.yml
 services:
   postgres:
     image: postgres:15-alpine
@@ -29,7 +28,10 @@ services:
       AREA_INFER_DEVICE: ${AREA_INFER_DEVICE:-auto}
       AREA_INFER_GPU_POLICY: ${AREA_INFER_GPU_POLICY:-warn_continue}
     volumes:
-      - "D:/textile-device-monitor/runtime/area-models:/opt/area_weights:ro"
+      - type: bind
+        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-models"
+        target: /opt/area_weights
+        read_only: true
     ports:
       - "9001:9001"
     networks:
@@ -50,26 +52,16 @@ services:
       AREA_INFER_TIMEOUT_SEC: 60
       AREA_OUTPUT_DIR: /data/area_outputs
       AREA_EXCEL_TEMPLATE_PATH: /opt/area_templates/-面积法-定量试验原始记录-新系统.xls
-      # 在面积识别页面中请填写：
-      # root_path=/data/area_root
-      # old_root_path=/data/area_old
-      # result_output_root=/data/area_outputs
     volumes:
+      - area_root_cifs:/data/share66
+      - area_old_cifs:/data/share82
+      - area_out_cifs:/data/share66_out
       - type: bind
-        source: '\\192.168.105.66\17检验八部\10特纤\02-检验\横截面'
-        target: /data/area_root
-      - type: bind
-        source: '\\192.168.105.82\材料检测中心\10特纤\02-检验'
-        target: /data/area_old
-      - type: bind
-        source: '\\192.168.105.66\17检验八部\10特纤\02-检验\横截面_结果'
-        target: /data/area_outputs
-      - type: bind
-        source: 'D:/textile-device-monitor/runtime/area-models'
+        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-models"
         target: /opt/area_weights
         read_only: true
       - type: bind
-        source: 'D:/textile-device-monitor/runtime/area-templates'
+        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-templates"
         target: /opt/area_templates
         read_only: true
     ports:
@@ -93,6 +85,27 @@ services:
 
 volumes:
   postgres_data:
+
+  area_root_cifs:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${SMB_USER_A},password=${SMB_PASS_A},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      device: "//192.168.105.66/17检验八部"
+
+  area_out_cifs:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${SMB_USER_B},password=${SMB_PASS_B},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      device: "//192.168.105.82/材料检测中心"
+
+  area_old_cifs:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${SMB_USER_A},password=${SMB_PASS_A},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      device: "//192.168.105.66/17检验八部"
 
 networks:
   textile-net:

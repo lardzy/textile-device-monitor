@@ -630,7 +630,6 @@ class AreaJobManager:
                 {
                     "folder_name": entry.name,
                     "updated_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
-                    "image_count": self._count_images_in_dir(entry),
                 }
             )
         return result
@@ -680,7 +679,6 @@ class AreaJobManager:
             {
                 "folder_name": path.name,
                 "updated_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
-                "image_count": self._count_images_in_dir(path),
             }
             for mtime, path in chunk
         ]

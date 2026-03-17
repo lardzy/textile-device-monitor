@@ -1140,13 +1140,6 @@ function AreaRecognition() {
       ),
     },
     {
-      title: '图片数',
-      dataIndex: 'image_count',
-      key: 'image_count',
-      width: 90,
-      align: 'center',
-    },
-    {
       title: '更新时间',
       dataIndex: 'updated_at',
       key: 'updated_at',
