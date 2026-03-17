@@ -17,12 +17,17 @@ services:
       - textile-net
 
   area-infer:
-    build: ./area-infer
+    build:
+      context: ./area-infer
+      args:
+        TORCH_VARIANT: ${AREA_INFER_TORCH_VARIANT:-cpu}
     container_name: textile-area-infer
     restart: unless-stopped
     environment:
       AREA_WEIGHTS_DIR: /opt/area_weights
       AREA_YOLACT_VENDOR_ROOT: /app/vendor/yolact
+      AREA_INFER_DEVICE: ${AREA_INFER_DEVICE:-auto}
+      AREA_INFER_GPU_POLICY: ${AREA_INFER_GPU_POLICY:-warn_continue}
     volumes:
       - "D:/textile-device-monitor/runtime/area-models:/opt/area_weights:ro"
     ports:

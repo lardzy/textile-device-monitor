@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import io
 import os
 import sys
 import threading
@@ -60,6 +59,7 @@ class _ModelRuntime:
     model_name: str
     model_file: str
     class_names: tuple[str, ...]
+    device: str
     cfg_name: str
     cfg_obj: Any
     net: Any
@@ -67,19 +67,110 @@ class _ModelRuntime:
 
 
 class AreaNativeEngine:
-    def __init__(self, *, weights_dir: str, vendor_root: str, default_cfg_name: str = "yolact_base_config") -> None:
+    def __init__(
+        self,
+        *,
+        weights_dir: str,
+        vendor_root: str,
+        default_cfg_name: str = "yolact_base_config",
+        infer_device: str = "auto",
+        gpu_policy: str = "warn_continue",
+    ) -> None:
         self.weights_dir = Path(weights_dir).resolve()
         self.vendor_root = Path(vendor_root).resolve()
         self.default_cfg_name = default_cfg_name
+        self._requested_device = self._normalize_infer_device(infer_device)
+        self._gpu_policy = self._normalize_gpu_policy(gpu_policy)
         self._lock = threading.RLock()
         self._runtime_loaded = False
-        self._cache: dict[tuple[str, tuple[str, ...]], _ModelRuntime] = {}
+        self._cache: dict[tuple[str, tuple[str, ...], str], _ModelRuntime] = {}
 
         self._torch = None
         self._cfg = None
         self._yolact_cls = None
         self._fast_transform_cls = None
         self._postprocess_fn = None
+        self._effective_device = None
+        self._effective_device_key = "cpu"
+        self._device_warning: str | None = None
+        self._cuda_available = False
+        self._gpu_count = 0
+        self._gpu_name: str | None = None
+
+    def _normalize_infer_device(self, value: str | None) -> str:
+        token = str(value or "").strip().lower()
+        if token in {"cpu", "cuda", "auto"}:
+            return token
+        return "auto"
+
+    def _normalize_gpu_policy(self, value: str | None) -> str:
+        token = str(value or "").strip().lower()
+        if token in {"warn_continue", "fail"}:
+            return token
+        return "warn_continue"
+
+    def _set_device_warning(self, warning: str | None) -> None:
+        token = str(warning or "").strip()
+        self._device_warning = token or None
+
+    def _runtime_device_payload(self) -> dict[str, Any]:
+        return {
+            "requested_device": self._requested_device,
+            "effective_device": "cuda:0" if self._effective_device_key == "cuda" else "cpu",
+            "cuda_available": bool(self._cuda_available),
+            "gpu_name": self._gpu_name,
+            "gpu_count": int(self._gpu_count),
+            "device_warning": self._device_warning,
+            "gpu_policy": self._gpu_policy,
+        }
+
+    def _fallback_to_cpu(self, reason: str) -> None:
+        if self._effective_device_key != "cuda":
+            return
+        self._effective_device = self._torch.device("cpu")
+        self._effective_device_key = "cpu"
+        self._cache.clear()
+        self._set_device_warning(reason)
+
+    def _resolve_runtime_device(self) -> None:
+        cuda_available = False
+        gpu_count = 0
+        gpu_name: str | None = None
+        try:
+            cuda_available = bool(self._torch.cuda.is_available())
+            if cuda_available:
+                gpu_count = int(self._torch.cuda.device_count())
+                if gpu_count > 0:
+                    gpu_name = str(self._torch.cuda.get_device_name(0))
+        except Exception:
+            cuda_available = False
+            gpu_count = 0
+            gpu_name = None
+
+        self._cuda_available = cuda_available
+        self._gpu_count = gpu_count
+        self._gpu_name = gpu_name
+        self._set_device_warning(None)
+
+        if self._requested_device == "cpu":
+            self._effective_device = self._torch.device("cpu")
+            self._effective_device_key = "cpu"
+            return
+
+        if cuda_available:
+            self._effective_device = self._torch.device("cuda:0")
+            self._effective_device_key = "cuda"
+            return
+
+        if self._requested_device == "cuda" and self._gpu_policy == "fail":
+            raise InferServiceError("infer_service_unavailable", "cuda_requested_but_unavailable")
+
+        if self._requested_device == "cuda":
+            self._set_device_warning("cuda_requested_but_unavailable_fallback_to_cpu")
+        else:
+            self._set_device_warning("cuda_unavailable_fallback_to_cpu")
+        self._effective_device = self._torch.device("cpu")
+        self._effective_device_key = "cpu"
 
     def _ensure_runtime(self) -> None:
         if self._runtime_loaded:
@@ -108,6 +199,7 @@ class AreaNativeEngine:
         self._fast_transform_cls = FastBaseTransform
         self._postprocess_fn = postprocess
         self._yolact_base_config = yolact_base_config
+        self._resolve_runtime_device()
         self._runtime_loaded = True
 
     def _build_cfg(self, class_names: list[str]) -> Any:
@@ -205,8 +297,8 @@ class AreaNativeEngine:
             raise InferServiceError("infer_model_load_failed", f"weight_not_found:{path}")
         return path
 
-    def _model_cache_key(self, model_file: str, class_names: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
-        return (Path(model_file).name, class_names)
+    def _model_cache_key(self, model_file: str, class_names: tuple[str, ...]) -> tuple[str, tuple[str, ...], str]:
+        return (Path(model_file).name, class_names, self._effective_device_key)
 
     def _load_model(self, *, model_name: str, model_file: str) -> _ModelRuntime:
         self._ensure_runtime()
@@ -223,9 +315,18 @@ class AreaNativeEngine:
         try:
             net = self._yolact_cls()
             net.load_weights(str(weight_path))
+            try:
+                net = net.to(self._effective_device)
+            except Exception as exc:
+                if self._effective_device_key == "cuda" and self._gpu_policy == "warn_continue":
+                    self._fallback_to_cpu(f"model_to_cuda_failed:{exc}")
+                    return self._load_model(model_name=model_name, model_file=model_file)
+                raise InferServiceError("infer_service_unavailable", f"model_to_device_failed:{exc}") from exc
             net.eval()
             net.detect.use_fast_nms = True
             net.detect.use_cross_class_nms = False
+        except InferServiceError:
+            raise
         except Exception as exc:
             raise InferServiceError("infer_model_load_failed", f"load_model_failed:{exc}") from exc
 
@@ -233,6 +334,7 @@ class AreaNativeEngine:
             model_name=model_name,
             model_file=Path(model_file).name,
             class_names=classes,
+            device=self._effective_device_key,
             cfg_name=getattr(cfg_obj, "name", "yolact_base"),
             cfg_obj=cfg_obj,
             net=net,
@@ -244,6 +346,7 @@ class AreaNativeEngine:
     def health(self) -> dict[str, Any]:
         with self._lock:
             self._ensure_runtime()
+            runtime_info = self._runtime_device_payload()
             return {
                 "status": "ok",
                 "weights_dir": str(self.weights_dir),
@@ -253,12 +356,14 @@ class AreaNativeEngine:
                         "model_file": item.model_file,
                         "class_names": list(item.class_names),
                         "cfg_name": item.cfg_name,
+                        "device": item.device,
                         "loaded_at": item.loaded_at,
                     }
                     for item in self._cache.values()
                 ],
                 "runtime": {
                     "torch_version": getattr(self._torch, "__version__", "unknown"),
+                    **runtime_info,
                 },
             }
 
@@ -270,6 +375,8 @@ class AreaNativeEngine:
                 "model_file": runtime.model_file,
                 "class_names": list(runtime.class_names),
                 "cfg_name": runtime.cfg_name,
+                "device": runtime.device,
+                **self._runtime_device_payload(),
             }
 
     def _render_overlay(
@@ -313,6 +420,26 @@ class AreaNativeEngine:
             raise InferServiceError("infer_bad_response", "overlay_encode_failed")
         return base64.b64encode(encoded.tobytes()).decode("utf-8")
 
+    def _run_model_infer(self, *, net: Any, image_bgr: np.ndarray, options: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+        h, w = image_bgr.shape[:2]
+        transform = self._fast_transform_cls()
+        try:
+            transform = transform.to(self._effective_device)
+        except Exception:
+            transform = transform
+
+        frame = self._torch.from_numpy(image_bgr).to(self._effective_device).float().unsqueeze(0)
+        batch = transform(frame)
+        with self._torch.no_grad():
+            preds = net(batch)
+        return self._postprocess_fn(
+            preds,
+            w,
+            h,
+            score_threshold=float(options["score_threshold"]),
+            crop_masks=True,
+        )
+
     def infer(
         self,
         *,
@@ -340,24 +467,36 @@ class AreaNativeEngine:
             net.detect.use_cross_class_nms = False
 
             image_bgr = self._decode_image(image_bytes_b64)
-            h, w = image_bgr.shape[:2]
 
             try:
-                frame = self._torch.from_numpy(image_bgr).float().unsqueeze(0)
-                batch = self._fast_transform_cls()(frame)
-                with self._torch.no_grad():
-                    preds = net(batch)
-                classes_t, scores_t, boxes_t, masks_t = self._postprocess_fn(
-                    preds,
-                    w,
-                    h,
-                    score_threshold=float(options["score_threshold"]),
-                    crop_masks=True,
+                classes_t, scores_t, boxes_t, masks_t = self._run_model_infer(
+                    net=net,
+                    image_bgr=image_bgr,
+                    options=options,
                 )
             except InferServiceError:
                 raise
             except Exception as exc:
-                raise InferServiceError("infer_bad_response", f"runtime_infer_failed:{exc}") from exc
+                if self._effective_device_key == "cuda" and self._gpu_policy == "warn_continue":
+                    self._fallback_to_cpu(f"infer_on_cuda_failed:{exc}")
+                    runtime = self._load_model(model_name=model_name, model_file=model_file)
+                    self._apply_cfg(runtime.cfg_obj)
+                    net = runtime.net
+                    net.detect.top_k = int(options["nms_top_k"])
+                    net.detect.conf_thresh = float(options["nms_conf_thresh"])
+                    net.detect.nms_thresh = float(options["nms_thresh"])
+                    net.detect.use_fast_nms = True
+                    net.detect.use_cross_class_nms = False
+                    try:
+                        classes_t, scores_t, boxes_t, masks_t = self._run_model_infer(
+                            net=net,
+                            image_bgr=image_bgr,
+                            options=options,
+                        )
+                    except Exception as retry_exc:
+                        raise InferServiceError("infer_bad_response", f"runtime_infer_failed:{retry_exc}") from retry_exc
+                else:
+                    raise InferServiceError("infer_bad_response", f"runtime_infer_failed:{exc}") from exc
 
             instances: list[dict[str, Any]] = []
             per_class_area_px: dict[str, int] = {name: 0 for name in runtime.class_names}
@@ -418,6 +557,7 @@ class AreaNativeEngine:
                     "engine": "linux_native_yolact",
                     "cfg_name": runtime.cfg_name,
                     "model_file": runtime.model_file,
+                    **self._runtime_device_payload(),
                     "elapsed_ms": round((time.time() - t0) * 1000.0, 2),
                     "instance_count": len(instances),
                 },
@@ -426,8 +566,12 @@ class AreaNativeEngine:
 
 DEFAULT_VENDOR_ROOT = Path(__file__).resolve().parents[1] / "vendor" / "yolact"
 DEFAULT_WEIGHTS_DIR = os.environ.get("AREA_WEIGHTS_DIR", "/opt/area_weights")
+DEFAULT_INFER_DEVICE = os.environ.get("AREA_INFER_DEVICE", "auto")
+DEFAULT_GPU_POLICY = os.environ.get("AREA_INFER_GPU_POLICY", "warn_continue")
 
 engine = AreaNativeEngine(
     weights_dir=DEFAULT_WEIGHTS_DIR,
     vendor_root=os.environ.get("AREA_YOLACT_VENDOR_ROOT", str(DEFAULT_VENDOR_ROOT)),
+    infer_device=DEFAULT_INFER_DEVICE,
+    gpu_policy=DEFAULT_GPU_POLICY,
 )
