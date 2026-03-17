@@ -1100,6 +1100,15 @@ class AreaJobManager:
             value = value * 26 + (ord(ch) - ord("A") + 1)
         return value - 1
 
+    def _build_template_class_id_map(self, model_name: str, class_names: list[str]) -> dict[str, int]:
+        class_id_map = {class_name: idx + 1 for idx, class_name in enumerate(class_names)}
+        normalized_model_name = str(model_name or "").replace(" ", "")
+        # Keep compatibility with legacy template numbering for the cotton-lyocell model.
+        if normalized_model_name == "棉-莱赛尔" and {"棉", "莱赛尔"}.issubset(class_id_map):
+            class_id_map["棉"] = 2
+            class_id_map["莱赛尔"] = 1
+        return class_id_map
+
     def _build_excel(
         self,
         *,
@@ -1116,7 +1125,7 @@ class AreaJobManager:
             raise AreaExcelTemplateError("excel_template_invalid", "template_class_slots_exceeded")
         if len(template_instances) > MAX_TEMPLATE_INSTANCE_ROWS:
             raise AreaExcelTemplateError("excel_template_capacity_exceeded")
-        class_id_map = {class_name: idx + 1 for idx, class_name in enumerate(class_names)}
+        class_id_map = self._build_template_class_id_map(job.model_name, class_names)
         write_rows: list[dict[str, int]] = []
         for row in template_instances:
             class_name = str(row.get("class_name") or "").strip()

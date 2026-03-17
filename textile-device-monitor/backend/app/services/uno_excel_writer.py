@@ -63,9 +63,7 @@ def _write_cells(
         raw.getCellRangeByName("BA9").setString(folder_name)
         report.getCellRangeByName("F8").setString(folder_name)
 
-        # Clear class header slots BA11:BG11, then fill model class names in order.
-        for col in range(52, 59):
-            raw.getCellByPosition(col, 10).setString("")
+        # Fill model class names in order, keep untouched cells as-is.
         for idx, class_name in enumerate(class_names):
             raw.getCellByPosition(52 + idx, 10).setString(str(class_name))
 
