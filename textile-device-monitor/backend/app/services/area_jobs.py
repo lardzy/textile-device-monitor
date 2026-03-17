@@ -37,6 +37,14 @@ PALETTE: list[tuple[int, int, int]] = [
     (94, 53, 177),
     (216, 27, 96),
 ]
+OVERLAY_CLASS_LABEL_EN: dict[str, str] = {
+    "棉": "Cotton",
+    "粘纤": "Viscose",
+    "莱赛尔": "Lyocell",
+    "莫代尔": "Modal",
+    "再生纤维素纤维": "RCF",
+    "未分类": "Unknown",
+}
 
 INVALID_OUTPUT_CHARS_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 MAX_TEMPLATE_INSTANCE_ROWS = 2990
@@ -1111,6 +1119,10 @@ class AreaJobManager:
         if normalized_model_name == "棉-莱赛尔" and {"棉", "莱赛尔"}.issubset(class_id_map):
             class_id_map["棉"] = 2
             class_id_map["莱赛尔"] = 1
+        # Keep compatibility with legacy template numbering for viscose-lyocell model.
+        if normalized_model_name == "粘纤-莱赛尔" and {"粘纤", "莱赛尔"}.issubset(class_id_map):
+            class_id_map["粘纤"] = 2
+            class_id_map["莱赛尔"] = 1
         return class_id_map
 
     def _build_excel(
@@ -1321,10 +1333,12 @@ class AreaJobManager:
                     x1 = 0
                     y1 = 0
 
-            code = "C1"
-            if cls_name in classes:
-                code = f"C{classes.index(cls_name) + 1}"
-            draw.text((x1 + 2, y1 + 2), code, fill=(255, 255, 255, 220), font=font)
+            label = OVERLAY_CLASS_LABEL_EN.get(cls_name)
+            if not label:
+                label = "C1"
+                if cls_name in classes:
+                    label = f"C{classes.index(cls_name) + 1}"
+            draw.text((x1 + 2, y1 + 2), label, fill=(255, 255, 255, 220), font=font)
 
         out = Image.alpha_composite(base, overlay).convert("RGB")
         target = Path(job.overlay_dir) / image_row.overlay_filename

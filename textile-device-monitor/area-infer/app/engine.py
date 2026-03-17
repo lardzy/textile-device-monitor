@@ -55,6 +55,17 @@ def parse_model_classes(model_name: str) -> list[str]:
     return deduped or ["未分类"]
 
 
+def remap_class_index_for_model(model_name: str, class_index: int, class_count: int) -> int:
+    normalized_model_name = str(model_name or "").replace(" ", "")
+    # Legacy weight b_v1_1.3 has class index order opposite to model display name.
+    if normalized_model_name == "粘纤-莱赛尔" and class_count >= 2:
+        if class_index == 0:
+            return 1
+        if class_index == 1:
+            return 0
+    return class_index
+
+
 @dataclass
 class _ModelRuntime:
     model_name: str
@@ -373,6 +384,7 @@ class AreaNativeEngine:
 
                 for i in order.tolist():
                     cls_idx = int(classes_np[i])
+                    cls_idx = remap_class_index_for_model(runtime.model_name, cls_idx, len(runtime.class_names))
                     score = float(scores_np[i])
                     box = boxes_np[i].tolist()
                     if len(box) != 4:
