@@ -3,18 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import queue
 import re
 import shutil
+import subprocess
+import tempfile
 import threading
 from typing import Any
 from uuid import uuid4
 
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import or_
-import xlrd
-from xlutils.copy import copy as xl_copy
 
 from app.config import settings
 from app.database import SessionLocal
@@ -39,6 +40,7 @@ PALETTE: list[tuple[int, int, int]] = [
 
 INVALID_OUTPUT_CHARS_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 MAX_TEMPLATE_INSTANCE_ROWS = 2990
+UNO_WRITER_SCRIPT = Path(__file__).resolve().with_name("uno_excel_writer.py")
 
 
 class AreaExcelTemplateError(RuntimeError):
@@ -1108,55 +1110,15 @@ class AreaJobManager:
         template_path = Path(settings.AREA_EXCEL_TEMPLATE_PATH)
         if not template_path.exists() or not template_path.is_file():
             raise AreaExcelTemplateError("excel_template_missing")
-
-        try:
-            source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
-        except FileNotFoundError as exc:
-            raise AreaExcelTemplateError("excel_template_missing") from exc
-        except Exception as exc:
-            raise AreaExcelTemplateError("excel_template_invalid", f"template_open_failed:{exc}") from exc
-
-        sheet_names = source_book.sheet_names()
-        if "原始数据" not in sheet_names or "截面统计报告1" not in sheet_names:
-            raise AreaExcelTemplateError("excel_template_invalid", "template_sheet_missing")
-
-        wb = xl_copy(source_book)
-        ws_raw = wb.get_sheet(sheet_names.index("原始数据"))
-        ws_report = wb.get_sheet(sheet_names.index("截面统计报告1"))
-
-        col_ba = self._excel_col_to_index("BA")
-        col_bg = self._excel_col_to_index("BG")
-        col_n = self._excel_col_to_index("N")
-        col_o = self._excel_col_to_index("O")
-
-        row_ba9 = 8
-        row_ba11 = 10
-        row_f8 = 7
-        row_start = 10
-        row_end = 2999
-
         class_names = parse_model_classes(job.model_name)
-        class_slots = col_bg - col_ba + 1
+        class_slots = self._excel_col_to_index("BG") - self._excel_col_to_index("BA") + 1
         if len(class_names) > class_slots:
             raise AreaExcelTemplateError("excel_template_invalid", "template_class_slots_exceeded")
-
-        ws_raw.write(row_ba9, col_ba, str(job.folder_name or ""))
-        ws_report.write(row_f8, self._excel_col_to_index("F"), str(job.folder_name or ""))
-
-        for col_idx in range(col_ba, col_bg + 1):
-            ws_raw.write(row_ba11, col_idx, "")
-        for idx, class_name in enumerate(class_names):
-            ws_raw.write(row_ba11, col_ba + idx, class_name)
-
-        for row_idx in range(row_start, row_end + 1):
-            ws_raw.write(row_idx, col_n, "")
-            ws_raw.write(row_idx, col_o, "")
-
         if len(template_instances) > MAX_TEMPLATE_INSTANCE_ROWS:
             raise AreaExcelTemplateError("excel_template_capacity_exceeded")
-
         class_id_map = {class_name: idx + 1 for idx, class_name in enumerate(class_names)}
-        for idx, row in enumerate(template_instances):
+        write_rows: list[dict[str, int]] = []
+        for row in template_instances:
             class_name = str(row.get("class_name") or "").strip()
             if class_name not in class_id_map:
                 raise AreaExcelTemplateError("excel_template_invalid", f"class_name_unmapped:{class_name}")
@@ -1164,15 +1126,71 @@ class AreaJobManager:
                 area_px = int(row.get("area_px") or 0)
             except (TypeError, ValueError):
                 area_px = 0
-            target_row = row_start + idx
-            ws_raw.write(target_row, col_n, int(class_id_map[class_name]))
-            ws_raw.write(target_row, col_o, max(0, area_px))
+            write_rows.append(
+                {
+                    "class_id": int(class_id_map[class_name]),
+                    "area_px": max(0, area_px),
+                }
+            )
 
         excel_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            wb.save(str(excel_path))
+            shutil.copy2(template_path, excel_path)
         except Exception as exc:
-            raise AreaExcelTemplateError("excel_template_invalid", f"template_save_failed:{exc}") from exc
+            raise AreaExcelTemplateError("excel_template_invalid", f"template_copy_failed:{exc}") from exc
+
+        payload = {
+            "excel_path": str(excel_path),
+            "folder_name": str(job.folder_name or ""),
+            "class_names": class_names,
+            "rows": write_rows,
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+            payload_path = fh.name
+
+        try:
+            cmd = ["/usr/bin/python3", str(UNO_WRITER_SCRIPT), payload_path]
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=120,
+                check=False,
+                env=dict(os.environ),
+            )
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "").strip()[:500]
+                raise AreaExcelTemplateError("excel_template_invalid", f"uno_write_failed:{detail}")
+        except subprocess.TimeoutExpired as exc:
+            raise AreaExcelTemplateError("excel_template_invalid", "uno_write_timeout") from exc
+        except FileNotFoundError as exc:
+            raise AreaExcelTemplateError("excel_template_invalid", "uno_runtime_missing") from exc
+        finally:
+            try:
+                Path(payload_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        if not excel_path.exists() or not excel_path.is_file():
+            raise AreaExcelTemplateError("excel_template_invalid", "excel_output_missing")
+        if excel_path.stat().st_size <= 0:
+            raise AreaExcelTemplateError("excel_template_invalid", "excel_output_empty")
+        if excel_path.suffix.lower() != ".xls":
+            raise AreaExcelTemplateError("excel_template_invalid", "excel_suffix_invalid")
+
+        if excel_path.stat().st_size < 1024:
+            raise AreaExcelTemplateError("excel_template_invalid", "excel_output_too_small")
+        try:
+            with excel_path.open("rb") as fh:
+                head = fh.read(8)
+            if head != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+                raise AreaExcelTemplateError("excel_template_invalid", "excel_ole_header_missing")
+        except Exception as exc:
+            if isinstance(exc, AreaExcelTemplateError):
+                raise
+            raise AreaExcelTemplateError("excel_template_invalid", f"excel_verify_failed:{exc}") from exc
 
     def _normalize_polygon(self, raw: Any) -> list[list[int]]:
         if not isinstance(raw, list):
