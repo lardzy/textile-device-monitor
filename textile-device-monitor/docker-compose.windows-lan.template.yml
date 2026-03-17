@@ -44,6 +44,7 @@ services:
       AREA_INFER_URL: http://area-infer:9001
       AREA_INFER_TIMEOUT_SEC: 60
       AREA_OUTPUT_DIR: /data/area_outputs
+      AREA_EXCEL_TEMPLATE_PATH: /opt/area_templates/-面积法-定量试验原始记录-新系统.xls
       # 在面积识别页面中请填写：
       # root_path=/data/area_root
       # old_root_path=/data/area_old
@@ -61,6 +62,10 @@ services:
       - type: bind
         source: 'D:/textile-device-monitor/runtime/area-models'
         target: /opt/area_weights
+        read_only: true
+      - type: bind
+        source: 'D:/textile-device-monitor/runtime/area-templates'
+        target: /opt/area_templates
         read_only: true
     ports:
       - "8000:8000"

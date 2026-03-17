@@ -44,9 +44,11 @@ services:
       AREA_INFER_URL: http://area-infer:9001
       AREA_INFER_TIMEOUT_SEC: 60
       AREA_OUTPUT_DIR: /data/area_outputs
+      AREA_EXCEL_TEMPLATE_PATH: /opt/area_templates/-面积法-定量试验原始记录-新系统.xls
     volumes:
       - /Volumes/LARD/Cache:/Volumes/LARD/Cache
       - ./runtime/area-models:/opt/area_weights:ro
+      - ./runtime/area-templates:/opt/area_templates:ro
       - ./runtime/area-outputs:/data/area_outputs
     ports:
       - "8000:8000"

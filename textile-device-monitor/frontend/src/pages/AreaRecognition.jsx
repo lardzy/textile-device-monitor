@@ -80,6 +80,9 @@ const getCreateJobErrorMessage = (raw) => {
   if (code === 'infer_timeout') return '原生推理服务超时，请稍后重试';
   if (code === 'infer_model_load_failed') return '模型加载失败，请检查权重文件与模型映射';
   if (code === 'infer_bad_response') return '原生推理服务返回异常，请联系管理员排查';
+  if (code === 'excel_template_missing') return 'Excel模板缺失，请检查 runtime/area-templates 下的模板文件';
+  if (code === 'excel_template_invalid') return 'Excel模板结构异常，请检查模板工作表名称与格式';
+  if (code === 'excel_template_capacity_exceeded') return '实例数量超过模板上限（2990），请拆分批次后重试';
   return code || '创建任务失败';
 };
 
@@ -1013,6 +1016,8 @@ function AreaRecognition() {
     const targetJobId = String(jobId || '').trim();
     if (!targetJobId) return;
     withDiscardConfirm(() => {
+      const folderNameText = String(jobPayload?.folder_name || selectedJob?.folder_name || '').trim();
+      message.info(`已切换到文件夹【${folderNameText || '-'}】的结果编辑视图，可继续编辑并导出最新Excel。`);
       if (targetJobId === selectedJobId) {
         if (jobPayload) {
           setSelectedJobSnapshot(jobPayload);
@@ -1043,6 +1048,7 @@ function AreaRecognition() {
     fetchResultSummary,
     fetchSelectedJobSnapshot,
     selectedJobId,
+    selectedJob,
     selectedJobStatus,
     withDiscardConfirm,
   ]);
@@ -1078,7 +1084,7 @@ function AreaRecognition() {
       await fetchResultSummary(selectedJobId);
       await fetchJobs({ keepSelection: true, page: jobPage });
     } catch (error) {
-      message.error(error.message || '保存失败');
+      message.error(getCreateJobErrorMessage(error.message) || '保存失败');
     } finally {
       setEditorSaving(false);
     }
@@ -1101,7 +1107,7 @@ function AreaRecognition() {
           await fetchEditorImages(selectedJobId, editorImagePage, editorImagePageSize);
           await fetchResultSummary(selectedJobId);
         } catch (error) {
-          message.error(error.message || '重置失败');
+          message.error(getCreateJobErrorMessage(error.message) || '重置失败');
         }
       },
     });
@@ -1419,10 +1425,11 @@ function AreaRecognition() {
         ) : (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
             <Card size="small" type="inner">
-              <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
-                <Space wrap>
-                  <Typography.Text>创建日期：{selectedJob?.created_at ? String(selectedJob.created_at).replace('T', ' ').slice(0, 19) : '-'}</Typography.Text>
-                </Space>
+                <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <Space wrap>
+                    <Typography.Text>文件夹：{selectedJob?.folder_name || '-'}</Typography.Text>
+                    <Typography.Text>创建日期：{selectedJob?.created_at ? String(selectedJob.created_at).replace('T', ' ').slice(0, 19) : '-'}</Typography.Text>
+                  </Space>
                 <Space>
                   <Button type="primary" icon={<SaveOutlined />} loading={editorSaving} onClick={handleSaveEditor} disabled={!selectedEditorImageId}>保存</Button>
                   <Button icon={<DownloadOutlined />} href={areaApi.getExcelUrl(selectedJobId)} target="_blank">导出Excel</Button>

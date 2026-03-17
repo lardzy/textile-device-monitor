@@ -185,13 +185,22 @@ def get_area_result(job_id: str):
 @router.get("/jobs/{job_id}/artifacts/excel")
 def download_area_excel(job_id: str):
     _ensure_enabled()
-    path = area_job_manager.get_excel_path(job_id)
+    try:
+        path = area_job_manager.get_excel_path(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if path is None:
         raise HTTPException(status_code=404, detail="result_not_found")
+    suffix = path.suffix.lower()
+    media_type = "application/octet-stream"
+    if suffix == ".xls":
+        media_type = "application/vnd.ms-excel"
+    elif suffix == ".xlsx":
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return FileResponse(
         path=path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=f"{job_id}.xlsx",
+        media_type=media_type,
+        filename=path.name,
     )
 
 

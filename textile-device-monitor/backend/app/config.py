@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     AREA_MAX_CONCURRENT_JOBS: int = 1
     AREA_ROOT_PATH_DEFAULT: str = "/tmp/area_inputs"
     AREA_WEIGHTS_DIR: str = "runtime/area-models"
+    AREA_EXCEL_TEMPLATE_PATH: str = "/opt/area_templates/-面积法-定量试验原始记录-新系统.xls"
     AREA_INFER_URL: str = "http://area-infer:9001"
     AREA_INFER_TIMEOUT_SEC: int = 60
     CORS_ORIGINS: str = "http://localhost,http://localhost:80,http://backend:8000"

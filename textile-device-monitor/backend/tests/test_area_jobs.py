@@ -6,6 +6,8 @@ import time
 import unittest
 
 from PIL import Image
+import xlrd
+import xlwt
 
 from app.config import settings
 from app.services.area_infer import AreaImageInferenceResult, AreaInstance, parse_model_classes
@@ -69,6 +71,48 @@ class _ServiceDownPredictor(_FakePredictor):
         raise RuntimeError("infer_service_unavailable")
 
 
+class _HugePredictor(_FakePredictor):
+    def predict(
+        self,
+        image_path: Path,
+        model_name: str,
+        weight_path: Path,
+        inference_options: dict | None = None,
+        *,
+        infer_url: str | None = None,
+        timeout_sec: int | None = None,
+        model_file: str | None = None,
+    ):
+        overlay = Image.open(image_path).convert("RGB")
+        class_name = parse_model_classes(model_name)[0]
+        instances = [
+            AreaInstance(class_name=class_name, area_px=1, bbox=(0, 0, 1, 1))
+            for _ in range(2991)
+        ]
+        return AreaImageInferenceResult(
+            image_name=image_path.name,
+            total_area_px=2991,
+            per_class_area_px={class_name: 2991},
+            instances=instances,
+            overlay_image=overlay,
+            engine_meta={"engine": "mock-native"},
+        )
+
+
+def _create_xls_template(path: Path) -> None:
+    wb = xlwt.Workbook()
+    wb.add_sheet("原始数据")
+    wb.add_sheet("截面统计报告1")
+    wb.save(str(path))
+
+
+def _excel_col_to_index(col: str) -> int:
+    value = 0
+    for ch in col.upper():
+        value = value * 26 + (ord(ch) - ord("A") + 1)
+    return value - 1
+
+
 class AreaJobsTests(unittest.TestCase):
     def test_parse_model_classes_alias(self):
         self.assertEqual(parse_model_classes("棉-粘-莱-莫"), ["棉", "粘纤", "莱赛尔", "莫代尔"])
@@ -84,10 +128,14 @@ class AreaJobsTests(unittest.TestCase):
             weights_dir = Path(tmpdir) / "weights"
             weights_dir.mkdir(parents=True, exist_ok=True)
             (weights_dir / "b_c1_1.3.pth").write_bytes(b"mock")
+            template_path = Path(tmpdir) / "template.xls"
+            _create_xls_template(template_path)
 
             old_output = settings.AREA_OUTPUT_DIR
+            old_template = settings.AREA_EXCEL_TEMPLATE_PATH
             try:
                 settings.AREA_OUTPUT_DIR = str(Path(tmpdir) / "out")
+                settings.AREA_EXCEL_TEMPLATE_PATH = str(template_path)
                 manager = AreaJobManager()
                 manager._predictor = _FakePredictor()
                 job = manager.create_job(
@@ -119,9 +167,27 @@ class AreaJobsTests(unittest.TestCase):
                 excel_path = manager.get_excel_path(job["job_id"])
                 self.assertIsNotNone(excel_path)
                 self.assertTrue(excel_path.exists())
+                self.assertEqual(excel_path.suffix.lower(), ".xls")
+                self.assertEqual(excel_path.name, "sample-001.xls")
+                self.assertTrue(excel_path.parent.name.startswith("sample-001_"))
+
+                book = xlrd.open_workbook(str(excel_path))
+                sheet_raw = book.sheet_by_name("原始数据")
+                sheet_report = book.sheet_by_name("截面统计报告1")
+                col_ba = _excel_col_to_index("BA")
+                col_bb = _excel_col_to_index("BB")
+                col_n = _excel_col_to_index("N")
+                col_o = _excel_col_to_index("O")
+                self.assertEqual(sheet_raw.cell_value(8, col_ba), "sample-001")
+                self.assertEqual(sheet_raw.cell_value(10, col_ba), "棉")
+                self.assertEqual(sheet_raw.cell_value(10, col_bb), "莱赛尔")
+                self.assertEqual(int(sheet_raw.cell_value(10, col_n)), 1)
+                self.assertEqual(int(sheet_raw.cell_value(10, col_o)), 120)
+                self.assertEqual(sheet_report.cell_value(7, _excel_col_to_index("F")), "sample-001")
                 manager.stop()
             finally:
                 settings.AREA_OUTPUT_DIR = old_output
+                settings.AREA_EXCEL_TEMPLATE_PATH = old_template
 
     def test_job_all_failed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -308,6 +374,52 @@ class AreaJobsTests(unittest.TestCase):
                 )
             self.assertEqual(str(ctx.exception), "infer_service_unavailable")
             manager.stop()
+
+    def test_excel_capacity_exceeded_marks_job_failed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            root.mkdir(parents=True, exist_ok=True)
+            target = root / "sample-big"
+            target.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (16, 16), color=(255, 255, 255)).save(target / "a.png")
+
+            weights_dir = Path(tmpdir) / "weights"
+            weights_dir.mkdir(parents=True, exist_ok=True)
+            (weights_dir / "b_c1_1.3.pth").write_bytes(b"mock")
+
+            template_path = Path(tmpdir) / "template.xls"
+            _create_xls_template(template_path)
+
+            old_output = settings.AREA_OUTPUT_DIR
+            old_template = settings.AREA_EXCEL_TEMPLATE_PATH
+            try:
+                settings.AREA_OUTPUT_DIR = str(Path(tmpdir) / "out")
+                settings.AREA_EXCEL_TEMPLATE_PATH = str(template_path)
+                manager = AreaJobManager()
+                manager._predictor = _HugePredictor()
+                job = manager.create_job(
+                    folder_name="sample-big",
+                    model_name="棉-莱赛尔",
+                    root_path=str(root),
+                    model_mapping={"棉-莱赛尔": "b_c1_1.3.pth"},
+                    weights_dir=str(weights_dir),
+                    output_root=str(Path(tmpdir) / "out"),
+                    infer_url="http://area-infer:9001",
+                    infer_timeout_sec=20,
+                )
+                for _ in range(60):
+                    payload = manager.get_job(job["job_id"])
+                    if payload and payload["status"] not in {"queued", "running"}:
+                        break
+                    time.sleep(0.1)
+                payload = manager.get_job(job["job_id"])
+                self.assertIsNotNone(payload)
+                self.assertEqual(payload["status"], "failed")
+                self.assertEqual(payload["error_code"], "excel_template_capacity_exceeded")
+                manager.stop()
+            finally:
+                settings.AREA_OUTPUT_DIR = old_output
+                settings.AREA_EXCEL_TEMPLATE_PATH = old_template
 
 
 if __name__ == "__main__":

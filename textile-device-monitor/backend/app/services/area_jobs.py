@@ -5,14 +5,16 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import queue
+import re
 import shutil
 import threading
 from typing import Any
 from uuid import uuid4
 
-from openpyxl import Workbook
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import or_
+import xlrd
+from xlutils.copy import copy as xl_copy
 
 from app.config import settings
 from app.database import SessionLocal
@@ -34,6 +36,15 @@ PALETTE: list[tuple[int, int, int]] = [
     (94, 53, 177),
     (216, 27, 96),
 ]
+
+INVALID_OUTPUT_CHARS_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+MAX_TEMPLATE_INSTANCE_ROWS = 2990
+
+
+class AreaExcelTemplateError(RuntimeError):
+    def __init__(self, code: str, message: str | None = None) -> None:
+        self.code = code
+        super().__init__(message or code)
 
 
 @dataclass
@@ -184,7 +195,8 @@ class AreaJobManager:
             raise ValueError(code) from exc
 
         job_id = uuid4().hex
-        output_dir = Path(normalized_output_root) / job_id
+        safe_output_name = self._safe_output_component(normalized_folder)
+        output_dir = Path(normalized_output_root) / f"{safe_output_name}_{job_id}"
         overlay_dir = output_dir / "overlays"
         output_dir.mkdir(parents=True, exist_ok=True)
         overlay_dir.mkdir(parents=True, exist_ok=True)
@@ -198,8 +210,8 @@ class AreaJobManager:
             weight_path=str((Path(weights_dir) / model_file).resolve()),
             output_dir=str(output_dir),
             overlay_dir=str(overlay_dir),
-            result_json_path=str(output_dir / "result.json"),
-            excel_path=str(output_dir / "result.xlsx"),
+            result_json_path=str(output_dir / f"{safe_output_name}.json"),
+            excel_path=str(output_dir / f"{safe_output_name}.xls"),
             infer_url=normalized_infer_url,
             infer_timeout_sec=normalized_infer_timeout,
             inference_options=normalized_options,
@@ -283,7 +295,10 @@ class AreaJobManager:
             job = db.query(AreaJob).filter(AreaJob.job_id == job_id).first()
             if job is None:
                 return None
-            self._rebuild_job_outputs(db, job)
+            try:
+                self._rebuild_job_outputs(db, job)
+            except AreaExcelTemplateError as exc:
+                raise ValueError(exc.code) from exc
             path = Path(job.excel_path)
             if not path.exists():
                 return None
@@ -492,6 +507,9 @@ class AreaJobManager:
                 "image_id": image_row.id,
                 "edit_version": int(image_row.edit_version or 0),
             }
+        except AreaExcelTemplateError as exc:
+            db.rollback()
+            raise ValueError(exc.code) from exc
         finally:
             db.close()
 
@@ -536,6 +554,9 @@ class AreaJobManager:
                 "image_id": image_row.id,
                 "edit_version": int(image_row.edit_version or 0),
             }
+        except AreaExcelTemplateError as exc:
+            db.rollback()
+            raise ValueError(exc.code) from exc
         finally:
             db.close()
 
@@ -950,6 +971,15 @@ class AreaJobManager:
 
         return normalized
 
+    def _safe_output_component(self, raw_name: str, fallback: str = "area_result") -> str:
+        token = str(raw_name or "").strip()
+        token = INVALID_OUTPUT_CHARS_PATTERN.sub("_", token)
+        token = token.strip(". ").strip()
+        if not token:
+            return fallback
+        token = re.sub(r"\s+", "_", token)
+        return token[:120]
+
     def _root_path_candidates(self, root_path: str) -> list[Path]:
         raw = root_path.strip()
         if not raw:
@@ -1059,55 +1089,90 @@ class AreaJobManager:
         finally:
             db.close()
 
+    def _excel_col_to_index(self, col: str) -> int:
+        token = str(col or "").strip().upper()
+        if not token.isalpha():
+            raise ValueError("invalid_excel_col")
+        value = 0
+        for ch in token:
+            value = value * 26 + (ord(ch) - ord("A") + 1)
+        return value - 1
+
     def _build_excel(
         self,
-        summary_rows: list[dict[str, Any]],
-        detail_rows: list[dict[str, Any]],
+        *,
+        job: AreaJob,
         excel_path: Path,
+        template_instances: list[dict[str, Any]],
     ) -> None:
-        wb = Workbook()
-        ws_summary = wb.active
-        ws_summary.title = "summary"
-        ws_summary.append(
-            ["class_name", "total_area_px", "ratio_percent", "image_count"]
-        )
-        for row in summary_rows:
-            ws_summary.append(
-                [
-                    row["class_name"],
-                    int(row["total_area_px"]),
-                    float(row["ratio_percent"]),
-                    int(row["image_count"]),
-                ]
-            )
+        template_path = Path(settings.AREA_EXCEL_TEMPLATE_PATH)
+        if not template_path.exists() or not template_path.is_file():
+            raise AreaExcelTemplateError("excel_template_missing")
 
-        ws_detail = wb.create_sheet("per_image")
-        ws_detail.append(
-            [
-                "image_name",
-                "class_name",
-                "instance_count",
-                "area_px",
-                "ratio_percent",
-                "overlay_filename",
-                "error",
-            ]
-        )
-        for row in detail_rows:
-            ws_detail.append(
-                [
-                    row.get("image_name", ""),
-                    row.get("class_name", ""),
-                    int(row.get("instance_count", 0)),
-                    int(row.get("area_px", 0)),
-                    float(row.get("ratio_percent", 0.0)),
-                    row.get("overlay_filename", ""),
-                    row.get("error", ""),
-                ]
-            )
+        try:
+            source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
+        except FileNotFoundError as exc:
+            raise AreaExcelTemplateError("excel_template_missing") from exc
+        except Exception as exc:
+            raise AreaExcelTemplateError("excel_template_invalid", f"template_open_failed:{exc}") from exc
+
+        sheet_names = source_book.sheet_names()
+        if "原始数据" not in sheet_names or "截面统计报告1" not in sheet_names:
+            raise AreaExcelTemplateError("excel_template_invalid", "template_sheet_missing")
+
+        wb = xl_copy(source_book)
+        ws_raw = wb.get_sheet(sheet_names.index("原始数据"))
+        ws_report = wb.get_sheet(sheet_names.index("截面统计报告1"))
+
+        col_ba = self._excel_col_to_index("BA")
+        col_bg = self._excel_col_to_index("BG")
+        col_n = self._excel_col_to_index("N")
+        col_o = self._excel_col_to_index("O")
+
+        row_ba9 = 8
+        row_ba11 = 10
+        row_f8 = 7
+        row_start = 10
+        row_end = 2999
+
+        class_names = parse_model_classes(job.model_name)
+        class_slots = col_bg - col_ba + 1
+        if len(class_names) > class_slots:
+            raise AreaExcelTemplateError("excel_template_invalid", "template_class_slots_exceeded")
+
+        ws_raw.write(row_ba9, col_ba, str(job.folder_name or ""))
+        ws_report.write(row_f8, self._excel_col_to_index("F"), str(job.folder_name or ""))
+
+        for col_idx in range(col_ba, col_bg + 1):
+            ws_raw.write(row_ba11, col_idx, "")
+        for idx, class_name in enumerate(class_names):
+            ws_raw.write(row_ba11, col_ba + idx, class_name)
+
+        for row_idx in range(row_start, row_end + 1):
+            ws_raw.write(row_idx, col_n, "")
+            ws_raw.write(row_idx, col_o, "")
+
+        if len(template_instances) > MAX_TEMPLATE_INSTANCE_ROWS:
+            raise AreaExcelTemplateError("excel_template_capacity_exceeded")
+
+        class_id_map = {class_name: idx + 1 for idx, class_name in enumerate(class_names)}
+        for idx, row in enumerate(template_instances):
+            class_name = str(row.get("class_name") or "").strip()
+            if class_name not in class_id_map:
+                raise AreaExcelTemplateError("excel_template_invalid", f"class_name_unmapped:{class_name}")
+            try:
+                area_px = int(row.get("area_px") or 0)
+            except (TypeError, ValueError):
+                area_px = 0
+            target_row = row_start + idx
+            ws_raw.write(target_row, col_n, int(class_id_map[class_name]))
+            ws_raw.write(target_row, col_o, max(0, area_px))
+
         excel_path.parent.mkdir(parents=True, exist_ok=True)
-        wb.save(excel_path)
-        wb.close()
+        try:
+            wb.save(str(excel_path))
+        except Exception as exc:
+            raise AreaExcelTemplateError("excel_template_invalid", f"template_save_failed:{exc}") from exc
 
     def _normalize_polygon(self, raw: Any) -> list[list[int]]:
         if not isinstance(raw, list):
@@ -1252,6 +1317,10 @@ class AreaJobManager:
 
     def _rebuild_job_outputs(self, db, job: AreaJob) -> None:
         classes = parse_model_classes(job.model_name)
+        safe_output_name = self._safe_output_component(job.folder_name)
+        output_dir = Path(job.output_dir)
+        job.result_json_path = str(output_dir / f"{safe_output_name}.json")
+        job.excel_path = str(output_dir / f"{safe_output_name}.xls")
         image_rows = (
             db.query(AreaJobImage)
             .filter(AreaJobImage.job_id == job.id)
@@ -1262,6 +1331,7 @@ class AreaJobManager:
         class_totals = {name: 0 for name in classes}
         class_image_counts = {name: 0 for name in classes}
         detail_rows: list[dict[str, Any]] = []
+        template_instances: list[dict[str, Any]] = []
         failed_images = 0
         succeeded_images = 0
 
@@ -1286,6 +1356,7 @@ class AreaJobManager:
             rows = (
                 db.query(AreaJobInstance)
                 .filter(AreaJobInstance.image_id == image_row.id)
+                .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
                 .all()
             )
             per_class_inst: dict[str, int] = {}
@@ -1293,6 +1364,19 @@ class AreaJobManager:
                 if item.is_deleted:
                     continue
                 per_class_inst[item.class_name] = per_class_inst.get(item.class_name, 0) + 1
+                try:
+                    area_px = int(item.area_px or 0)
+                except (TypeError, ValueError):
+                    area_px = 0
+                template_instances.append(
+                    {
+                        "image_name": image_row.image_name,
+                        "sort_index": int(item.sort_index or 0),
+                        "instance_id": int(item.id or 0),
+                        "class_name": str(item.class_name or ""),
+                        "area_px": max(0, area_px),
+                    }
+                )
 
             total_area = max(1, int(sum(max(0, int(v)) for v in per_class.values())))
             for class_name in classes:
@@ -1335,7 +1419,11 @@ class AreaJobManager:
         output_json_path = Path(job.result_json_path)
         output_json_path.parent.mkdir(parents=True, exist_ok=True)
         output_json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._build_excel(summary_rows, detail_rows, Path(job.excel_path))
+        self._build_excel(
+            job=job,
+            excel_path=Path(job.excel_path),
+            template_instances=template_instances,
+        )
 
         job.summary_json = summary_rows
         job.detail_json = detail_rows
@@ -1517,6 +1605,8 @@ class AreaJobManager:
             self._set_job_failed(record, str(exc), str(exc))
         except ValueError as exc:
             self._set_job_failed(record, str(exc), str(exc))
+        except AreaExcelTemplateError as exc:
+            self._set_job_failed(record, exc.code, str(exc))
         except Exception as exc:
             code = str(exc).strip()
             if code in {
@@ -1526,6 +1616,9 @@ class AreaJobManager:
                 "infer_bad_response",
                 "all_images_failed",
                 "job_not_found",
+                "excel_template_missing",
+                "excel_template_invalid",
+                "excel_template_capacity_exceeded",
             }:
                 self._set_job_failed(record, code, code)
             else:
