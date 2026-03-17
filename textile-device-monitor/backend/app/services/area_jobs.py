@@ -41,6 +41,10 @@ PALETTE: list[tuple[int, int, int]] = [
 INVALID_OUTPUT_CHARS_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 MAX_TEMPLATE_INSTANCE_ROWS = 2990
 UNO_WRITER_SCRIPT = Path(__file__).resolve().with_name("uno_excel_writer.py")
+AREA_IMAGE_PIXEL_SIZE = 1024.0
+AREA_IMAGE_ACTUAL_SIZE_UM = 129.15
+AREA_PX_TO_UM = AREA_IMAGE_ACTUAL_SIZE_UM / AREA_IMAGE_PIXEL_SIZE
+AREA_PX2_TO_UM2 = AREA_PX_TO_UM * AREA_PX_TO_UM
 
 
 class AreaExcelTemplateError(RuntimeError):
@@ -1126,19 +1130,20 @@ class AreaJobManager:
         if len(template_instances) > MAX_TEMPLATE_INSTANCE_ROWS:
             raise AreaExcelTemplateError("excel_template_capacity_exceeded")
         class_id_map = self._build_template_class_id_map(job.model_name, class_names)
-        write_rows: list[dict[str, int]] = []
+        write_rows: list[dict[str, float | int]] = []
         for row in template_instances:
             class_name = str(row.get("class_name") or "").strip()
             if class_name not in class_id_map:
                 raise AreaExcelTemplateError("excel_template_invalid", f"class_name_unmapped:{class_name}")
             try:
-                area_px = int(row.get("area_px") or 0)
+                area_px = float(row.get("area_px") or 0.0)
             except (TypeError, ValueError):
-                area_px = 0
+                area_px = 0.0
+            area_um2 = max(0.0, area_px) * AREA_PX2_TO_UM2
             write_rows.append(
                 {
                     "class_id": int(class_id_map[class_name]),
-                    "area_px": max(0, area_px),
+                    "area_um2": area_um2,
                 }
             )
 

@@ -46,7 +46,7 @@ def _write_cells(
     excel_path: Path,
     folder_name: str,
     class_names: list[str],
-    rows: list[dict[str, int]],
+    rows: list[dict[str, int | float]],
     port: int,
 ) -> None:
     import uno
@@ -76,9 +76,9 @@ def _write_cells(
         for idx, item in enumerate(rows):
             row_idx = 10 + idx
             class_id = int(item.get("class_id", 0))
-            area_px = int(item.get("area_px", 0))
+            area_um2 = float(item.get("area_um2", item.get("area_px", 0.0)))
             raw.getCellByPosition(13, row_idx).setValue(float(max(0, class_id)))
-            raw.getCellByPosition(14, row_idx).setValue(float(max(0, area_px)))
+            raw.getCellByPosition(14, row_idx).setValue(float(max(0.0, area_um2)))
 
         doc.store()
     finally:
