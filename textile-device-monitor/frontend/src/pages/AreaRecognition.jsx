@@ -1953,7 +1953,7 @@ function AreaRecognition() {
                                   stroke={item.is_deleted ? 'rgba(0, 0, 0, 0.22)' : 'rgba(0, 0, 0, 0.56)'}
                                   strokeWidth={1.6}
                                   paintOrder="stroke"
-                                  fontSize={9}
+                                  fontSize={4}
                                   fontWeight={500}
                                   style={{ pointerEvents: 'none', userSelect: 'none' }}
                                 >
