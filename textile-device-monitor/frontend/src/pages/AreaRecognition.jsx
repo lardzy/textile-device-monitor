@@ -66,6 +66,9 @@ const LABEL_ALIAS = {
 };
 
 const invalidFolderNamePattern = /[\\/:*?"<>|]/;
+const CANVAS_MIN_SCALE = 0.35;
+const CANVAS_MAX_SCALE = 4;
+const CANVAS_FIT_PADDING = 24;
 
 const formatBeijingDateTime = (value) => {
   if (!value) return '-';
@@ -155,6 +158,7 @@ const computeBBoxFromPolygon = (polygon, fallback = []) => {
 function AreaRecognition() {
   const queueUserIdRef = useRef(getOrCreateQueueUserId());
   const editorCanvasRef = useRef(null);
+  const editorImageRef = useRef(null);
   const folderRequestSeqRef = useRef(0);
   const editorImagesRequestSeqRef = useRef(0);
   const editorDetailRequestSeqRef = useRef(0);
@@ -163,6 +167,11 @@ function AreaRecognition() {
   const initLoadedRef = useRef(false);
   const initializedEditorJobRef = useRef('');
   const selectedJobIdRef = useRef('');
+  const viewportOffsetRef = useRef({ x: 0, y: 0 });
+  const viewportScaleRef = useRef(1);
+  const defaultViewportRef = useRef({ x: 0, y: 0 });
+  const hasManualViewportRef = useRef(false);
+  const panStateRef = useRef(null);
 
   const [configLoading, setConfigLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
@@ -213,10 +222,16 @@ function AreaRecognition() {
   const [isEditing, setIsEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [editorOverlayLoadFailed, setEditorOverlayLoadFailed] = useState(false);
+  const [editorBaseImageLoadFailed, setEditorBaseImageLoadFailed] = useState(false);
 
   const [dragState, setDragState] = useState(null);
   const [imageNaturalSize, setImageNaturalSize] = useState({ width: 0, height: 0 });
   const [imageDisplaySize, setImageDisplaySize] = useState({ width: 0, height: 0 });
+  const [editorViewportSize, setEditorViewportSize] = useState({ width: 0, height: 0 });
+  const [showMask, setShowMask] = useState(true);
+  const [viewportScale, setViewportScale] = useState(1);
+  const [viewportOffset, setViewportOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
 
   const [folderImagesModal, setFolderImagesModal] = useState({
     open: false,
@@ -269,25 +284,100 @@ function AreaRecognition() {
     if (!selectedJobId || !filename) return "";
     return areaApi.getImageUrl(selectedJobId, filename);
   }, [editorDetail?.image?.overlay_filename, editorDetail?.image?.overlay_url, selectedJobId]);
+  const editorSourceImageUrl = useMemo(() => {
+    const folder = String(selectedJob?.folder_name || '').trim();
+    const imageName = String(editorDetail?.image?.image_name || '').trim();
+    if (!folder || !imageName) return '';
+    return areaApi.getFolderImageUrl(folder, imageName);
+  }, [editorDetail?.image?.image_name, selectedJob?.folder_name]);
+  const editorCanvasImageUrl = useMemo(() => {
+    if (!editorBaseImageLoadFailed && editorSourceImageUrl) return editorSourceImageUrl;
+    return editorOverlayUrl;
+  }, [editorBaseImageLoadFailed, editorOverlayUrl, editorSourceImageUrl]);
 
-  const updateDisplaySize = useCallback(() => {
-    if (!editorCanvasRef.current) return;
-    const imageEl = editorCanvasRef.current.querySelector('img');
-    if (!imageEl) return;
-    setImageDisplaySize({
-      width: imageEl.clientWidth,
-      height: imageEl.clientHeight,
+  const measureEditorViewport = useCallback(() => {
+    const element = editorCanvasRef.current;
+    return {
+      width: element?.clientWidth || 0,
+      height: element?.clientHeight || 0,
+    };
+  }, []);
+
+  const updateEditorViewportSize = useCallback((nextSize) => {
+    setEditorViewportSize((prev) => {
+      if (prev.width === nextSize.width && prev.height === nextSize.height) return prev;
+      return nextSize;
     });
   }, []);
 
-  useEffect(() => {
-    window.addEventListener('resize', updateDisplaySize);
-    return () => window.removeEventListener('resize', updateDisplaySize);
-  }, [updateDisplaySize]);
+  const computeFitLayout = useCallback((naturalSize = imageNaturalSize, viewportSize = editorViewportSize) => {
+    const naturalWidth = Number(naturalSize?.width || 0);
+    const naturalHeight = Number(naturalSize?.height || 0);
+    const viewportWidth = Number(viewportSize?.width || 0);
+    const viewportHeight = Number(viewportSize?.height || 0);
+    if (!naturalWidth || !naturalHeight || !viewportWidth || !viewportHeight) return null;
+    const maxWidth = Math.max(viewportWidth - CANVAS_FIT_PADDING * 2, 40);
+    const maxHeight = Math.max(viewportHeight - CANVAS_FIT_PADDING * 2, 40);
+    const fitScale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight, 1);
+    const width = Math.max(1, Math.round(naturalWidth * fitScale));
+    const height = Math.max(1, Math.round(naturalHeight * fitScale));
+    return {
+      width,
+      height,
+      offsetX: Math.round((viewportWidth - width) / 2),
+      offsetY: Math.round((viewportHeight - height) / 2),
+    };
+  }, [editorViewportSize, imageNaturalSize]);
+
+  const applyViewportFit = useCallback(({ forceReset = false, naturalSize = imageNaturalSize, viewportSize = editorViewportSize } = {}) => {
+    const previousDefault = defaultViewportRef.current;
+    const fit = computeFitLayout(naturalSize, viewportSize);
+    if (!fit) {
+      setImageDisplaySize((prev) => (
+        prev.width === 0 && prev.height === 0 ? prev : { width: 0, height: 0 }
+      ));
+      if (forceReset) {
+        viewportScaleRef.current = 1;
+        viewportOffsetRef.current = { x: 0, y: 0 };
+        defaultViewportRef.current = { x: 0, y: 0 };
+        hasManualViewportRef.current = false;
+        setViewportScale(1);
+        setViewportOffset({ x: 0, y: 0 });
+      }
+      return;
+    }
+    defaultViewportRef.current = { x: fit.offsetX, y: fit.offsetY };
+    setImageDisplaySize((prev) => (
+      prev.width === fit.width && prev.height === fit.height ? prev : { width: fit.width, height: fit.height }
+    ));
+    const isAtPreviousDefault = Math.abs(viewportScaleRef.current - 1) < 0.001
+      && Math.abs(viewportOffsetRef.current.x - previousDefault.x) < 2
+      && Math.abs(viewportOffsetRef.current.y - previousDefault.y) < 2;
+    if (forceReset || !hasManualViewportRef.current || isAtPreviousDefault) {
+      const nextOffset = { x: fit.offsetX, y: fit.offsetY };
+      viewportScaleRef.current = 1;
+      viewportOffsetRef.current = nextOffset;
+      hasManualViewportRef.current = false;
+      setViewportScale(1);
+      setViewportOffset((prev) => (
+        prev.x === nextOffset.x && prev.y === nextOffset.y ? prev : nextOffset
+      ));
+    }
+  }, [computeFitLayout, editorViewportSize, imageNaturalSize]);
+
+  const restoreDefaultViewport = useCallback(() => {
+    const measuredViewport = measureEditorViewport();
+    updateEditorViewportSize(measuredViewport);
+    hasManualViewportRef.current = false;
+    applyViewportFit({
+      forceReset: true,
+      naturalSize: imageNaturalSize,
+      viewportSize: measuredViewport.width && measuredViewport.height ? measuredViewport : editorViewportSize,
+    });
+  }, [applyViewportFit, editorViewportSize, imageNaturalSize, measureEditorViewport, updateEditorViewportSize]);
 
   const pointFromEvent = useCallback((event) => {
-    if (!editorCanvasRef.current) return null;
-    const imageEl = editorCanvasRef.current.querySelector('img');
+    const imageEl = editorImageRef.current;
     if (!imageEl) return null;
     const rect = imageEl.getBoundingClientRect();
     if (!rect.width || !rect.height || !imageNaturalSize.width || !imageNaturalSize.height) return null;
@@ -299,6 +389,14 @@ function AreaRecognition() {
       rect,
     };
   }, [imageNaturalSize.height, imageNaturalSize.width]);
+
+  useEffect(() => {
+    viewportOffsetRef.current = viewportOffset;
+  }, [viewportOffset]);
+
+  useEffect(() => {
+    viewportScaleRef.current = viewportScale;
+  }, [viewportScale]);
 
   const updateInstanceById = useCallback((instanceId, updater) => {
     setWorkingInstances((prev) => prev.map((item) => {
@@ -352,6 +450,31 @@ function AreaRecognition() {
     };
   }, [dragState, imageNaturalSize.height, imageNaturalSize.width, pointFromEvent, updateInstanceById]);
 
+  useEffect(() => {
+    if (!isPanning) return undefined;
+    const onMove = (event) => {
+      const panState = panStateRef.current;
+      if (!panState) return;
+      event.preventDefault();
+      const nextOffset = {
+        x: panState.originX + (event.clientX - panState.startX),
+        y: panState.originY + (event.clientY - panState.startY),
+      };
+      viewportOffsetRef.current = nextOffset;
+      setViewportOffset(nextOffset);
+    };
+    const onUp = () => {
+      panStateRef.current = null;
+      setIsPanning(false);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [isPanning]);
+
   const withDiscardConfirm = useCallback((action) => {
     if (!dirty) {
       action();
@@ -377,9 +500,19 @@ function AreaRecognition() {
     setDirty(false);
     setIsEditing(false);
     setEditorOverlayLoadFailed(false);
+    setEditorBaseImageLoadFailed(false);
     setEditorImageLoading(false);
     setImageNaturalSize({ width: 0, height: 0 });
     setImageDisplaySize({ width: 0, height: 0 });
+    setEditorViewportSize({ width: 0, height: 0 });
+    setViewportScale(1);
+    setViewportOffset({ x: 0, y: 0 });
+    setIsPanning(false);
+    viewportScaleRef.current = 1;
+    viewportOffsetRef.current = { x: 0, y: 0 };
+    defaultViewportRef.current = { x: 0, y: 0 };
+    hasManualViewportRef.current = false;
+    panStateRef.current = null;
   }, []);
 
   const clearEditorContextState = useCallback(() => {
@@ -396,6 +529,7 @@ function AreaRecognition() {
 
   useEffect(() => {
     setEditorOverlayLoadFailed(false);
+    setEditorBaseImageLoadFailed(false);
   }, [editorOverlayUrl, selectedEditorImageId, selectedJobId]);
 
   useEffect(() => {
@@ -407,10 +541,42 @@ function AreaRecognition() {
   }, [selectedJobId]);
 
   useEffect(() => {
-    if (editorOverlayUrl) return;
+    if (editorCanvasImageUrl) return;
     setImageNaturalSize({ width: 0, height: 0 });
     setImageDisplaySize({ width: 0, height: 0 });
-  }, [editorOverlayUrl]);
+    setViewportScale(1);
+    setViewportOffset({ x: 0, y: 0 });
+    setIsPanning(false);
+    viewportScaleRef.current = 1;
+    viewportOffsetRef.current = { x: 0, y: 0 };
+    defaultViewportRef.current = { x: 0, y: 0 };
+    hasManualViewportRef.current = false;
+    panStateRef.current = null;
+  }, [editorCanvasImageUrl]);
+
+  useEffect(() => {
+    const element = editorCanvasRef.current;
+    if (!element) return undefined;
+    const updateSize = () => {
+      updateEditorViewportSize({
+        width: element.clientWidth || 0,
+        height: element.clientHeight || 0,
+      });
+    };
+    updateSize();
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateSize);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, [editorOverlayUrl, selectedEditorImageId, selectedJobId, updateEditorViewportSize]);
+
+  useEffect(() => {
+    if (!imageNaturalSize.width || !imageNaturalSize.height || !editorViewportSize.width || !editorViewportSize.height) return;
+    applyViewportFit();
+  }, [applyViewportFit, editorViewportSize, imageNaturalSize]);
 
   const fetchConfig = useCallback(async () => {
     setConfigLoading(true);
@@ -765,7 +931,11 @@ function AreaRecognition() {
     const onKeyDown = (event) => {
       if (folderImagesModal.open) return;
       if (!selectedJobId) return;
-      if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return;
+      }
 
       if (event.code === 'Space') {
         event.preventDefault();
@@ -780,6 +950,11 @@ function AreaRecognition() {
           ...item,
           is_deleted: !item.is_deleted,
         }));
+        return;
+      }
+      if (event.key.toLowerCase() === 'v') {
+        event.preventDefault();
+        setShowMask((prev) => !prev);
         return;
       }
       if (!isEditing && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
@@ -1109,7 +1284,7 @@ function AreaRecognition() {
     }
   };
 
-  const handleResetEditor = () => {
+  const handleResetEditor = useCallback(() => {
     if (!selectedJobId || !selectedEditorImageId) return;
     Modal.confirm({
       title: '确认重置',
@@ -1122,6 +1297,7 @@ function AreaRecognition() {
             edited_by_id: queueUserIdRef.current,
           });
           message.success('已重置当前图片');
+          restoreDefaultViewport();
           await fetchEditorImageDetail(selectedJobId, selectedEditorImageId);
           await fetchEditorImages(selectedJobId, editorImagePage, editorImagePageSize);
           await fetchResultSummary(selectedJobId);
@@ -1130,7 +1306,7 @@ function AreaRecognition() {
         }
       },
     });
-  };
+  }, [editorImagePage, editorImagePageSize, fetchEditorImageDetail, fetchEditorImages, fetchResultSummary, restoreDefaultViewport, selectedEditorImageId, selectedJobId]);
 
   const folderColumns = [
     {
@@ -1288,9 +1464,63 @@ function AreaRecognition() {
     const target = event.target;
     const width = target.naturalWidth || 0;
     const height = target.naturalHeight || 0;
+    const measuredViewport = measureEditorViewport();
     setImageNaturalSize({ width, height });
-    setImageDisplaySize({ width: target.clientWidth, height: target.clientHeight });
+    updateEditorViewportSize(measuredViewport);
+    hasManualViewportRef.current = false;
+    requestAnimationFrame(() => {
+      applyViewportFit({
+        forceReset: true,
+        naturalSize: { width, height },
+        viewportSize: measuredViewport.width && measuredViewport.height ? measuredViewport : editorViewportSize,
+      });
+    });
   };
+
+  const handleViewportWheel = useCallback((event) => {
+    if (!imageDisplaySize.width || !imageDisplaySize.height || editorOverlayLoadFailed) return;
+    const container = editorCanvasRef.current;
+    if (!container) return;
+    event.preventDefault();
+    const rect = container.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const currentScale = viewportScaleRef.current;
+    const nextScale = clamp(
+      Number((currentScale * (event.deltaY < 0 ? 1.12 : 1 / 1.12)).toFixed(4)),
+      CANVAS_MIN_SCALE,
+      CANVAS_MAX_SCALE,
+    );
+    if (Math.abs(nextScale - currentScale) < 0.0001) return;
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const stageX = (pointerX - viewportOffsetRef.current.x) / currentScale;
+    const stageY = (pointerY - viewportOffsetRef.current.y) / currentScale;
+    const nextOffset = {
+      x: pointerX - stageX * nextScale,
+      y: pointerY - stageY * nextScale,
+    };
+    hasManualViewportRef.current = true;
+    viewportScaleRef.current = nextScale;
+    viewportOffsetRef.current = nextOffset;
+    setViewportScale(nextScale);
+    setViewportOffset(nextOffset);
+  }, [editorOverlayLoadFailed, imageDisplaySize.height, imageDisplaySize.width]);
+
+  const handleViewportMouseDown = useCallback((event) => {
+    if (event.button !== 1 || !imageDisplaySize.width || !imageDisplaySize.height || editorOverlayLoadFailed) return;
+    event.preventDefault();
+    hasManualViewportRef.current = true;
+    panStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: viewportOffsetRef.current.x,
+      originY: viewportOffsetRef.current.y,
+    };
+    setIsPanning(true);
+  }, [editorOverlayLoadFailed, imageDisplaySize.height, imageDisplaySize.width]);
+
+  const currentZoomPercent = Math.round(viewportScale * 100);
+  const hasCanvasStage = imageDisplaySize.width > 0 && imageDisplaySize.height > 0;
 
   const displayPolygon = (polygon) => {
     if (!Array.isArray(polygon) || !polygon.length || !imageNaturalSize.width || !imageNaturalSize.height || !imageDisplaySize.width || !imageDisplaySize.height) {
@@ -1500,151 +1730,197 @@ function AreaRecognition() {
 
             <Card
               size="small"
-              title={`编辑画布 ${editorDetail?.image?.image_name ? `(${editorDetail.image.image_name})` : ''}`}
+              title={(
+                <Space wrap size={8}>
+                  <span>{`编辑画布 ${editorDetail?.image?.image_name ? `(${editorDetail.image.image_name})` : ''}`}</span>
+                  {!showMask ? <Tag color="error">当前未显示遮罩</Tag> : null}
+                </Space>
+              )}
               extra={(
                 <Space wrap size={8}>
+                  <Button icon={<EyeOutlined />} onClick={() => setShowMask((prev) => !prev)} disabled={!selectedEditorImageId}>
+                    {showMask ? '隐藏遮罩' : '显示遮罩'}
+                  </Button>
                   <Button onClick={handleToggleDelete} disabled={!selectedInstance}>弃用/加回</Button>
                   <Button icon={<EditOutlined />} onClick={() => setIsEditing((prev) => !prev)} disabled={!selectedInstance || selectedInstance?.is_deleted}>编辑</Button>
                   <Button onClick={handleResetEditor} disabled={!selectedEditorImageId}>重置</Button>
                 </Space>
               )}
             >
-              <div style={{ marginBottom: 8, color: '#666', fontSize: 12 }}>
-                快捷键：`Space` 编辑模式，`D` 弃用/加回，`←/→` 切换图片（仅非编辑状态）
+              <div style={{ marginBottom: 8, color: showMask ? '#666' : '#cf1322', fontSize: 12, fontWeight: showMask ? 400 : 600 }}>
+                快捷键：`Space` 编辑模式，`D` 弃用/加回，`V` 显示/隐藏遮罩填充，`滚轮` 缩放，`中键拖拽` 平移，`←/→` 切换图片（仅非编辑状态）
               </div>
-              <Space size={8} style={{ marginBottom: 8 }}>
+              <Space wrap size={8} style={{ marginBottom: 8 }}>
                 <Tag color="blue">选中实例</Tag>
                 <Tag color="default">普通实例</Tag>
                 <Tag color="orange">弃用实例（虚线）</Tag>
+                <Tag color={showMask ? 'processing' : 'error'}>{showMask ? '遮罩已显示' : '遮罩已隐藏（仅显示轮廓）'}</Tag>
+                <Typography.Text type="secondary">当前倍率：{currentZoomPercent}%</Typography.Text>
+                <Button size="small" icon={<ReloadOutlined />} onClick={restoreDefaultViewport} disabled={!hasCanvasStage}>恢复默认倍率</Button>
               </Space>
               <div
                 ref={editorCanvasRef}
+                onWheel={handleViewportWheel}
+                onMouseDownCapture={handleViewportMouseDown}
+                onAuxClick={(event) => {
+                  if (event.button === 1) event.preventDefault();
+                }}
                 style={{
                   position: 'relative',
                   width: '100%',
                   border: '1px solid #e5e5e5',
                   borderRadius: 6,
-                  minHeight: 360,
+                  height: 'min(68vh, 720px)',
+                  minHeight: 420,
                   overflow: 'hidden',
                   background: '#fafafa',
+                  cursor: hasCanvasStage ? (isPanning ? 'grabbing' : 'grab') : 'default',
                 }}
               >
                 {editorImageLoading ? (
-                  <div style={{ minHeight: 360, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Spin />
                   </div>
-                ) : editorOverlayUrl && !editorOverlayLoadFailed ? (
-                  <img
-                    src={editorOverlayUrl}
-                    alt={editorDetail?.image?.image_name || 'overlay'}
-                    style={{ width: '100%', display: 'block' }}
-                    onLoad={onCanvasImageLoad}
-                    onError={() => {
-                      setEditorOverlayLoadFailed(true);
-                      setImageNaturalSize({ width: 0, height: 0 });
-                      setImageDisplaySize({ width: 0, height: 0 });
-                    }}
-                  />
-                ) : (
-                  <div style={{ minHeight: 360, padding: 24, color: '#999', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    当前图片无叠加图可编辑（可能是历史产物已清理或结果路径不可访问）
-                  </div>
-                )}
-                {imageDisplaySize.width > 0 && imageDisplaySize.height > 0 && (
-                  <svg
-                    width={imageDisplaySize.width}
-                    height={imageDisplaySize.height}
+                ) : editorCanvasImageUrl && !editorOverlayLoadFailed ? (
+                  <div
                     style={{
                       position: 'absolute',
                       top: 0,
                       left: 0,
-                      pointerEvents: 'auto',
+                      width: imageDisplaySize.width,
+                      height: imageDisplaySize.height,
+                      transform: `translate(${viewportOffset.x}px, ${viewportOffset.y}px) scale(${viewportScale})`,
+                      transformOrigin: '0 0',
+                      willChange: 'transform',
                     }}
                   >
-                    {workingInstances.map((item, idx) => {
-                      const colorIdx = Math.max(0, classNames.indexOf(item.class_name));
-                      const selected = item.instance_id === selectedInstanceId;
-                      const points = displayPolygon(item.polygon);
-                      let fill = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, 0.25);
-                      let stroke = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, 0.9);
-                      let strokeWidth = selected ? 3 : 1.5;
-                      let strokeDasharray;
-                      if (item.is_deleted) {
-                        fill = selected ? 'rgba(250, 173, 20, 0.14)' : 'rgba(120, 120, 120, 0.08)';
-                        stroke = selected ? 'rgba(250, 173, 20, 0.95)' : 'rgba(255, 77, 79, 0.85)';
-                        strokeDasharray = '8 4';
-                      } else if (selected) {
-                        fill = 'rgba(22, 119, 255, 0.24)';
-                        stroke = 'rgba(22, 119, 255, 0.98)';
-                      }
-                      return (
-                        <g key={item.instance_id}>
-                          {points ? (
-                            <>
-                              {selected ? (
-                                <polygon
-                                  points={points}
-                                  fill="none"
-                                  stroke="rgba(255, 255, 255, 0.95)"
-                                  strokeWidth={1}
-                                  pointerEvents="none"
-                                />
+                    <img
+                      ref={editorImageRef}
+                      src={editorCanvasImageUrl}
+                      alt={editorDetail?.image?.image_name || 'overlay'}
+                      draggable={false}
+                      onDragStart={(event) => event.preventDefault()}
+                      style={{
+                        width: imageDisplaySize.width,
+                        height: imageDisplaySize.height,
+                        display: 'block',
+                        userSelect: 'none',
+                      }}
+                      onLoad={onCanvasImageLoad}
+                      onError={() => {
+                        if (!editorBaseImageLoadFailed && editorSourceImageUrl && editorCanvasImageUrl === editorSourceImageUrl) {
+                          setEditorBaseImageLoadFailed(true);
+                          return;
+                        }
+                        setEditorOverlayLoadFailed(true);
+                        setImageNaturalSize({ width: 0, height: 0 });
+                        setImageDisplaySize({ width: 0, height: 0 });
+                      }}
+                    />
+                    {hasCanvasStage ? (
+                      <svg
+                        width={imageDisplaySize.width}
+                        height={imageDisplaySize.height}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          pointerEvents: 'auto',
+                        }}
+                      >
+                        {workingInstances.map((item, idx) => {
+                          const colorIdx = Math.max(0, classNames.indexOf(item.class_name));
+                          const selected = item.instance_id === selectedInstanceId;
+                          const points = displayPolygon(item.polygon);
+                          let fill = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, 0.25);
+                          let stroke = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, 0.9);
+                          let strokeWidth = selected ? 3 : 1.5;
+                          let strokeDasharray;
+                          if (item.is_deleted) {
+                            fill = selected ? 'rgba(250, 173, 20, 0.14)' : 'rgba(120, 120, 120, 0.08)';
+                            stroke = selected ? 'rgba(250, 173, 20, 0.95)' : 'rgba(255, 77, 79, 0.85)';
+                            strokeDasharray = '8 4';
+                          } else if (selected) {
+                            fill = 'rgba(22, 119, 255, 0.24)';
+                            stroke = 'rgba(22, 119, 255, 0.98)';
+                          }
+                          const interactiveFill = showMask ? fill : 'rgba(255, 255, 255, 0.001)';
+                          return (
+                            <g key={item.instance_id}>
+                              {points ? (
+                                <>
+                                  {selected ? (
+                                    <polygon
+                                      points={points}
+                                      fill="none"
+                                      stroke="rgba(255, 255, 255, 0.95)"
+                                      strokeWidth={1}
+                                      pointerEvents="none"
+                                    />
+                                  ) : null}
+                                  <polygon
+                                    points={points}
+                                    fill={interactiveFill}
+                                    stroke={stroke}
+                                    strokeWidth={strokeWidth}
+                                    strokeDasharray={strokeDasharray}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setSelectedInstanceId(item.instance_id);
+                                    }}
+                                    onMouseDown={(event) => {
+                                      if (event.button !== 0) return;
+                                      if (!isEditing || item.is_deleted || !selected) return;
+                                      event.preventDefault();
+                                      const p = pointFromEvent(event);
+                                      if (!p) return;
+                                      setDragState({
+                                        type: 'polygon',
+                                        instanceId: item.instance_id,
+                                        startPoint: { x: p.x, y: p.y },
+                                        originPolygon: Array.isArray(item.polygon) ? item.polygon.map((point) => [...point]) : [],
+                                      });
+                                    }}
+                                  />
+                                </>
                               ) : null}
-                              <polygon
-                                points={points}
-                                fill={fill}
-                                stroke={stroke}
-                                strokeWidth={strokeWidth}
-                                strokeDasharray={strokeDasharray}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setSelectedInstanceId(item.instance_id);
-                                }}
-                                onMouseDown={(event) => {
-                                  if (!isEditing || item.is_deleted || !selected) return;
-                                  event.preventDefault();
-                                  const p = pointFromEvent(event);
-                                  if (!p) return;
-                                  setDragState({
-                                    type: 'polygon',
-                                    instanceId: item.instance_id,
-                                    startPoint: { x: p.x, y: p.y },
-                                    originPolygon: Array.isArray(item.polygon) ? item.polygon.map((point) => [...point]) : [],
-                                  });
-                                }}
-                              />
-                            </>
-                          ) : null}
 
-                          {isEditing && selected && !item.is_deleted && Array.isArray(item.polygon)
-                            ? item.polygon.map((point, vertexIdx) => {
-                              const display = displayPoint(point);
-                              return (
-                                <circle
-                                  key={`${item.instance_id}-${vertexIdx}`}
-                                  cx={display.x}
-                                  cy={display.y}
-                                  r={5}
-                                  fill="rgba(22, 119, 255, 0.98)"
-                                  stroke="#fff"
-                                  strokeWidth={1.5}
-                                  onMouseDown={(event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    setDragState({
-                                      type: 'vertex',
-                                      instanceId: item.instance_id,
-                                      vertexIndex: vertexIdx,
-                                    });
-                                  }}
-                                />
-                              );
-                            })
-                            : null}
-                        </g>
-                      );
-                    })}
-                  </svg>
+                              {isEditing && selected && !item.is_deleted && Array.isArray(item.polygon)
+                                ? item.polygon.map((point, vertexIdx) => {
+                                  const display = displayPoint(point);
+                                  return (
+                                    <circle
+                                      key={`${item.instance_id}-${vertexIdx}`}
+                                      cx={display.x}
+                                      cy={display.y}
+                                      r={5}
+                                      fill="rgba(22, 119, 255, 0.98)"
+                                      stroke="#fff"
+                                      strokeWidth={1.5}
+                                      onMouseDown={(event) => {
+                                        if (event.button !== 0) return;
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        setDragState({
+                                          type: 'vertex',
+                                          instanceId: item.instance_id,
+                                          vertexIndex: vertexIdx,
+                                        });
+                                      }}
+                                    />
+                                  );
+                                })
+                                : null}
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div style={{ position: 'absolute', inset: 0, padding: 24, color: '#999', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    当前图片无可编辑底图（可能是原图与叠加图都不可访问）
+                  </div>
                 )}
               </div>
 
