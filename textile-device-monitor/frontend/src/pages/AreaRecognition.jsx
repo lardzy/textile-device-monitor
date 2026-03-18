@@ -1478,6 +1478,7 @@ function AreaRecognition() {
   };
 
   const handleViewportWheel = useCallback((event) => {
+    if (!event.altKey) return;
     if (!imageDisplaySize.width || !imageDisplaySize.height || editorOverlayLoadFailed) return;
     const container = editorCanvasRef.current;
     if (!container) return;
@@ -1748,7 +1749,7 @@ function AreaRecognition() {
               )}
             >
               <div style={{ marginBottom: 8, color: showMask ? '#666' : '#cf1322', fontSize: 12, fontWeight: showMask ? 400 : 600 }}>
-                快捷键：`Space` 编辑模式，`D` 弃用/加回，`V` 显示/隐藏遮罩填充，`滚轮` 缩放，`中键拖拽` 平移，`←/→` 切换图片（仅非编辑状态）
+                快捷键：`Space` 编辑模式，`D` 弃用/加回，`V` 显示/隐藏遮罩填充，`Alt + 滚轮` 缩放，`中键拖拽` 平移，`←/→` 切换图片（仅非编辑状态）
               </div>
               <Space wrap size={8} style={{ marginBottom: 8 }}>
                 <Tag color="blue">选中实例</Tag>
