@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -309,6 +310,41 @@ class AreaJobsTests(unittest.TestCase):
                 recycle = root / ".recycle"
                 self.assertTrue((recycle / "move_a.jpg").exists())
                 self.assertTrue((recycle / "move_b.png").exists())
+            finally:
+                manager.stop()
+
+    def test_run_archive_skips_nested_old_root_branch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            root.mkdir(parents=True, exist_ok=True)
+            old_root = root / "旧"
+            old_root.mkdir(parents=True, exist_ok=True)
+            archived = root / "sample-old"
+            archived.mkdir(parents=True, exist_ok=True)
+            archived_file = archived / "a.jpg"
+            archived_file.write_bytes(b"x")
+            kept_in_old = old_root / "already-there"
+            kept_in_old.mkdir(parents=True, exist_ok=True)
+            nested_file = kept_in_old / "keep.txt"
+            nested_file.write_text("keep", encoding="utf-8")
+
+            stale_time = time.time() - 60 * 60 * 48
+            os.utime(archived, (stale_time, stale_time))
+            os.utime(old_root, (stale_time, stale_time))
+
+            manager = AreaJobManager()
+            try:
+                result = manager.run_archive(
+                    root_path=str(root),
+                    old_root_path=str(old_root),
+                    older_than_hours=24,
+                )
+                self.assertEqual(result["moved_count"], 1)
+                self.assertEqual(result["failed_count"], 0)
+                self.assertFalse(archived.exists())
+                self.assertTrue((old_root / "sample-old" / "a.jpg").exists())
+                self.assertTrue(old_root.exists())
+                self.assertTrue(nested_file.exists())
             finally:
                 manager.stop()
 

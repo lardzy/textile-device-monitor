@@ -810,6 +810,10 @@ class AreaJobManager:
         if not old_root_path.strip():
             raise ValueError("invalid_old_root_path")
         old_root.mkdir(parents=True, exist_ok=True)
+        try:
+            old_root_resolved = old_root.resolve()
+        except OSError:
+            old_root_resolved = old_root
 
         threshold = datetime.now(timezone.utc) - timedelta(hours=max(1, int(older_than_hours or 24)))
         running_folders = self._running_folders()
@@ -830,6 +834,12 @@ class AreaJobManager:
                 if entry.name.startswith(".") or entry.name == ".recycle":
                     continue
                 if entry.name.startswith("_"):
+                    continue
+                try:
+                    entry_resolved = entry.resolve()
+                except OSError:
+                    entry_resolved = entry
+                if entry_resolved == old_root_resolved or old_root_resolved.is_relative_to(entry_resolved):
                     continue
                 if entry.name in running_folders:
                     continue
