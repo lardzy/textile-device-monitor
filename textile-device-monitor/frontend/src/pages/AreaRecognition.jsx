@@ -65,6 +65,26 @@ const LABEL_ALIAS = {
   莫: '莫代尔',
 };
 
+const OVERLAY_CLASS_LABEL_EN = {
+  棉: 'Cotton',
+  粘纤: 'Viscose',
+  莱赛尔: 'Lyocell',
+  莫代尔: 'Modal',
+  再生纤维素纤维: 'RCF',
+  未分类: 'Unknown',
+};
+
+const OVERLAY_LABEL_CLASS_SWAP_BY_MODEL = {
+  '棉-莱赛尔': {
+    棉: '莱赛尔',
+    莱赛尔: '棉',
+  },
+  '粘纤-莱赛尔': {
+    粘纤: '莱赛尔',
+    莱赛尔: '粘纤',
+  },
+};
+
 const invalidFolderNamePattern = /[\\/:*?"<>|]/;
 const CANVAS_MIN_SCALE = 0.35;
 const CANVAS_MAX_SCALE = 4;
@@ -153,6 +173,13 @@ const computeBBoxFromPolygon = (polygon, fallback = []) => {
   });
   if (xs.length < 3 || ys.length < 3) return Array.isArray(fallback) ? fallback : [];
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+};
+
+const getOverlayLabelText = (modelName, className) => {
+  const normalizedModelName = String(modelName || '').trim();
+  const normalizedClassName = String(className || '').trim();
+  const swappedClassName = OVERLAY_LABEL_CLASS_SWAP_BY_MODEL[normalizedModelName]?.[normalizedClassName] || normalizedClassName;
+  return OVERLAY_CLASS_LABEL_EN[swappedClassName] || swappedClassName || OVERLAY_CLASS_LABEL_EN.未分类;
 };
 
 function AreaRecognition() {
@@ -294,6 +321,10 @@ function AreaRecognition() {
     if (!editorBaseImageLoadFailed && editorSourceImageUrl) return editorSourceImageUrl;
     return editorOverlayUrl;
   }, [editorBaseImageLoadFailed, editorOverlayUrl, editorSourceImageUrl]);
+  const editorCanvasUsesSourceImage = useMemo(
+    () => Boolean(!editorBaseImageLoadFailed && editorSourceImageUrl && editorCanvasImageUrl === editorSourceImageUrl),
+    [editorBaseImageLoadFailed, editorCanvasImageUrl, editorSourceImageUrl],
+  );
 
   const measureEditorViewport = useCallback(() => {
     const element = editorCanvasRef.current;
@@ -1483,6 +1514,9 @@ function AreaRecognition() {
     const container = editorCanvasRef.current;
     if (!container) return;
     event.preventDefault();
+    if (typeof event.stopPropagation === 'function') {
+      event.stopPropagation();
+    }
     const rect = container.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     const currentScale = viewportScaleRef.current;
@@ -1506,6 +1540,18 @@ function AreaRecognition() {
     setViewportScale(nextScale);
     setViewportOffset(nextOffset);
   }, [editorOverlayLoadFailed, imageDisplaySize.height, imageDisplaySize.width]);
+
+  useEffect(() => {
+    const container = editorCanvasRef.current;
+    if (!container) return undefined;
+    const handleNativeWheel = (event) => {
+      handleViewportWheel(event);
+    };
+    container.addEventListener('wheel', handleNativeWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleNativeWheel);
+    };
+  }, [handleViewportWheel]);
 
   const handleViewportMouseDown = useCallback((event) => {
     if (event.button !== 1 || !imageDisplaySize.width || !imageDisplaySize.height || editorOverlayLoadFailed) return;
@@ -1541,6 +1587,18 @@ function AreaRecognition() {
     return {
       x: Math.round(point[0] * sx),
       y: Math.round(point[1] * sy),
+    };
+  };
+
+  const displayLabelPosition = (bbox, polygon) => {
+    const normalizedBBox = Array.isArray(bbox) && bbox.length === 4 ? bbox : computeBBoxFromPolygon(polygon, []);
+    if (!Array.isArray(normalizedBBox) || normalizedBBox.length !== 4) {
+      return { x: 8, y: 18 };
+    }
+    const topLeft = displayPoint([normalizedBBox[0], normalizedBBox[1]]);
+    return {
+      x: Math.max(4, topLeft.x + 2),
+      y: Math.max(16, topLeft.y + 16),
     };
   };
 
@@ -1761,7 +1819,6 @@ function AreaRecognition() {
               </Space>
               <div
                 ref={editorCanvasRef}
-                onWheel={handleViewportWheel}
                 onMouseDownCapture={handleViewportMouseDown}
                 onAuxClick={(event) => {
                   if (event.button === 1) event.preventDefault();
@@ -1833,6 +1890,8 @@ function AreaRecognition() {
                           const colorIdx = Math.max(0, classNames.indexOf(item.class_name));
                           const selected = item.instance_id === selectedInstanceId;
                           const points = displayPolygon(item.polygon);
+                          const labelPosition = displayLabelPosition(item.bbox, item.polygon);
+                          const overlayLabel = getOverlayLabelText(selectedJob?.model_name, item.class_name);
                           let fill = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, 0.25);
                           let stroke = getColorByIndex(colorIdx >= 0 ? colorIdx : idx, 0.9);
                           let strokeWidth = selected ? 3 : 1.5;
@@ -1884,6 +1943,22 @@ function AreaRecognition() {
                                     }}
                                   />
                                 </>
+                              ) : null}
+
+                              {editorCanvasUsesSourceImage && overlayLabel ? (
+                                <text
+                                  x={labelPosition.x}
+                                  y={labelPosition.y}
+                                  fill={item.is_deleted ? 'rgba(255, 255, 255, 0.48)' : 'rgba(255, 255, 255, 0.78)'}
+                                  stroke={item.is_deleted ? 'rgba(0, 0, 0, 0.22)' : 'rgba(0, 0, 0, 0.56)'}
+                                  strokeWidth={1.6}
+                                  paintOrder="stroke"
+                                  fontSize={9}
+                                  fontWeight={500}
+                                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                                >
+                                  {overlayLabel}
+                                </text>
                               ) : null}
 
                               {isEditing && selected && !item.is_deleted && Array.isArray(item.polygon)
