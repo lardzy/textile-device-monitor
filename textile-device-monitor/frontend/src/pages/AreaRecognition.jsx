@@ -67,6 +67,25 @@ const LABEL_ALIAS = {
 
 const invalidFolderNamePattern = /[\\/:*?"<>|]/;
 
+const formatBeijingDateTime = (value) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  const formatter = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${lookup.year}-${lookup.month}-${lookup.day} ${lookup.hour}:${lookup.minute}:${lookup.second}`;
+};
+
 const getCreateJobErrorMessage = (raw) => {
   const code = String(raw || '').trim();
   if (code === 'folder_not_found') return '文件夹不存在，请检查根路径和文件夹名称';
@@ -1144,7 +1163,7 @@ function AreaRecognition() {
       dataIndex: 'updated_at',
       key: 'updated_at',
       width: 200,
-      render: (value) => (value ? String(value).replace('T', ' ').slice(0, 19) : '-'),
+      render: (value) => formatBeijingDateTime(value),
     },
     {
       title: '操作',
@@ -1239,7 +1258,7 @@ function AreaRecognition() {
       dataIndex: 'edited_at',
       key: 'edited_at',
       width: 180,
-      render: (value) => (value ? String(value).replace('T', ' ').slice(0, 19) : '-'),
+      render: (value) => formatBeijingDateTime(value),
     },
     {
       title: '编辑人ID',
@@ -1421,7 +1440,7 @@ function AreaRecognition() {
                 <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
                   <Space wrap>
                     <Typography.Text>文件夹：{selectedJob?.folder_name || '-'}</Typography.Text>
-                    <Typography.Text>创建日期：{selectedJob?.created_at ? String(selectedJob.created_at).replace('T', ' ').slice(0, 19) : '-'}</Typography.Text>
+                    <Typography.Text>创建日期：{formatBeijingDateTime(selectedJob?.created_at)}</Typography.Text>
                   </Space>
                 <Space>
                   <Button type="primary" icon={<SaveOutlined />} loading={editorSaving} onClick={handleSaveEditor} disabled={!selectedEditorImageId}>保存</Button>
@@ -1739,7 +1758,7 @@ function AreaRecognition() {
                     />
                     <Typography.Text type="secondary">
                       定期归档：{archiveEnabled ? '开启' : '关闭'}（每 48 小时检查一次）；
-                      归档状态：上次执行 {archiveStatus?.last_run_at ? String(archiveStatus.last_run_at).replace('T', ' ').slice(0, 19) : '未执行'}，
+                      归档状态：上次执行 {archiveStatus?.last_run_at ? formatBeijingDateTime(archiveStatus.last_run_at) : '未执行'}，
                       当前 {archiveStatus?.is_due ? '已到执行窗口' : '未到执行窗口'}。
                     </Typography.Text>
                   </Space>
