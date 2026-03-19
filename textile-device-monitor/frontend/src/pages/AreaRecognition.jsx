@@ -1568,6 +1568,8 @@ function AreaRecognition() {
 
   const currentZoomPercent = Math.round(viewportScale * 100);
   const hasCanvasStage = imageDisplaySize.width > 0 && imageDisplaySize.height > 0;
+  const editorHandleRadius = 3.5 / Math.max(viewportScale, 0.001);
+  const editorHandleStrokeWidth = 1.2 / Math.max(viewportScale, 0.001);
 
   const displayPolygon = (polygon) => {
     if (!Array.isArray(polygon) || !polygon.length || !imageNaturalSize.width || !imageNaturalSize.height || !imageDisplaySize.width || !imageDisplaySize.height) {
@@ -1969,10 +1971,10 @@ function AreaRecognition() {
                                       key={`${item.instance_id}-${vertexIdx}`}
                                       cx={display.x}
                                       cy={display.y}
-                                      r={5}
+                                      r={editorHandleRadius}
                                       fill="rgba(22, 119, 255, 0.98)"
                                       stroke="#fff"
-                                      strokeWidth={1.5}
+                                      strokeWidth={editorHandleStrokeWidth}
                                       onMouseDown={(event) => {
                                         if (event.button !== 0) return;
                                         event.preventDefault();
