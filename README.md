@@ -22,7 +22,7 @@
 
 ### 1. 系统分层
 
-![系统分层图](./docs/readme-assets/overall-architecture.svg)
+![系统分层图](./docs/readme-assets/overall-architecture.jpg)
 
 从代码结构来看，这个工作区可以拆成 3 层：
 
