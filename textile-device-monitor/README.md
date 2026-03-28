@@ -58,6 +58,32 @@ docker-compose up -d
 http://服务器IP
 ```
 
+### Linux + NVIDIA GPU（面积识别）部署
+
+当服务器是 Linux 并带 NVIDIA 显卡（如 RTX 4060）时，建议使用 GPU 覆盖文件启动 `area-infer`。
+
+1. 前置检查
+```bash
+nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+```
+
+2. 使用 GPU 覆盖文件启动
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build area-infer backend frontend
+```
+
+3. 查看推理服务是否使用 GPU
+```bash
+curl http://127.0.0.1:9001/health
+```
+返回中 `runtime.effective_device` 为 `cuda:0` 表示已走 GPU。
+
+4. 设备策略说明
+- `AREA_INFER_DEVICE`：`auto|cuda|cpu`（默认 `auto`）
+- `AREA_INFER_GPU_POLICY`：`warn_continue|fail`（默认 `warn_continue`）
+- 当 GPU 不可用且策略为 `warn_continue` 时，会回退 CPU 并在 `device_warning` 字段给出告警。
+
 ### 服务端口
 - 前端: 80
 - 后端: 8000

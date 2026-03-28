@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Textile monitor architecture</title>
+  <desc id="desc">Static SVG architecture diagram for the textile device monitor workspace.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f5f8fc"/>
+      <stop offset="100%" stop-color="#eef3ff"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0 0 L12 6 L0 12 Z" fill="#5d6b85"/>
+    </marker>
+    <style>
+      .title { font: 700 34px "PingFang SC", "Microsoft YaHei", Arial, sans-serif; fill: #1f2a44; }
+      .subtitle { font: 500 18px "PingFang SC", "Microsoft YaHei", Arial, sans-serif; fill: #66758f; }
+      .boxTitle { font: 700 23px "PingFang SC", "Microsoft YaHei", Arial, sans-serif; fill: #24324a; }
+      .boxText { font: 500 16px "PingFang SC", "Microsoft YaHei", Arial, sans-serif; fill: #516076; }
+      .edge { stroke: #5d6b85; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .edgeText { font: 600 15px "PingFang SC", "Microsoft YaHei", Arial, sans-serif; fill: #4b5870; }
+      .card { stroke-width: 2.5; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="760" fill="url(#bg)"/>
+  <rect x="26" y="26" width="1228" height="708" rx="28" fill="#ffffff" stroke="#d8dfec" stroke-width="3"/>
+
+  <text x="70" y="84" class="title">纺织检测设备监控与智能分析工作区</text>
+  <text x="70" y="116" class="subtitle">设备端采集、Web 中台、OCR 链路与面积识别链路的静态结构图</text>
+
+  <rect x="78" y="218" width="268" height="176" rx="24" fill="#ebf5ff" stroke="#73a8f8" class="card"/>
+  <text x="212" y="266" text-anchor="middle" class="boxTitle">Windows 设备客户端</text>
+  <text x="212" y="304" text-anchor="middle" class="boxText">工作目录 / 日志读取</text>
+  <text x="212" y="332" text-anchor="middle" class="boxText">设备指标采集与状态上报</text>
+  <text x="212" y="360" text-anchor="middle" class="boxText">本机结果图片 / 表格服务</text>
+
+  <rect x="486" y="112" width="308" height="166" rx="24" fill="#eef8ee" stroke="#8ec58d" class="card"/>
+  <text x="640" y="160" text-anchor="middle" class="boxTitle">Monitor Backend</text>
+  <text x="640" y="198" text-anchor="middle" class="boxText">FastAPI + Queue / History / OCR / Area API</text>
+  <text x="640" y="226" text-anchor="middle" class="boxText">WebSocket 推送、任务调度、结果代理</text>
+
+  <rect x="918" y="112" width="284" height="166" rx="24" fill="#eef9f3" stroke="#7bc8a5" class="card"/>
+  <text x="1060" y="160" text-anchor="middle" class="boxTitle">React Frontend</text>
+  <text x="1060" y="198" text-anchor="middle" class="boxText">设备监控 / 历史 / 统计</text>
+  <text x="1060" y="226" text-anchor="middle" class="boxText">OCR / 面积识别 / 结果查看</text>
+
+  <rect x="514" y="334" width="252" height="120" rx="24" fill="#fcf0f8" stroke="#dd87bd" class="card"/>
+  <text x="640" y="382" text-anchor="middle" class="boxTitle">PostgreSQL</text>
+  <text x="640" y="418" text-anchor="middle" class="boxText">设备状态、历史、排队、任务元数据</text>
+
+  <rect x="92" y="528" width="286" height="150" rx="24" fill="#fff6ec" stroke="#f2a55c" class="card"/>
+  <text x="235" y="576" text-anchor="middle" class="boxTitle">area-infer / YOLACT</text>
+  <text x="235" y="614" text-anchor="middle" class="boxText">面积识别推理服务</text>
+  <text x="235" y="642" text-anchor="middle" class="boxText">叠加图 / JSON / Excel 结果</text>
+
+  <rect x="500" y="528" width="280" height="150" rx="24" fill="#f4efff" stroke="#9f84df" class="card"/>
+  <text x="640" y="576" text-anchor="middle" class="boxTitle">OCR Adapter</text>
+  <text x="640" y="614" text-anchor="middle" class="boxText">统一 OCR 接口、上传校验</text>
+  <text x="640" y="642" text-anchor="middle" class="boxText">上游结果归一化与导出</text>
+
+  <rect x="890" y="500" width="304" height="104" rx="24" fill="#f2f5fd" stroke="#90a5da" class="card"/>
+  <text x="1042" y="544" text-anchor="middle" class="boxTitle">GLM-OCR Runtime</text>
+  <text x="1042" y="578" text-anchor="middle" class="boxText">运行时包装与转发</text>
+
+  <rect x="890" y="626" width="304" height="78" rx="24" fill="#edf1ff" stroke="#7c93d8" class="card"/>
+  <text x="1042" y="673" text-anchor="middle" class="boxTitle">vLLM / GLM-OCR 模型服务</text>
+
+  <path d="M346 266 C402 234, 438 204, 486 184" class="edge"/>
+  <text x="394" y="206" class="edgeText">每 5 秒状态上报</text>
+
+  <path d="M346 340 C404 298, 440 252, 486 226" class="edge"/>
+  <text x="368" y="292" class="edgeText">结果文件 / 图片服务</text>
+
+  <path d="M794 184 L918 184" class="edge"/>
+  <text x="824" y="158" class="edgeText">WebSocket 实时推送</text>
+
+  <path d="M640 278 L640 334" class="edge"/>
+  <text x="664" y="314" class="edgeText">状态与任务落库</text>
+
+  <path d="M560 278 C500 368, 392 462, 284 528" class="edge"/>
+  <text x="392" y="428" class="edgeText">面积识别任务</text>
+
+  <path d="M640 454 L640 528" class="edge"/>
+  <text x="664" y="500" class="edgeText">OCR 任务</text>
+
+  <path d="M780 602 C822 584, 850 564, 890 552" class="edge"/>
+  <text x="818" y="548" class="edgeText">转发到运行时</text>
+
+  <path d="M1042 604 L1042 626" class="edge"/>
+  <text x="1066" y="620" class="edgeText">模型调用</text>
+
+  <text x="640" y="724" text-anchor="middle" class="subtitle">docs/readme-assets/overall-architecture.svg</text>
+</svg>

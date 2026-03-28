@@ -3,3 +3,12 @@
 /textile-device-client/dist/
 /textile-device-client/logs/
 /.venv/
+/reference-document/
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+/textile-device-monitor/frontend/node_modules/
+/textile-device-monitor/frontend/dist/
+/textile-device-monitor/runtime/

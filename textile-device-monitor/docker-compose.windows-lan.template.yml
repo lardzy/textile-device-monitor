@@ -1,0 +1,112 @@
+# docker-compose.yml
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: textile-monitor-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: textile_monitor
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - textile-net
+
+  area-infer:
+    build:
+      context: ./area-infer
+      args:
+        TORCH_VARIANT: ${AREA_INFER_TORCH_VARIANT:-cpu}
+    container_name: textile-area-infer
+    restart: unless-stopped
+    environment:
+      AREA_WEIGHTS_DIR: /opt/area_weights
+      AREA_YOLACT_VENDOR_ROOT: /app/vendor/yolact
+      AREA_INFER_DEVICE: ${AREA_INFER_DEVICE:-auto}
+      AREA_INFER_GPU_POLICY: ${AREA_INFER_GPU_POLICY:-warn_continue}
+    volumes:
+      - type: bind
+        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-models"
+        target: /opt/area_weights
+        read_only: true
+    ports:
+      - "9001:9001"
+    networks:
+      - textile-net
+
+  backend:
+    build: ./backend
+    container_name: textile-monitor-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://admin:password123@postgres:5432/textile_monitor
+      SECRET_KEY: your-secret-key-change-in-production
+      HEARTBEAT_TIMEOUT: 30
+      DATA_RETENTION_DAYS: 30
+      CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
+      AREA_WEIGHTS_DIR: /opt/area_weights
+      AREA_INFER_URL: http://area-infer:9001
+      AREA_INFER_TIMEOUT_SEC: 60
+      AREA_OUTPUT_DIR: /data/area_outputs
+      AREA_EXCEL_TEMPLATE_PATH: /opt/area_templates/-面积法-定量试验原始记录-新系统.xls
+    volumes:
+      - area_root_cifs:/data/share66
+      - area_old_cifs:/data/share82
+      - area_out_cifs:/data/share66_out
+      - type: bind
+        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-models"
+        target: /opt/area_weights
+        read_only: true
+      - type: bind
+        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-templates"
+        target: /opt/area_templates
+        read_only: true
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - area-infer
+    networks:
+      - textile-net
+
+  frontend:
+    build: ./frontend
+    container_name: textile-monitor-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - textile-net
+
+volumes:
+  postgres_data:
+
+  area_root_cifs:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${SMB_USER_A},password=${SMB_PASS_A},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      device: "//192.168.105.66/17检验八部"
+
+  area_out_cifs:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${SMB_USER_B},password=${SMB_PASS_B},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      device: "//192.168.105.82/材料检测中心"
+
+  area_old_cifs:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${SMB_USER_A},password=${SMB_PASS_A},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      device: "//192.168.105.66/17检验八部"
+
+networks:
+  textile-net:
+    driver: bridge

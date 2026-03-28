@@ -12,3 +12,13 @@ body {
 #root {
   min-height: 100vh;
 }
+
+.area-folder-main-preview-mask.ant-image-mask,
+.area-folder-main-preview-container .ant-image-mask {
+  background: transparent !important;
+}
+
+.area-folder-main-preview-mask .ant-image-mask-info,
+.area-folder-main-preview-container .ant-image-mask-info {
+  display: none !important;
+}

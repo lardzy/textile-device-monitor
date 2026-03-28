@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  area-infer:
+    build:
+      context: ./area-infer
+      args:
+        TORCH_VARIANT: gpu
+    gpus: all
+    environment:
+      AREA_INFER_DEVICE: ${AREA_INFER_DEVICE:-auto}
+      AREA_INFER_GPU_POLICY: ${AREA_INFER_GPU_POLICY:-warn_continue}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility

@@ -16,6 +16,25 @@ services:
     networks:
       - textile-net
 
+  area-infer:
+    build:
+      context: ./area-infer
+      args:
+        TORCH_VARIANT: ${AREA_INFER_TORCH_VARIANT:-cpu}
+    container_name: textile-area-infer
+    restart: unless-stopped
+    environment:
+      AREA_WEIGHTS_DIR: /opt/area_weights
+      AREA_YOLACT_VENDOR_ROOT: /app/vendor/yolact
+      AREA_INFER_DEVICE: ${AREA_INFER_DEVICE:-auto}
+      AREA_INFER_GPU_POLICY: ${AREA_INFER_GPU_POLICY:-warn_continue}
+    volumes:
+      - ./runtime/area-models:/opt/area_weights:ro
+    ports:
+      - "9001:9001"
+    networks:
+      - textile-net
+
   backend:
     build: ./backend
     container_name: textile-monitor-backend
@@ -26,10 +45,21 @@ services:
       HEARTBEAT_TIMEOUT: 30
       DATA_RETENTION_DAYS: 30
       CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
+      AREA_WEIGHTS_DIR: /opt/area_weights
+      AREA_INFER_URL: http://area-infer:9001
+      AREA_INFER_TIMEOUT_SEC: 60
+      AREA_OUTPUT_DIR: /data/area_outputs
+      AREA_EXCEL_TEMPLATE_PATH: /opt/area_templates/-面积法-定量试验原始记录-新系统.xls
+    volumes:
+      - /Users/lishuyang/PycharmProjects/textile-device-test:/Users/lishuyang/PycharmProjects/textile-device-test
+      - ./runtime/area-models:/opt/area_weights:ro
+      - ./runtime/area-templates:/opt/area_templates:ro
+      - ./runtime/area-outputs:/data/area_outputs
     ports:
       - "8000:8000"
     depends_on:
       - postgres
+      - area-infer
     networks:
       - textile-net
 
