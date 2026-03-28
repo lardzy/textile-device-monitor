@@ -1,0 +1,86 @@
+flowchart TB
+    classDef device fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a5f
+    classDef backend fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#78350f
+    classDef database fill:#fce7f3,stroke:#ec4899,stroke-width:2px,color:#831843
+    classDef frontend fill:#d1fae5,stroke:#10b981,stroke-width:2px,color:#064e3b
+    classDef aiOcr fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#3b0764
+    classDef aiArea fill:#fff7ed,stroke:#f97316,stroke-width:2px,color:#7c2d12
+    classDef sched fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px,color:#1e293b
+    classDef layerLabel fill:none,stroke:none,color:#374151,font-weight:bold
+
+    subgraph DEVICE["  设备采集层  "]
+        direction LR
+        DC1["Windows 客户端\n共聚焦设备\nOlympus 日志解析"]:::device
+        DC2["Windows 客户端\n通用检测设备\n工作目录扫描"]:::device
+    end
+
+    subgraph BIZ["  业务中台层  "]
+        direction TB
+        subgraph BSVCS["FastAPI 后端核心服务"]
+            direction LR
+            M1["设备管理\n心跳监控\n在线/离线判断"]:::backend
+            M2["排队协同\n顺序调整\n超时提醒"]:::backend
+            M3["历史记录\n数据统计\nExcel 导出"]:::backend
+            M4["结果代理\n图片/表格\n文件转发"]:::backend
+            M5["任务编排\nOCR / 面积\n作业调度"]:::backend
+        end
+        direction LR
+        PG[("PostgreSQL\n设备 · 队列 · 历史\n统计 · 任务")]:::database
+        SCHED["后台定时任务\n心跳监控 30s · 数据清理 02:00\n排队超时 · 面积归档"]:::sched
+    end
+
+    subgraph FE["  前端展示层  "]
+        direction LR
+        F1["设备监控\n实时状态看板"]:::frontend
+        F2["面积识别\n任务 · 编辑 · 结果"]:::frontend
+        F3["历史记录\n筛选 · 统计 · 导出"]:::frontend
+        F4["OCR 识别\n上传 · 轮询 · 导出"]:::frontend
+        F5["结果浏览\n图片 · 表格"]:::frontend
+    end
+
+    subgraph AI["  智能能力层  "]
+        direction TB
+        subgraph OCR["OCR 识别链路"]
+            direction LR
+            OCR_A["OCR Adapter\n接口适配"]:::aiOcr
+            OCR_R["GLM-OCR\nRuntime"]:::aiOcr
+            OCR_V["vLLM\n模型推理"]:::aiOcr
+        end
+        subgraph AREA["面积识别链路"]
+            direction LR
+            AREA_I["area-infer\n推理服务"]:::aiArea
+            AREA_M["YOLACT\n实例分割"]:::aiArea
+        end
+    end
+
+    %% 设备 -> 后端
+    DC1 ==>|"每 5s 心跳上报\n设备状态 · 系统指标"| M1
+    DC2 ==>|"每 5s 心跳上报\n任务进度 · 磁盘容量"| M1
+    DC1 -.->|"本机结果文件服务\n图片 · 表格"| M4
+
+    %% 后端内部
+    M1 --- M2 --- M3 --- M4 --- M5
+    BSVCS <--> PG
+    BSVCS --- SCHED
+
+    %% 后端 -> 前端
+    M1 ==>|"WebSocket\n实时状态推送"| F1
+    M2 ==>|"WebSocket\n排队变化通知"| F1
+    M5 -->|"REST API\n任务创建 · 结果"| F2
+    M3 -->|"REST API\n分页查询 · 统计"| F3
+    M5 -->|"REST API\n上传 · 轮询 · 下载"| F4
+    M4 -->|"REST API\n代理文件访问"| F5
+
+    %% 后端 -> 智能能力
+    M5 -->|"OCR 任务\nPDF / 图片"| OCR_A
+    OCR_A --> OCR_R --> OCR_V
+
+    M5 -->|"面积识别任务\n文件夹路径 · 参数"| AREA_I
+    AREA_I --> AREA_M
+
+    %% 智能能力 -> 前端（结果回流）
+    AREA_M -.->|"叠加图 · JSON · Excel"| F2
+    OCR_V -.->|"Markdown · JSON · DOCX"| F4
+
+    %% 完成后队列出队
+    F1 -.->|"任务完成 100%\n自动出队提醒"| M2
