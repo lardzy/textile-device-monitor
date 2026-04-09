@@ -140,7 +140,7 @@ function Statistics() {
         </Col>
 
         <Col span={12}>
-          <Card title="设备利用率">
+          <Card title="设备利用率（忙碌时长占比）">
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={summary}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -156,7 +156,7 @@ function Statistics() {
                   const numeric = Number(value);
                   return `${Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00'}%`;
                 }} />
-                <Bar dataKey="utilization_rate" fill="#ffc658" name="利用率" />
+                <Bar dataKey="utilization_rate" fill="#ffc658" name="忙碌时长占比" />
               </BarChart>
             </ResponsiveContainer>
           </Card>

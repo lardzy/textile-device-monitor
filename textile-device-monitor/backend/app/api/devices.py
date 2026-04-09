@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
+from datetime import datetime, timezone
 from app.database import get_db
 from app.schemas import (
     Device,
@@ -117,9 +118,21 @@ async def report_device_status(
         )
 
     from app.crud import history as history_crud
+    from app.crud import device_tracking as tracking_crud
     from app.crud import queue as queue_crud
+    from app.services.device_tracking import (
+        EVENT_STATUS,
+        EVENT_TASK_COMPLETE,
+        EVENT_TASK_START,
+        advance_task_state,
+        normalize_task_key,
+    )
 
-    previous_progress = device.task_progress
+    previous_status = (
+        device.status.value if hasattr(device.status, "value") else str(device.status)
+    )
+    observed_at = datetime.now(timezone.utc)
+    device_id = int(device.id)  # type: ignore[arg-type]
 
     device_crud.update_device_heartbeat(db, device)
     device_crud.update_device_status(
@@ -133,23 +146,56 @@ async def report_device_status(
         status_report.client_base_url,
     )
 
-    completed_record = None
-    device_id = int(device.id)  # type: ignore[arg-type]
-    should_complete = (
-        status_report.task_progress is not None
-        and status_report.task_progress == 100
-        and previous_progress != 100
+    current_status = (
+        device.status.value if hasattr(device.status, "value") else str(device.status)
     )
-    if should_complete and status_report.task_id:
-        latest = history_crud.get_latest_status(db, device_id)
-        if (
-            latest
-            and latest.task_id == status_report.task_id
-            and latest.task_progress == 100
-        ):
-            should_complete = False
+    normalized_task_key = normalize_task_key(status_report.task_key)
+    task_state = tracking_crud.get_or_create_task_state(db, device_id)
+    state_snapshot = tracking_crud.snapshot_task_state(task_state)
+    decision = advance_task_state(
+        state_snapshot,
+        status=current_status,
+        task_key=normalized_task_key,
+        task_name=status_report.task_name,
+        task_progress=status_report.task_progress,
+    )
 
-    if should_complete:  # type: ignore[truthy-bool]
+    if previous_status != current_status:
+        tracking_crud.create_state_event(
+            db,
+            device_id=device_id,
+            event_type=EVENT_STATUS,
+            status=current_status,
+            task_key=decision.next_state.task_key,
+            task_name=status_report.task_name,
+            task_progress=status_report.task_progress,
+            occurred_at=observed_at,
+        )
+
+    if decision.emit_task_start:
+        tracking_crud.create_state_event(
+            db,
+            device_id=device_id,
+            event_type=EVENT_TASK_START,
+            status=current_status,
+            task_key=decision.next_state.task_key,
+            task_name=decision.next_state.task_name,
+            task_progress=status_report.task_progress,
+            occurred_at=observed_at,
+        )
+
+    completed_record = None
+    if decision.allow_completion:
+        tracking_crud.create_state_event(
+            db,
+            device_id=device_id,
+            event_type=EVENT_TASK_COMPLETE,
+            status=current_status,
+            task_key=decision.next_state.task_key,
+            task_name=decision.next_state.task_name,
+            task_progress=status_report.task_progress,
+            occurred_at=observed_at,
+        )
         task_duration_seconds = (
             int(device.task_elapsed_seconds)  # type: ignore[arg-type]
             if device.task_elapsed_seconds is not None
@@ -158,7 +204,7 @@ async def report_device_status(
         history_crud.create_status_history(
             db,
             device_id,
-            status_report.status,
+            current_status,
             status_report.task_id,
             status_report.task_name,
             status_report.task_progress,
@@ -166,6 +212,8 @@ async def report_device_status(
             task_duration_seconds,
         )
         completed_record = queue_crud.complete_first_in_queue(db, device_id)
+
+    tracking_crud.save_task_state(db, task_state, decision.next_state)
 
     queue_count = queue_crud.get_queue_count(db, device_id)
 
@@ -192,7 +240,7 @@ async def report_device_status(
                 "device_id": device.id,
                 "device_code": device.device_code,
                 "device_name": device.name,
-                "status": status_report.status,
+                "status": current_status,
                 "task_id": status_report.task_id,
                 "task_name": status_report.task_name,
                 "task_progress": status_report.task_progress,

@@ -4,7 +4,9 @@ from typing import List, Optional
 from app.models import (
     Device,
     DeviceStatus,
+    DeviceStateEvent,
     DeviceStatusHistory,
+    DeviceTaskState,
     QueueRecord,
     QueueChangeLog,
     Statistic,
@@ -65,6 +67,12 @@ def delete_device(db: Session, device_id: int) -> bool:
     )
     db.query(DeviceStatusHistory).filter(
         DeviceStatusHistory.device_id == device_id
+    ).delete(synchronize_session=False)
+    db.query(DeviceStateEvent).filter(
+        DeviceStateEvent.device_id == device_id
+    ).delete(synchronize_session=False)
+    db.query(DeviceTaskState).filter(
+        DeviceTaskState.device_id == device_id
     ).delete(synchronize_session=False)
     db.query(Statistic).filter(Statistic.device_id == device_id).delete(
         synchronize_session=False

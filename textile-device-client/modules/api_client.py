@@ -186,6 +186,7 @@ class ApiClient:
         device_code: str,
         status: str,
         task_id: Optional[str] = None,
+        task_key: Optional[str] = None,
         task_name: Optional[str] = None,
         task_progress: Optional[int] = None,
         metrics: Optional[Dict[str, Any]] = None,
@@ -207,6 +208,7 @@ class ApiClient:
         data = {
             "status": status,
             "task_id": task_id,
+            "task_key": task_key,
             "task_name": task_name,
             "task_progress": task_progress,
             "metrics": metrics,

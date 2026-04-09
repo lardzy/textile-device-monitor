@@ -100,6 +100,18 @@ class ProgressReader:
             return None
         return os.path.basename(latest_folder)
 
+    def get_latest_folder_path(self) -> Optional[str]:
+        latest_folder = self._get_latest_modified_folder(self.working_path)
+        if not latest_folder:
+            return None
+        return self._normalize_task_path(latest_folder)
+
+    def _normalize_task_path(self, path: str) -> str:
+        return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+    def get_task_key(self) -> Optional[str]:
+        return self.get_latest_folder_path() or self.get_latest_folder_name()
+
     def _check_progress(self, folder_path: str) -> int:
         """根据文件夹结构判断进度"""
         result_folder = os.path.join(folder_path, "result")
@@ -872,6 +884,14 @@ class OlympusProgressReader(ProgressReader):
     def get_current_output_path(self) -> Optional[str]:
         self._refresh_state()
         return self._current_output_path
+
+    def get_task_key(self) -> Optional[str]:
+        self._refresh_state()
+        if self._current_output_path and not self._is_temp_output_path(
+            self._current_output_path
+        ):
+            return self._normalize_task_path(self._current_output_path)
+        return self.get_latest_folder_name()
 
     def resolve_output_folder(self, folder_param: Optional[str]) -> Optional[str]:
         self._refresh_state()

@@ -80,6 +80,7 @@ class StatusReporter:
         """执行单次上报"""
         device_status = self._determine_status()
         latest_folder_name = self.progress_reader.get_latest_folder_name()
+        task_key = self._get_task_key()
         task_id = self._generate_task_id(latest_folder_name)
         task_name = latest_folder_name or "AI显微镜检测"
         task_progress = self._get_task_progress()
@@ -116,6 +117,7 @@ class StatusReporter:
             device_code=self.device_code,
             status=device_status,
             task_id=task_id,
+            task_key=task_key,
             task_name=task_name,
             task_progress=task_progress,
             metrics=metrics,
@@ -189,6 +191,18 @@ class StatusReporter:
             int or None: 任务进度
         """
         return self.progress_reader.read_progress()
+
+    def _get_task_key(self) -> Optional[str]:
+        if not self.progress_reader:
+            return None
+        task_key_getter = getattr(self.progress_reader, "get_task_key", None)
+        if callable(task_key_getter):
+            try:
+                return task_key_getter()
+            except Exception as exc:
+                self.logger.error(f"获取 task_key 失败: {exc}")
+                return None
+        return self.progress_reader.get_latest_folder_name()
 
     def report_once(self) -> bool:
         """执行单次上报（手动触发）

@@ -60,6 +60,12 @@ class Device(Base):
     )
 
     status_history = relationship("DeviceStatusHistory", back_populates="device")
+    task_state = relationship(
+        "DeviceTaskState",
+        back_populates="device",
+        uselist=False,
+    )
+    state_events = relationship("DeviceStateEvent", back_populates="device")
     queue_records = relationship("QueueRecord", back_populates="device")
     statistics = relationship("Statistic", back_populates="device")
 
@@ -78,6 +84,38 @@ class DeviceStatusHistory(Base):
     reported_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     device = relationship("Device", back_populates="status_history")
+
+
+class DeviceTaskState(Base):
+    __tablename__ = "device_task_states"
+
+    device_id = Column(Integer, ForeignKey("devices.id"), primary_key=True)
+    task_key = Column(String(500), index=True)
+    task_name = Column(String(200))
+    observed_in_progress = Column(Boolean, nullable=False, default=False)
+    last_status = Column(String(20))
+    last_progress = Column(Integer)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    device = relationship("Device", back_populates="task_state")
+
+
+class DeviceStateEvent(Base):
+    __tablename__ = "device_state_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(Integer, ForeignKey("devices.id"), nullable=False, index=True)
+    event_type = Column(String(32), nullable=False, index=True)
+    status = Column(String(20), nullable=False)
+    task_key = Column(String(500))
+    task_name = Column(String(200))
+    task_progress = Column(Integer)
+    occurred_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    device = relationship("Device", back_populates="state_events")
 
 
 class QueueRecord(Base):

@@ -1,10 +1,11 @@
-from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.crud import devices as device_crud
+from app.crud import device_tracking as tracking_crud
 from app.websocket.manager import websocket_manager
 from app.models import DeviceStatus
 from datetime import datetime, timezone
 import asyncio
+from app.services.device_tracking import EVENT_DEVICE_OFFLINE
 
 
 async def check_device_heartbeat():
@@ -21,6 +22,24 @@ async def check_device_heartbeat():
                 time_diff = (now - last_heartbeat).total_seconds()
                 if time_diff > 30 and device.status != DeviceStatus.OFFLINE:
                     device_crud.update_device_status(db, device, DeviceStatus.OFFLINE)
+                    device_id = int(device.id)  # type: ignore[arg-type]
+                    task_state = tracking_crud.get_or_create_task_state(db, device_id)
+                    snapshot = tracking_crud.snapshot_task_state(task_state)
+                    snapshot.last_status = DeviceStatus.OFFLINE.value
+                    snapshot.last_progress = device.task_progress
+                    if not snapshot.task_name and device.task_name:
+                        snapshot.task_name = str(device.task_name)
+                    tracking_crud.save_task_state(db, task_state, snapshot)
+                    tracking_crud.create_state_event(
+                        db,
+                        device_id=device_id,
+                        event_type=EVENT_DEVICE_OFFLINE,
+                        status=DeviceStatus.OFFLINE.value,
+                        task_key=snapshot.task_key,
+                        task_name=snapshot.task_name,
+                        task_progress=device.task_progress,
+                        occurred_at=now,
+                    )
 
                     await websocket_manager.broadcast(
                         {

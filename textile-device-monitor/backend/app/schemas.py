@@ -64,6 +64,7 @@ class Device(DeviceBase):
 class StatusReport(BaseModel):
     status: DeviceStatus
     task_id: Optional[str] = Field(None, max_length=100)
+    task_key: Optional[str] = Field(None, max_length=500)
     task_name: Optional[str] = Field(None, max_length=200)
     task_progress: Optional[int] = Field(None, ge=0, le=100)
     metrics: Optional[Dict[str, Any]] = None
