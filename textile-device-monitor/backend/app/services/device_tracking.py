@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Iterable, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from app.config import settings
 
 
 EVENT_STATUS = "status"
@@ -11,6 +14,7 @@ EVENT_TASK_COMPLETE = "task_complete"
 EVENT_DEVICE_OFFLINE = "device_offline"
 OFFLINE_STATUS = "offline"
 BUSY_STATUS = "busy"
+UNTRACKED_TASK_NAMES = {"AI显微镜检测"}
 
 
 @dataclass
@@ -55,16 +59,81 @@ def normalize_task_key(task_key: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
+def resolve_tracking_task_key(
+    task_key: Optional[str],
+    task_name: Optional[str],
+) -> Optional[str]:
+    normalized_key = normalize_task_key(task_key)
+    if normalized_key is not None:
+        return normalized_key
+
+    normalized_name = normalize_task_key(task_name)
+    if normalized_name in UNTRACKED_TASK_NAMES:
+        return None
+    return normalized_name
+
+
 def normalize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 
+def get_stats_timezone(tz_name: Optional[str] = None) -> ZoneInfo:
+    timezone_name = tz_name or settings.STATS_TIMEZONE
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
 def is_in_progress(status: Optional[str], task_progress: Optional[int]) -> bool:
     if status == BUSY_STATUS:
         return True
     return task_progress is not None and 0 < task_progress < 100
+
+
+def _task_key_basename(task_key: Optional[str]) -> Optional[str]:
+    normalized_key = normalize_task_key(task_key)
+    if normalized_key is None:
+        return None
+    compact = normalized_key.replace("\\", "/").rstrip("/")
+    if not compact:
+        return None
+    return compact.split("/")[-1].casefold()
+
+
+def resolve_laser_confocal_task_key(
+    current: TaskStateSnapshot,
+    task_key: Optional[str],
+    task_name: Optional[str],
+    *,
+    is_laser_confocal: bool = False,
+) -> Optional[str]:
+    normalized_key = normalize_task_key(task_key)
+    if not is_laser_confocal:
+        return normalized_key
+    if normalized_key is None or current.task_key is None:
+        return normalized_key
+    if current.task_key == normalized_key:
+        return normalized_key
+    if current.last_progress == 100:
+        return normalized_key
+
+    current_base = _task_key_basename(current.task_key)
+    incoming_base = _task_key_basename(normalized_key)
+    task_name_base = normalize_task_key(task_name)
+    if task_name_base is not None:
+        task_name_base = task_name_base.casefold()
+
+    if (
+        current_base is not None
+        and incoming_base is not None
+        and task_name_base is not None
+        and current_base == incoming_base == task_name_base
+    ):
+        return current.task_key
+    return normalized_key
 
 
 def advance_task_state(
@@ -74,8 +143,14 @@ def advance_task_state(
     task_key: Optional[str],
     task_name: Optional[str],
     task_progress: Optional[int],
+    is_laser_confocal: bool = False,
 ) -> TaskStateDecision:
-    normalized_key = normalize_task_key(task_key)
+    normalized_key = resolve_laser_confocal_task_key(
+        current,
+        task_key,
+        task_name,
+        is_laser_confocal=is_laser_confocal,
+    )
     next_state = TaskStateSnapshot(
         task_key=current.task_key,
         task_name=current.task_name,
@@ -129,13 +204,19 @@ def get_window_bounds(
     end_date: date,
     *,
     now: Optional[datetime] = None,
+    tz_name: Optional[str] = None,
 ) -> tuple[datetime, datetime]:
-    current_time = normalize_datetime(now or datetime.now(timezone.utc))
-    start_dt = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+    stats_tz = get_stats_timezone(tz_name)
+    current_time = now or datetime.now(stats_tz)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=stats_tz)
+    else:
+        current_time = current_time.astimezone(stats_tz)
+    start_dt = datetime.combine(start_date, time.min, tzinfo=stats_tz)
     if end_date == current_time.date():
         end_dt = current_time
     else:
-        end_dt = datetime.combine(end_date, time.max, tzinfo=timezone.utc)
+        end_dt = datetime.combine(end_date, time.max, tzinfo=stats_tz)
     return start_dt, end_dt
 
 

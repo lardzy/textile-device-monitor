@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 import unittest
+from zoneinfo import ZoneInfo
 
 from app.services.device_tracking import (
     EVENT_DEVICE_OFFLINE,
@@ -11,6 +12,7 @@ from app.services.device_tracking import (
     advance_task_state,
     calculate_utilization,
     get_window_bounds,
+    resolve_tracking_task_key,
 )
 
 
@@ -84,6 +86,51 @@ class DeviceTrackingTests(unittest.TestCase):
         self.assertFalse(decision.allow_completion)
         self.assertFalse(decision.emit_task_start)
 
+    def test_laser_confocal_path_alias_allows_completion(self):
+        current = TaskStateSnapshot(
+            task_key="job-1",
+            task_name="job-1",
+            observed_in_progress=True,
+            last_status="busy",
+            last_progress=20,
+        )
+
+        decision = advance_task_state(
+            current,
+            status="idle",
+            task_key="/data/job-1",
+            task_name="job-1",
+            task_progress=100,
+            is_laser_confocal=True,
+        )
+
+        self.assertEqual(decision.next_state.task_key, "job-1")
+        self.assertTrue(decision.allow_completion)
+        self.assertFalse(decision.emit_task_start)
+
+    def test_laser_confocal_path_alias_does_not_emit_second_task_start(self):
+        current = TaskStateSnapshot(
+            task_key="job-1",
+            task_name="job-1",
+            observed_in_progress=True,
+            last_status="busy",
+            last_progress=20,
+        )
+
+        decision = advance_task_state(
+            current,
+            status="busy",
+            task_key="/data/job-1",
+            task_name="job-1",
+            task_progress=80,
+            is_laser_confocal=True,
+        )
+
+        self.assertEqual(decision.next_state.task_key, "job-1")
+        self.assertFalse(decision.emit_task_start)
+        self.assertFalse(decision.allow_completion)
+        self.assertTrue(decision.next_state.observed_in_progress)
+
     def test_in_progress_report_emits_task_start(self):
         decision = advance_task_state(
             TaskStateSnapshot(),
@@ -96,6 +143,21 @@ class DeviceTrackingTests(unittest.TestCase):
         self.assertTrue(decision.emit_task_start)
         self.assertFalse(decision.allow_completion)
         self.assertTrue(decision.next_state.observed_in_progress)
+
+    def test_task_name_fallback_supports_legacy_clients(self):
+        decision = advance_task_state(
+            TaskStateSnapshot(),
+            status="busy",
+            task_key=resolve_tracking_task_key(None, "legacy-folder"),
+            task_name="legacy-folder",
+            task_progress=20,
+        )
+
+        self.assertTrue(decision.emit_task_start)
+        self.assertEqual(decision.next_state.task_key, "legacy-folder")
+
+    def test_default_task_name_does_not_become_tracking_key(self):
+        self.assertIsNone(resolve_tracking_task_key(None, "AI显微镜检测"))
 
     def test_utilization_uses_busy_duration(self):
         start_at = datetime(2026, 4, 9, 8, 0, tzinfo=timezone.utc)
@@ -135,10 +197,24 @@ class DeviceTrackingTests(unittest.TestCase):
             date(2026, 4, 9),
             date(2026, 4, 9),
             now=now,
+            tz_name="UTC",
         )
 
         self.assertEqual(start_at, datetime(2026, 4, 9, 0, 0, tzinfo=timezone.utc))
         self.assertEqual(end_at, now)
+
+    def test_window_bounds_follow_business_timezone(self):
+        now = datetime(2026, 4, 9, 2, 15, tzinfo=timezone.utc)
+        start_at, end_at = get_window_bounds(
+            date(2026, 4, 9),
+            date(2026, 4, 9),
+            now=now,
+            tz_name="Asia/Shanghai",
+        )
+
+        shanghai = ZoneInfo("Asia/Shanghai")
+        self.assertEqual(start_at, datetime(2026, 4, 9, 0, 0, tzinfo=shanghai))
+        self.assertEqual(end_at, datetime(2026, 4, 9, 10, 15, tzinfo=shanghai))
 
 
 if __name__ == "__main__":

@@ -125,7 +125,7 @@ async def report_device_status(
         EVENT_TASK_COMPLETE,
         EVENT_TASK_START,
         advance_task_state,
-        normalize_task_key,
+        resolve_tracking_task_key,
     )
 
     previous_status = (
@@ -149,7 +149,14 @@ async def report_device_status(
     current_status = (
         device.status.value if hasattr(device.status, "value") else str(device.status)
     )
-    normalized_task_key = normalize_task_key(status_report.task_key)
+    is_laser_confocal = (
+        isinstance(status_report.metrics, dict)
+        and status_report.metrics.get("device_type") == "laser_confocal"
+    )
+    normalized_task_key = resolve_tracking_task_key(
+        status_report.task_key,
+        status_report.task_name,
+    )
     task_state = tracking_crud.get_or_create_task_state(db, device_id)
     state_snapshot = tracking_crud.snapshot_task_state(task_state)
     decision = advance_task_state(
@@ -158,6 +165,7 @@ async def report_device_status(
         task_key=normalized_task_key,
         task_name=status_report.task_name,
         task_progress=status_report.task_progress,
+        is_laser_confocal=is_laser_confocal,
     )
 
     if previous_status != current_status:

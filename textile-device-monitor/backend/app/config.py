@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     AREA_EXCEL_TEMPLATE_PATH: str = "/opt/area_templates/-面积法-定量试验原始记录-新系统.xls"
     AREA_INFER_URL: str = "http://area-infer:9001"
     AREA_INFER_TIMEOUT_SEC: int = 60
+    STATS_TIMEZONE: str = "Asia/Shanghai"
     CORS_ORIGINS: str = "http://localhost,http://localhost:80,http://backend:8000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

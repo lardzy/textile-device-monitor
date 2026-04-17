@@ -216,6 +216,7 @@ class OlympusProgressReader(ProgressReader):
         self._frame_total: Optional[int] = None
         self._z_range: Optional[tuple[int, int]] = None
         self._output_path_candidates: list[str] = []
+        self._active_task_key: Optional[str] = None
 
         # 定义所有正则表达式
         self._TIMESTAMP_PATTERN = re.compile(
@@ -506,6 +507,7 @@ class OlympusProgressReader(ProgressReader):
         self._has_frames = False
         self._current_file_name = None
         self._output_path_candidates = []
+        self._active_task_key = None
 
     def _record_recent_result(self, path: str, timestamp: Optional[datetime]) -> None:
         if not path:
@@ -887,10 +889,27 @@ class OlympusProgressReader(ProgressReader):
 
     def get_task_key(self) -> Optional[str]:
         self._refresh_state()
+        if self._task_started and self._active_task_key:
+            return self._active_task_key
+
+        candidate = self._resolve_task_key_candidate()
+        if self._task_started and candidate and not self._active_task_key:
+            self._active_task_key = candidate
+            return self._active_task_key
+
+        if self._task_started:
+            return self._active_task_key
+        return None
+
+    def _resolve_task_key_candidate(self) -> Optional[str]:
         if self._current_output_path and not self._is_temp_output_path(
             self._current_output_path
         ):
             return self._normalize_task_path(self._current_output_path)
+        if self._current_output_path:
+            folder_name = os.path.basename(self._current_output_path)
+            if folder_name:
+                return folder_name
         return self.get_latest_folder_name()
 
     def resolve_output_folder(self, folder_param: Optional[str]) -> Optional[str]:
