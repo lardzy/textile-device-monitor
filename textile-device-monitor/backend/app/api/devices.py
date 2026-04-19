@@ -223,6 +223,10 @@ async def report_device_status(
 
     tracking_crud.save_task_state(db, task_state, decision.next_state)
 
+    placeholder_record = None
+    if previous_status == ModelDeviceStatus.IDLE.value and current_status == ModelDeviceStatus.BUSY.value:
+        placeholder_record = queue_crud.create_placeholder_if_missing(db, device_id)
+
     queue_count = queue_crud.get_queue_count(db, device_id)
 
     if completed_record:
@@ -236,6 +240,21 @@ async def report_device_status(
                     "queue_id": completed_record.id,
                     "completed_by": completed_record.inspector_name,
                     "completed_by_id": completed_record.created_by_id,
+                    "device_name": device.name,
+                },
+            }
+        )
+
+    if placeholder_record:
+        await websocket_manager.broadcast(
+            {
+                "type": "queue_update",
+                "data": {
+                    "device_id": device.id,
+                    "action": "placeholder_create",
+                    "queue_id": placeholder_record.id,
+                    "queue_count": queue_count,
+                    "inspector_name": placeholder_record.inspector_name,
                     "device_name": device.name,
                 },
             }

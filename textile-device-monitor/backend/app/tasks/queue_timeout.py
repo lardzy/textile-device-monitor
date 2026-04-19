@@ -121,18 +121,21 @@ async def check_queue_timeouts():
             if now >= deadline_at:
                 timed_out_record = queue[0]
                 next_record = queue[1]
-                queue_crud.swap_first_two_in_queue(
+                swap_result = queue_crud.swap_first_two_in_queue(
                     db, device.id, changed_by="系统", changed_by_id=None
                 )
+                auto_removed = swap_result[2] if swap_result else []
                 queue_count = queue_crud.get_queue_count(db, device.id)
+                queue_action = "placeholder_auto_remove" if auto_removed else "timeout_shift"
 
                 await websocket_manager.broadcast(
                     {
                         "type": "queue_update",
                         "data": {
                             "device_id": device.id,
-                            "action": "timeout_shift",
+                            "action": queue_action,
                             "queue_count": queue_count,
+                            "auto_removed_queue_ids": [record.id for record in auto_removed],
                         },
                     }
                 )

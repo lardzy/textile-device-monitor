@@ -1,6 +1,27 @@
 import os
 from typing import List
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    from pydantic import BaseModel, ConfigDict
+
+    class BaseSettings(BaseModel):
+        model_config = ConfigDict(extra="ignore")
+
+        def __init__(self, **values):
+            env_values = {}
+            for field_name in self.__class__.model_fields:
+                if field_name in values:
+                    continue
+                env_value = os.getenv(field_name)
+                if env_value is not None:
+                    env_values[field_name] = env_value
+            env_values.update(values)
+            super().__init__(**env_values)
+
+    class SettingsConfigDict(dict):
+        pass
 
 
 class Settings(BaseSettings):

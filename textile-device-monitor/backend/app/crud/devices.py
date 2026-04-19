@@ -219,6 +219,10 @@ def update_device_status(  # 更新设备状态
         device.task_elapsed_seconds = 0
 
     previous_progress = device.task_progress
+    task_started_at = device.task_started_at
+    if task_started_at is not None and task_started_at.tzinfo is None:
+        task_started_at = task_started_at.replace(tzinfo=timezone.utc)
+        device.task_started_at = task_started_at
 
     device.status = status
     if not preserve_task_fields:
@@ -231,11 +235,11 @@ def update_device_status(  # 更新设备状态
         device.client_base_url = client_base_url
 
     next_progress = task_progress if task_progress is not None else previous_progress
-    if device.task_started_at:
+    if task_started_at:
         if next_progress == 100:
             if previous_progress != 100 or device.task_elapsed_seconds is None:
                 device.task_elapsed_seconds = int(
-                    (now - device.task_started_at).total_seconds()
+                    (now - task_started_at).total_seconds()
                 )
         elif not (
             is_laser_confocal
@@ -243,7 +247,7 @@ def update_device_status(  # 更新设备状态
             and previous_progress == 100
         ):
             device.task_elapsed_seconds = int(
-                (now - device.task_started_at).total_seconds()
+                (now - task_started_at).total_seconds()
             )
 
     device.last_heartbeat = now
