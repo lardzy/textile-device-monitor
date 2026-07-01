@@ -35,19 +35,51 @@ python main.py
 
 ### 打包部署
 
-1. **打包程序**
+打包环境除运行时依赖外，还需要安装 PyInstaller：
+
 ```bash
-python build.py
+pip install -r requirements.txt pyinstaller
 ```
 
-2. **安装程序**
+1. **同步安装器版本**
 ```bash
-install.bat
+python scripts/build_windows_installer.py --sync-only
 ```
 
-3. **卸载程序**
+2. **打包静默版程序**
 ```bash
-uninstall.bat
+python scripts/build_windows_onedir.py
+```
+
+产物目录：
+
+```bash
+dist/windows/TextileDeviceClient
+```
+
+3. **生成安装包（Windows + Inno Setup）**
+```bash
+python scripts/build_windows_installer.py
+```
+
+安装包输出目录：
+
+```bash
+dist/installer
+```
+
+如需指定 Inno Setup 编译器路径：
+
+```bash
+python scripts/build_windows_installer.py --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+```
+
+### 调试打包
+
+正式安装包只包含无控制台的静默版。排查启动问题时，可以临时生成控制台版：
+
+```bash
+python scripts/build_windows_onedir.py --console
 ```
 
 ## 配置说明
@@ -109,12 +141,11 @@ F:\\tmp\\AiCodingTest\\参考文件\\bak
 ```
 textile-device-client/
 ├── main.py                    # 主程序入口
-├── build.py                   # PyInstaller 打包脚本
-├── install.bat                # Windows 安装脚本
-├── uninstall.bat              # Windows 卸载脚本
+├── build.py                   # 兼容入口，转发到 scripts/build_windows_onedir.py
 ├── requirements.txt           # Python 依赖
 ├── modules/
 │   ├── __init__.py
+│   ├── version.py             # 应用版本号
 │   ├── config.py              # 配置管理
 │   ├── logger.py              # 日志管理
 │   ├── api_client.py          # 服务端 API 客户端
@@ -125,6 +156,16 @@ textile-device-client/
 │   ├── tray_icon.py           # 系统托盘
 │   ├── config_window.py       # 配置窗口
 │   └── log_window.py          # 日志查看窗口
+├── scripts/
+│   ├── build_support.py       # 版本同步和打包辅助逻辑
+│   ├── build_windows_onedir.py # PyInstaller onedir 构建入口
+│   └── build_windows_installer.py # Inno Setup 安装包构建入口
+├── packaging/
+│   ├── pyinstaller/
+│   │   └── textile_device_client.spec
+│   └── inno-setup/
+│       ├── textile_device_client.iss
+│       └── version.auto.iss
 ├── resources/
 │   └── icon.ico              # 托盘图标
 ├── config.json               # 配置文件（运行时生成）
@@ -235,7 +276,8 @@ GET /health
 1. 在 `modules/` 目录下创建新模块
 2. 在 `main.py` 中集成新功能
 3. 更新 `requirements.txt` 添加新依赖
-4. 更新 `build.py` 确保新模块被打包
+4. 如需额外 hidden import，更新 `scripts/build_support.py`
+5. 如需调整打包布局，更新 `packaging/pyinstaller/textile_device_client.spec`
 
 ### 调试模式
 

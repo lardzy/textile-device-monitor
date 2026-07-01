@@ -4,6 +4,9 @@
 /textile-device-client/logs/
 /.venv/
 /reference-document/
+.tmp/
+__pycache__/
+*.py[cod]
 .DS_Store
 .DS_Store?
 ._*
