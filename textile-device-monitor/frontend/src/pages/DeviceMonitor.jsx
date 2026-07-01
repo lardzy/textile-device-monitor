@@ -697,7 +697,7 @@ function DeviceMonitor() {
       if (!data || data.device_id == null) return;
       setDevices(prev => prev.map(device => 
         device.id === data.device_id 
-          ? { ...device, ...data }
+          ? { ...device, ...data, offline_last_seen: data.status === 'offline' ? device.offline_last_seen : null }
           : device
       ));
     });
@@ -757,7 +757,7 @@ function DeviceMonitor() {
       if (!data || data.device_id == null) return;
       setDevices(prev => prev.map(device => 
         device.id === data.device_id 
-          ? { ...device, status: 'offline' }
+          ? { ...device, status: 'offline', offline_last_seen: data.last_seen || device.last_heartbeat }
           : device
       ));
     });
@@ -1202,6 +1202,12 @@ function DeviceMonitor() {
           const extendedCount = device.queue_timeout_extended_count || 0;
           const remainingExtends = Math.max(0, 3 - extendedCount);
           const canExtend = remainingExtends > 0;
+          const statusBadge = (
+            <Badge
+              status={config.color}
+              text={device.status === 'offline' ? '离线/心跳超时' : config.text}
+            />
+          );
           return (
             <Col xs={24} sm={12} md={8} lg={6} key={device.id}>
               <Card 
@@ -1211,7 +1217,11 @@ function DeviceMonitor() {
                 title={
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>{device.name}</span>
-                    <Badge status={config.color} text={config.text} />
+                    {device.status === 'offline' ? (
+                      <Tooltip title={device.offline_last_seen ? `最后心跳: ${device.offline_last_seen}` : '心跳超时'}>
+                        {statusBadge}
+                      </Tooltip>
+                    ) : statusBadge}
                   </div>
                 }
                 extra={<span style={{ fontSize: '12px', color: '#666' }}>排队: {device.queue_count || 0}</span>}

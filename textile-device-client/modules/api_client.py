@@ -5,6 +5,7 @@
 import requests
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+import time
 
 try:
     from modules.logger import Logger
@@ -41,46 +42,134 @@ class ApiClient:
         self.timeout = 5
         self.max_retries = 3
         self.logger = logger
+        self.last_request_info: Dict[str, Any] = {}
+
+    def _record_request_info(
+        self,
+        *,
+        method: str,
+        endpoint: str,
+        attempts: int,
+        elapsed_seconds: float,
+        success: bool,
+        status_code: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        self.last_request_info = {
+            "method": method,
+            "endpoint": endpoint,
+            "attempts": attempts,
+            "elapsed_seconds": elapsed_seconds,
+            "success": success,
+            "status_code": status_code,
+            "error": error,
+        }
 
     def _request(
         self, method: str, endpoint: str, data: Optional[Dict] = None
     ) -> Optional[Any]:
         """发送 HTTP 请求"""
         url = f"{self.base_url}/api{endpoint}"
+        started_at = time.monotonic()
+        attempts = 0
+        last_error = None
 
         for attempt in range(self.max_retries):
+            attempts = attempt + 1
             try:
                 response = self.session.request(
                     method, url, json=data, timeout=self.timeout
                 )
 
                 if response.status_code == 200:
+                    self._record_request_info(
+                        method=method,
+                        endpoint=endpoint,
+                        attempts=attempts,
+                        elapsed_seconds=time.monotonic() - started_at,
+                        success=True,
+                        status_code=response.status_code,
+                    )
                     return response.json()
                 elif response.status_code == 201:
+                    self._record_request_info(
+                        method=method,
+                        endpoint=endpoint,
+                        attempts=attempts,
+                        elapsed_seconds=time.monotonic() - started_at,
+                        success=True,
+                        status_code=response.status_code,
+                    )
                     return response.json()
                 elif response.status_code == 404:
                     self.logger.warning(f"资源不存在: {endpoint}")
+                    self._record_request_info(
+                        method=method,
+                        endpoint=endpoint,
+                        attempts=attempts,
+                        elapsed_seconds=time.monotonic() - started_at,
+                        success=False,
+                        status_code=response.status_code,
+                        error="not_found",
+                    )
                     return None
                 elif response.status_code == 400:
                     self.logger.error(f"请求错误: {response.text}")
+                    self._record_request_info(
+                        method=method,
+                        endpoint=endpoint,
+                        attempts=attempts,
+                        elapsed_seconds=time.monotonic() - started_at,
+                        success=False,
+                        status_code=response.status_code,
+                        error=response.text,
+                    )
                     return None
                 else:
                     self.logger.error(f"HTTP {response.status_code}: {response.text}")
+                    self._record_request_info(
+                        method=method,
+                        endpoint=endpoint,
+                        attempts=attempts,
+                        elapsed_seconds=time.monotonic() - started_at,
+                        success=False,
+                        status_code=response.status_code,
+                        error=response.text,
+                    )
                     return None
 
             except requests.exceptions.Timeout:
+                last_error = "timeout"
                 self.logger.warning(
                     f"请求超时 (尝试 {attempt + 1}/{self.max_retries}): {url}"
                 )
             except requests.exceptions.ConnectionError:
+                last_error = "connection_error"
                 self.logger.warning(
                     f"连接失败 (尝试 {attempt + 1}/{self.max_retries}): {url}"
                 )
             except Exception as e:
+                last_error = str(e)
                 self.logger.error(f"请求异常: {e}")
+                self._record_request_info(
+                    method=method,
+                    endpoint=endpoint,
+                    attempts=attempts,
+                    elapsed_seconds=time.monotonic() - started_at,
+                    success=False,
+                    error=last_error,
+                )
                 return None
 
         self.logger.error(f"请求失败，已达最大重试次数: {url}")
+        self._record_request_info(
+            method=method,
+            endpoint=endpoint,
+            attempts=attempts,
+            elapsed_seconds=time.monotonic() - started_at,
+            success=False,
+            error=last_error,
+        )
         return None
 
     def get_all_devices(self) -> List[Device]:

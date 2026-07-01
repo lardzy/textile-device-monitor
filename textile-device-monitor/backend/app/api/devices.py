@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime, timezone
+import asyncio
 from app.database import get_db
 from app.schemas import (
     Device,
@@ -18,6 +19,13 @@ from app.websocket.manager import websocket_manager
 from app.models import DeviceStatus as ModelDeviceStatus
 
 router = APIRouter(prefix="/devices", tags=["devices"])
+
+
+def schedule_websocket_broadcast(message: dict) -> None:
+    """Schedule fire-and-forget WebSocket work without delaying API responses."""
+    if not websocket_manager.active_connections:
+        return
+    asyncio.create_task(websocket_manager.broadcast(message))
 
 
 @router.get("", response_model=List[Device])
@@ -224,13 +232,16 @@ async def report_device_status(
     tracking_crud.save_task_state(db, task_state, decision.next_state)
 
     placeholder_record = None
-    if previous_status == ModelDeviceStatus.IDLE.value and current_status == ModelDeviceStatus.BUSY.value:
+    if (
+        previous_status == ModelDeviceStatus.IDLE.value
+        and current_status == ModelDeviceStatus.BUSY.value
+    ):
         placeholder_record = queue_crud.create_placeholder_if_missing(db, device_id)
 
     queue_count = queue_crud.get_queue_count(db, device_id)
 
     if completed_record:
-        await websocket_manager.broadcast(
+        schedule_websocket_broadcast(
             {
                 "type": "queue_update",
                 "data": {
@@ -246,7 +257,7 @@ async def report_device_status(
         )
 
     if placeholder_record:
-        await websocket_manager.broadcast(
+        schedule_websocket_broadcast(
             {
                 "type": "queue_update",
                 "data": {
@@ -260,7 +271,7 @@ async def report_device_status(
             }
         )
 
-    await websocket_manager.broadcast(
+    schedule_websocket_broadcast(
         {
             "type": "device_status_update",
             "data": {

@@ -151,6 +151,7 @@ def update_device_status(  # 更新设备状态
     task_progress: Optional[int] = None,
     metrics: Optional[dict] = None,
     client_base_url: Optional[str] = None,
+    touch_heartbeat: bool = True,
 ) -> Device:
     now = datetime.now(timezone.utc)
     new_task = False
@@ -250,7 +251,8 @@ def update_device_status(  # 更新设备状态
                 (now - task_started_at).total_seconds()
             )
 
-    device.last_heartbeat = now
+    if touch_heartbeat:
+        device.last_heartbeat = now
     db.commit()
     db.refresh(device)
     return device

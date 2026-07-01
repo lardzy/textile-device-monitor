@@ -51,6 +51,50 @@ class ProgressReader:
             self.logger.error(f"读取工作路径失败: {e}，进度设为 0")
             return 0
 
+    def get_status_snapshot(self) -> Dict[str, Any]:
+        """Collect all status fields with a single directory scan."""
+        snapshot: Dict[str, Any] = {
+            "task_progress": 0,
+            "latest_folder_name": None,
+            "task_key": None,
+            "client_base_url": self.get_client_base_url(),
+            "extra_metrics": {},
+            "device_state": None,
+            "task_active": False,
+        }
+        if not self.working_path:
+            self.logger.warning("工作路径未配置，进度设为 0")
+            return snapshot
+
+        try:
+            if not os.path.exists(self.working_path):
+                self.logger.warning(f"工作路径不存在: {self.working_path}，进度设为 0")
+                return snapshot
+
+            latest_folder = self._get_latest_modified_folder(self.working_path)
+            if not latest_folder:
+                self.logger.warning("未找到可用的子文件夹，进度设为 0")
+                return snapshot
+
+            progress = self._check_progress(latest_folder)
+            folder_name = os.path.basename(latest_folder)
+            normalized_path = self._normalize_task_path(latest_folder)
+            self.logger.debug(f"当前最新文件夹: {latest_folder}，进度: {progress}%")
+            snapshot.update(
+                {
+                    "task_progress": progress,
+                    "latest_folder_name": folder_name,
+                    "task_key": normalized_path or folder_name,
+                }
+            )
+            return snapshot
+        except PermissionError:
+            self.logger.error(f"无权限访问工作路径: {self.working_path}")
+            return snapshot
+        except Exception as e:
+            self.logger.error(f"读取工作路径失败: {e}，进度设为 0")
+            return snapshot
+
     def check_path_accessible(self) -> bool:
         """检查工作路径是否可访问
 
@@ -889,6 +933,9 @@ class OlympusProgressReader(ProgressReader):
 
     def get_task_key(self) -> Optional[str]:
         self._refresh_state()
+        return self._get_task_key_from_current_state()
+
+    def _get_task_key_from_current_state(self) -> Optional[str]:
         if self._task_started and self._active_task_key:
             return self._active_task_key
 
@@ -910,7 +957,7 @@ class OlympusProgressReader(ProgressReader):
             folder_name = os.path.basename(self._current_output_path)
             if folder_name:
                 return folder_name
-        return self.get_latest_folder_name()
+        return None
 
     def resolve_output_folder(self, folder_param: Optional[str]) -> Optional[str]:
         self._refresh_state()
@@ -1000,7 +1047,9 @@ class OlympusProgressReader(ProgressReader):
 
     def get_extra_metrics(self) -> Dict[str, Any]:
         self._refresh_state()
+        return self._build_extra_metrics()
 
+    def _build_extra_metrics(self) -> Dict[str, Any]:
         # 图像进度（基于当前帧位置估算）
         image_progress = self._calculate_image_progress()
 
@@ -1027,7 +1076,7 @@ class OlympusProgressReader(ProgressReader):
 
         olympus = {
             "state": self._current_state,
-            "active": self.is_task_active(),
+            "active": self._is_task_active_from_current_state(),
             "output_path": self._current_output_path,
             "output_path_candidates": self._output_path_candidates,
             "current_file": self._current_file_name,
@@ -1062,6 +1111,9 @@ class OlympusProgressReader(ProgressReader):
 
     def is_task_active(self) -> bool:
         self._refresh_state()
+        return self._is_task_active_from_current_state()
+
+    def _is_task_active_from_current_state(self) -> bool:
         if self._task_finished:
             return False
         if self._acquisition_active:
@@ -1074,3 +1126,18 @@ class OlympusProgressReader(ProgressReader):
             if self._has_frames or self._has_exports or self._groups_started:
                 return True
         return False
+
+    def get_status_snapshot(self) -> Dict[str, Any]:
+        """Collect all status fields with a single log refresh."""
+        self._refresh_state()
+        output_path = self._current_output_path
+        folder_name = os.path.basename(output_path) if output_path else None
+        return {
+            "task_progress": self._calculate_overall_progress(),
+            "latest_folder_name": folder_name,
+            "task_key": self._get_task_key_from_current_state(),
+            "client_base_url": self.get_client_base_url(),
+            "extra_metrics": self._build_extra_metrics(),
+            "device_state": self._current_state,
+            "task_active": self._is_task_active_from_current_state(),
+        }

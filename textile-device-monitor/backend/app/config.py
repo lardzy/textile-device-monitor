@@ -27,7 +27,8 @@ except ImportError:
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://admin:password123@postgres:5432/textile_monitor"
     SECRET_KEY: str = "your-secret-key-change-in-production"
-    HEARTBEAT_TIMEOUT: int = 30
+    HEARTBEAT_TIMEOUT: int = 90
+    HEARTBEAT_CHECK_INTERVAL: int = 10
     DATA_RETENTION_DAYS: int = 30
     QUEUE_IDLE_REMIND_SECONDS: int = 60
     QUEUE_IDLE_TIMEOUT_SECONDS: int = 300
