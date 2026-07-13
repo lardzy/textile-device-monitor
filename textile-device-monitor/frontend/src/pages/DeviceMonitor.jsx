@@ -298,6 +298,7 @@ function DeviceMonitor() {
   const [inspectorName, setInspectorName] = useState(getInspectorName());
   const [tableModal, setTableModal] = useState({ open: false, folder: null });
   const [imagesModal, setImagesModal] = useState({ open: false, folder: null });
+  const [imagesLayoutVersion, setImagesLayoutVersion] = useState(0);
   const [claimModal, setClaimModal] = useState({
     open: false,
     record: null,
@@ -1537,6 +1538,11 @@ function DeviceMonitor() {
                         title="结果图片"
                         open={imagesModal.open}
                         onCancel={() => setImagesModal({ open: false, folder: null })}
+                        afterOpenChange={(open) => {
+                          if (open) {
+                            setImagesLayoutVersion(version => version + 1);
+                          }
+                        }}
                         footer={null}
                         width="90vw"
                         style={{ top: 20 }}
@@ -1548,6 +1554,7 @@ function DeviceMonitor() {
                             deviceId={selectedDeviceId}
                             folder={imagesModal.folder}
                             embedded
+                            layoutVersion={imagesLayoutVersion}
                           />
                         )}
                       </Modal>

@@ -237,7 +237,7 @@ class ConfigWindow(QDialog):
         config = None
 
         if not existing_app:
-            app = QApplication(sys.argv)
+            app = QApplication([sys.argv[0]])
 
         dialog = ConfigWindow(current_config, preset_devices)
         result = dialog.exec()

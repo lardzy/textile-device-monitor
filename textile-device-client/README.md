@@ -35,48 +35,56 @@ python main.py
 
 ### 打包部署
 
-打包环境除运行时依赖外，还需要安装 PyInstaller：
+打包机必须使用 64 位 CPython 3.12，并安装锁定的 Windows 构建依赖：
 
 ```bash
-pip install -r requirements.txt pyinstaller
+python -m pip install -r requirements-build.lock.txt
 ```
 
-1. **同步安装器版本**
-```bash
-python scripts/build_windows_installer.py --sync-only
-```
-
-2. **打包静默版程序**
-```bash
-python scripts/build_windows_onedir.py
-```
-
-产物目录：
+安装 Inno Setup 6 后，使用统一发布命令完成干净的 PyInstaller 构建、构建清单校验和安装器生成：
 
 ```bash
-dist/windows/TextileDeviceClient
-```
-
-3. **生成安装包（Windows + Inno Setup）**
-```bash
-python scripts/build_windows_installer.py
-```
-
-安装包输出目录：
-
-```bash
-dist/installer
+python scripts/build_windows_release.py
 ```
 
 如需指定 Inno Setup 编译器路径：
 
 ```bash
-python scripts/build_windows_installer.py --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+python scripts/build_windows_release.py --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+```
+
+正式产物包括：
+
+```bash
+dist/windows/TextileDeviceClient
+dist/windows/TextileDeviceClient/build-manifest.json
+dist/windows/TextileDeviceClient/textile-device-client.exe.sha256
+dist/installer/textile-device-client-setup-<version>.exe
+dist/installer/textile-device-client-setup-<version>.exe.sha256
+```
+
+安装器会拒绝版本不一致、源码已变化、哈希不匹配、控制台模式或 bootloader 调试模式的 onedir 目录。PyInstaller 子进程使用隔离的 DLL 搜索路径，避免 Conda 或其它 Python 环境中的 DLL 混入产物。找不到 Inno Setup 编译器时命令会返回失败，不会把已有安装包误报为新产物。
+
+拥有 Authenticode 代码签名证书时，可签名客户端和安装器：
+
+```bash
+set TDC_SIGN_CERT_THUMBPRINT=<证书 SHA-1 指纹>
+python scripts/build_windows_release.py --sign
+```
+
+可通过 `SIGNTOOL_EXE` 指定 `signtool.exe`；也可使用 `--signtool`、`--certificate-thumbprint` 和 `--timestamp-url` 参数。
+
+以下命令仅用于分步排查，不是正式发布入口：
+
+```bash
+python scripts/build_windows_installer.py --sync-only
+python scripts/build_windows_onedir.py
+python scripts/build_windows_installer.py
 ```
 
 ### 调试打包
 
-正式安装包只包含无控制台的静默版。排查启动问题时，可以临时生成控制台版：
+排查启动问题时，可以临时生成控制台版。该目录会被正式安装器明确拒绝，重新执行统一发布命令后才能生成安装包：
 
 ```bash
 python scripts/build_windows_onedir.py --console
@@ -145,6 +153,7 @@ textile-device-client/
 ├── main.py                    # 主程序入口
 ├── build.py                   # 兼容入口，转发到 scripts/build_windows_onedir.py
 ├── requirements.txt           # Python 依赖
+├── requirements-build.lock.txt # Windows 打包环境锁定依赖
 ├── modules/
 │   ├── __init__.py
 │   ├── version.py             # 应用版本号
@@ -161,7 +170,8 @@ textile-device-client/
 ├── scripts/
 │   ├── build_support.py       # 版本同步和打包辅助逻辑
 │   ├── build_windows_onedir.py # PyInstaller onedir 构建入口
-│   └── build_windows_installer.py # Inno Setup 安装包构建入口
+│   ├── build_windows_installer.py # Inno Setup 安装包构建入口
+│   └── build_windows_release.py # 正式发布统一入口
 ├── packaging/
 │   ├── pyinstaller/
 │   │   └── textile_device_client.spec

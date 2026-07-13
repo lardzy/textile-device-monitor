@@ -36,12 +36,15 @@ class Config:
             try:
                 with open(config_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
-                return {**DEFAULT_CONFIG, **config}
+                loaded_config = {**DEFAULT_CONFIG, **config}
             except Exception as e:
                 print(f"加载配置文件失败: {e}，使用默认配置")
-                return DEFAULT_CONFIG.copy()
+                loaded_config = DEFAULT_CONFIG.copy()
         else:
-            return DEFAULT_CONFIG.copy()
+            loaded_config = DEFAULT_CONFIG.copy()
+
+        self.config = loaded_config
+        return loaded_config.copy()
 
     def save(self) -> bool:
         """保存配置文件"""

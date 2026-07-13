@@ -13,6 +13,10 @@
   #error "PyInstaller output not found. Build dist/windows/TextileDeviceClient first."
 #endif
 
+#ifnexist MyAppSourceDir + "\build-manifest.json"
+  #error "Release build manifest not found. Use scripts/build_windows_release.py."
+#endif
+
 #ifnexist MyAppIconFile
   #error "Application icon not found. Expected resources/icon.ico."
 #endif
@@ -42,6 +46,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}";
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\{#MyAppExeName}"
+Type: files; Name: "{app}\build-manifest.json"
+Type: files; Name: "{app}\{#MyAppExeName}.sha256"
 
 [Files]
 Source: "{#MyAppSourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

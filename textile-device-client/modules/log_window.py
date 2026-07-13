@@ -100,11 +100,11 @@ class LogWindow(QDialog):
         """切换自动刷新"""
         if self.timer.isActive():
             self.timer.stop()
-            self.auto_refresh_label = "自动刷新: 关"
+            self.auto_refresh_checkbox.setText("自动刷新: 关")
             self.auto_refresh_button.setText("开始刷新")
         else:
             self.timer.start(2000)
-            self.auto_refresh_label = "自动刷新: 开"
+            self.auto_refresh_checkbox.setText("自动刷新: 开")
             self.auto_refresh_button.setText("停止刷新")
 
     def _clear_logs(self):
@@ -128,7 +128,7 @@ class LogWindow(QDialog):
         existing_app = QApplication.instance()
 
         if not existing_app:
-            app = QApplication(sys.argv)
+            app = QApplication([sys.argv[0]])
 
         dialog = LogWindow(get_logs_callback)
         dialog.exec()

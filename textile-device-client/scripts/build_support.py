@@ -1,10 +1,32 @@
 from __future__ import annotations
 
+import hashlib
+from importlib import metadata
+import json
+import os
 from pathlib import Path
+import platform
 import re
+import shutil
+import struct
+import subprocess
+import sys
+from typing import Any
 
+
+APP_DISPLAY_NAME = "Textile Device Client"
+APP_PUBLISHER = "Textile Device Monitor"
+EXECUTABLE_NAME = "textile-device-client.exe"
+BUILD_MANIFEST_NAME = "build-manifest.json"
+BUILD_LOCK_NAME = "requirements-build.lock.txt"
+BUILD_MANIFEST_SCHEMA = 1
+SUPPORTED_PYTHON = (3, 12)
+DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com"
 
 _VERSION_PATTERN = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
+_PINNED_REQUIREMENT_PATTERN = re.compile(
+    r"^([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)$"
+)
 
 BASE_HIDDEN_IMPORTS = (
     "PyQt6",
@@ -17,6 +39,33 @@ BASE_HIDDEN_IMPORTS = (
     "openpyxl",
     "formulas",
 )
+
+FORMULAS_EXCLUDED_PREFIXES = (
+    "formulas.app",
+    "formulas.cli",
+    "formulas.excel.ods_reader",
+)
+
+_REQUIRED_BUILD_INPUTS = (
+    Path("main.py"),
+    Path("requirements.txt"),
+    Path(BUILD_LOCK_NAME),
+    Path("modules/version.py"),
+    Path("resources/icon.ico"),
+    Path("packaging/pyinstaller/textile_device_client.spec"),
+    Path("scripts/build_support.py"),
+    Path("scripts/build_windows_onedir.py"),
+)
+
+_BUILD_INPUT_TREES = (
+    Path("modules"),
+    Path("resources"),
+    Path("packaging/pyinstaller"),
+)
+
+
+class BuildValidationError(RuntimeError):
+    pass
 
 
 def read_app_version(project_root: Path) -> str:
@@ -42,13 +91,412 @@ def write_installer_version_include(project_root: Path) -> Path:
     return output
 
 
+def _windows_version_tuple(version: str) -> tuple[int, int, int, int]:
+    parts = version.split(".")
+    if not 1 <= len(parts) <= 4 or any(not part.isdigit() for part in parts):
+        raise BuildValidationError(
+            f"App version must contain 1-4 numeric components: {version!r}"
+        )
+    values = [int(part) for part in parts]
+    if any(value > 65535 for value in values):
+        raise BuildValidationError(
+            f"App version components must be <= 65535: {version!r}"
+        )
+    return tuple((values + [0, 0, 0, 0])[:4])
+
+
+def write_pyinstaller_version_file(project_root: Path, output: Path) -> Path:
+    version = read_app_version(project_root)
+    version_tuple = _windows_version_tuple(version)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={version_tuple},
+    prodvers={version_tuple},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', '{APP_PUBLISHER}'),
+          StringStruct('FileDescription', '{APP_DISPLAY_NAME}'),
+          StringStruct('FileVersion', '{version}'),
+          StringStruct('InternalName', '{EXECUTABLE_NAME}'),
+          StringStruct('OriginalFilename', '{EXECUTABLE_NAME}'),
+          StringStruct('ProductName', '{APP_DISPLAY_NAME}'),
+          StringStruct('ProductVersion', '{version}')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+""",
+        encoding="utf-8",
+    )
+    return output
+
+
+def _include_formulas_submodule(module_name: str) -> bool:
+    return not any(
+        module_name == prefix or module_name.startswith(f"{prefix}.")
+        for prefix in FORMULAS_EXCLUDED_PREFIXES
+    )
+
+
 def collect_hidden_imports() -> list[str]:
+    from PyInstaller.utils.hooks import collect_submodules
+
     imports = list(BASE_HIDDEN_IMPORTS)
+    imports.extend(
+        collect_submodules("formulas", filter=_include_formulas_submodule)
+    )
+    return list(dict.fromkeys(imports))
+
+
+def _canonicalize_distribution_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def read_build_lock(project_root: Path) -> dict[str, tuple[str, str]]:
+    lock_path = project_root / BUILD_LOCK_NAME
+    if not lock_path.exists():
+        raise BuildValidationError(f"Build dependency lock not found: {lock_path}")
+
+    locked: dict[str, tuple[str, str]] = {}
+    for line_number, raw_line in enumerate(
+        lock_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _PINNED_REQUIREMENT_PATTERN.fullmatch(line)
+        if match is None:
+            raise BuildValidationError(
+                f"Every build dependency must be exactly pinned; "
+                f"{lock_path}:{line_number}: {line!r}"
+            )
+        distribution_name, expected_version = match.groups()
+        canonical_name = _canonicalize_distribution_name(distribution_name)
+        if canonical_name in locked:
+            raise BuildValidationError(
+                f"Duplicate dependency in {lock_path}: {distribution_name}"
+            )
+        locked[canonical_name] = (distribution_name, expected_version)
+    if not locked:
+        raise BuildValidationError(f"Build dependency lock is empty: {lock_path}")
+    return locked
+
+
+def validate_build_environment(project_root: Path) -> list[str]:
+    errors: list[str] = []
+    if sys.platform != "win32":
+        errors.append(f"Windows is required, current platform is {sys.platform!r}")
+    if sys.version_info[:2] != SUPPORTED_PYTHON:
+        errors.append(
+            "CPython "
+            f"{SUPPORTED_PYTHON[0]}.{SUPPORTED_PYTHON[1]} is required, "
+            f"current version is {platform.python_version()}"
+        )
+    if struct.calcsize("P") * 8 != 64:
+        errors.append("A 64-bit Python interpreter is required")
 
     try:
-        from PyInstaller.utils.hooks import collect_submodules
-        imports.extend(collect_submodules("formulas"))
-    except Exception:
-        return imports
+        locked = read_build_lock(project_root)
+    except BuildValidationError as exc:
+        errors.append(str(exc))
+        return errors
 
-    return list(dict.fromkeys(imports))
+    for distribution_name, expected_version in locked.values():
+        try:
+            actual_version = metadata.version(distribution_name)
+        except metadata.PackageNotFoundError:
+            errors.append(f"Missing build dependency: {distribution_name}=={expected_version}")
+            continue
+        if actual_version != expected_version:
+            errors.append(
+                f"Build dependency mismatch: {distribution_name} "
+                f"is {actual_version}, expected {expected_version}"
+            )
+    return errors
+
+
+def ensure_build_environment(project_root: Path) -> None:
+    errors = validate_build_environment(project_root)
+    if errors:
+        details = "\n".join(f"  - {error}" for error in errors)
+        raise BuildValidationError(
+            "Build environment validation failed:\n"
+            f"{details}\n"
+            f"Install the locked environment with: "
+            f"python -m pip install -r {BUILD_LOCK_NAME}"
+        )
+
+
+def create_isolated_build_environment() -> dict[str, str]:
+    """Create a deterministic DLL search path for the PyInstaller child."""
+    environment = os.environ.copy()
+    windows_directory = Path(environment.get("WINDIR", r"C:\Windows"))
+    path_candidates = (
+        Path(sys.executable).parent,
+        Path(sys.prefix),
+        Path(sys.base_prefix),
+        Path(sys.base_prefix) / "DLLs",
+        windows_directory / "System32",
+        windows_directory,
+    )
+    unique_paths: list[str] = []
+    seen_paths: set[str] = set()
+    for path in path_candidates:
+        normalized = os.path.normcase(os.path.abspath(path))
+        if normalized in seen_paths:
+            continue
+        seen_paths.add(normalized)
+        unique_paths.append(str(path))
+
+    environment["PATH"] = os.pathsep.join(unique_paths)
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment.pop("PYTHONPATH", None)
+    return environment
+
+
+def collect_build_input_files(project_root: Path) -> list[Path]:
+    missing = [
+        project_root / relative_path
+        for relative_path in _REQUIRED_BUILD_INPUTS
+        if not (project_root / relative_path).is_file()
+    ]
+    if missing:
+        formatted = "\n".join(f"  - {path}" for path in missing)
+        raise BuildValidationError(f"Required build inputs are missing:\n{formatted}")
+
+    files = {project_root / path for path in _REQUIRED_BUILD_INPUTS}
+    for relative_tree in _BUILD_INPUT_TREES:
+        tree = project_root / relative_tree
+        if not tree.is_dir():
+            continue
+        for path in tree.rglob("*"):
+            if not path.is_file():
+                continue
+            if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
+                continue
+            files.add(path)
+    return sorted(files, key=lambda path: path.relative_to(project_root).as_posix())
+
+
+def calculate_source_fingerprint(project_root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in collect_build_input_files(project_root):
+        relative_path = path.relative_to(project_root).as_posix()
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_sha256_file(path: Path, output: Path | None = None) -> Path:
+    output_path = output or path.with_name(f"{path.name}.sha256")
+    output_path.write_text(
+        f"{sha256_file(path)}  {path.name}\n",
+        encoding="ascii",
+    )
+    return output_path
+
+
+def create_build_manifest(
+    project_root: Path,
+    app_dir: Path,
+    *,
+    console: bool,
+    bootloader_debug: bool,
+    signed: bool,
+) -> dict[str, Any]:
+    executable = app_dir / EXECUTABLE_NAME
+    if not executable.is_file():
+        raise BuildValidationError(f"Built executable not found: {executable}")
+    return {
+        "schema": BUILD_MANIFEST_SCHEMA,
+        "app_name": APP_DISPLAY_NAME,
+        "app_version": read_app_version(project_root),
+        "build_mode": "console" if console else "release",
+        "bootloader_debug": bool(bootloader_debug),
+        "signed": bool(signed),
+        "executable_name": EXECUTABLE_NAME,
+        "executable_sha256": sha256_file(executable),
+        "source_sha256": calculate_source_fingerprint(project_root),
+        "python_version": platform.python_version(),
+        "python_architecture": f"{struct.calcsize('P') * 8}-bit",
+        "pyinstaller_version": metadata.version("PyInstaller"),
+    }
+
+
+def write_build_manifest(
+    project_root: Path,
+    app_dir: Path,
+    *,
+    console: bool,
+    bootloader_debug: bool,
+    signed: bool,
+) -> Path:
+    manifest = create_build_manifest(
+        project_root,
+        app_dir,
+        console=console,
+        bootloader_debug=bootloader_debug,
+        signed=signed,
+    )
+    output = app_dir / BUILD_MANIFEST_NAME
+    output.write_text(
+        json.dumps(manifest, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return output
+
+
+def validate_release_build(
+    project_root: Path,
+    app_dir: Path,
+    *,
+    require_signed: bool = False,
+) -> dict[str, Any]:
+    manifest_path = app_dir / BUILD_MANIFEST_NAME
+    if not manifest_path.is_file():
+        raise BuildValidationError(
+            f"Build manifest not found: {manifest_path}. Rebuild the onedir package."
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BuildValidationError(f"Invalid build manifest: {manifest_path}: {exc}") from exc
+
+    errors: list[str] = []
+    expected_version = read_app_version(project_root)
+    expected_source_hash = calculate_source_fingerprint(project_root)
+    executable = app_dir / EXECUTABLE_NAME
+
+    if manifest.get("schema") != BUILD_MANIFEST_SCHEMA:
+        errors.append("unsupported build manifest schema")
+    if manifest.get("app_version") != expected_version:
+        errors.append(
+            f"binary version is {manifest.get('app_version')!r}, "
+            f"source version is {expected_version!r}"
+        )
+    if manifest.get("source_sha256") != expected_source_hash:
+        errors.append("source files changed after the onedir package was built")
+    if manifest.get("build_mode") != "release":
+        errors.append(f"build mode is {manifest.get('build_mode')!r}, expected 'release'")
+    if manifest.get("bootloader_debug") is not False:
+        errors.append("bootloader debug is enabled")
+    if require_signed and manifest.get("signed") is not True:
+        errors.append("the onedir executable is not signed")
+    if not executable.is_file():
+        errors.append(f"executable not found: {executable}")
+    elif manifest.get("executable_sha256") != sha256_file(executable):
+        errors.append("executable hash does not match the build manifest")
+
+    if errors:
+        details = "\n".join(f"  - {error}" for error in errors)
+        raise BuildValidationError(
+            "PyInstaller output is not a valid release build:\n"
+            f"{details}\n"
+            "Run scripts/build_windows_release.py or rebuild the release onedir package."
+        )
+    return manifest
+
+
+def find_signtool(explicit_path: str | None = None) -> str | None:
+    configured_path = explicit_path or os.environ.get("SIGNTOOL_EXE", "").strip()
+    if configured_path:
+        candidate = Path(configured_path).expanduser()
+        if candidate.is_file():
+            return str(candidate)
+        return None
+
+    resolved = shutil.which("signtool.exe") or shutil.which("signtool")
+    if resolved:
+        return resolved
+
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", "").strip()
+    if not program_files_x86:
+        return None
+    kits_bin = Path(program_files_x86) / "Windows Kits" / "10" / "bin"
+    if not kits_bin.is_dir():
+        return None
+    candidates = sorted(
+        kits_bin.glob("*/x64/signtool.exe"),
+        key=lambda path: path.parent.parent.name,
+        reverse=True,
+    )
+    return str(candidates[0]) if candidates else None
+
+
+def sign_windows_file(
+    path: Path,
+    *,
+    signtool_path: str | None = None,
+    certificate_thumbprint: str | None = None,
+    timestamp_url: str = DEFAULT_TIMESTAMP_URL,
+) -> None:
+    resolved_signtool = find_signtool(signtool_path)
+    if not resolved_signtool:
+        raise BuildValidationError(
+            "signtool.exe was not found. Set SIGNTOOL_EXE or pass --signtool."
+        )
+    thumbprint = (
+        certificate_thumbprint
+        or os.environ.get("TDC_SIGN_CERT_THUMBPRINT", "")
+    ).replace(" ", "").strip()
+    if not thumbprint:
+        raise BuildValidationError(
+            "A signing certificate thumbprint is required. Set "
+            "TDC_SIGN_CERT_THUMBPRINT or pass --certificate-thumbprint."
+        )
+    if not path.is_file():
+        raise BuildValidationError(f"File to sign not found: {path}")
+
+    command = [
+        resolved_signtool,
+        "sign",
+        "/sha1",
+        thumbprint,
+        "/fd",
+        "SHA256",
+    ]
+    if timestamp_url:
+        command.extend(["/tr", timestamp_url, "/td", "SHA256"])
+    command.append(str(path))
+    subprocess.run(command, check=True)
+    verify_windows_signature(path, signtool_path=resolved_signtool)
+
+
+def verify_windows_signature(
+    path: Path,
+    *,
+    signtool_path: str | None = None,
+) -> None:
+    resolved_signtool = find_signtool(signtool_path)
+    if not resolved_signtool:
+        raise BuildValidationError(
+            "signtool.exe was not found. Set SIGNTOOL_EXE or pass --signtool."
+        )
+    if not path.is_file():
+        raise BuildValidationError(f"Signed file not found: {path}")
+    subprocess.run([resolved_signtool, "verify", "/pa", str(path)], check=True)

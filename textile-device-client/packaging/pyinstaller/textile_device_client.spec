@@ -17,6 +17,13 @@ entry_script = project_root / "main.py"
 app_icon = project_root / "resources" / "icon.ico"
 console_mode = os.environ.get("TDC_PYINSTALLER_CONSOLE", "0") == "1"
 bootloader_debug = os.environ.get("TDC_PYINSTALLER_BOOTLOADER_DEBUG", "0") == "1"
+version_file = Path(os.environ.get("TDC_PYINSTALLER_VERSION_FILE", ""))
+
+if not version_file.is_file():
+    raise RuntimeError(
+        "PyInstaller version resource not found. "
+        "Run the build through scripts/build_windows_onedir.py."
+    )
 
 
 a = Analysis(
@@ -48,6 +55,7 @@ exe = EXE(
     runtime_tmpdir=None,
     console=console_mode,
     icon=str(app_icon),
+    version=str(version_file),
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
