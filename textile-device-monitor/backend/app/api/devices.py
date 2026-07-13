@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
+from datetime import datetime, timezone
+import asyncio
 from app.database import get_db
 from app.schemas import (
     Device,
@@ -17,6 +19,13 @@ from app.websocket.manager import websocket_manager
 from app.models import DeviceStatus as ModelDeviceStatus
 
 router = APIRouter(prefix="/devices", tags=["devices"])
+
+
+def schedule_websocket_broadcast(message: dict) -> None:
+    """Schedule fire-and-forget WebSocket work without delaying API responses."""
+    if not websocket_manager.active_connections:
+        return
+    asyncio.create_task(websocket_manager.broadcast(message))
 
 
 @router.get("", response_model=List[Device])
@@ -117,9 +126,21 @@ async def report_device_status(
         )
 
     from app.crud import history as history_crud
+    from app.crud import device_tracking as tracking_crud
     from app.crud import queue as queue_crud
+    from app.services.device_tracking import (
+        EVENT_STATUS,
+        EVENT_TASK_COMPLETE,
+        EVENT_TASK_START,
+        advance_task_state,
+        resolve_tracking_task_key,
+    )
 
-    previous_progress = device.task_progress
+    previous_status = (
+        device.status.value if hasattr(device.status, "value") else str(device.status)
+    )
+    observed_at = datetime.now(timezone.utc)
+    device_id = int(device.id)  # type: ignore[arg-type]
 
     device_crud.update_device_heartbeat(db, device)
     device_crud.update_device_status(
@@ -133,23 +154,64 @@ async def report_device_status(
         status_report.client_base_url,
     )
 
-    completed_record = None
-    device_id = int(device.id)  # type: ignore[arg-type]
-    should_complete = (
-        status_report.task_progress is not None
-        and status_report.task_progress == 100
-        and previous_progress != 100
+    current_status = (
+        device.status.value if hasattr(device.status, "value") else str(device.status)
     )
-    if should_complete and status_report.task_id:
-        latest = history_crud.get_latest_status(db, device_id)
-        if (
-            latest
-            and latest.task_id == status_report.task_id
-            and latest.task_progress == 100
-        ):
-            should_complete = False
+    is_laser_confocal = (
+        isinstance(status_report.metrics, dict)
+        and status_report.metrics.get("device_type") == "laser_confocal"
+    )
+    normalized_task_key = resolve_tracking_task_key(
+        status_report.task_key,
+        status_report.task_name,
+    )
+    task_state = tracking_crud.get_or_create_task_state(db, device_id)
+    state_snapshot = tracking_crud.snapshot_task_state(task_state)
+    decision = advance_task_state(
+        state_snapshot,
+        status=current_status,
+        task_key=normalized_task_key,
+        task_name=status_report.task_name,
+        task_progress=status_report.task_progress,
+        is_laser_confocal=is_laser_confocal,
+    )
 
-    if should_complete:  # type: ignore[truthy-bool]
+    if previous_status != current_status:
+        tracking_crud.create_state_event(
+            db,
+            device_id=device_id,
+            event_type=EVENT_STATUS,
+            status=current_status,
+            task_key=decision.next_state.task_key,
+            task_name=status_report.task_name,
+            task_progress=status_report.task_progress,
+            occurred_at=observed_at,
+        )
+
+    if decision.emit_task_start:
+        tracking_crud.create_state_event(
+            db,
+            device_id=device_id,
+            event_type=EVENT_TASK_START,
+            status=current_status,
+            task_key=decision.next_state.task_key,
+            task_name=decision.next_state.task_name,
+            task_progress=status_report.task_progress,
+            occurred_at=observed_at,
+        )
+
+    completed_record = None
+    if decision.allow_completion:
+        tracking_crud.create_state_event(
+            db,
+            device_id=device_id,
+            event_type=EVENT_TASK_COMPLETE,
+            status=current_status,
+            task_key=decision.next_state.task_key,
+            task_name=decision.next_state.task_name,
+            task_progress=status_report.task_progress,
+            occurred_at=observed_at,
+        )
         task_duration_seconds = (
             int(device.task_elapsed_seconds)  # type: ignore[arg-type]
             if device.task_elapsed_seconds is not None
@@ -158,7 +220,7 @@ async def report_device_status(
         history_crud.create_status_history(
             db,
             device_id,
-            status_report.status,
+            current_status,
             status_report.task_id,
             status_report.task_name,
             status_report.task_progress,
@@ -167,10 +229,19 @@ async def report_device_status(
         )
         completed_record = queue_crud.complete_first_in_queue(db, device_id)
 
+    tracking_crud.save_task_state(db, task_state, decision.next_state)
+
+    placeholder_record = None
+    if (
+        previous_status == ModelDeviceStatus.IDLE.value
+        and current_status == ModelDeviceStatus.BUSY.value
+    ):
+        placeholder_record = queue_crud.create_placeholder_if_missing(db, device_id)
+
     queue_count = queue_crud.get_queue_count(db, device_id)
 
     if completed_record:
-        await websocket_manager.broadcast(
+        schedule_websocket_broadcast(
             {
                 "type": "queue_update",
                 "data": {
@@ -185,14 +256,29 @@ async def report_device_status(
             }
         )
 
-    await websocket_manager.broadcast(
+    if placeholder_record:
+        schedule_websocket_broadcast(
+            {
+                "type": "queue_update",
+                "data": {
+                    "device_id": device.id,
+                    "action": "placeholder_create",
+                    "queue_id": placeholder_record.id,
+                    "queue_count": queue_count,
+                    "inspector_name": placeholder_record.inspector_name,
+                    "device_name": device.name,
+                },
+            }
+        )
+
+    schedule_websocket_broadcast(
         {
             "type": "device_status_update",
             "data": {
                 "device_id": device.id,
                 "device_code": device.device_code,
                 "device_name": device.name,
-                "status": status_report.status,
+                "status": current_status,
                 "task_id": status_report.task_id,
                 "task_name": status_report.task_name,
                 "task_progress": status_report.task_progress,

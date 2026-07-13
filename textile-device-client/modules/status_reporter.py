@@ -35,6 +35,7 @@ class StatusReporter:
         self.is_running = False
         self.thread: Optional[threading.Thread] = None
         self._last_progress: Optional[int] = None
+        self._consecutive_failures = 0
 
     def set_manual_status(self, status: Optional[str]):
         """设置手动状态
@@ -78,28 +79,19 @@ class StatusReporter:
 
     def _report(self):
         """执行单次上报"""
-        device_status = self._determine_status()
-        latest_folder_name = self.progress_reader.get_latest_folder_name()
+        report_started_at = time.monotonic()
+        progress_snapshot, progress_elapsed = self._collect_progress_snapshot()
+        device_status = self._determine_status(progress_snapshot)
+        latest_folder_name = progress_snapshot.get("latest_folder_name")
+        task_key = progress_snapshot.get("task_key")
         task_id = self._generate_task_id(latest_folder_name)
         task_name = latest_folder_name or "AI显微镜检测"
-        task_progress = self._get_task_progress()
+        task_progress = progress_snapshot.get("task_progress")
         metrics = self.metrics_collector.collect_metrics()
-        extra_metrics: Dict[str, Any] = {}
-        if self.progress_reader:
-            progress_reader = cast(Any, self.progress_reader)
-            metrics_getter = getattr(progress_reader, "get_extra_metrics", None)
-            if callable(metrics_getter):
-                try:
-                    result = metrics_getter() or {}
-                    if isinstance(result, dict):
-                        extra_metrics = result
-                except Exception as exc:
-                    self.logger.error(f"获取扩展指标失败: {exc}")
+        extra_metrics = progress_snapshot.get("extra_metrics") or {}
         if extra_metrics:
             metrics = {**metrics, **extra_metrics}
-        client_base_url = (
-            self.progress_reader.get_client_base_url() if self.progress_reader else None
-        )
+        client_base_url = progress_snapshot.get("client_base_url")
 
         if (
             task_progress is not None
@@ -116,13 +108,24 @@ class StatusReporter:
             device_code=self.device_code,
             status=device_status,
             task_id=task_id,
+            task_key=task_key,
             task_name=task_name,
             task_progress=task_progress,
             metrics=metrics,
             client_base_url=client_base_url,
         )
+        total_elapsed = time.monotonic() - report_started_at
+        request_info = getattr(self.api_client, "last_request_info", {}) or {}
+        http_elapsed = float(request_info.get("elapsed_seconds") or 0)
+        attempts = int(request_info.get("attempts") or 0)
 
         if response:
+            if self._consecutive_failures:
+                self.logger.warning(
+                    f"状态上报已恢复 - 连续失败: {self._consecutive_failures}, "
+                    f"本次耗时: {total_elapsed:.2f}s"
+                )
+            self._consecutive_failures = 0
             queue_count = response.data.get("queue_count", 0) if response.data else 0
             self.logger.info(
                 f"上报成功 - 状态: {device_status}, "
@@ -130,9 +133,60 @@ class StatusReporter:
                 f"CPU: {metrics['cpu']}%, Memory: {metrics['memory']}%"
             )
         else:
+            self._consecutive_failures += 1
             self.logger.error("上报失败")
 
-    def _determine_status(self) -> str:
+        if total_elapsed >= 10 or not response:
+            self.logger.warning(
+                f"状态上报诊断 - 成功: {bool(response)}, "
+                f"总耗时: {total_elapsed:.2f}s, "
+                f"进度耗时: {progress_elapsed:.2f}s, "
+                f"HTTP耗时: {http_elapsed:.2f}s, "
+                f"HTTP尝试: {attempts}, "
+                f"连续失败: {self._consecutive_failures}"
+            )
+
+    def _collect_progress_snapshot(self) -> tuple[Dict[str, Any], float]:
+        started_at = time.monotonic()
+        default_snapshot: Dict[str, Any] = {
+            "task_progress": None,
+            "latest_folder_name": None,
+            "task_key": None,
+            "client_base_url": None,
+            "extra_metrics": {},
+            "device_state": None,
+            "task_active": False,
+        }
+        if not self.progress_reader:
+            return default_snapshot, time.monotonic() - started_at
+
+        progress_reader = cast(Any, self.progress_reader)
+        snapshot_getter = getattr(progress_reader, "get_status_snapshot", None)
+        if callable(snapshot_getter):
+            try:
+                snapshot = snapshot_getter() or {}
+                if isinstance(snapshot, dict):
+                    merged = {**default_snapshot, **snapshot}
+                    return merged, time.monotonic() - started_at
+            except Exception as exc:
+                self.logger.error(f"获取状态快照失败: {exc}")
+
+        try:
+            default_snapshot.update(
+                {
+                    "task_progress": self.progress_reader.read_progress(),
+                    "latest_folder_name": self.progress_reader.get_latest_folder_name(),
+                    "task_key": self._get_task_key(),
+                    "client_base_url": self.progress_reader.get_client_base_url(),
+                }
+            )
+        except Exception as exc:
+            self.logger.error(f"获取状态快照失败: {exc}")
+        return default_snapshot, time.monotonic() - started_at
+
+    def _determine_status(
+        self, progress_snapshot: Optional[Dict[str, Any]] = None
+    ) -> str:
         """确定设备状态
 
         Returns:
@@ -141,18 +195,14 @@ class StatusReporter:
         if self.manual_status:
             return self.manual_status
 
+        progress_snapshot = progress_snapshot or {}
         if self.progress_reader and getattr(
             self.progress_reader, "is_laser_confocal", False
         ):
-            state_getter = getattr(self.progress_reader, "get_device_state", None)
-            active_getter = getattr(self.progress_reader, "is_task_active", None)
-            state = None
-            is_active = False
-            if callable(state_getter):
-                state = state_getter()
-            if callable(active_getter):
-                is_active = bool(active_getter())
-            progress = self.progress_reader.read_progress()
+            state = progress_snapshot.get("device_state")
+            is_active = bool(progress_snapshot.get("task_active"))
+            progress = progress_snapshot.get("task_progress")
+            progress = int(progress) if progress is not None else 0
             if state in (
                 "StateRepeatRunning",
                 "StateRepeatStarting",
@@ -165,7 +215,8 @@ class StatusReporter:
                 if progress < 100:
                     return "busy"
                 return "idle"
-        progress = self.progress_reader.read_progress()
+        progress = progress_snapshot.get("task_progress")
+        progress = int(progress) if progress is not None else 0
 
         if progress < 100:
             return "busy"
@@ -189,6 +240,18 @@ class StatusReporter:
             int or None: 任务进度
         """
         return self.progress_reader.read_progress()
+
+    def _get_task_key(self) -> Optional[str]:
+        if not self.progress_reader:
+            return None
+        task_key_getter = getattr(self.progress_reader, "get_task_key", None)
+        if callable(task_key_getter):
+            try:
+                return task_key_getter()
+            except Exception as exc:
+                self.logger.error(f"获取 task_key 失败: {exc}")
+                return None
+        return self.progress_reader.get_latest_folder_name()
 
     def report_once(self) -> bool:
         """执行单次上报（手动触发）

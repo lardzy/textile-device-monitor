@@ -11,7 +11,6 @@ import shutil
 from collections import OrderedDict
 from typing import Optional, List, Dict, Callable, cast
 from datetime import datetime
-from http.server import HTTPServer
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote, quote
 from .progress_reader import ProgressReader
@@ -33,6 +32,12 @@ class ResultsHandler(BaseHTTPRequestHandler):
     _recent_cache_ttl = 30
     _recent_cache_max_items = 20
     _invalid_folder_name_pattern = re.compile(r'[\\/:*?"<>|]')
+
+    def log_message(self, format: str, *args) -> None:
+        """Route access logs through the app logger in windowed builds."""
+        if self.logger:
+            client_host = self.client_address[0] if self.client_address else "-"
+            self.logger.debug(f"results_http {client_host} {format % args}")
 
     @classmethod
     def _process_xlsx_with_formulas(cls, xlsx_path: str) -> Optional[bytes]:
@@ -353,7 +358,6 @@ class ResultsHandler(BaseHTTPRequestHandler):
             self.reader.working_path
         )
         latest_name = os.path.basename(latest_folder) if latest_folder else None
-        today = datetime.now().date()
         candidates = []
         for folder_path in entries:
             folder_name = os.path.basename(folder_path)
@@ -362,8 +366,6 @@ class ResultsHandler(BaseHTTPRequestHandler):
             try:
                 mtime = os.path.getmtime(folder_path)
             except Exception:
-                continue
-            if datetime.fromtimestamp(mtime).date() != today:
                 continue
 
             result_dir = os.path.join(folder_path, "result")
@@ -1001,8 +1003,10 @@ class ResultsServer:
 
     def stop(self):
         if self.httpd:
-            self.httpd.shutdown()
+            httpd = self.httpd
             self.httpd = None
+            httpd.shutdown()
+            httpd.server_close()
 
     def prewarm_latest_formulas(self) -> None:
         if not self.reader:

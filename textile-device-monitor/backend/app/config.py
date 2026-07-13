@@ -1,12 +1,34 @@
 import os
 from typing import List
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    from pydantic import BaseModel, ConfigDict
+
+    class BaseSettings(BaseModel):
+        model_config = ConfigDict(extra="ignore")
+
+        def __init__(self, **values):
+            env_values = {}
+            for field_name in self.__class__.model_fields:
+                if field_name in values:
+                    continue
+                env_value = os.getenv(field_name)
+                if env_value is not None:
+                    env_values[field_name] = env_value
+            env_values.update(values)
+            super().__init__(**env_values)
+
+    class SettingsConfigDict(dict):
+        pass
 
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://admin:password123@postgres:5432/textile_monitor"
     SECRET_KEY: str = "your-secret-key-change-in-production"
-    HEARTBEAT_TIMEOUT: int = 30
+    HEARTBEAT_TIMEOUT: int = 90
+    HEARTBEAT_CHECK_INTERVAL: int = 10
     DATA_RETENTION_DAYS: int = 30
     QUEUE_IDLE_REMIND_SECONDS: int = 60
     QUEUE_IDLE_TIMEOUT_SECONDS: int = 300
@@ -32,6 +54,7 @@ class Settings(BaseSettings):
     AREA_EXCEL_TEMPLATE_PATH: str = "/opt/area_templates/-面积法-定量试验原始记录-新系统.xls"
     AREA_INFER_URL: str = "http://area-infer:9001"
     AREA_INFER_TIMEOUT_SEC: int = 60
+    STATS_TIMEZONE: str = "Asia/Shanghai"
     CORS_ORIGINS: str = "http://localhost,http://localhost:80,http://backend:8000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

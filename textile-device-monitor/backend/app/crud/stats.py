@@ -1,15 +1,28 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Dict, List, Optional
+
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
-from typing import List, Optional, Dict
-from app.models import Statistic, Device, DeviceStatusHistory
-from app.schemas import Statistic
-from datetime import datetime, date, timedelta
-from sqlalchemy.sql import func as sql_func
+
+from app.crud import device_tracking as tracking_crud
+from app.crud.queue import get_queue_count
+from app.models import Device, DeviceStatusHistory, Statistic
+from app.schemas import Statistic as StatisticSchema
+from app.services.device_tracking import (
+    BUSY_STATUS,
+    EVENT_TASK_COMPLETE,
+    EVENT_TASK_START,
+    OFFLINE_STATUS,
+    StateEventSnapshot,
+    calculate_utilization,
+    get_window_bounds,
+)
 
 
 def create_daily_statistic(
     db: Session, device_id: int, stat_date: date, data: dict
-) -> Statistic:
+) -> StatisticSchema:
     stat = Statistic(
         device_id=device_id, stat_date=stat_date, stat_type="daily", **data
     )
@@ -25,7 +38,7 @@ def get_statistics(
     stat_type: str,
     start_date: date,
     end_date: date,
-) -> List[Statistic]:
+) -> List[StatisticSchema]:
     query = db.query(Statistic).filter(
         Statistic.stat_type == stat_type,
         Statistic.stat_date >= start_date,
@@ -66,27 +79,82 @@ def get_realtime_stats(db: Session) -> Dict:
     }
 
 
+def _build_state_snapshots(events: list) -> list[StateEventSnapshot]:
+    return [
+        StateEventSnapshot(
+            occurred_at=event.occurred_at,
+            status=event.status,
+            event_type=event.event_type,
+        )
+        for event in events
+    ]
+
+
+def _build_stats_payload(
+    db: Session,
+    *,
+    device_id: int,
+    start_at: datetime,
+    end_at: datetime,
+) -> dict:
+    initial_event = tracking_crud.get_latest_state_event_before(
+        db,
+        device_id=device_id,
+        before=start_at,
+    )
+    events = tracking_crud.get_state_events_in_range(
+        db,
+        device_id=device_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    initial_status = initial_event.status if initial_event else OFFLINE_STATUS
+    utilization = calculate_utilization(
+        initial_status,
+        _build_state_snapshots(events),
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+    completed_tasks = tracking_crud.count_state_events(
+        db,
+        device_id=device_id,
+        event_type=EVENT_TASK_COMPLETE,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    total_tasks = tracking_crud.count_state_events(
+        db,
+        device_id=device_id,
+        event_type=EVENT_TASK_START,
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+    return {
+        "total_tasks": total_tasks,
+        "completed_tasks": completed_tasks,
+        "busy_seconds": int(utilization.busy_seconds),
+        "total_seconds": int(utilization.total_seconds),
+        "utilization_rate": round(utilization.utilization_rate, 2),
+        "event_count": len(events),
+        "busy_event_count": len([event for event in events if event.status == BUSY_STATUS]),
+    }
+
+
 def get_device_realtime_stats(db: Session, device_id: int) -> Dict:
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
         return {}
 
     today = date.today()
-    start_of_day = datetime.combine(today, datetime.min.time())
-
-    history = (
-        db.query(DeviceStatusHistory)
-        .filter(
-            DeviceStatusHistory.device_id == device_id,
-            DeviceStatusHistory.reported_at >= start_of_day,
-        )
-        .all()
+    start_at, end_at = get_window_bounds(today, today)
+    stats_payload = _build_stats_payload(
+        db,
+        device_id=device_id,
+        start_at=start_at,
+        end_at=end_at,
     )
-
-    total_busy = len([h for h in history if h.status == "busy"])
-    total_reports = len(history)
-
-    from app.crud.queue import get_queue_count
 
     actual_queue_count = get_queue_count(db, device_id)
 
@@ -95,11 +163,9 @@ def get_device_realtime_stats(db: Session, device_id: int) -> Dict:
         "device_name": device.name,
         "status": device.status,
         "last_heartbeat": device.last_heartbeat,
-        "total_reports_today": total_reports,
-        "busy_reports_today": total_busy,
-        "utilization_today": (total_busy / total_reports * 100)
-        if total_reports > 0
-        else 0,
+        "total_reports_today": stats_payload["event_count"],
+        "busy_reports_today": stats_payload["busy_event_count"],
+        "utilization_today": stats_payload["utilization_rate"],
         "queue_count": actual_queue_count,
     }
 
@@ -107,50 +173,41 @@ def get_device_realtime_stats(db: Session, device_id: int) -> Dict:
 def calculate_device_stats(
     db: Session, device_id: int, start_date: date, end_date: date
 ) -> dict:
-    start_datetime = datetime.combine(start_date, datetime.min.time())
-    end_datetime = datetime.combine(end_date, datetime.max.time())
+    start_at, end_at = get_window_bounds(start_date, end_date)
+    stats_payload = _build_stats_payload(
+        db,
+        device_id=device_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
 
     history = (
         db.query(DeviceStatusHistory)
         .filter(
             DeviceStatusHistory.device_id == device_id,
-            DeviceStatusHistory.reported_at >= start_datetime,
-            DeviceStatusHistory.reported_at <= end_datetime,
+            DeviceStatusHistory.reported_at >= start_at,
+            DeviceStatusHistory.reported_at <= end_at,
+            DeviceStatusHistory.task_duration_seconds.isnot(None),
         )
         .all()
     )
-
-    total_tasks = len(set([h.task_id for h in history if h.task_id]))
-    completed_tasks = len([h for h in history if h.status == "idle" and h.task_id])
-
-    durations = []
-    task_start = None
-    for h in history:
-        if h.status == "busy" and h.task_id:
-            if task_start is None or task_start != h.task_id:
-                task_start = h.task_id
-                task_start_time = h.reported_at
-        elif h.status == "idle" and task_start:
-            if h.task_id == task_start:
-                duration = (h.reported_at - task_start_time).total_seconds()
-                durations.append(duration)
-                task_start = None
+    durations = [
+        int(item.task_duration_seconds)
+        for item in history
+        if item.task_duration_seconds is not None
+    ]
 
     avg_duration = sum(durations) / len(durations) if durations else 0
     max_duration = max(durations) if durations else 0
     min_duration = min(durations) if durations else 0
 
-    total_reports = len(history)
-    busy_reports = len([h for h in history if h.status == "busy"])
-    utilization_rate = (busy_reports / total_reports * 100) if total_reports > 0 else 0
-
     return {
-        "total_tasks": total_tasks,
-        "completed_tasks": completed_tasks,
+        "total_tasks": stats_payload["total_tasks"],
+        "completed_tasks": stats_payload["completed_tasks"],
         "avg_duration": int(avg_duration),
         "max_duration": int(max_duration),
         "min_duration": int(min_duration),
-        "utilization_rate": round(utilization_rate, 2),
+        "utilization_rate": stats_payload["utilization_rate"],
     }
 
 

@@ -2,20 +2,30 @@
 进度文件读取模块
 """
 
+import ipaddress
 import os
 import re
+import socket
 import threading
 from collections import deque
 from datetime import datetime
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
 from .logger import Logger
 
 
 class ProgressReader:
-    def __init__(self, working_path: str, logger: Logger, results_port: int = 9100):
+    def __init__(
+        self,
+        working_path: str,
+        logger: Logger,
+        results_port: int = 9100,
+        server_url: Optional[str] = None,
+    ):
         self.working_path = working_path
         self.logger = logger
         self.results_port = results_port
+        self.server_url = server_url
         self.is_laser_confocal = False
 
     def read_progress(self) -> int:
@@ -50,6 +60,50 @@ class ProgressReader:
         except Exception as e:
             self.logger.error(f"读取工作路径失败: {e}，进度设为 0")
             return 0
+
+    def get_status_snapshot(self) -> Dict[str, Any]:
+        """Collect all status fields with a single directory scan."""
+        snapshot: Dict[str, Any] = {
+            "task_progress": 0,
+            "latest_folder_name": None,
+            "task_key": None,
+            "client_base_url": self.get_client_base_url(),
+            "extra_metrics": {},
+            "device_state": None,
+            "task_active": False,
+        }
+        if not self.working_path:
+            self.logger.warning("工作路径未配置，进度设为 0")
+            return snapshot
+
+        try:
+            if not os.path.exists(self.working_path):
+                self.logger.warning(f"工作路径不存在: {self.working_path}，进度设为 0")
+                return snapshot
+
+            latest_folder = self._get_latest_modified_folder(self.working_path)
+            if not latest_folder:
+                self.logger.warning("未找到可用的子文件夹，进度设为 0")
+                return snapshot
+
+            progress = self._check_progress(latest_folder)
+            folder_name = os.path.basename(latest_folder)
+            normalized_path = self._normalize_task_path(latest_folder)
+            self.logger.debug(f"当前最新文件夹: {latest_folder}，进度: {progress}%")
+            snapshot.update(
+                {
+                    "task_progress": progress,
+                    "latest_folder_name": folder_name,
+                    "task_key": normalized_path or folder_name,
+                }
+            )
+            return snapshot
+        except PermissionError:
+            self.logger.error(f"无权限访问工作路径: {self.working_path}")
+            return snapshot
+        except Exception as e:
+            self.logger.error(f"读取工作路径失败: {e}，进度设为 0")
+            return snapshot
 
     def check_path_accessible(self) -> bool:
         """检查工作路径是否可访问
@@ -100,6 +154,18 @@ class ProgressReader:
             return None
         return os.path.basename(latest_folder)
 
+    def get_latest_folder_path(self) -> Optional[str]:
+        latest_folder = self._get_latest_modified_folder(self.working_path)
+        if not latest_folder:
+            return None
+        return self._normalize_task_path(latest_folder)
+
+    def _normalize_task_path(self, path: str) -> str:
+        return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+    def get_task_key(self) -> Optional[str]:
+        return self.get_latest_folder_path() or self.get_latest_folder_name()
+
     def _check_progress(self, folder_path: str) -> int:
         """根据文件夹结构判断进度"""
         result_folder = os.path.join(folder_path, "result")
@@ -127,22 +193,7 @@ class ProgressReader:
     def get_client_base_url(self) -> Optional[str]:
         """构建客户端结果服务地址"""
         try:
-            import socket
-
-            host = None
-            hostname = socket.gethostname()
-            candidates = socket.gethostbyname_ex(hostname)[2]
-            for candidate in candidates:
-                if candidate.startswith("127."):
-                    continue
-                if candidate == "0.0.0.0":
-                    continue
-                host = candidate
-                break
-            if not host:
-                host = socket.gethostbyname(hostname)
-                if host.startswith("127.") or host == "0.0.0.0":
-                    host = None
+            host = self._get_result_service_host()
 
             port = getattr(self, "results_port", None)
             if not port:
@@ -153,10 +204,81 @@ class ProgressReader:
         except Exception:
             return None
 
+    def _get_result_service_host(self) -> Optional[str]:
+        server_host, server_port = self._get_server_endpoint()
+        if server_host:
+            if self._is_loopback_host(server_host):
+                # The backend is published from Docker on this machine. Inside the
+                # container, host.docker.internal resolves back to the Windows host.
+                return "host.docker.internal"
+
+            route_host = self._get_route_local_ip(server_host, server_port)
+            if route_host:
+                return route_host
+
+        return self._get_fallback_local_ip()
+
+    def _get_server_endpoint(self) -> tuple[Optional[str], int]:
+        raw_url = str(getattr(self, "server_url", None) or "").strip()
+        if not raw_url:
+            return None, 80
+
+        parsed = urlparse(raw_url if "://" in raw_url else f"//{raw_url}")
+        host = parsed.hostname
+        if not host:
+            return None, 80
+        default_port = 443 if parsed.scheme == "https" else 80
+        return host, parsed.port or default_port
+
+    @staticmethod
+    def _is_loopback_host(host: str) -> bool:
+        if host.lower() == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _get_route_local_ip(server_host: str, server_port: int) -> Optional[str]:
+        route_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # UDP connect selects a route without sending application data.
+            route_socket.connect((server_host, server_port))
+            local_ip = str(route_socket.getsockname()[0])
+            if local_ip and local_ip != "0.0.0.0" and not local_ip.startswith("127."):
+                return local_ip
+        except OSError:
+            return None
+        finally:
+            route_socket.close()
+        return None
+
+    @staticmethod
+    def _get_fallback_local_ip() -> Optional[str]:
+        hostname = socket.gethostname()
+        candidates = socket.gethostbyname_ex(hostname)[2]
+        for candidate in candidates:
+            if candidate.startswith("127.") or candidate == "0.0.0.0":
+                continue
+            return candidate
+        return None
+
 
 class OlympusProgressReader(ProgressReader):
-    def __init__(self, log_path: str, logger: Logger, results_port: int = 9100):
-        super().__init__(working_path="", logger=logger, results_port=results_port)
+    def __init__(
+        self,
+        log_path: str,
+        logger: Logger,
+        results_port: int = 9100,
+        server_url: Optional[str] = None,
+    ):
+        super().__init__(
+            working_path="",
+            logger=logger,
+            results_port=results_port,
+            server_url=server_url,
+        )
         self.log_path = log_path
         self.is_laser_confocal = True
         if os.name == "nt":
@@ -204,6 +326,9 @@ class OlympusProgressReader(ProgressReader):
         self._frame_total: Optional[int] = None
         self._z_range: Optional[tuple[int, int]] = None
         self._output_path_candidates: list[str] = []
+        self._active_task_key: Optional[str] = None
+        self._prepared_group_total = 0
+        self._overall_progress_high_water = 0
 
         # 定义所有正则表达式
         self._TIMESTAMP_PATTERN = re.compile(
@@ -230,7 +355,12 @@ class OlympusProgressReader(ProgressReader):
             rb"notifyExportImage.*path=([^,]+)"
         )
         self._GROUP_FROM_FILENAME_PATTERN = re.compile(r"_G(\d{3})_A\d+")
-        self._GROUP_TOTAL_PATTERN = re.compile(r"numberOfGroup=(\d+)")
+        self._PREPARE_START_PATTERN = re.compile(
+            r"start@CameraImageSourceImpl2.*start\(\) was called"
+        )
+        self._PREPARED_PROTOCOL_PATTERN = re.compile(
+            r"getProtocol@CameraImageSourceImpl2.*getProtocol\(\) was called"
+        )
         self._XY_PATTERN = re.compile(r"3NXYP\s+(-?\d+),(-?\d+),0")
         self._Z_PATTERN = re.compile(r"1PE\s+(-?\d+),0")
         self._STAGE_POS_PATTERN = re.compile(r"stagePosition\"?[=:](-?\d+)")
@@ -385,32 +515,54 @@ class OlympusProgressReader(ProgressReader):
                 self._offset = 0
                 self._initialized = True
                 return
-            tail_bytes = min(file_size, 200000)
+            read_offset = self._get_initial_read_offset(file_size)
             with open(self.log_path, "rb") as f:
-                f.seek(file_size - tail_bytes)
-                data = f.read()
-            if not data:
-                self._offset = file_size
-                self._initialized = True
-                return
-            lines = data.split(b"\n")
-            if tail_bytes < file_size and lines:
-                lines = lines[1:]
-            if data.endswith(b"\n"):
+                f.seek(read_offset)
+                if read_offset > 0:
+                    f.seek(read_offset - 1)
+                    starts_on_line_boundary = f.read(1) == b"\n"
+                    f.seek(read_offset)
+                    if not starts_on_line_boundary:
+                        f.readline()
                 self._pending_bytes = b""
-            else:
-                self._pending_bytes = lines[-1] if lines else b""
-                lines = lines[:-1]
-            for line_bytes in lines:
-                line = self._decode_line_bytes(line_bytes).rstrip("\r")
-                self._process_line(line, line_bytes=line_bytes)
-            self._offset = file_size
+                while True:
+                    line_bytes = f.readline()
+                    if not line_bytes:
+                        break
+                    if not line_bytes.endswith(b"\n"):
+                        self._pending_bytes = line_bytes
+                        break
+                    line_bytes = line_bytes[:-1]
+                    line = self._decode_line_bytes(line_bytes).rstrip("\r")
+                    self._process_line(line, line_bytes=line_bytes)
+                self._offset = f.tell()
             self._initialized = True
         except Exception as exc:
             self.logger.error(f"初始化日志读取失败: {exc}")
             self._offset = 0
             self._pending_bytes = b""
             self._initialized = True
+
+    def _get_initial_read_offset(self, file_size: int) -> int:
+        tail_offset = max(0, file_size - 200000)
+        try:
+            with open(self.log_path, "rb") as source:
+                last_start_offset: Optional[int] = None
+                while True:
+                    line_offset = source.tell()
+                    line = source.readline()
+                    if not line:
+                        break
+                    if (
+                        b"start@CameraImageSourceImpl2" in line
+                        and b"start() was called" in line
+                    ):
+                        last_start_offset = line_offset
+                if last_start_offset is not None:
+                    return last_start_offset
+        except OSError:
+            pass
+        return tail_offset
 
     def _read_new_lines(self) -> None:
         if not self.log_path:
@@ -494,6 +646,9 @@ class OlympusProgressReader(ProgressReader):
         self._has_frames = False
         self._current_file_name = None
         self._output_path_candidates = []
+        self._active_task_key = None
+        self._prepared_group_total = 0
+        self._overall_progress_high_water = 0
 
     def _record_recent_result(self, path: str, timestamp: Optional[datetime]) -> None:
         if not path:
@@ -561,8 +716,12 @@ class OlympusProgressReader(ProgressReader):
         self._record_recent_result(normalized, timestamp)
 
     def _start_acquisition(self, timestamp: Optional[datetime]) -> None:
+        prepared_group_total = self._prepared_group_total
         if self._task_finished or not self._task_started:
             self._reset_acquisition_state()
+        if prepared_group_total > 0:
+            self._group_total = prepared_group_total
+        self._prepared_group_total = 0
         self._mark_task_started(timestamp)
         self._acquisition_active = True
 
@@ -587,6 +746,11 @@ class OlympusProgressReader(ProgressReader):
         if not line:
             return
         timestamp = self._parse_timestamp(line)
+
+        if self._PREPARE_START_PATTERN.search(line):
+            self._prepared_group_total = 0
+        elif self._PREPARED_PROTOCOL_PATTERN.search(line):
+            self._prepared_group_total += 1
 
         if "saveMATLProperties" in line and "datapath=" in line:
             match = self._DATAPATH_PATTERN.search(line)
@@ -822,6 +986,7 @@ class OlympusProgressReader(ProgressReader):
         if not self._task_started:
             return 0
         if self._task_finished:
+            self._overall_progress_high_water = 100
             return 100
 
         # 计算总组数
@@ -831,6 +996,8 @@ class OlympusProgressReader(ProgressReader):
 
         # 计算已完成的组数
         completed = len(self._groups_completed)
+        if self._current_group in self._groups_completed:
+            completed -= 1
 
         # 计算当前组内的进度
         current_fraction = 0.0
@@ -840,6 +1007,7 @@ class OlympusProgressReader(ProgressReader):
             and self._last_frame_total > 0
         ):
             current_fraction = self._current_frame / self._last_frame_total
+            current_fraction = max(0.0, min(1.0, current_fraction))
 
         # 计算总体进度
         progress = int(((completed + current_fraction) / total_groups) * 100)
@@ -848,7 +1016,11 @@ class OlympusProgressReader(ProgressReader):
         if not self._task_finished:
             progress = min(99, progress)
 
-        return max(0, progress)
+        progress = max(0, progress)
+        if self._group_total:
+            progress = max(self._overall_progress_high_water, progress)
+            self._overall_progress_high_water = progress
+        return progress
 
     def read_progress(self) -> int:
         self._refresh_state()
@@ -872,6 +1044,34 @@ class OlympusProgressReader(ProgressReader):
     def get_current_output_path(self) -> Optional[str]:
         self._refresh_state()
         return self._current_output_path
+
+    def get_task_key(self) -> Optional[str]:
+        self._refresh_state()
+        return self._get_task_key_from_current_state()
+
+    def _get_task_key_from_current_state(self) -> Optional[str]:
+        if self._task_started and self._active_task_key:
+            return self._active_task_key
+
+        candidate = self._resolve_task_key_candidate()
+        if self._task_started and candidate and not self._active_task_key:
+            self._active_task_key = candidate
+            return self._active_task_key
+
+        if self._task_started:
+            return self._active_task_key
+        return None
+
+    def _resolve_task_key_candidate(self) -> Optional[str]:
+        if self._current_output_path and not self._is_temp_output_path(
+            self._current_output_path
+        ):
+            return self._normalize_task_path(self._current_output_path)
+        if self._current_output_path:
+            folder_name = os.path.basename(self._current_output_path)
+            if folder_name:
+                return folder_name
+        return None
 
     def resolve_output_folder(self, folder_param: Optional[str]) -> Optional[str]:
         self._refresh_state()
@@ -961,7 +1161,9 @@ class OlympusProgressReader(ProgressReader):
 
     def get_extra_metrics(self) -> Dict[str, Any]:
         self._refresh_state()
+        return self._build_extra_metrics()
 
+    def _build_extra_metrics(self) -> Dict[str, Any]:
         # 图像进度（基于当前帧位置估算）
         image_progress = self._calculate_image_progress()
 
@@ -988,7 +1190,7 @@ class OlympusProgressReader(ProgressReader):
 
         olympus = {
             "state": self._current_state,
-            "active": self.is_task_active(),
+            "active": self._is_task_active_from_current_state(),
             "output_path": self._current_output_path,
             "output_path_candidates": self._output_path_candidates,
             "current_file": self._current_file_name,
@@ -998,6 +1200,11 @@ class OlympusProgressReader(ProgressReader):
             "group_current": group_current,
             "group_completed": len(self._groups_completed),
             "group_total": total_groups,
+            "group_total_source": (
+                "prepared_protocols"
+                if self._group_total
+                else ("observed_groups" if self._max_group_index else None)
+            ),
             "xy_position": (
                 {"x": self._xy_position[0], "y": self._xy_position[1]}
                 if self._xy_position
@@ -1023,6 +1230,9 @@ class OlympusProgressReader(ProgressReader):
 
     def is_task_active(self) -> bool:
         self._refresh_state()
+        return self._is_task_active_from_current_state()
+
+    def _is_task_active_from_current_state(self) -> bool:
         if self._task_finished:
             return False
         if self._acquisition_active:
@@ -1035,3 +1245,18 @@ class OlympusProgressReader(ProgressReader):
             if self._has_frames or self._has_exports or self._groups_started:
                 return True
         return False
+
+    def get_status_snapshot(self) -> Dict[str, Any]:
+        """Collect all status fields with a single log refresh."""
+        self._refresh_state()
+        output_path = self._current_output_path
+        folder_name = os.path.basename(output_path) if output_path else None
+        return {
+            "task_progress": self._calculate_overall_progress(),
+            "latest_folder_name": folder_name,
+            "task_key": self._get_task_key_from_current_state(),
+            "client_base_url": self.get_client_base_url(),
+            "extra_metrics": self._build_extra_metrics(),
+            "device_state": self._current_state,
+            "task_active": self._is_task_active_from_current_state(),
+        }

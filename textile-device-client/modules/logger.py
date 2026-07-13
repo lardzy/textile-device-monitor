@@ -4,6 +4,7 @@
 
 import logging
 import os
+import sys
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
@@ -40,10 +41,11 @@ class Logger:
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        if sys.stderr is not None:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
 
         return logger
 

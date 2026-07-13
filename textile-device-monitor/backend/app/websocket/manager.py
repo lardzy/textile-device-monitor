@@ -1,6 +1,10 @@
 from fastapi import WebSocket
 from fastapi.encoders import jsonable_encoder
 from typing import List, Dict, Any
+import asyncio
+
+
+SEND_TIMEOUT_SECONDS = 1.0
 
 
 class ConnectionManager:
@@ -12,20 +16,36 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def send_personal_message(
         self, message: Dict[str, Any], websocket: WebSocket
     ):
         await websocket.send_json(jsonable_encoder(message))
 
+    async def _send_or_disconnect(self, connection: WebSocket, payload: Any):
+        try:
+            await asyncio.wait_for(
+                connection.send_json(payload),
+                timeout=SEND_TIMEOUT_SECONDS,
+            )
+        except Exception as e:
+            print(f"Error sending message: {e}")
+            self.disconnect(connection)
+
     async def broadcast(self, message: Dict[str, Any]):
         payload = jsonable_encoder(message)
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(payload)
-            except Exception as e:
-                print(f"Error sending message: {e}")
+        connections = list(self.active_connections)
+        if not connections:
+            return
+        await asyncio.gather(
+            *(
+                self._send_or_disconnect(connection, payload)
+                for connection in connections
+            ),
+            return_exceptions=True,
+        )
 
     async def broadcast_device_status(
         self, device_id: int, status: str, data: Dict[str, Any]

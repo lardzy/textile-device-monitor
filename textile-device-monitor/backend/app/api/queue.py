@@ -6,6 +6,7 @@ from app.schemas import (
     QueueRecord,
     QueueCreate,
     PositionChange,
+    QueueClaimRequest,
     MessageResponse,
     QueueWithLogs,
     QueueTimeoutExtend,
@@ -98,11 +99,12 @@ async def change_queue_position(
     old_position = existing_record.position
 
     try:
-        queue_record = queue_crud.update_queue_position(db, queue_id, position_change)
-        if not queue_record:
+        queue_result = queue_crud.update_queue_position(db, queue_id, position_change)
+        if not queue_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Queue record not found"
             )
+        queue_record, auto_removed = queue_result
     except ValueError as e:
         if "Concurrency conflict" in str(e):
             raise HTTPException(
@@ -114,16 +116,53 @@ async def change_queue_position(
         ) from e
 
     queue_count = queue_crud.get_queue_count(db, queue_record.device_id)
+    action = "placeholder_auto_remove" if auto_removed else "position_change"
     await websocket_manager.broadcast(
         {
             "type": "queue_update",
             "data": {
                 "device_id": queue_record.device_id,
-                "action": "position_change",
+                "action": action,
                 "queue_id": queue_id,
                 "old_position": old_position,
                 "new_position": position_change.new_position,
                 "changed_by": queue_record.inspector_name,
+                "queue_count": queue_count,
+                "auto_removed_queue_ids": [record.id for record in auto_removed],
+            },
+        }
+    )
+
+    return queue_record
+
+
+@router.post("/{queue_id}/claim", response_model=QueueRecord)
+async def claim_placeholder(
+    queue_id: int, payload: QueueClaimRequest, db: Session = Depends(get_db)
+):
+    """认领占位人员"""
+    try:
+        queue_record = queue_crud.claim_placeholder(db, queue_id, payload)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    if not queue_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Queue record not found"
+        )
+
+    queue_count = queue_crud.get_queue_count(db, queue_record.device_id)
+    await websocket_manager.broadcast(
+        {
+            "type": "queue_update",
+            "data": {
+                "device_id": queue_record.device_id,
+                "action": "placeholder_claim",
+                "queue_id": queue_record.id,
+                "inspector_name": queue_record.inspector_name,
+                "claimed_by_id": queue_record.created_by_id,
                 "queue_count": queue_count,
             },
         }
@@ -147,16 +186,21 @@ async def leave_queue(
         )
 
     device_id = queue_record.device_id
-    success = queue_crud.delete_queue(db, queue_id, changed_by_id)
+    deleted_record = queue_crud.delete_queue(db, queue_id, changed_by_id)
 
-    if success:
+    if deleted_record:
         queue_count = queue_crud.get_queue_count(db, device_id)
+        action = (
+            "placeholder_delete"
+            if deleted_record.is_placeholder and deleted_record.auto_remove_when_inactive
+            else "leave"
+        )
         await websocket_manager.broadcast(
             {
                 "type": "queue_update",
                 "data": {
                     "device_id": device_id,
-                    "action": "leave",
+                    "action": action,
                     "queue_id": queue_id,
                     "queue_count": queue_count,
                 },

@@ -94,6 +94,39 @@ const renderUserLabel = (name, userId) => {
   );
 };
 
+const isUnclaimedPlaceholder = (record) => Boolean(record?.is_placeholder && record?.auto_remove_when_inactive);
+
+const getQueueLogDisplay = (log) => {
+  switch (log.change_type) {
+    case 'placeholder_create':
+      return { color: '#1677ff', text: log.remark || '系统已自动创建占位人员' };
+    case 'placeholder_claim':
+      return { color: '#52c41a', text: log.remark || '占位人员已被认领' };
+    case 'placeholder_delete':
+      return { color: '#ff4d4f', text: log.remark || '占位人员已被删除' };
+    case 'placeholder_auto_remove':
+      return { color: '#fa8c16', text: log.remark || '占位人员已自动移除' };
+    case 'timeout_shift':
+      return { color: '#ff4d4f', text: log.remark || '超时未使用设备，已顺延' };
+    case 'timeout_extend':
+      return { color: '#fa8c16', text: log.remark || '设备超时已延长' };
+    default:
+      break;
+  }
+
+  if (log.new_position === 0) {
+    return { color: '#52c41a', text: '测量完成' };
+  }
+  if (log.new_position === -1) {
+    return { color: '#ff4d4f', text: '离开排队' };
+  }
+
+  return {
+    color: undefined,
+    text: `${getQueuePositionLabel(log.old_position)} → ${getQueuePositionLabel(log.new_position)}`,
+  };
+};
+
 const getActiveQueueEntry = (queueList) => {
   if (!Array.isArray(queueList)) return null;
   return queueList.find(item => item.position === 1) || null;
@@ -265,6 +298,12 @@ function DeviceMonitor() {
   const [inspectorName, setInspectorName] = useState(getInspectorName());
   const [tableModal, setTableModal] = useState({ open: false, folder: null });
   const [imagesModal, setImagesModal] = useState({ open: false, folder: null });
+  const [imagesLayoutVersion, setImagesLayoutVersion] = useState(0);
+  const [claimModal, setClaimModal] = useState({
+    open: false,
+    record: null,
+    submittingAction: null,
+  });
   const [cleanupModal, setCleanupModal] = useState({
     open: false,
     folder: null,
@@ -277,6 +316,7 @@ function DeviceMonitor() {
   const [notifyModes, setNotifyModes] = useState(() => getQueueNoticeModes());
   const [nowTime, setNowTime] = useState(Date.now());
   const [form] = Form.useForm();
+  const [claimForm] = Form.useForm();
   const devicesRef = useRef([]);
   const notifyModesRef = useRef(notifyModes);
   const lastProgressRef = useRef(new Map());
@@ -306,6 +346,13 @@ function DeviceMonitor() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    form.setFieldsValue({
+      inspector_name: inspectorName || getInspectorName(),
+      copies: 1,
+    });
+  }, [form]);
 
   const fetchDevices = async () => {
     try {
@@ -651,7 +698,7 @@ function DeviceMonitor() {
       if (!data || data.device_id == null) return;
       setDevices(prev => prev.map(device => 
         device.id === data.device_id 
-          ? { ...device, ...data }
+          ? { ...device, ...data, offline_last_seen: data.status === 'offline' ? device.offline_last_seen : null }
           : device
       ));
     });
@@ -711,7 +758,7 @@ function DeviceMonitor() {
       if (!data || data.device_id == null) return;
       setDevices(prev => prev.map(device => 
         device.id === data.device_id 
-          ? { ...device, status: 'offline' }
+          ? { ...device, status: 'offline', offline_last_seen: data.last_seen || device.last_heartbeat }
           : device
       ));
     });
@@ -721,7 +768,7 @@ function DeviceMonitor() {
       if (data.action === 'complete') {
         notifyQueueCompletion(data);
       }
-      if (data.action === 'leave' && data.queue_id) {
+      if (['leave', 'placeholder_delete'].includes(data.action) && data.queue_id) {
         removeQueueNoticeEntry(data.queue_id);
       }
       if (data.device_id === selectedDeviceId) {
@@ -759,12 +806,24 @@ function DeviceMonitor() {
     setRecentResults([]);
     if (selectedDeviceId) {
       fetchQueue(selectedDeviceId);
-      fetchRecentResults(selectedDevice);
     }
+    setClaimModal({ open: false, record: null, submittingAction: null });
+    claimForm.resetFields();
     setTableModal({ open: false, folder: null });
     setImagesModal({ open: false, folder: null });
     setCleanupModal(prev => ({ ...prev, open: false, submitting: false }));
-  }, [selectedDeviceId]);
+  }, [claimForm, selectedDeviceId]);
+
+  useEffect(() => {
+    if (!selectedDeviceId || !selectedDevice) return;
+    fetchRecentResults(selectedDevice);
+  }, [
+    selectedDeviceId,
+    selectedDevice?.task_name,
+    selectedDevice?.task_progress,
+    selectedDevice?.status,
+    selectedDevice?.client_base_url,
+  ]);
 
   useEffect(() => {
     if (!selectedDeviceId) return;
@@ -863,11 +922,85 @@ function DeviceMonitor() {
     }
   };
 
+  const openClaimModal = (record) => {
+    const rememberedName = (inspectorName || getInspectorName() || '').trim();
+    claimForm.setFieldsValue({ inspector_name: rememberedName });
+    setClaimModal({
+      open: true,
+      record,
+      submittingAction: null,
+    });
+  };
+
+  const closeClaimModal = () => {
+    setClaimModal(prev => {
+      if (prev.submittingAction) return prev;
+      return {
+        open: false,
+        record: null,
+        submittingAction: null,
+      };
+    });
+    claimForm.resetFields();
+  };
+
+  const handleClaimPlaceholder = async () => {
+    if (!claimModal.record) return;
+
+    try {
+      const values = await claimForm.validateFields();
+      const nextInspectorName = values.inspector_name.trim();
+      setClaimModal(prev => ({ ...prev, submittingAction: 'claim' }));
+      await queueApi.claim(claimModal.record.id, {
+        inspector_name: nextInspectorName,
+        claimed_by_id: queueUserIdRef.current,
+      });
+      saveInspectorName(nextInspectorName);
+      setInspectorName(nextInspectorName);
+      form.setFieldsValue({ inspector_name: nextInspectorName });
+      message.success('认领占位成功');
+      setClaimModal({
+        open: false,
+        record: null,
+        submittingAction: null,
+      });
+      claimForm.resetFields();
+      fetchQueue(selectedDeviceId, { notify: true, reason: 'placeholder_claim' });
+    } catch (error) {
+      if (error?.errorFields) {
+        return;
+      }
+      setClaimModal(prev => ({ ...prev, submittingAction: null }));
+      message.error(error?.message || '认领占位失败');
+    }
+  };
+
+  const handleDeletePlaceholder = async () => {
+    if (!claimModal.record) return;
+
+    try {
+      setClaimModal(prev => ({ ...prev, submittingAction: 'delete' }));
+      await queueApi.leave(claimModal.record.id, { changed_by_id: queueUserIdRef.current });
+      removeQueueNoticeEntry(claimModal.record.id);
+      message.success('占位人员已删除');
+      setClaimModal({
+        open: false,
+        record: null,
+        submittingAction: null,
+      });
+      claimForm.resetFields();
+      fetchQueue(selectedDeviceId, { notify: true, reason: 'placeholder_delete' });
+    } catch (error) {
+      setClaimModal(prev => ({ ...prev, submittingAction: null }));
+      message.error(error?.message || '删除占位人员失败');
+    }
+  };
 
   const handleJoinQueue = async (values) => {
     try {
+      const nextInspectorName = values.inspector_name.trim();
       const records = await queueApi.join({
-        inspector_name: values.inspector_name,
+        inspector_name: nextInspectorName,
         device_id: selectedDeviceId,
         copies: values.copies || 1,
         created_by_id: queueUserIdRef.current,
@@ -881,7 +1014,7 @@ function DeviceMonitor() {
           addQueueNoticeEntry({
             id: records[i].id,
             device_id: selectedDeviceId,
-            inspector_name: values.inspector_name,
+            inspector_name: nextInspectorName,
             created_by_id: queueUserIdRef.current,
           });
         }
@@ -893,9 +1026,12 @@ function DeviceMonitor() {
       if (actualCopies > 0 && actualCopies < requestedCopies) {
         message.info(`已按配额加入 ${actualCopies} 份（超出部分忽略）`);
       }
-      saveInspectorName(values.inspector_name);
-      form.resetFields();
-      setInspectorName('');
+      saveInspectorName(nextInspectorName);
+      setInspectorName(nextInspectorName);
+      form.setFieldsValue({
+        inspector_name: nextInspectorName,
+        copies: 1,
+      });
       fetchQueue(selectedDeviceId, { notify: true, reason: 'join' });
     } catch (error) {
       message.error(error?.message || '加入排队失败');
@@ -1010,7 +1146,19 @@ function DeviceMonitor() {
           : getQueuePositionDisplay(record.position)
       )
     },
-    { title: '检验员', dataIndex: 'inspector_name', key: 'inspector_name' },
+    {
+      title: '检验员',
+      dataIndex: 'inspector_name',
+      key: 'inspector_name',
+      render: (_, record) => (
+        isUnclaimedPlaceholder(record) ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span>{record.inspector_name}</span>
+            <Tag color="gold">占位</Tag>
+          </span>
+        ) : record.inspector_name
+      ),
+    },
     { title: '加入时间', dataIndex: 'submitted_at', key: 'submitted_at', render: formatTime },
     { title: 'ID', dataIndex: 'created_by_id', key: 'created_by_id', width: 90, align: 'center', render: renderUserId },
     {
@@ -1018,12 +1166,18 @@ function DeviceMonitor() {
       key: 'actions',
       width: 80,
       render: (_, record) => (
-        <Button
-          type="text"
-          danger
-          icon={<DeleteOutlined />}
-          onClick={() => handleDeleteQueue(record)}
-        />
+        isUnclaimedPlaceholder(record) ? (
+          <Button type="link" onClick={() => openClaimModal(record)}>
+            认领
+          </Button>
+        ) : (
+          <Button
+            type="text"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => handleDeleteQueue(record)}
+          />
+        )
       )
     }
   ];
@@ -1059,6 +1213,12 @@ function DeviceMonitor() {
           const extendedCount = device.queue_timeout_extended_count || 0;
           const remainingExtends = Math.max(0, 3 - extendedCount);
           const canExtend = remainingExtends > 0;
+          const statusBadge = (
+            <Badge
+              status={config.color}
+              text={device.status === 'offline' ? '离线/心跳超时' : config.text}
+            />
+          );
           return (
             <Col xs={24} sm={12} md={8} lg={6} key={device.id}>
               <Card 
@@ -1068,7 +1228,11 @@ function DeviceMonitor() {
                 title={
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>{device.name}</span>
-                    <Badge status={config.color} text={config.text} />
+                    {device.status === 'offline' ? (
+                      <Tooltip title={device.offline_last_seen ? `最后心跳: ${device.offline_last_seen}` : '心跳超时'}>
+                        {statusBadge}
+                      </Tooltip>
+                    ) : statusBadge}
                   </div>
                 }
                 extra={<span style={{ fontSize: '12px', color: '#666' }}>排队: {device.queue_count || 0}</span>}
@@ -1374,6 +1538,11 @@ function DeviceMonitor() {
                         title="结果图片"
                         open={imagesModal.open}
                         onCancel={() => setImagesModal({ open: false, folder: null })}
+                        afterOpenChange={(open) => {
+                          if (open) {
+                            setImagesLayoutVersion(version => version + 1);
+                          }
+                        }}
                         footer={null}
                         width="90vw"
                         style={{ top: 20 }}
@@ -1385,9 +1554,60 @@ function DeviceMonitor() {
                             deviceId={selectedDeviceId}
                             folder={imagesModal.folder}
                             embedded
-                            clientBaseUrl={selectedDevice?.client_base_url || null}
+                            layoutVersion={imagesLayoutVersion}
                           />
                         )}
+                      </Modal>
+                      <Modal
+                        title="认领占位人员"
+                        open={claimModal.open}
+                        onCancel={closeClaimModal}
+                        onOk={handleClaimPlaceholder}
+                        okText="认领这个占位"
+                        cancelText="取消"
+                        confirmLoading={claimModal.submittingAction === 'claim'}
+                        maskClosable={!claimModal.submittingAction}
+                        keyboard={!claimModal.submittingAction}
+                        footer={[
+                          <Button
+                            key="delete"
+                            danger
+                            onClick={handleDeletePlaceholder}
+                            loading={claimModal.submittingAction === 'delete'}
+                            disabled={Boolean(claimModal.submittingAction && claimModal.submittingAction !== 'delete')}
+                          >
+                            删除这个占位人员
+                          </Button>,
+                          <Button
+                            key="cancel"
+                            onClick={closeClaimModal}
+                            disabled={Boolean(claimModal.submittingAction)}
+                          >
+                            取消
+                          </Button>,
+                          <Button
+                            key="claim"
+                            type="primary"
+                            onClick={handleClaimPlaceholder}
+                            loading={claimModal.submittingAction === 'claim'}
+                            disabled={Boolean(claimModal.submittingAction && claimModal.submittingAction !== 'claim')}
+                          >
+                            认领这个占位
+                          </Button>,
+                        ]}
+                      >
+                        <Form form={claimForm} layout="vertical">
+                          <Form.Item
+                            label="检验员姓名"
+                            name="inspector_name"
+                            rules={[{ required: true, message: '请输入检验员姓名' }]}
+                          >
+                            <Input
+                              placeholder="检验员姓名"
+                              maxLength={50}
+                            />
+                          </Form.Item>
+                        </Form>
                       </Modal>
                     </Card>
                   </Col>
@@ -1397,33 +1617,16 @@ function DeviceMonitor() {
                         dataSource={queueLogs}
                         style={{ maxHeight: 240, overflowY: 'auto' }}
                         renderItem={log => {
-                          const isCompletionLog = log.new_position === 0;
-                          const isLeaveLog = log.new_position === -1;
-                          const isTimeoutShiftLog = log.change_type === 'timeout_shift';
-                          const isTimeoutExtendLog = log.change_type === 'timeout_extend';
+                          const logDisplay = getQueueLogDisplay(log);
                           return (
                             <List.Item>
                               <div style={{ width: '100%' }}>
                                 <div style={{ fontSize: '12px', color: '#999' }}>
                                   {formatDateTime(log.change_time)} - {renderUserLabel(log.changed_by, log.changed_by_id)}
                                 </div>
-                                {isTimeoutShiftLog ? (
-                                  <div style={{ color: '#ff4d4f', fontWeight: 600 }}>
-                                    {log.remark || '超时未使用设备，已顺延'}
-                                  </div>
-                                ) : isTimeoutExtendLog ? (
-                                  <div style={{ color: '#fa8c16', fontWeight: 600 }}>
-                                    {log.remark || '设备超时已延长'}
-                                  </div>
-                                ) : isCompletionLog ? (
-                                  <div style={{ color: '#52c41a', fontWeight: 600 }}>测量完成</div>
-                                ) : isLeaveLog ? (
-                                  <div style={{ color: '#ff4d4f', fontWeight: 600 }}>离开排队</div>
-                                ) : (
-                                  <div>
-                                    {getQueuePositionLabel(log.old_position)} → {getQueuePositionLabel(log.new_position)}
-                                  </div>
-                                )}
+                                <div style={logDisplay.color ? { color: logDisplay.color, fontWeight: 600 } : undefined}>
+                                  {logDisplay.text}
+                                </div>
                               </div>
                             </List.Item>
                           );

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 import uvicorn
 from pathlib import Path
 
-from app.database import engine, get_db
+from app.database import engine, get_db, ensure_queue_record_schema
 from app.models import Base
 from sqlalchemy.exc import OperationalError
 from app.config import settings
@@ -25,6 +25,7 @@ def init_db(max_attempts: int = 5) -> None:
     for attempt in range(1, max_attempts + 1):
         try:
             Base.metadata.create_all(bind=engine)
+            ensure_queue_record_schema()
             return
         except OperationalError as exc:
             if attempt == max_attempts:

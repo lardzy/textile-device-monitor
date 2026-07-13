@@ -4,6 +4,7 @@ export const queueApi = {
   getByDevice: (deviceId) => api.get(`/queue/${deviceId}`),
   join: (data) => api.post('/queue', data),
   updatePosition: (id, data) => api.put(`/queue/${id}/position`, data),
+  claim: (id, data) => api.post(`/queue/${id}/claim`, data),
   leave: (id, params) => api.delete(`/queue/${id}`, { params }),
   complete: (deviceId) => api.post(`/queue/${deviceId}/complete`),
   getCount: (deviceId) => api.get(`/queue/count/${deviceId}`),

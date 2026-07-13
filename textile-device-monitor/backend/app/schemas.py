@@ -64,6 +64,7 @@ class Device(DeviceBase):
 class StatusReport(BaseModel):
     status: DeviceStatus
     task_id: Optional[str] = Field(None, max_length=100)
+    task_key: Optional[str] = Field(None, max_length=500)
     task_name: Optional[str] = Field(None, max_length=200)
     task_progress: Optional[int] = Field(None, ge=0, le=100)
     metrics: Optional[Dict[str, Any]] = None
@@ -109,9 +110,16 @@ class QueueRecord(BaseModel):
     status: TaskStatus
     version: int
     created_by_id: Optional[str] = None
+    is_placeholder: bool = False
+    auto_remove_when_inactive: bool = False
 
     class Config:
         from_attributes = True
+
+
+class QueueClaimRequest(BaseModel):
+    inspector_name: str = Field(..., min_length=1, max_length=50)
+    claimed_by_id: Optional[str] = Field(None, max_length=64)
 
 
 class QueueChangeLog(BaseModel):

@@ -42,7 +42,8 @@ services:
     environment:
       DATABASE_URL: postgresql://admin:password123@postgres:5432/textile_monitor
       SECRET_KEY: your-secret-key-change-in-production
-      HEARTBEAT_TIMEOUT: 30
+      HEARTBEAT_TIMEOUT: 90
+      HEARTBEAT_CHECK_INTERVAL: 10
       DATA_RETENTION_DAYS: 30
       CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
       AREA_WEIGHTS_DIR: /opt/area_weights

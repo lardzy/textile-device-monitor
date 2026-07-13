@@ -35,19 +35,59 @@ python main.py
 
 ### 打包部署
 
-1. **打包程序**
+打包机必须使用 64 位 CPython 3.12，并安装锁定的 Windows 构建依赖：
+
 ```bash
-python build.py
+python -m pip install -r requirements-build.lock.txt
 ```
 
-2. **安装程序**
+安装 Inno Setup 6 后，使用统一发布命令完成干净的 PyInstaller 构建、构建清单校验和安装器生成：
+
 ```bash
-install.bat
+python scripts/build_windows_release.py
 ```
 
-3. **卸载程序**
+如需指定 Inno Setup 编译器路径：
+
 ```bash
-uninstall.bat
+python scripts/build_windows_release.py --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+```
+
+正式产物包括：
+
+```bash
+dist/windows/TextileDeviceClient
+dist/windows/TextileDeviceClient/build-manifest.json
+dist/windows/TextileDeviceClient/textile-device-client.exe.sha256
+dist/installer/textile-device-client-setup-<version>.exe
+dist/installer/textile-device-client-setup-<version>.exe.sha256
+```
+
+安装器会拒绝版本不一致、源码已变化、哈希不匹配、控制台模式或 bootloader 调试模式的 onedir 目录。PyInstaller 子进程使用隔离的 DLL 搜索路径，避免 Conda 或其它 Python 环境中的 DLL 混入产物。找不到 Inno Setup 编译器时命令会返回失败，不会把已有安装包误报为新产物。
+
+拥有 Authenticode 代码签名证书时，可签名客户端和安装器：
+
+```bash
+set TDC_SIGN_CERT_THUMBPRINT=<证书 SHA-1 指纹>
+python scripts/build_windows_release.py --sign
+```
+
+可通过 `SIGNTOOL_EXE` 指定 `signtool.exe`；也可使用 `--signtool`、`--certificate-thumbprint` 和 `--timestamp-url` 参数。
+
+以下命令仅用于分步排查，不是正式发布入口：
+
+```bash
+python scripts/build_windows_installer.py --sync-only
+python scripts/build_windows_onedir.py
+python scripts/build_windows_installer.py
+```
+
+### 调试打包
+
+排查启动问题时，可以临时生成控制台版。该目录会被正式安装器明确拒绝，重新执行统一发布命令后才能生成安装包：
+
+```bash
+python scripts/build_windows_onedir.py --console
 ```
 
 ## 配置说明
@@ -59,6 +99,8 @@ uninstall.bat
 - **服务器地址**: 服务器 API 地址，如 `http://192.168.1.100:8000`
 - **工作路径**: 监测根目录，如 `F:\\tmp\\AiCodingTest\\参考文件\\bak`
 - **上报间隔**: 状态上报间隔（秒），默认 5 秒
+
+客户端结果服务监听 `0.0.0.0:9100`。客户端会根据服务器地址选择实际使用的局域网网卡并上报该网卡 IP；当服务器地址是本机环回地址时，会使用 `host.docker.internal` 供本机 Docker 后端访问。生产环境还需在 Windows 防火墙中允许服务器访问客户端 TCP 9100 端口。
 
 ## 使用说明
 
@@ -109,12 +151,12 @@ F:\\tmp\\AiCodingTest\\参考文件\\bak
 ```
 textile-device-client/
 ├── main.py                    # 主程序入口
-├── build.py                   # PyInstaller 打包脚本
-├── install.bat                # Windows 安装脚本
-├── uninstall.bat              # Windows 卸载脚本
+├── build.py                   # 兼容入口，转发到 scripts/build_windows_onedir.py
 ├── requirements.txt           # Python 依赖
+├── requirements-build.lock.txt # Windows 打包环境锁定依赖
 ├── modules/
 │   ├── __init__.py
+│   ├── version.py             # 应用版本号
 │   ├── config.py              # 配置管理
 │   ├── logger.py              # 日志管理
 │   ├── api_client.py          # 服务端 API 客户端
@@ -125,6 +167,17 @@ textile-device-client/
 │   ├── tray_icon.py           # 系统托盘
 │   ├── config_window.py       # 配置窗口
 │   └── log_window.py          # 日志查看窗口
+├── scripts/
+│   ├── build_support.py       # 版本同步和打包辅助逻辑
+│   ├── build_windows_onedir.py # PyInstaller onedir 构建入口
+│   ├── build_windows_installer.py # Inno Setup 安装包构建入口
+│   └── build_windows_release.py # 正式发布统一入口
+├── packaging/
+│   ├── pyinstaller/
+│   │   └── textile_device_client.spec
+│   └── inno-setup/
+│       ├── textile_device_client.iss
+│       └── version.auto.iss
 ├── resources/
 │   └── icon.ico              # 托盘图标
 ├── config.json               # 配置文件（运行时生成）
@@ -230,12 +283,26 @@ GET /health
 
 ## 开发说明
 
+### Olympus 日志回放测试
+
+生产客户端只监听实时更新的 `Olympus.log`。测试时可将当前日志或归档日志按原始时间间隔追加到独立的测试文件：
+
+```powershell
+.venv\Scripts\python.exe scripts\replay_olympus_log.py `
+  "F:\tmp\test\olympus log\Olympus.log" `
+  --output "F:\tmp\test\olympus-replay\Olympus.log" `
+  --truncate
+```
+
+默认 `--speed 1` 为真实速度。联调时可使用 `--speed 30` 进行 30 倍速回放；也可使用 `--start-at` 和 `--end-at` 限定源日志时间范围。传入包含日志的目录时，程序会按各日志首条时间戳排序并回放其中全部 `.log` 文件。
+
 ### 添加新功能
 
 1. 在 `modules/` 目录下创建新模块
 2. 在 `main.py` 中集成新功能
 3. 更新 `requirements.txt` 添加新依赖
-4. 更新 `build.py` 确保新模块被打包
+4. 如需额外 hidden import，更新 `scripts/build_support.py`
+5. 如需调整打包布局，更新 `packaging/pyinstaller/textile_device_client.spec`
 
 ### 调试模式
 

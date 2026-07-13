@@ -6,6 +6,7 @@ import sys
 import time
 import os
 import ctypes
+import subprocess
 import threading
 import queue
 from typing import Optional
@@ -24,6 +25,48 @@ try:
     HAS_WINDOWS_CONSOLE = True
 except:
     HAS_WINDOWS_CONSOLE = False
+
+
+def _is_windowed_runtime() -> bool:
+    return bool(
+        getattr(sys, "frozen", False)
+        and (sys.stdin is None or sys.stdout is None)
+    )
+
+
+def _self_command(mode: str) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, mode]
+    return [sys.executable, os.path.abspath(__file__), mode]
+
+
+def _show_native_error(message: str) -> None:
+    if not HAS_WINDOWS_CONSOLE:
+        return
+    try:
+        user32.MessageBoxW(None, message, "纺织品检测设备客户端", 0x10)
+    except Exception:
+        pass
+
+
+def _run_config_tool() -> int:
+    from modules.config_window import ConfigWindow
+
+    config = Config()
+    new_config = ConfigWindow.show_config_dialog(
+        config.get_all(), DeviceManager.PRESET_DEVICES
+    )
+    if new_config is None:
+        return 2
+    return 0 if config.update(new_config) else 1
+
+
+def _run_log_viewer() -> int:
+    from modules.log_window import LogWindow
+
+    logger = Logger(log_dir="logs", log_level="INFO")
+    LogWindow.show_log_dialog(logger.get_recent_logs)
+    return 0
 
 
 def hide_console():
@@ -136,8 +179,9 @@ class TextileDeviceClient:
         self.status_reporter = None
         self.results_server = None
         self.tray_icon = None
-        self._config_dialog_open = False
         self._config_lock = threading.Lock()
+        self._config_process = None
+        self._log_process = None
         self._config_watcher = None
         self._should_exit = False
 
@@ -161,12 +205,14 @@ class TextileDeviceClient:
                 ),
                 logger=self.logger,
                 results_port=self.config.get_results_port(),
+                server_url=config["server_url"],
             )
         else:
             self.progress_reader = ProgressReader(
                 working_path=config["working_path"],
                 logger=self.logger,
                 results_port=self.config.get_results_port(),
+                server_url=config["server_url"],
             )
 
         self.metrics_collector = MetricsCollector(logger=self.logger)
@@ -192,7 +238,7 @@ class TextileDeviceClient:
                 ),
             )
 
-        if TrayIcon:
+        if TrayIcon and self.tray_icon is None:
             self.tray_icon = TrayIcon(
                 logger=self.logger,
                 on_open_config=self._open_config,
@@ -209,13 +255,23 @@ class TextileDeviceClient:
         try:
             if self.config.is_first_run():
                 self.logger.info("首次运行，进入配置流程")
-                # 首次运行时显示控制台
-                show_console()
-                if not self._show_config_dialog():
-                    self.logger.warning("用户取消配置，程序退出")
-                    return
-                # 配置完成后，隐藏控制台
-                hide_console()
+                if _is_windowed_runtime():
+                    completed = subprocess.run(
+                        _self_command("--config-tool"),
+                        cwd=os.getcwd(),
+                        check=False,
+                    )
+                    self.config.load()
+                    if completed.returncode != 0 or self.config.is_first_run():
+                        self.logger.warning("用户取消配置，程序退出")
+                        return
+                    self.initialize()
+                else:
+                    show_console()
+                    if not self._show_config_dialog():
+                        self.logger.warning("用户取消配置，程序退出")
+                        return
+                    hide_console()
             else:
                 self.logger.info("加载已保存的配置")
                 # 后续运行时隐藏控制台
@@ -488,6 +544,8 @@ class TextileDeviceClient:
         old_log_path = self.config.get_log_path()
         old_is_confocal = self.config.is_laser_confocal()
         old_port = self.config.get_results_port()
+        old_report_interval = self.config.get_report_interval()
+        old_manual_status = self.config.get_manual_status()
 
         self.config.load()
 
@@ -497,6 +555,8 @@ class TextileDeviceClient:
         new_log_path = self.config.get_log_path()
         new_is_confocal = self.config.is_laser_confocal()
         new_port = self.config.get_results_port()
+        new_report_interval = self.config.get_report_interval()
+        new_manual_status = self.config.get_manual_status()
 
         if (
             old_device_code != new_device_code
@@ -505,6 +565,7 @@ class TextileDeviceClient:
             or old_log_path != new_log_path
             or old_is_confocal != new_is_confocal
             or old_port != new_port
+            or old_report_interval != new_report_interval
         ):
             self.logger.info("配置已更改，需要重新初始化")
             if self.status_reporter:
@@ -524,41 +585,48 @@ class TextileDeviceClient:
             if self.tray_icon:
                 self.tray_icon.show_notification("配置已更新", "新配置已自动应用")
         else:
+            if not self.config.is_device_registered():
+                self._register_device()
+            if old_manual_status != new_manual_status and self.status_reporter:
+                self.status_reporter.set_manual_status(new_manual_status)
             self.logger.info("配置已更新")
 
     def _open_config(self):
         """打开配置窗口"""
+        self.logger.info("打开配置窗口")
+        self._launch_window_tool("--config-tool", "配置窗口", "_config_process")
+
+    def _launch_window_tool(self, mode: str, label: str, process_attribute: str):
+        """Launch a UI helper as a separate instance of this executable."""
         with self._config_lock:
-            if self._config_dialog_open:
-                self.logger.warning("配置窗口已打开，忽略重复请求")
+            current_process = getattr(self, process_attribute)
+            if current_process is not None and current_process.poll() is None:
+                self.logger.warning(f"{label}已打开，忽略重复请求")
                 return
 
-            self._config_dialog_open = True
+            try:
+                process = subprocess.Popen(_self_command(mode), cwd=os.getcwd())
+            except Exception as exc:
+                self.logger.exception(f"启动{label}失败: {exc}")
+                if self.tray_icon:
+                    self.tray_icon.show_notification(f"{label}启动失败", str(exc))
+                return
+            setattr(self, process_attribute, process)
 
-        self.logger.info("打开配置窗口")
-
-        try:
-            import subprocess
-
-            script_path = os.path.join(os.path.dirname(__file__), "config_tool.py")
-
-            if os.path.exists(script_path):
-                subprocess.Popen([sys.executable, script_path])
-                self.logger.info("配置窗口已启动")
-            else:
-                self.logger.error(f"配置工具不存在: {script_path}")
+        def wait_for_tool() -> None:
+            return_code = process.wait()
+            if return_code not in (0, 2):
+                self.logger.error(f"{label}异常退出，退出码: {return_code}")
                 if self.tray_icon:
                     self.tray_icon.show_notification(
-                        "配置窗口", "配置工具文件不存在，请使用命令行方式"
+                        f"{label}异常退出", f"退出码: {return_code}"
                     )
-
-        except Exception as e:
-            self.logger.exception(f"启动配置窗口失败: {e}")
-            if self.tray_icon:
-                self.tray_icon.show_notification("配置窗口启动失败", str(e))
-        finally:
             with self._config_lock:
-                self._config_dialog_open = False
+                if getattr(self, process_attribute) is process:
+                    setattr(self, process_attribute, None)
+
+        threading.Thread(target=wait_for_tool, daemon=True).start()
+        self.logger.info(f"{label}已启动")
 
     def _toggle_maintenance(self, status: Optional[str]):
         """切换维护模式
@@ -574,19 +642,9 @@ class TextileDeviceClient:
             self.tray_icon.update_status(status or "idle")
 
     def _view_logs(self):
-        """查看日志（命令行）"""
+        """打开日志查看窗口"""
         self.logger.info("查看日志")
-        print("\n" + "=" * 60)
-        print("最近日志:")
-        print("=" * 60)
-
-        logs = self.logger.get_recent_logs(50)
-        for log in logs:
-            print(log.strip())
-
-        print("=" * 60)
-        print("日志文件位于: logs/")
-        print("=" * 60)
+        self._launch_window_tool("--log-viewer", "日志窗口", "_log_process")
 
     def _reconnect(self):
         """重新连接服务器"""
@@ -629,6 +687,10 @@ class TextileDeviceClient:
         """
         self.logger.error(message)
 
+        if _is_windowed_runtime():
+            _show_native_error(message)
+            raise SystemExit(1)
+
         print("\n" + "=" * 60)
         print("错误")
         print("=" * 60)
@@ -640,11 +702,22 @@ class TextileDeviceClient:
         sys.exit(1)
 
 
-def main():
+def main() -> int:
     """主函数"""
+    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    try:
+        if mode == "--config-tool":
+            return _run_config_tool()
+        if mode == "--log-viewer":
+            return _run_log_viewer()
+    except Exception as exc:
+        _show_native_error(str(exc))
+        return 1
+
     client = TextileDeviceClient()
     client.run()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
