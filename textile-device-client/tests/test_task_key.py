@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 CLIENT_ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,53 @@ class _Logger:
 
     def error(self, message: str) -> None:
         return None
+
+
+class _RouteSocket:
+    def __init__(self, local_ip: str):
+        self.local_ip = local_ip
+        self.connected_to = None
+        self.closed = False
+
+    def connect(self, endpoint) -> None:
+        self.connected_to = endpoint
+
+    def getsockname(self):
+        return self.local_ip, 50000
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class ClientBaseUrlTests(unittest.TestCase):
+    def test_loopback_server_uses_docker_host_gateway(self):
+        reader = ProgressReader(
+            working_path="",
+            logger=_Logger(),
+            results_port=9100,
+            server_url="http://127.0.0.1:8000",
+        )
+
+        self.assertEqual(
+            reader.get_client_base_url(),
+            "http://host.docker.internal:9100",
+        )
+
+    def test_lan_server_uses_source_ip_for_server_route(self):
+        route_socket = _RouteSocket("192.168.1.28")
+        reader = ProgressReader(
+            working_path="",
+            logger=_Logger(),
+            results_port=9100,
+            server_url="http://192.168.1.100:8000",
+        )
+
+        with patch("modules.progress_reader.socket.socket", return_value=route_socket):
+            base_url = reader.get_client_base_url()
+
+        self.assertEqual(base_url, "http://192.168.1.28:9100")
+        self.assertEqual(route_socket.connected_to, ("192.168.1.100", 8000))
+        self.assertTrue(route_socket.closed)
 
 
 class TaskKeyTests(unittest.TestCase):

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, Input, Modal, Progress, Spin, message } from 'antd';
+import { Button, Card, Empty, Input, Modal, Progress, Spin, message } from 'antd';
 
 import { FixedSizeGrid as Grid } from 'react-window';
 import { resultsApi } from '../api/results';
-import { deviceApi } from '../api/devices';
 
 const COLUMN_WIDTH = 140;
 const ROW_HEIGHT = 160;
@@ -18,7 +17,6 @@ function ResultsImages({
   deviceId: propDeviceId,
   folder: propFolder,
   embedded = false,
-  clientBaseUrl: propClientBaseUrl,
 }) {
   const params = new URLSearchParams(window.location.search);
   const deviceId = propDeviceId ?? params.get('device_id');
@@ -50,7 +48,6 @@ function ResultsImages({
   const [failedCount, setFailedCount] = useState(0);
   const [loadAllDuration, setLoadAllDuration] = useState(null);
   const [gridHeight, setGridHeight] = useState(600);
-  const [clientBaseUrl, setClientBaseUrl] = useState(propClientBaseUrl || null);
   const previewContainerRef = useRef(null);
   const loadAllStartRef = useRef(null);
   const loadAllCancelledRef = useRef(false);
@@ -64,61 +61,15 @@ function ResultsImages({
     if (!query) return items;
     return items.filter(item => item.name.toLowerCase().includes(query));
   }, [items, searchText]);
+  const hasItems = items.length > 0;
   const rows = Math.ceil(filteredItems.length / columns);
 
-  const resolvedBaseUrl = useMemo(() => {
-    if (!clientBaseUrl) return null;
-    return String(clientBaseUrl).replace(/\/+$/, '');
-  }, [clientBaseUrl]);
-
   const buildImageUrls = useCallback((name, targetFolder) => {
-    const encodedName = encodeURIComponent(name);
-    const folderParam = targetFolder ? `?folder=${encodeURIComponent(targetFolder)}` : '';
-    if (resolvedBaseUrl) {
-      return {
-        fullUrl: `${resolvedBaseUrl}/client/results/image/${encodedName}${folderParam}`,
-        thumbUrl: `${resolvedBaseUrl}/client/results/thumb/${encodedName}${folderParam}`,
-      };
-    }
     return {
       fullUrl: resultsApi.getImageUrl(deviceId, name, targetFolder),
       thumbUrl: resultsApi.getThumbUrl(deviceId, name, targetFolder),
     };
-  }, [deviceId, resolvedBaseUrl]);
-
-  useEffect(() => {
-    if (propClientBaseUrl) {
-      setClientBaseUrl(propClientBaseUrl);
-      return;
-    }
-    if (!deviceId) return;
-    let cancelled = false;
-    deviceApi.getById(deviceId)
-      .then((device) => {
-        if (cancelled) return;
-        setClientBaseUrl(device?.client_base_url || null);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setClientBaseUrl(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [deviceId, propClientBaseUrl]);
-
-  useEffect(() => {
-    if (!resolvedBaseUrl || items.length === 0) return;
-    setItems(prev => prev.map(item => {
-      if (!item) return item;
-      const urls = buildImageUrls(item.name, item.folder);
-      return {
-        ...item,
-        fullUrl: urls.fullUrl,
-        thumbUrl: urls.thumbUrl,
-      };
-    }));
-  }, [buildImageUrls, resolvedBaseUrl]);
+  }, [deviceId]);
 
 
   const processQueue = useCallback(() => {
@@ -316,26 +267,36 @@ function ResultsImages({
   }, [deviceId, requestedFolder]);
 
   useEffect(() => {
+    if (!hasItems) return undefined;
     const element = containerRef.current;
     if (!element) return undefined;
     const updateSize = () => {
-      const width = element.clientWidth || window.innerWidth;
-      const height = element.clientHeight || 0;
-      setContainerWidth(width);
-      setColumns(Math.max(1, Math.floor(width / COLUMN_WIDTH)));
-      if (height) {
+      const rect = element.getBoundingClientRect();
+      const parentRect = element.parentElement?.getBoundingClientRect();
+      const width = Math.floor(rect.width || parentRect?.width || 0);
+      const height = Math.floor(rect.height || 0);
+      if (width > 0) {
+        setContainerWidth(width);
+        setColumns(Math.max(1, Math.floor(width / COLUMN_WIDTH)));
+      }
+      if (height > 0) {
         setGridHeight(height);
       }
     };
     updateSize();
+    const frameId = window.requestAnimationFrame(updateSize);
+    let observer;
     if (typeof ResizeObserver !== 'undefined') {
-      const observer = new ResizeObserver(updateSize);
+      observer = new ResizeObserver(updateSize);
       observer.observe(element);
-      return () => observer.disconnect();
     }
     window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
-  }, []);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      observer?.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
+  }, [hasItems]);
 
   const onItemsRendered = ({ visibleRowStartIndex, visibleRowStopIndex }) => {
     if (rows <= 0) return;
@@ -578,6 +539,12 @@ function ResultsImages({
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
           </div>
+        ) : items.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={folder ? `结果目录 ${folder} 中没有图片` : '当前结果目录没有图片'}
+            style={{ padding: 48 }}
+          />
         ) : (
           <div
             ref={containerRef}

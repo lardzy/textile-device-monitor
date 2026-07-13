@@ -353,7 +353,6 @@ class ResultsHandler(BaseHTTPRequestHandler):
             self.reader.working_path
         )
         latest_name = os.path.basename(latest_folder) if latest_folder else None
-        today = datetime.now().date()
         candidates = []
         for folder_path in entries:
             folder_name = os.path.basename(folder_path)
@@ -362,8 +361,6 @@ class ResultsHandler(BaseHTTPRequestHandler):
             try:
                 mtime = os.path.getmtime(folder_path)
             except Exception:
-                continue
-            if datetime.fromtimestamp(mtime).date() != today:
                 continue
 
             result_dir = os.path.join(folder_path, "result")

@@ -92,6 +92,8 @@ python scripts/build_windows_onedir.py --console
 - **工作路径**: 监测根目录，如 `F:\\tmp\\AiCodingTest\\参考文件\\bak`
 - **上报间隔**: 状态上报间隔（秒），默认 5 秒
 
+客户端结果服务监听 `0.0.0.0:9100`。客户端会根据服务器地址选择实际使用的局域网网卡并上报该网卡 IP；当服务器地址是本机环回地址时，会使用 `host.docker.internal` 供本机 Docker 后端访问。生产环境还需在 Windows 防火墙中允许服务器访问客户端 TCP 9100 端口。
+
 ## 使用说明
 
 ### 托盘图标功能

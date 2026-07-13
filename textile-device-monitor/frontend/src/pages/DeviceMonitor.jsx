@@ -805,7 +805,6 @@ function DeviceMonitor() {
     setRecentResults([]);
     if (selectedDeviceId) {
       fetchQueue(selectedDeviceId);
-      fetchRecentResults(selectedDevice);
     }
     setClaimModal({ open: false, record: null, submittingAction: null });
     claimForm.resetFields();
@@ -813,6 +812,17 @@ function DeviceMonitor() {
     setImagesModal({ open: false, folder: null });
     setCleanupModal(prev => ({ ...prev, open: false, submitting: false }));
   }, [claimForm, selectedDeviceId]);
+
+  useEffect(() => {
+    if (!selectedDeviceId || !selectedDevice) return;
+    fetchRecentResults(selectedDevice);
+  }, [
+    selectedDeviceId,
+    selectedDevice?.task_name,
+    selectedDevice?.task_progress,
+    selectedDevice?.status,
+    selectedDevice?.client_base_url,
+  ]);
 
   useEffect(() => {
     if (!selectedDeviceId) return;
@@ -1538,7 +1548,6 @@ function DeviceMonitor() {
                             deviceId={selectedDeviceId}
                             folder={imagesModal.folder}
                             embedded
-                            clientBaseUrl={selectedDevice?.client_base_url || null}
                           />
                         )}
                       </Modal>

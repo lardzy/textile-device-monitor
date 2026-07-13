@@ -2,20 +2,30 @@
 进度文件读取模块
 """
 
+import ipaddress
 import os
 import re
+import socket
 import threading
 from collections import deque
 from datetime import datetime
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
 from .logger import Logger
 
 
 class ProgressReader:
-    def __init__(self, working_path: str, logger: Logger, results_port: int = 9100):
+    def __init__(
+        self,
+        working_path: str,
+        logger: Logger,
+        results_port: int = 9100,
+        server_url: Optional[str] = None,
+    ):
         self.working_path = working_path
         self.logger = logger
         self.results_port = results_port
+        self.server_url = server_url
         self.is_laser_confocal = False
 
     def read_progress(self) -> int:
@@ -183,22 +193,7 @@ class ProgressReader:
     def get_client_base_url(self) -> Optional[str]:
         """构建客户端结果服务地址"""
         try:
-            import socket
-
-            host = None
-            hostname = socket.gethostname()
-            candidates = socket.gethostbyname_ex(hostname)[2]
-            for candidate in candidates:
-                if candidate.startswith("127."):
-                    continue
-                if candidate == "0.0.0.0":
-                    continue
-                host = candidate
-                break
-            if not host:
-                host = socket.gethostbyname(hostname)
-                if host.startswith("127.") or host == "0.0.0.0":
-                    host = None
+            host = self._get_result_service_host()
 
             port = getattr(self, "results_port", None)
             if not port:
@@ -209,10 +204,81 @@ class ProgressReader:
         except Exception:
             return None
 
+    def _get_result_service_host(self) -> Optional[str]:
+        server_host, server_port = self._get_server_endpoint()
+        if server_host:
+            if self._is_loopback_host(server_host):
+                # The backend is published from Docker on this machine. Inside the
+                # container, host.docker.internal resolves back to the Windows host.
+                return "host.docker.internal"
+
+            route_host = self._get_route_local_ip(server_host, server_port)
+            if route_host:
+                return route_host
+
+        return self._get_fallback_local_ip()
+
+    def _get_server_endpoint(self) -> tuple[Optional[str], int]:
+        raw_url = str(getattr(self, "server_url", None) or "").strip()
+        if not raw_url:
+            return None, 80
+
+        parsed = urlparse(raw_url if "://" in raw_url else f"//{raw_url}")
+        host = parsed.hostname
+        if not host:
+            return None, 80
+        default_port = 443 if parsed.scheme == "https" else 80
+        return host, parsed.port or default_port
+
+    @staticmethod
+    def _is_loopback_host(host: str) -> bool:
+        if host.lower() == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _get_route_local_ip(server_host: str, server_port: int) -> Optional[str]:
+        route_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # UDP connect selects a route without sending application data.
+            route_socket.connect((server_host, server_port))
+            local_ip = str(route_socket.getsockname()[0])
+            if local_ip and local_ip != "0.0.0.0" and not local_ip.startswith("127."):
+                return local_ip
+        except OSError:
+            return None
+        finally:
+            route_socket.close()
+        return None
+
+    @staticmethod
+    def _get_fallback_local_ip() -> Optional[str]:
+        hostname = socket.gethostname()
+        candidates = socket.gethostbyname_ex(hostname)[2]
+        for candidate in candidates:
+            if candidate.startswith("127.") or candidate == "0.0.0.0":
+                continue
+            return candidate
+        return None
+
 
 class OlympusProgressReader(ProgressReader):
-    def __init__(self, log_path: str, logger: Logger, results_port: int = 9100):
-        super().__init__(working_path="", logger=logger, results_port=results_port)
+    def __init__(
+        self,
+        log_path: str,
+        logger: Logger,
+        results_port: int = 9100,
+        server_url: Optional[str] = None,
+    ):
+        super().__init__(
+            working_path="",
+            logger=logger,
+            results_port=results_port,
+            server_url=server_url,
+        )
         self.log_path = log_path
         self.is_laser_confocal = True
         if os.name == "nt":

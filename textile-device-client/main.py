@@ -161,12 +161,14 @@ class TextileDeviceClient:
                 ),
                 logger=self.logger,
                 results_port=self.config.get_results_port(),
+                server_url=config["server_url"],
             )
         else:
             self.progress_reader = ProgressReader(
                 working_path=config["working_path"],
                 logger=self.logger,
                 results_port=self.config.get_results_port(),
+                server_url=config["server_url"],
             )
 
         self.metrics_collector = MetricsCollector(logger=self.logger)
