@@ -273,6 +273,19 @@ GET /health
 
 ## 开发说明
 
+### Olympus 日志回放测试
+
+生产客户端只监听实时更新的 `Olympus.log`。测试时可将当前日志或归档日志按原始时间间隔追加到独立的测试文件：
+
+```powershell
+.venv\Scripts\python.exe scripts\replay_olympus_log.py `
+  "F:\tmp\test\olympus log\Olympus.log" `
+  --output "F:\tmp\test\olympus-replay\Olympus.log" `
+  --truncate
+```
+
+默认 `--speed 1` 为真实速度。联调时可使用 `--speed 30` 进行 30 倍速回放；也可使用 `--start-at` 和 `--end-at` 限定源日志时间范围。传入包含日志的目录时，程序会按各日志首条时间戳排序并回放其中全部 `.log` 文件。
+
 ### 添加新功能
 
 1. 在 `modules/` 目录下创建新模块

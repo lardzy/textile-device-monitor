@@ -327,6 +327,8 @@ class OlympusProgressReader(ProgressReader):
         self._z_range: Optional[tuple[int, int]] = None
         self._output_path_candidates: list[str] = []
         self._active_task_key: Optional[str] = None
+        self._prepared_group_total = 0
+        self._overall_progress_high_water = 0
 
         # 定义所有正则表达式
         self._TIMESTAMP_PATTERN = re.compile(
@@ -353,7 +355,12 @@ class OlympusProgressReader(ProgressReader):
             rb"notifyExportImage.*path=([^,]+)"
         )
         self._GROUP_FROM_FILENAME_PATTERN = re.compile(r"_G(\d{3})_A\d+")
-        self._GROUP_TOTAL_PATTERN = re.compile(r"numberOfGroup=(\d+)")
+        self._PREPARE_START_PATTERN = re.compile(
+            r"start@CameraImageSourceImpl2.*start\(\) was called"
+        )
+        self._PREPARED_PROTOCOL_PATTERN = re.compile(
+            r"getProtocol@CameraImageSourceImpl2.*getProtocol\(\) was called"
+        )
         self._XY_PATTERN = re.compile(r"3NXYP\s+(-?\d+),(-?\d+),0")
         self._Z_PATTERN = re.compile(r"1PE\s+(-?\d+),0")
         self._STAGE_POS_PATTERN = re.compile(r"stagePosition\"?[=:](-?\d+)")
@@ -508,32 +515,54 @@ class OlympusProgressReader(ProgressReader):
                 self._offset = 0
                 self._initialized = True
                 return
-            tail_bytes = min(file_size, 200000)
+            read_offset = self._get_initial_read_offset(file_size)
             with open(self.log_path, "rb") as f:
-                f.seek(file_size - tail_bytes)
-                data = f.read()
-            if not data:
-                self._offset = file_size
-                self._initialized = True
-                return
-            lines = data.split(b"\n")
-            if tail_bytes < file_size and lines:
-                lines = lines[1:]
-            if data.endswith(b"\n"):
+                f.seek(read_offset)
+                if read_offset > 0:
+                    f.seek(read_offset - 1)
+                    starts_on_line_boundary = f.read(1) == b"\n"
+                    f.seek(read_offset)
+                    if not starts_on_line_boundary:
+                        f.readline()
                 self._pending_bytes = b""
-            else:
-                self._pending_bytes = lines[-1] if lines else b""
-                lines = lines[:-1]
-            for line_bytes in lines:
-                line = self._decode_line_bytes(line_bytes).rstrip("\r")
-                self._process_line(line, line_bytes=line_bytes)
-            self._offset = file_size
+                while True:
+                    line_bytes = f.readline()
+                    if not line_bytes:
+                        break
+                    if not line_bytes.endswith(b"\n"):
+                        self._pending_bytes = line_bytes
+                        break
+                    line_bytes = line_bytes[:-1]
+                    line = self._decode_line_bytes(line_bytes).rstrip("\r")
+                    self._process_line(line, line_bytes=line_bytes)
+                self._offset = f.tell()
             self._initialized = True
         except Exception as exc:
             self.logger.error(f"初始化日志读取失败: {exc}")
             self._offset = 0
             self._pending_bytes = b""
             self._initialized = True
+
+    def _get_initial_read_offset(self, file_size: int) -> int:
+        tail_offset = max(0, file_size - 200000)
+        try:
+            with open(self.log_path, "rb") as source:
+                last_start_offset: Optional[int] = None
+                while True:
+                    line_offset = source.tell()
+                    line = source.readline()
+                    if not line:
+                        break
+                    if (
+                        b"start@CameraImageSourceImpl2" in line
+                        and b"start() was called" in line
+                    ):
+                        last_start_offset = line_offset
+                if last_start_offset is not None:
+                    return last_start_offset
+        except OSError:
+            pass
+        return tail_offset
 
     def _read_new_lines(self) -> None:
         if not self.log_path:
@@ -618,6 +647,8 @@ class OlympusProgressReader(ProgressReader):
         self._current_file_name = None
         self._output_path_candidates = []
         self._active_task_key = None
+        self._prepared_group_total = 0
+        self._overall_progress_high_water = 0
 
     def _record_recent_result(self, path: str, timestamp: Optional[datetime]) -> None:
         if not path:
@@ -685,8 +716,12 @@ class OlympusProgressReader(ProgressReader):
         self._record_recent_result(normalized, timestamp)
 
     def _start_acquisition(self, timestamp: Optional[datetime]) -> None:
+        prepared_group_total = self._prepared_group_total
         if self._task_finished or not self._task_started:
             self._reset_acquisition_state()
+        if prepared_group_total > 0:
+            self._group_total = prepared_group_total
+        self._prepared_group_total = 0
         self._mark_task_started(timestamp)
         self._acquisition_active = True
 
@@ -711,6 +746,11 @@ class OlympusProgressReader(ProgressReader):
         if not line:
             return
         timestamp = self._parse_timestamp(line)
+
+        if self._PREPARE_START_PATTERN.search(line):
+            self._prepared_group_total = 0
+        elif self._PREPARED_PROTOCOL_PATTERN.search(line):
+            self._prepared_group_total += 1
 
         if "saveMATLProperties" in line and "datapath=" in line:
             match = self._DATAPATH_PATTERN.search(line)
@@ -946,6 +986,7 @@ class OlympusProgressReader(ProgressReader):
         if not self._task_started:
             return 0
         if self._task_finished:
+            self._overall_progress_high_water = 100
             return 100
 
         # 计算总组数
@@ -955,6 +996,8 @@ class OlympusProgressReader(ProgressReader):
 
         # 计算已完成的组数
         completed = len(self._groups_completed)
+        if self._current_group in self._groups_completed:
+            completed -= 1
 
         # 计算当前组内的进度
         current_fraction = 0.0
@@ -964,6 +1007,7 @@ class OlympusProgressReader(ProgressReader):
             and self._last_frame_total > 0
         ):
             current_fraction = self._current_frame / self._last_frame_total
+            current_fraction = max(0.0, min(1.0, current_fraction))
 
         # 计算总体进度
         progress = int(((completed + current_fraction) / total_groups) * 100)
@@ -972,7 +1016,11 @@ class OlympusProgressReader(ProgressReader):
         if not self._task_finished:
             progress = min(99, progress)
 
-        return max(0, progress)
+        progress = max(0, progress)
+        if self._group_total:
+            progress = max(self._overall_progress_high_water, progress)
+            self._overall_progress_high_water = progress
+        return progress
 
     def read_progress(self) -> int:
         self._refresh_state()
@@ -1152,6 +1200,11 @@ class OlympusProgressReader(ProgressReader):
             "group_current": group_current,
             "group_completed": len(self._groups_completed),
             "group_total": total_groups,
+            "group_total_source": (
+                "prepared_protocols"
+                if self._group_total
+                else ("observed_groups" if self._max_group_index else None)
+            ),
             "xy_position": (
                 {"x": self._xy_position[0], "y": self._xy_position[1]}
                 if self._xy_position
