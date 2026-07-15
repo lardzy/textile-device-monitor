@@ -159,7 +159,7 @@ const isConfocalDevice = (device) => {
   return device.metrics?.device_type === 'laser_confocal' || Boolean(device.metrics?.olympus);
 };
 
-const DraggableRow = ({ index, moveRow, onDropConfirm, isActive, children, ...restProps }) => {
+const DraggableRow = ({ index, onDropConfirm, isActive, children, className, style, ...restProps }) => {
   const ref = useRef(null);
   const [{ isOver, dropClassName }, drop] = useDrop({
     accept: type,
@@ -181,59 +181,58 @@ const DraggableRow = ({ index, moveRow, onDropConfirm, isActive, children, ...re
       onDropConfirm(dragIndex, index);
     },
   });
-  const [, drag] = useDrag({
+  const [{ isDragging }, drag] = useDrag({
     type,
     item: { index },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
   });
-  drop(drag(ref));
+  drag(drop(ref));
   const rowStyle = {
-    ...restProps.style,
-    cursor: 'move',
+    ...style,
+    cursor: isDragging ? 'grabbing' : 'grab',
     ...(isActive ? { background: '#f6ffed' } : null),
+    ...(isDragging ? { opacity: 0.55 } : null),
   };
+  const rowClassName = [className, isOver ? dropClassName : ''].filter(Boolean).join(' ');
   return (
     <tr
-      ref={ref}
-      className={`${isOver ? dropClassName : ''}`}
-      style={rowStyle}
       {...restProps}
+      ref={ref}
+      className={rowClassName}
+      style={rowStyle}
     >
       {children}
     </tr>
   );
 };
 
-const DragTable = ({ columns, dataSource, onDropConfirm, ...props }) => {
-  const moveRow = (dragIndex, hoverIndex) => {
-    const dragRow = dataSource[dragIndex];
-    const newData = [...dataSource];
-    newData.splice(dragIndex, 1);
-    newData.splice(hoverIndex, 0, dragRow);
-    return newData;
-  };
+const queueTableComponents = {
+  body: {
+    row: DraggableRow,
+  },
+};
 
-  const components = {
-    body: {
-      row: (props) => {
-        const index = dataSource.findIndex((x) => x.id === props['data-row-key']);
-        const record = index >= 0 ? dataSource[index] : null;
-        return (
-          <DraggableRow
-            index={index}
-            moveRow={moveRow}
-            onDropConfirm={onDropConfirm}
-            isActive={record?.position === 1}
-            {...props}
-          />
-        );
-      },
-    },
-  };
+const DragTable = ({ columns, dataSource, onDropConfirm, onRow, ...props }) => {
+  const getRowProps = (record, index) => ({
+    ...(onRow?.(record, index) || {}),
+    index,
+    onDropConfirm,
+    isActive: record?.position === 1,
+  });
 
-  return <Table columns={columns} dataSource={dataSource} components={components} pagination={false} size="small" {...props} />;
+  return (
+    <Table
+      columns={columns}
+      dataSource={dataSource}
+      components={queueTableComponents}
+      pagination={false}
+      size="small"
+      onRow={getRowProps}
+      {...props}
+    />
+  );
 };
 
 const isTempOutputPath = (path) => {
@@ -1133,7 +1132,11 @@ function DeviceMonitor() {
       dataIndex: 'drag',
       key: 'drag',
       width: 50,
-      render: () => <HolderOutlined style={{ cursor: 'move', color: '#999' }} />
+      render: () => (
+        <Tooltip title="拖动整行调整顺序">
+          <HolderOutlined aria-hidden style={{ color: '#8c8c8c' }} />
+        </Tooltip>
+      )
     },
     {
       title: '位置',
@@ -1167,16 +1170,24 @@ function DeviceMonitor() {
       width: 80,
       render: (_, record) => (
         isUnclaimedPlaceholder(record) ? (
-          <Button type="link" onClick={() => openClaimModal(record)}>
+          <Button
+            type="link"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={() => openClaimModal(record)}
+          >
             认领
           </Button>
         ) : (
-          <Button
-            type="text"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => handleDeleteQueue(record)}
-          />
+          <Tooltip title="删除">
+            <Button
+              type="text"
+              danger
+              aria-label="删除排队记录"
+              icon={<DeleteOutlined />}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={() => handleDeleteQueue(record)}
+            />
+          </Tooltip>
         )
       )
     }
@@ -1216,7 +1227,7 @@ function DeviceMonitor() {
           const statusBadge = (
             <Badge
               status={config.color}
-              text={device.status === 'offline' ? '离线/心跳超时' : config.text}
+              text={device.status === 'offline' ? '离线' : config.text}
             />
           );
           return (
