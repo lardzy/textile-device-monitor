@@ -8,7 +8,11 @@ import DeviceManagement from './pages/DeviceManagement';
 import ResultsTable from './pages/ResultsTable';
 import ResultsImages from './pages/ResultsImages';
 import OcrTool from './pages/OcrTool';
-import AreaRecognition from './pages/AreaRecognition';
+import AreaShell from './pages/area/AreaShell';
+import AreaTaskCenter from './pages/area/AreaTaskCenter';
+import AreaFolders from './pages/area/AreaFolders';
+import AreaSettings from './pages/area/AreaSettings';
+import AreaJobWorkspace from './pages/area/AreaJobWorkspace';
 import wsClient from './websocket/client';
 import { useState, useEffect } from 'react';
 
@@ -53,7 +57,12 @@ const appRoutes = (
     <Route path="/statistics" element={<Statistics />} />
     <Route path="/management" element={<DeviceManagement />} />
     <Route path="/tools/ocr" element={<OcrTool />} />
-    <Route path="/tools/area" element={<AreaRecognition />} />
+    <Route path="/tools/area" element={<AreaShell />}>
+      <Route index element={<AreaTaskCenter />} />
+      <Route path="folders" element={<AreaFolders />} />
+      <Route path="settings" element={<AreaSettings />} />
+      <Route path="jobs/:jobId" element={<AreaJobWorkspace />} />
+    </Route>
     <Route path="/results/table" element={<ResultsTable />} />
     <Route path="/results/images" element={<ResultsImages />} />
   </Routes>
@@ -68,6 +77,7 @@ function AppLayout() {
   const selectedKey = selectedMenuItem?.key || 'monitor';
   const currentTitle = selectedMenuItem?.label || '纺织品检测系统';
   const isResults = location.pathname.startsWith('/results');
+  const isAreaWorkspace = location.pathname.startsWith('/tools/area/jobs/');
 
   useEffect(() => {
     const baseUrl = import.meta.env.VITE_WS_URL;
@@ -115,7 +125,9 @@ function AppLayout() {
         <Header style={{ background: '#fff', display: 'flex', alignItems: 'center', padding: '0 24px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
           <h2 style={{ margin: 0 }}>{currentTitle}</h2>
         </Header>
-        <Content style={{ margin: '24px 16px', padding: 24, background: '#fff', borderRadius: '8px' }}>
+        <Content style={isAreaWorkspace
+          ? { margin: 0, padding: 0, background: '#f4f5f7', minWidth: 0, overflow: 'hidden' }
+          : { margin: '24px 16px', padding: 24, background: '#fff', borderRadius: '8px', minWidth: 0 }}>
           {appRoutes}
         </Content>
       </Layout>

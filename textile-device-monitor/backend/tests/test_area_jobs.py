@@ -12,7 +12,7 @@ import xlwt
 
 from app.config import settings
 from app.services.area_infer import AreaImageInferenceResult, AreaInstance, parse_model_classes
-from app.services.area_jobs import AreaJobManager
+from app.services.area_jobs import AREA_PX2_TO_UM2, AreaEditConflictError, AreaJobManager
 
 
 class _FakePredictor:
@@ -72,6 +72,12 @@ class _ServiceDownPredictor(_FakePredictor):
         raise RuntimeError("infer_service_unavailable")
 
 
+class _SlowPredictor(_FakePredictor):
+    def predict(self, *args, **kwargs):
+        time.sleep(0.25)
+        return super().predict(*args, **kwargs)
+
+
 class _HugePredictor(_FakePredictor):
     def predict(
         self,
@@ -118,6 +124,132 @@ class AreaJobsTests(unittest.TestCase):
     def test_parse_model_classes_alias(self):
         self.assertEqual(parse_model_classes("棉-粘-莱-莫"), ["棉", "粘纤", "莱赛尔", "莫代尔"])
 
+    def test_cleanup_preview_does_not_move_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            target = root / "sample-preview"
+            target.mkdir(parents=True)
+            Image.new("RGB", (8, 8)).save(target / "raw.jpg")
+            Image.new("RGB", (8, 8)).save(target / "kept_i.jpg")
+
+            manager = AreaJobManager()
+            preview = manager.preview_cleanup_folder(str(root), target.name)
+
+            self.assertEqual(preview["move_count"], 1)
+            self.assertEqual(preview["keep_count"], 1)
+            self.assertTrue((target / "raw.jpg").exists())
+            self.assertFalse((root / ".recycle").exists())
+
+    def test_running_job_can_be_cancelled_cooperatively(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            target = root / "sample-cancel"
+            target.mkdir(parents=True)
+            for index in range(4):
+                Image.new("RGB", (24, 24), color=(index, index, index)).save(target / f"{index}.png")
+            weights = Path(tmpdir) / "weights"
+            weights.mkdir()
+            (weights / "model.pth").write_bytes(b"mock")
+
+            manager = AreaJobManager()
+            manager._predictor = _SlowPredictor()
+            job = manager.create_job(
+                folder_name=target.name,
+                model_name="棉-莱赛尔",
+                root_path=str(root),
+                model_mapping={"棉-莱赛尔": "model.pth"},
+                weights_dir=str(weights),
+                output_root=str(Path(tmpdir) / "out"),
+            )
+            for _ in range(30):
+                if manager.get_job(job["job_id"])["status"] == "running":
+                    break
+                time.sleep(0.03)
+            manager.cancel_job(job["job_id"])
+            for _ in range(50):
+                payload = manager.get_job(job["job_id"])
+                if payload["status"] == "cancelled":
+                    break
+                time.sleep(0.05)
+            payload = manager.get_job(job["job_id"])
+            self.assertEqual(payload["status"], "cancelled")
+            self.assertLess(payload["processed_images"], payload["total_images"])
+            manager.stop()
+
+    def test_editor_supports_manual_instances_class_changes_and_conflicts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            target = root / "sample-editor"
+            target.mkdir(parents=True)
+            Image.new("RGB", (48, 48), color=(255, 255, 255)).save(target / "a.png")
+            weights = Path(tmpdir) / "weights"
+            weights.mkdir()
+            (weights / "model.pth").write_bytes(b"mock")
+            template = Path(tmpdir) / "template.xls"
+            _create_xls_template(template)
+
+            old_template = settings.AREA_EXCEL_TEMPLATE_PATH
+            try:
+                settings.AREA_EXCEL_TEMPLATE_PATH = str(template)
+                manager = AreaJobManager()
+                manager._predictor = _FakePredictor()
+                job = manager.create_job(
+                    folder_name=target.name,
+                    model_name="棉-莱赛尔",
+                    root_path=str(root),
+                    model_mapping={"棉-莱赛尔": "model.pth"},
+                    weights_dir=str(weights),
+                    output_root=str(Path(tmpdir) / "out"),
+                )
+                for _ in range(200):
+                    payload = manager.get_job(job["job_id"])
+                    if payload["status"] not in {"queued", "running"}:
+                        break
+                    time.sleep(0.1)
+                self.assertIn(payload["status"], {"succeeded", "succeeded_with_errors"})
+                image = manager.list_editor_images(job["job_id"], page_size=10)["items"][0]
+                detail = manager.get_editor_image(job["job_id"], image["image_id"])
+                existing = detail["instances"][0]
+                saved = manager.save_editor_image(
+                    job["job_id"],
+                    image["image_id"],
+                    [
+                        {**existing, "class_name": "莱赛尔"},
+                        {
+                            "client_id": "manual-1",
+                            "class_name": "棉",
+                            "polygon": [[10, 10], [20, 10], [20, 20], [10, 20]],
+                            "is_deleted": False,
+                        },
+                    ],
+                    "test-user",
+                    expected_edit_version=0,
+                )
+                self.assertEqual(len(saved["detail"]["instances"]), 2)
+                self.assertEqual(saved["detail"]["instances"][0]["class_name"], "莱赛尔")
+                self.assertIn("manual-1", saved["created_instance_ids"])
+
+                with self.assertRaises(AreaEditConflictError):
+                    manager.save_editor_image(
+                        job["job_id"],
+                        image["image_id"],
+                        saved["detail"]["instances"],
+                        "stale-user",
+                        expected_edit_version=0,
+                    )
+
+                reset = manager.reset_editor_image(
+                    job["job_id"],
+                    image["image_id"],
+                    "test-user",
+                    expected_edit_version=saved["edit_version"],
+                )
+                self.assertEqual(len(reset["detail"]["instances"]), 1)
+                self.assertEqual(reset["detail"]["instances"][0]["class_name"], "棉")
+                manager.stop()
+            finally:
+                settings.AREA_EXCEL_TEMPLATE_PATH = old_template
+
     def test_job_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "root"
@@ -149,7 +281,7 @@ class AreaJobsTests(unittest.TestCase):
                     infer_url="http://area-infer:9001",
                     infer_timeout_sec=20,
                 )
-                for _ in range(50):
+                for _ in range(200):
                     payload = manager.get_job(job["job_id"])
                     if payload and payload["status"] not in {"queued", "running"}:
                         break
@@ -182,8 +314,8 @@ class AreaJobsTests(unittest.TestCase):
                 self.assertEqual(sheet_raw.cell_value(8, col_ba), "sample-001")
                 self.assertEqual(sheet_raw.cell_value(10, col_ba), "棉")
                 self.assertEqual(sheet_raw.cell_value(10, col_bb), "莱赛尔")
-                self.assertEqual(int(sheet_raw.cell_value(10, col_n)), 1)
-                self.assertEqual(int(sheet_raw.cell_value(10, col_o)), 120)
+                self.assertEqual(int(sheet_raw.cell_value(10, col_n)), 2)
+                self.assertAlmostEqual(sheet_raw.cell_value(10, col_o), 120 * AREA_PX2_TO_UM2, places=6)
                 self.assertEqual(sheet_report.cell_value(7, _excel_col_to_index("F")), "sample-001")
                 manager.stop()
             finally:

@@ -22,13 +22,17 @@ api.interceptors.response.use(
     return response.data;
   },
   (error) => {
+    const detail = error.response?.data?.detail;
     const message =
-      error.response?.data?.detail
+      (typeof detail === 'string' ? detail : detail?.code)
       || (error.response?.status === 413 ? 'file_too_large' : null)
       || error.message
       || '请求失败';
     console.error('API Error:', message);
-    return Promise.reject(new Error(message));
+    const apiError = new Error(message);
+    apiError.status = error.response?.status;
+    apiError.detail = detail;
+    return Promise.reject(apiError);
   }
 );
 

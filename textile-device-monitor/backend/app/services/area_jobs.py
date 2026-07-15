@@ -71,6 +71,14 @@ class AreaExcelTemplateError(RuntimeError):
         super().__init__(message or code)
 
 
+class AreaEditConflictError(RuntimeError):
+    def __init__(self, *, current_version: int, edited_by_id: str = "", edited_at: str | None = None) -> None:
+        self.current_version = current_version
+        self.edited_by_id = edited_by_id
+        self.edited_at = edited_at
+        super().__init__("edit_version_conflict")
+
+
 @dataclass
 class AreaJobRecord:
     job_id: str
@@ -100,6 +108,7 @@ class AreaJobRecord:
     result_rows: list[dict[str, Any]] = field(default_factory=list)
     image_items: list[dict[str, str]] = field(default_factory=list)
     engine_meta: dict[str, Any] = field(default_factory=dict)
+    cancel_requested: bool = False
 
 
 class AreaJobManager:
@@ -110,6 +119,7 @@ class AreaJobManager:
         self._shutdown_event = threading.Event()
         self._workers: list[threading.Thread] = []
         self._started = False
+        self._reconciled = False
         self._predictor = AreaPredictor(
             infer_url=settings.AREA_INFER_URL,
             timeout_sec=settings.AREA_INFER_TIMEOUT_SEC,
@@ -119,6 +129,9 @@ class AreaJobManager:
         with self._lock:
             if self._started:
                 return
+            if not self._reconciled:
+                self._reconcile_interrupted_jobs()
+                self._reconciled = True
             Path(settings.AREA_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
             worker_count = max(1, int(settings.AREA_MAX_CONCURRENT_JOBS))
             self._shutdown_event.clear()
@@ -257,6 +270,10 @@ class AreaJobManager:
         query: str | None = None,
         page: int = 1,
         page_size: int = 5,
+        statuses: list[str] | None = None,
+        model_name: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
     ) -> dict[str, Any]:
         db = SessionLocal()
         try:
@@ -270,6 +287,15 @@ class AreaJobManager:
                         AreaJob.model_name.ilike(pattern),
                     )
                 )
+            normalized_statuses = [str(item).strip() for item in (statuses or []) if str(item).strip()]
+            if normalized_statuses:
+                q = q.filter(AreaJob.status.in_(normalized_statuses))
+            if model_name:
+                q = q.filter(AreaJob.model_name == model_name.strip())
+            if created_from:
+                q = q.filter(AreaJob.created_at >= created_from)
+            if created_to:
+                q = q.filter(AreaJob.created_at <= created_to)
             q = q.order_by(AreaJob.created_at.desc())
             total = q.count()
             effective_page_size = max(1, min(page_size, limit, 1000))
@@ -292,6 +318,64 @@ class AreaJobManager:
             if row is None:
                 return None
             return self._serialize_job_row(row)
+        finally:
+            db.close()
+
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        db = SessionLocal()
+        try:
+            row = db.query(AreaJob).filter(AreaJob.job_id == job_id).first()
+            if row is None:
+                raise ValueError("job_not_found")
+
+            with self._lock:
+                record = self._jobs.get(job_id)
+                effective_status = record.status if record is not None else str(row.status)
+                if effective_status not in {"queued", "running", "cancelling"}:
+                    raise ValueError("job_not_cancellable")
+                if record is not None:
+                    record.cancel_requested = True
+
+                now = datetime.now(timezone.utc)
+                if effective_status == "queued":
+                    next_status = "cancelled"
+                    if record is not None:
+                        record.status = next_status
+                        record.finished_at = now
+                    row.finished_at = now
+                else:
+                    next_status = "cancelling"
+                    if record is not None:
+                        record.status = next_status
+
+                row.status = next_status
+                row.error_code = None
+                row.error_message = None
+            db.commit()
+        finally:
+            db.close()
+
+        payload = self.get_job(job_id)
+        if payload is None:
+            raise ValueError("job_not_found")
+        return payload
+
+    def _reconcile_interrupted_jobs(self) -> None:
+        db = SessionLocal()
+        try:
+            now = datetime.now(timezone.utc)
+            rows = (
+                db.query(AreaJob)
+                .filter(AreaJob.status.in_(["queued", "running", "cancelling"]))
+                .all()
+            )
+            for row in rows:
+                row.status = "failed"
+                row.error_code = "service_restarted"
+                row.error_message = "service_restarted"
+                row.finished_at = now
+            if rows:
+                db.commit()
         finally:
             db.close()
 
@@ -360,6 +444,71 @@ class AreaJobManager:
         finally:
             db.close()
 
+    def get_source_image_path(self, job_id: str, image_id: int) -> Path | None:
+        db = SessionLocal()
+        try:
+            image_row = (
+                db.query(AreaJobImage)
+                .join(AreaJob, AreaJob.id == AreaJobImage.job_id)
+                .filter(AreaJob.job_id == job_id, AreaJobImage.id == image_id)
+                .first()
+            )
+            if image_row is None:
+                return None
+            path = Path(str(image_row.source_image_path or ""))
+            if path.exists() and path.is_file():
+                return path
+            return None
+        finally:
+            db.close()
+
+    def get_system_status(
+        self,
+        *,
+        root_path: str,
+        output_root: str,
+        model_mapping: dict[str, str],
+        weights_dir: str,
+        infer_url: str,
+    ) -> dict[str, Any]:
+        root_available = bool(self._existing_roots(root_path))
+        output_path = Path(str(output_root or "").strip()) if str(output_root or "").strip() else None
+        output_available = False
+        if output_path is not None:
+            candidate = output_path if output_path.exists() else output_path.parent
+            output_available = candidate.exists() and candidate.is_dir() and os.access(candidate, os.W_OK)
+
+        missing_models = [
+            name
+            for name, filename in (model_mapping or {}).items()
+            if not (Path(weights_dir) / str(filename)).exists()
+        ]
+        infer_available = True
+        infer_error = ""
+        try:
+            self._predictor.check_service_health(infer_url=infer_url, timeout_sec=3)
+        except Exception as exc:
+            infer_available = False
+            infer_error = str(exc).strip() or "infer_service_unavailable"
+
+        issues: list[str] = []
+        if not root_available:
+            issues.append("root_path_not_found")
+        if not output_available:
+            issues.append("output_root_unavailable")
+        if missing_models:
+            issues.append("model_weights_missing")
+        if not infer_available:
+            issues.append(infer_error)
+        return {
+            "ok": not issues,
+            "root_available": root_available,
+            "output_available": output_available,
+            "infer_available": infer_available,
+            "missing_models": missing_models,
+            "issues": issues,
+        }
+
     def list_overlay_images(
         self, job_id: str, page: int = 1, page_size: int = 50
     ) -> dict[str, Any] | None:
@@ -394,13 +543,23 @@ class AreaJobManager:
         job_id: str,
         page: int = 1,
         page_size: int = 5,
+        query: str | None = None,
+        state: str | None = None,
     ) -> dict[str, Any] | None:
         db = SessionLocal()
         try:
             job = db.query(AreaJob).filter(AreaJob.job_id == job_id).first()
             if job is None:
                 return None
-            q = db.query(AreaJobImage).filter(AreaJobImage.job_id == job.id).order_by(AreaJobImage.image_name.asc())
+            q = db.query(AreaJobImage).filter(AreaJobImage.job_id == job.id)
+            if query:
+                q = q.filter(AreaJobImage.image_name.ilike(f"%{query.strip()}%"))
+            normalized_state = str(state or "all").strip().lower()
+            if normalized_state == "edited":
+                q = q.filter(AreaJobImage.edited_at.isnot(None))
+            elif normalized_state == "failed":
+                q = q.filter(AreaJobImage.error_message.isnot(None), AreaJobImage.error_message != "")
+            q = q.order_by(AreaJobImage.image_name.asc())
             total = q.count()
             start = max(0, (max(1, page) - 1) * max(1, page_size))
             rows = q.offset(start).limit(max(1, page_size)).all()
@@ -413,6 +572,8 @@ class AreaJobManager:
                     "edited_by_id": row.edited_by_id,
                     "edit_version": int(row.edit_version or 0),
                     "error": row.error_message or "",
+                    "width": int(row.width or 0),
+                    "height": int(row.height or 0),
                 }
                 for row in rows
             ]
@@ -455,6 +616,9 @@ class AreaJobManager:
                 overlay_filename = ""
             return {
                 "job_id": job.job_id,
+                "job_status": job.status,
+                "model_name": job.model_name,
+                "class_names": parse_model_classes(job.model_name),
                 "job_created_at": job.created_at.isoformat() if job.created_at else None,
                 "job_updated_at": job.updated_at.isoformat() if job.updated_at else None,
                 "image": {
@@ -468,6 +632,7 @@ class AreaJobManager:
                     "edited_at": image_row.edited_at.isoformat() if image_row.edited_at else None,
                     "edited_by_id": image_row.edited_by_id,
                     "edit_version": int(image_row.edit_version or 0),
+                    "error": image_row.error_message or "",
                 },
                 "instances": [self._serialize_instance(row) for row in instances],
             }
@@ -480,12 +645,15 @@ class AreaJobManager:
         image_id: int,
         instances_payload: list[dict[str, Any]],
         edited_by_id: str,
+        expected_edit_version: int | None = None,
     ) -> dict[str, Any]:
         db = SessionLocal()
         try:
             job = db.query(AreaJob).filter(AreaJob.job_id == job_id).first()
             if job is None:
                 raise ValueError("job_not_found")
+            if job.status not in {"succeeded", "succeeded_with_errors"}:
+                raise ValueError("job_not_editable")
             image_row = (
                 db.query(AreaJobImage)
                 .filter(AreaJobImage.id == image_id, AreaJobImage.job_id == job.id)
@@ -493,6 +661,15 @@ class AreaJobManager:
             )
             if image_row is None:
                 raise ValueError("image_not_found")
+            current_version = int(image_row.edit_version or 0)
+            if expected_edit_version is not None and int(expected_edit_version) != current_version:
+                raise AreaEditConflictError(
+                    current_version=current_version,
+                    edited_by_id=str(image_row.edited_by_id or ""),
+                    edited_at=image_row.edited_at.isoformat() if image_row.edited_at else None,
+                )
+
+            valid_classes = set(parse_model_classes(job.model_name))
             db_instances = (
                 db.query(AreaJobInstance)
                 .filter(AreaJobInstance.image_id == image_row.id)
@@ -500,36 +677,83 @@ class AreaJobManager:
                 .all()
             )
             inst_map = {item.id: item for item in db_instances}
+            next_sort_index = max([int(item.sort_index or 0) for item in db_instances] + [-1]) + 1
+            created_client_ids: dict[str, AreaJobInstance] = {}
             for payload in instances_payload:
                 instance_id = int(payload.get("instance_id") or 0)
                 row = inst_map.get(instance_id)
-                if row is None:
-                    continue
-                row.is_deleted = bool(payload.get("is_deleted", False))
+                is_deleted = bool(payload.get("is_deleted", False))
+                class_name = str(payload.get("class_name") or (row.class_name if row is not None else "")).strip()
+                if class_name not in valid_classes:
+                    raise ValueError("invalid_class_name")
+
                 polygon = self._normalize_polygon(payload.get("polygon"))
-                bbox = self._normalize_bbox(payload.get("bbox"), image_row.width, image_row.height)
-                if polygon:
-                    row.polygon = polygon
-                if bbox:
-                    row.bbox = bbox
-                if row.polygon:
-                    row.area_px = self._polygon_area_px(row.polygon, image_row.width, image_row.height)
+                if not polygon:
+                    raise ValueError("invalid_polygon")
+                polygon = self._clamp_polygon(polygon, image_row.width, image_row.height)
+                bbox = self._bbox_from_polygon(polygon, image_row.width, image_row.height)
+
+                if row is None:
+                    if instance_id > 0:
+                        raise ValueError("instance_not_found")
+                    if is_deleted:
+                        continue
+                    row = AreaJobInstance(
+                        image_id=image_row.id,
+                        class_name=class_name,
+                        source="manual",
+                        score=None,
+                        bbox=bbox,
+                        polygon=polygon,
+                        area_px=0,
+                        is_deleted=False,
+                        sort_index=next_sort_index,
+                        initial_bbox=[],
+                        initial_polygon=[],
+                        initial_class_name=class_name,
+                        initial_area_px=0,
+                        initial_is_deleted=True,
+                    )
+                    next_sort_index += 1
+                    db.add(row)
+                    client_id = str(payload.get("client_id") or "").strip()
+                    if client_id:
+                        created_client_ids[client_id] = row
                 else:
-                    row.area_px = self._bbox_area_px(row.bbox)
+                    row.class_name = class_name
+                    row.polygon = polygon
+                    row.bbox = bbox
+                    row.is_deleted = is_deleted
+
+                row.area_px = self._polygon_area_px(row.polygon, image_row.width, image_row.height)
                 if row.is_deleted:
                     row.area_px = 0
 
             image_row.edited_by_id = edited_by_id.strip()[:64] if edited_by_id else ""
             image_row.edited_at = datetime.now(timezone.utc)
-            image_row.edit_version = int(image_row.edit_version or 0) + 1
+            image_row.edit_version = current_version + 1
+            db.flush()
             self._refresh_image_area_stats(db, image_row)
-            self._rerender_all_overlays_for_job(db, job)
+            refreshed_instances = (
+                db.query(AreaJobInstance)
+                .filter(AreaJobInstance.image_id == image_row.id)
+                .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
+                .all()
+            )
+            self._render_overlay_for_image(job, image_row, refreshed_instances)
             self._rebuild_job_outputs(db, job)
             db.commit()
+            detail = self.get_editor_image(job_id, image_id)
             return {
                 "status": "ok",
                 "image_id": image_row.id,
                 "edit_version": int(image_row.edit_version or 0),
+                "created_instance_ids": {
+                    client_id: int(row.id)
+                    for client_id, row in created_client_ids.items()
+                    if row.id is not None
+                },
+                "detail": detail,
             }
         except AreaExcelTemplateError as exc:
             db.rollback()
@@ -542,6 +766,7 @@ class AreaJobManager:
         job_id: str,
         image_id: int,
         edited_by_id: str,
+        expected_edit_version: int | None = None,
     ) -> dict[str, Any]:
         db = SessionLocal()
         try:
@@ -555,6 +780,13 @@ class AreaJobManager:
             )
             if image_row is None:
                 raise ValueError("image_not_found")
+            current_version = int(image_row.edit_version or 0)
+            if expected_edit_version is not None and int(expected_edit_version) != current_version:
+                raise AreaEditConflictError(
+                    current_version=current_version,
+                    edited_by_id=str(image_row.edited_by_id or ""),
+                    edited_at=image_row.edited_at.isoformat() if image_row.edited_at else None,
+                )
             db_instances = (
                 db.query(AreaJobInstance)
                 .filter(AreaJobInstance.image_id == image_row.id)
@@ -562,21 +794,34 @@ class AreaJobManager:
                 .all()
             )
             for row in db_instances:
+                if (row.source or "inference") == "manual":
+                    db.delete(row)
+                    continue
                 row.bbox = list(row.initial_bbox or [])
                 row.polygon = list(row.initial_polygon or [])
+                row.class_name = str(row.initial_class_name or row.class_name)
                 row.is_deleted = bool(row.initial_is_deleted)
                 row.area_px = int(row.initial_area_px or 0)
             image_row.edited_by_id = edited_by_id.strip()[:64] if edited_by_id else ""
             image_row.edited_at = datetime.now(timezone.utc)
-            image_row.edit_version = int(image_row.edit_version or 0) + 1
+            image_row.edit_version = current_version + 1
+            db.flush()
             self._refresh_image_area_stats(db, image_row)
-            self._rerender_all_overlays_for_job(db, job)
+            refreshed_instances = (
+                db.query(AreaJobInstance)
+                .filter(AreaJobInstance.image_id == image_row.id)
+                .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
+                .all()
+            )
+            self._render_overlay_for_image(job, image_row, refreshed_instances)
             self._rebuild_job_outputs(db, job)
             db.commit()
+            detail = self.get_editor_image(job_id, image_id)
             return {
                 "status": "ok",
                 "image_id": image_row.id,
                 "edit_version": int(image_row.edit_version or 0),
+                "detail": detail,
             }
         except AreaExcelTemplateError as exc:
             db.rollback()
@@ -630,6 +875,7 @@ class AreaJobManager:
                 {
                     "folder_name": entry.name,
                     "updated_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
+                    "image_count": self._count_images_in_dir(entry),
                 }
             )
         return result
@@ -679,6 +925,7 @@ class AreaJobManager:
             {
                 "folder_name": path.name,
                 "updated_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
+                "image_count": self._count_images_in_dir(path),
             }
             for mtime, path in chunk
         ]
@@ -728,6 +975,49 @@ class AreaJobManager:
             raise FileNotFoundError("image_not_found")
         return path
 
+    def preview_cleanup_folder(
+        self,
+        root_path: str,
+        folder_name: str,
+        *,
+        rename_enabled: bool = False,
+        new_folder_name: str | None = None,
+    ) -> dict[str, Any]:
+        target = self._resolve_target_folder(root_path, folder_name)
+        movable: list[str] = []
+        kept: list[str] = []
+        try:
+            entries = list(target.iterdir())
+        except OSError:
+            entries = []
+        for item in entries:
+            try:
+                if not item.is_file() or item.suffix.lower() not in ALLOWED_IMAGE_SUFFIXES:
+                    continue
+            except OSError:
+                continue
+            lower_name = item.name.lower()
+            if lower_name.endswith("_i.jpg") or lower_name.endswith("_i.jpeg"):
+                kept.append(item.name)
+            else:
+                movable.append(item.name)
+
+        rename_target_exists = False
+        normalized_new_name = str(new_folder_name or "").strip()
+        if rename_enabled and normalized_new_name:
+            rename_target = target.parent / normalized_new_name
+            rename_target_exists = rename_target.exists() and rename_target.resolve() != target.resolve()
+        return {
+            "folder_name": folder_name,
+            "move_count": len(movable),
+            "keep_count": len(kept),
+            "move_samples": movable[:10],
+            "keep_samples": kept[:10],
+            "rename_enabled": bool(rename_enabled),
+            "new_folder_name": normalized_new_name,
+            "rename_target_exists": rename_target_exists,
+        }
+
     def cleanup_folder(
         self,
         root_path: str,
@@ -740,9 +1030,24 @@ class AreaJobManager:
         if not parent.exists() or not parent.is_dir():
             raise ValueError("output_parent_missing")
 
+        candidate_path: Path | None = None
+        if rename_enabled:
+            candidate_name = str(new_folder_name or "").strip()
+            if not candidate_name:
+                raise ValueError("rename_name_empty")
+            if candidate_name in {".", ".."}:
+                raise ValueError("rename_invalid_name")
+            invalid_chars = set('\\/:*?"<>|')
+            if any(ch in invalid_chars for ch in candidate_name):
+                raise ValueError("rename_invalid_name")
+            candidate_path = parent / candidate_name
+            if candidate_path.exists() and candidate_path.resolve() != target.resolve():
+                raise ValueError("rename_target_exists")
+
         recycle_dir = parent / ".recycle"
         recycle_dir.mkdir(parents=True, exist_ok=True)
         moved = 0
+        moved_paths: dict[str, str] = {}
         try:
             entries = list(target.iterdir())
         except OSError:
@@ -761,7 +1066,9 @@ class AreaJobManager:
             dst = recycle_dir / item.name
             if dst.exists():
                 dst = recycle_dir / f"{item.stem}_{uuid4().hex[:8]}{item.suffix}"
+            old_item_path = str(item.resolve())
             shutil.move(str(item), str(dst))
+            moved_paths[old_item_path] = str(dst.resolve())
             moved += 1
 
         normalized_target = target.resolve()
@@ -770,21 +1077,16 @@ class AreaJobManager:
         renamed = False
 
         if rename_enabled:
-            candidate_name = str(new_folder_name or "").strip()
-            if not candidate_name:
-                raise ValueError("rename_name_empty")
-            if candidate_name in {".", ".."}:
-                raise ValueError("rename_invalid_name")
-            invalid_chars = set('\\/:*?"<>|')
-            if any(ch in invalid_chars for ch in candidate_name):
-                raise ValueError("rename_invalid_name")
-            candidate_path = parent / candidate_name
-            if candidate_path.exists() and candidate_path.resolve() != normalized_target:
-                raise ValueError("rename_target_exists")
-            if candidate_path.resolve() != normalized_target:
+            if candidate_path is not None and candidate_path.resolve() != normalized_target:
                 target.rename(candidate_path)
                 new_path = candidate_path.resolve()
                 renamed = True
+
+        self._remap_source_image_paths(
+            moved_paths=moved_paths,
+            old_prefix=normalized_target if renamed else None,
+            new_prefix=new_path if renamed else None,
+        )
 
         return {
             "moved": moved,
@@ -855,6 +1157,10 @@ class AreaJobManager:
                 self._cleanup_mac_noise_files(entry)
                 try:
                     shutil.move(str(entry), str(dest))
+                    self._remap_source_image_paths(
+                        old_prefix=entry_resolved,
+                        new_prefix=dest.resolve(),
+                    )
                     moved_items.append(
                         {
                             "from": str(entry),
@@ -874,6 +1180,66 @@ class AreaJobManager:
             "items": moved_items,
             "failed_count": len(failed_items),
             "failed_items": failed_items,
+            "threshold_hours": max(1, int(older_than_hours or 24)),
+        }
+
+    def preview_archive(
+        self,
+        root_path: str,
+        old_root_path: str,
+        older_than_hours: int = 24,
+    ) -> dict[str, Any]:
+        roots = self._existing_roots(root_path)
+        if not roots:
+            raise FileNotFoundError("root_path_not_found")
+        if not str(old_root_path or "").strip():
+            raise ValueError("invalid_old_root_path")
+        old_root = Path(old_root_path.strip())
+        try:
+            old_root_resolved = old_root.resolve()
+        except OSError:
+            old_root_resolved = old_root
+        threshold = datetime.now(timezone.utc) - timedelta(hours=max(1, int(older_than_hours or 24)))
+        running_folders = self._running_folders()
+        items: list[dict[str, Any]] = []
+        for root in roots:
+            try:
+                entries = list(root.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    continue
+                if entry.name.startswith(".") or entry.name.startswith("_") or entry.name == ".recycle":
+                    continue
+                try:
+                    entry_resolved = entry.resolve()
+                except OSError:
+                    entry_resolved = entry
+                if entry_resolved == old_root_resolved or old_root_resolved.is_relative_to(entry_resolved):
+                    continue
+                if entry.name in running_folders:
+                    continue
+                try:
+                    mtime = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
+                except OSError:
+                    continue
+                if mtime > threshold:
+                    continue
+                items.append(
+                    {
+                        "folder_name": entry.name,
+                        "updated_at": mtime.isoformat(),
+                        "image_count": self._count_images_in_dir(entry),
+                    }
+                )
+        items.sort(key=lambda item: item["updated_at"])
+        return {
+            "count": len(items),
+            "items": items,
             "threshold_hours": max(1, int(older_than_hours or 24)),
         }
 
@@ -902,6 +1268,7 @@ class AreaJobManager:
         return {
             "instance_id": row.id,
             "class_name": row.class_name,
+            "source": row.source or "inference",
             "score": float(row.score) if row.score is not None else None,
             "bbox": list(row.bbox or []),
             "polygon": list(row.polygon or []),
@@ -920,6 +1287,10 @@ class AreaJobManager:
                 self._run_job(job_id)
             finally:
                 self._queue.task_done()
+
+    def _is_cancel_requested(self, record: AreaJobRecord) -> bool:
+        with self._lock:
+            return bool(record.cancel_requested or record.status in {"cancelling", "cancelled"})
 
     def _set_job_failed(self, record: AreaJobRecord, code: str, message: str) -> None:
         now = datetime.now(timezone.utc)
@@ -1060,6 +1431,35 @@ class AreaJobManager:
             except OSError:
                 continue
         return count
+
+    def _remap_source_image_paths(
+        self,
+        *,
+        moved_paths: dict[str, str] | None = None,
+        old_prefix: Path | None = None,
+        new_prefix: Path | None = None,
+    ) -> None:
+        exact_moves = moved_paths or {}
+        db = SessionLocal()
+        try:
+            rows = db.query(AreaJobImage).all()
+            changed = False
+            for row in rows:
+                raw_path = str(row.source_image_path or "")
+                replacement = exact_moves.get(raw_path)
+                if replacement is None and old_prefix is not None and new_prefix is not None:
+                    try:
+                        relative = Path(raw_path).relative_to(old_prefix)
+                        replacement = str(new_prefix / relative)
+                    except (TypeError, ValueError):
+                        replacement = None
+                if replacement and replacement != raw_path:
+                    row.source_image_path = replacement
+                    changed = True
+            if changed:
+                db.commit()
+        finally:
+            db.close()
 
     def _cleanup_mac_noise_files(self, folder: Path) -> None:
         try:
@@ -1250,6 +1650,28 @@ class AreaJobManager:
                 continue
             out.append([px, py])
         return out if len(out) >= 3 else []
+
+    def _clamp_polygon(self, polygon: list[list[int]], width: int, height: int) -> list[list[int]]:
+        max_x = max(0, int(width or 0) - 1)
+        max_y = max(0, int(height or 0) - 1)
+        return [
+            [max(0, min(int(point[0]), max_x)), max(0, min(int(point[1]), max_y))]
+            for point in polygon
+        ]
+
+    def _bbox_from_polygon(self, polygon: list[list[int]], width: int, height: int) -> list[int]:
+        if not polygon:
+            return []
+        return self._normalize_bbox(
+            [
+                min(point[0] for point in polygon),
+                min(point[1] for point in polygon),
+                max(point[0] for point in polygon),
+                max(point[1] for point in polygon),
+            ],
+            width,
+            height,
+        )
 
     def _normalize_bbox(self, raw: Any, width: int, height: int) -> list[int]:
         if not isinstance(raw, (list, tuple)) or len(raw) != 4:
@@ -1506,6 +1928,8 @@ class AreaJobManager:
             record = self._jobs.get(job_id)
             if record is None:
                 return
+            if record.cancel_requested or record.status == "cancelled":
+                return
             record.status = "running"
             record.started_at = datetime.now(timezone.utc)
             record.error_code = None
@@ -1547,6 +1971,8 @@ class AreaJobManager:
                 if job_row is None:
                     raise RuntimeError("job_not_found")
                 for image_path in image_paths:
+                    if self._is_cancel_requested(record):
+                        break
                     try:
                         prediction = self._predictor.predict(
                             image_path=image_path,
@@ -1596,6 +2022,7 @@ class AreaJobManager:
                             row = AreaJobInstance(
                                 image_id=image_row.id,
                                 class_name=inst.class_name,
+                                source="inference",
                                 score=float(inst.score) if inst.score is not None else None,
                                 bbox=bbox,
                                 polygon=polygon,
@@ -1604,6 +2031,7 @@ class AreaJobManager:
                                 sort_index=idx,
                                 initial_bbox=bbox,
                                 initial_polygon=polygon,
+                                initial_class_name=inst.class_name,
                                 initial_area_px=area_px,
                                 initial_is_deleted=False,
                             )
@@ -1649,6 +2077,18 @@ class AreaJobManager:
                         job_row.succeeded_images = record.succeeded_images
                         job_row.failed_images = record.failed_images
                         db.commit()
+
+                if self._is_cancel_requested(record):
+                    now = datetime.now(timezone.utc)
+                    job_row.status = "cancelled"
+                    job_row.finished_at = now
+                    job_row.error_code = None
+                    job_row.error_message = None
+                    db.commit()
+                    with self._lock:
+                        record.status = "cancelled"
+                        record.finished_at = now
+                    return
 
                 if record.succeeded_images <= 0:
                     raise RuntimeError(infer_error_code or "all_images_failed")
@@ -1696,7 +2136,7 @@ class AreaJobManager:
             return {
                 item.folder_name
                 for item in self._jobs.values()
-                if item.status in {"queued", "running"}
+                if item.status in {"queued", "running", "cancelling"}
             }
 
 
