@@ -274,6 +274,7 @@ class AreaJobInstance(Base):
         index=True,
     )
     class_name = Column(String(100), nullable=False)
+    source = Column(String(32), nullable=False, default="inference")
     score = Column(Float)
     bbox = Column(JSON_VARIANT)
     polygon = Column(JSON_VARIANT)
@@ -282,6 +283,7 @@ class AreaJobInstance(Base):
     sort_index = Column(Integer, nullable=False, default=0)
     initial_bbox = Column(JSON_VARIANT)
     initial_polygon = Column(JSON_VARIANT)
+    initial_class_name = Column(String(100))
     initial_area_px = Column(Integer, nullable=False, default=0)
     initial_is_deleted = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

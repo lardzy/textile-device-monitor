@@ -56,3 +56,40 @@ def ensure_queue_record_schema() -> None:
                 "WHERE auto_remove_when_inactive IS NULL"
             )
         )
+
+
+def ensure_area_job_schema() -> None:
+    inspector = inspect(engine)
+    if "area_job_instances" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("area_job_instances")}
+    statements: list[str] = []
+    if "source" not in columns:
+        statements.append(
+            "ALTER TABLE area_job_instances "
+            "ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'inference'"
+        )
+    if "initial_class_name" not in columns:
+        statements.append(
+            "ALTER TABLE area_job_instances "
+            "ADD COLUMN initial_class_name VARCHAR(100)"
+        )
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        connection.execute(
+            text(
+                "UPDATE area_job_instances "
+                "SET source = 'inference' "
+                "WHERE source IS NULL OR source = ''"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE area_job_instances "
+                "SET initial_class_name = class_name "
+                "WHERE initial_class_name IS NULL OR initial_class_name = ''"
+            )
+        )
