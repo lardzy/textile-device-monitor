@@ -1,8 +1,8 @@
 import { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
-import { Alert, Badge, Button, Card, Checkbox, Collapse, Drawer, Empty, Form, Input, InputNumber, List, message, Modal, Popconfirm, Progress, Segmented, Select, Skeleton, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
-import { BellOutlined, CheckCircleOutlined, ClockCircleOutlined, DeleteOutlined, ExclamationCircleOutlined, FileImageOutlined, FileTextOutlined, FolderOpenOutlined, HolderOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
+import { Alert, Badge, Button, Card, Checkbox, Collapse, Empty, Form, Input, InputNumber, List, message, Modal, Popconfirm, Progress, Select, Skeleton, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { CheckCircleOutlined, ClockCircleFilled, ClockCircleOutlined, DeleteOutlined, DownOutlined, ExclamationCircleOutlined, FileImageOutlined, FileTextOutlined, FolderOpenOutlined, HolderOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
 import { resultsApi } from '../api/results';
@@ -64,32 +64,26 @@ const getQueuePositionLabel = (position) => {
   return `位置 ${position - 1}`;
 };
 
-const formatUserIdShort = (value) => {
-  if (!value) return '-';
-  const text = String(value);
-  if (text.length <= 10) return text;
-  return text.slice(0, 8);
-};
-
-const renderUserLabel = (name, userId) => {
-  const label = name || '-';
-  if (!userId) return label;
-  const shortId = formatUserIdShort(userId);
-  return (
-    <span>
-      {label} (
-      <Tooltip title={String(userId)}>
-        <span>{shortId}</span>
-      </Tooltip>
-      )
-    </span>
-  );
-};
-
 const isUnclaimedPlaceholder = (record) => Boolean(record?.is_placeholder && record?.auto_remove_when_inactive);
 
 const getQueueLogDisplay = (log) => {
   switch (log.change_type) {
+    case 'join':
+      return {
+        color: '#1677ff',
+        text: log.new_position == null ? (log.remark || '加入排队') : `加入排队 · ${getQueuePositionLabel(log.new_position)}`,
+      };
+    case 'position_change':
+      return {
+        color: '#8c8c8c',
+        text: log.old_position == null || log.new_position == null
+          ? (log.remark || '排队位置已更新')
+          : `调整位置 · ${getQueuePositionLabel(log.old_position)} → ${getQueuePositionLabel(log.new_position)}`,
+      };
+    case 'complete':
+      return { color: '#52c41a', text: '测量完成' };
+    case 'leave':
+      return { color: '#ff4d4f', text: '离开排队' };
     case 'placeholder_create':
       return { color: '#1677ff', text: log.remark || '系统已自动创建占位人员' };
     case 'placeholder_claim':
@@ -111,6 +105,10 @@ const getQueueLogDisplay = (log) => {
   }
   if (log.new_position === -1) {
     return { color: '#ff4d4f', text: '离开排队' };
+  }
+
+  if (log.old_position == null || log.new_position == null) {
+    return { color: undefined, text: log.remark || '排队状态已更新' };
   }
 
   return {
@@ -199,7 +197,7 @@ const QueueTimeoutNotice = ({ device, queueCount, compact = false, extending = f
   );
 };
 
-const DeviceOverviewCard = ({ device, selected, onSelect }) => {
+const DeviceOverviewCard = ({ device, selected, onSelect, onQuickQueue }) => {
   const config = statusConfig[device.status] || statusConfig.offline;
   const confocal = isConfocalDevice(device);
   const olympus = device.metrics?.olympus || {};
@@ -216,13 +214,14 @@ const DeviceOverviewCard = ({ device, selected, onSelect }) => {
   const queueCount = Number.isFinite(rawQueueCount) ? Math.max(0, rawQueueCount) : 0;
 
   return (
-    <button
-      type="button"
-      className={`monitor-device-card${selected ? ' monitor-device-card--selected' : ''}${device.status === 'offline' ? ' monitor-device-card--offline' : ''}`}
-      aria-pressed={selected}
-      aria-label={`选择设备 ${device.name}，当前状态 ${statusText}`}
-      onClick={() => onSelect(device.id)}
-    >
+    <div className={`monitor-device-card-shell${selected ? ' monitor-device-card-shell--selected' : ''}`}>
+      <button
+        type="button"
+        className={`monitor-device-card${selected ? ' monitor-device-card--selected' : ''}${device.status === 'offline' ? ' monitor-device-card--offline' : ''}`}
+        aria-pressed={selected}
+        aria-label={`选择设备 ${device.name}，当前状态 ${statusText}`}
+        onClick={() => onSelect(device.id)}
+      >
       <div className="monitor-device-card__header">
         <div className="monitor-device-card__identity">
           <strong>{device.name}</strong>
@@ -309,11 +308,23 @@ const DeviceOverviewCard = ({ device, selected, onSelect }) => {
         </Tooltip>
         <span><small>温度</small>{formatTemperature(device.metrics?.temperature)}</span>
       </div>
-      <div className="monitor-device-card__footer">
-        <QueueTimeoutNotice device={device} compact />
-        {selected ? <span className="monitor-device-card__selected-label">当前操作设备</span> : null}
-      </div>
-    </button>
+        <div className="monitor-device-card__footer">
+          <QueueTimeoutNotice device={device} compact />
+        </div>
+      </button>
+      {selected ? (
+        <Button
+          className="monitor-device-card__quick-action"
+          type="primary"
+          size="small"
+          icon={<DownOutlined />}
+          aria-label={`快速前往 ${device.name} 排队输入`}
+          onClick={() => onQuickQueue(device.id)}
+        >
+          快速排队
+        </Button>
+      ) : null}
+    </div>
   );
 };
 
@@ -502,8 +513,7 @@ function DeviceMonitor() {
   });
   const [recentResults, setRecentResults] = useState([]);
   const [notifyModes, setNotifyModes] = useState(() => getQueueNoticeModes());
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  const [workbenchTab, setWorkbenchTab] = useState('queue');
+  const [queueFocusPulse, setQueueFocusPulse] = useState(false);
   const [form] = Form.useForm();
   const [claimForm] = Form.useForm();
   const [modal, modalContextHolder] = Modal.useModal();
@@ -527,6 +537,8 @@ function DeviceMonitor() {
   const mountedRef = useRef(true);
   const managedModalHandlesRef = useRef(new Set());
   const queueNoticeModalIdsRef = useRef(new Set());
+  const queueFormAnchorRef = useRef(null);
+  const queueFocusTimerRef = useRef(null);
 
   const destroyManagedModals = useCallback(() => {
     managedModalHandlesRef.current.forEach(handle => handle.destroy());
@@ -576,6 +588,9 @@ function DeviceMonitor() {
       pendingQueueRefreshRef.current.clear();
       queueNotifyIntentRef.current.clear();
       queueNoticeModalIdsRef.current.clear();
+      if (queueFocusTimerRef.current) {
+        window.clearTimeout(queueFocusTimerRef.current);
+      }
     };
   }, [destroyManagedModals]);
 
@@ -1253,12 +1268,27 @@ function DeviceMonitor() {
   }, [selectedDeviceId]);
 
   const handleSelectDevice = (deviceId) => {
-    setWorkbenchOpen(true);
     if (deviceId !== selectedDeviceIdRef.current) {
       selectedDeviceIdRef.current = deviceId;
       setSelectedDeviceId(deviceId);
-      setWorkbenchTab('queue');
     }
+  };
+
+  const handleQuickQueue = () => {
+    const anchor = queueFormAnchorRef.current;
+    if (!anchor) return;
+    if (queueFocusTimerRef.current) {
+      window.clearTimeout(queueFocusTimerRef.current);
+    }
+    setQueueFocusPulse(true);
+    anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.requestAnimationFrame(() => {
+      form.getFieldInstance('inspector_name')?.focus?.({ preventScroll: true });
+    });
+    queueFocusTimerRef.current = window.setTimeout(() => {
+      setQueueFocusPulse(false);
+      queueFocusTimerRef.current = null;
+    }, 1600);
   };
 
   const handleRefreshAll = async () => {
@@ -1539,7 +1569,7 @@ function DeviceMonitor() {
     : 'off';
 
   const handleNotifyModeChange = async (nextMode) => {
-    if (selectedDeviceId == null) return;
+    if (selectedDeviceId == null) return false;
     if (nextMode !== 'off') {
       const permitted = await requestNotificationPermission();
       if (!permitted) {
@@ -1547,14 +1577,34 @@ function DeviceMonitor() {
           ...prev,
           [String(selectedDeviceId)]: 'off'
         }));
-        return;
+        return false;
       }
     }
     setNotifyModes(prev => ({
       ...prev,
       [String(selectedDeviceId)]: nextMode
     }));
+    return true;
   };
+
+  const handleToggleNotifyMode = async () => {
+    const nextMode = notifyMode === 'off' ? 'once' : notifyMode === 'once' ? 'always' : 'off';
+    const applied = await handleNotifyModeChange(nextMode);
+    if (!applied) return;
+    if (nextMode === 'off') {
+      message.info('完成提醒已关闭');
+    } else if (nextMode === 'once') {
+      message.success('完成提醒已开启：下次检测完成时提醒一次');
+    } else {
+      message.success('完成提醒已开启：本设备每次检测完成都会提醒');
+    }
+  };
+
+  const notifyModeLabel = notifyMode === 'once'
+    ? '提醒一次'
+    : notifyMode === 'always'
+      ? '持续提醒'
+      : '关闭';
 
   const handleDropConfirm = (dragIndex, dropIndex) => {
     const dragRecord = queue[dragIndex];
@@ -1758,27 +1808,34 @@ function DeviceMonitor() {
   };
 
   const renderQueueActivity = () => {
-    if (queueLoading && !queueLogs.length) return <Skeleton active paragraph={{ rows: 5 }} />;
+    if (queueLoading && !queueLogs.length) return <Skeleton active paragraph={{ rows: 3 }} />;
     if (!queueLogs.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="今日暂无排队动态" />;
     return (
-      <List
-        className="monitor-activity-list"
-        dataSource={queueLogs}
-        renderItem={log => {
+      <div className="monitor-activity-grid">
+        {queueLogs.map(log => {
           const logDisplay = getQueueLogDisplay(log);
+          const isMine = log.changed_by_id && log.changed_by_id === queueUserIdRef.current;
           return (
-            <List.Item>
-              <div className="monitor-activity-item">
-                <span className="monitor-activity-item__dot" style={{ background: logDisplay.color || '#98a2b3' }} />
-                <div>
-                  <strong style={logDisplay.color ? { color: logDisplay.color } : undefined}>{logDisplay.text}</strong>
-                  <span>{formatDateTime(log.change_time)} · {renderUserLabel(log.changed_by, log.changed_by_id)}</span>
+            <div className="monitor-activity-item" key={log.id}>
+              <span className="monitor-activity-item__dot" style={{ background: logDisplay.color || '#98a2b3' }} />
+              <div className="monitor-activity-item__copy">
+                <strong style={logDisplay.color ? { color: logDisplay.color } : undefined} title={logDisplay.text}>
+                  {logDisplay.text}
+                </strong>
+                <div className="monitor-activity-item__meta">
+                  <time title={formatDateTime(log.change_time)}>{formatTime(log.change_time)}</time>
+                  <Tooltip title={log.changed_by_id ? `浏览器标识：${log.changed_by_id}` : undefined}>
+                    <span className="monitor-activity-item__actor">
+                      {log.changed_by || '系统'}
+                      {isMine ? <em>本人</em> : null}
+                    </span>
+                  </Tooltip>
                 </div>
               </div>
-            </List.Item>
+            </div>
           );
-        }}
-      />
+        })}
+      </div>
     );
   };
 
@@ -1869,6 +1926,7 @@ function DeviceMonitor() {
                 device={device}
                 selected={device.id === selectedDeviceId}
                 onSelect={handleSelectDevice}
+                onQuickQueue={handleQuickQueue}
               />
             ))}
           </div>
@@ -1891,331 +1949,311 @@ function DeviceMonitor() {
           </Card>
         )}
 
-        <Drawer
-          className="monitor-device-drawer"
-          title={(
-            <div className="monitor-device-drawer__title">
-              <span>设备快捷操作</span>
-              <small>排队与结果无需滚动到底部</small>
-            </div>
-          )}
-          extra={selectedDevice ? (
-            <Select
-              className="monitor-device-drawer__switcher"
-              size="small"
-              value={selectedDevice.id}
-              onChange={handleSelectDevice}
-              optionFilterProp="label"
-              showSearch
-              options={devices.map(device => ({
-                value: device.id,
-                label: `${device.name} · ${(statusConfig[device.status] || statusConfig.offline).text}`,
-              }))}
-            />
-          ) : null}
-          width="min(680px, 100vw)"
-          open={Boolean(selectedDevice && workbenchOpen)}
-          onClose={() => setWorkbenchOpen(false)}
-          mask={false}
-          push={false}
-          styles={{ body: { padding: 0 } }}
-        >
-          {selectedDevice ? (
-            <div className="monitor-drawer-workbench">
-              <div className="monitor-drawer-summary">
-                <div className="monitor-drawer-summary__identity">
-                  <div>
-                    <Typography.Title level={4}>{selectedDevice.name}</Typography.Title>
-                    <Badge
-                      status={selectedConfig.color}
-                      text={selectedDevice.status === 'offline' ? '离线' : selectedConfig.text}
-                    />
-                  </div>
-                  <Space size={6} wrap>
-                    <Tag>{selectedDevice.device_code || '无设备编号'}</Tag>
-                    <Tag color={selectedIsConfocal ? 'purple' : 'blue'}>
-                      {selectedIsConfocal ? '激光共聚焦' : '普通设备'}
-                    </Tag>
-                  </Space>
+        {selectedDevice ? (
+          <Card className="analytics-panel monitor-workbench">
+            <div className="monitor-workbench-summary">
+              <div className="monitor-workbench-summary__identity">
+                <span>当前操作设备</span>
+                <div>
+                  <Typography.Title level={4}>{selectedDevice.name}</Typography.Title>
+                  <Badge
+                    status={selectedConfig.color}
+                    text={selectedDevice.status === 'offline' ? '离线' : selectedConfig.text}
+                  />
                 </div>
-                <div className="monitor-drawer-summary__metrics">
-                  <div className="monitor-drawer-progress">
-                    <span>{selectedTaskCompleted ? '最近任务' : '任务进度'}</span>
-                    <strong>{Number.isFinite(selectedProgress) ? Math.max(0, Math.min(100, selectedProgress)) + '%' : '-'}</strong>
-                    <Progress
-                      percent={Number.isFinite(selectedProgress) ? Math.max(0, Math.min(100, selectedProgress)) : 0}
-                      status={selectedDevice.status === 'error' ? 'exception' : selectedProgress === 100 ? 'success' : 'active'}
-                      showInfo={false}
-                    />
-                  </div>
-                  <div className="monitor-drawer-queue-count">
-                    <span>当前排队</span>
-                    <strong>{queueLoading ? '…' : queue.length}</strong>
-                    <small>人</small>
-                  </div>
-                </div>
-                <Button size="small" onClick={() => setWorkbenchTab('results')}>查看结果</Button>
+                <Space size={6} wrap>
+                  <Tag>{selectedDevice.device_code || '无设备编号'}</Tag>
+                  <Tag color={selectedIsConfocal ? 'purple' : 'blue'}>
+                    {selectedIsConfocal ? '激光共聚焦' : '普通设备'}
+                  </Tag>
+                </Space>
               </div>
 
-              <QueueTimeoutNotice
-                device={selectedDevice}
-                queueCount={queueLoading ? Number(selectedDevice.queue_count || 0) : queue.length}
-                extending={extendingDeviceId === selectedDevice.id}
-                onExtend={() => handleExtendTimeout(selectedDevice.id)}
-              />
-
-              {myNextQueueEntry ? (
-                <div className="monitor-my-queue-state">
-                  <CheckCircleOutlined />
-                  <span>
-                    {myNextQueueEntry.position === 1
-                      ? '现在已轮到您，请开始使用设备'
-                      : `您已在队列中，当前排第 ${getQueuePositionDisplay(myNextQueueEntry.position)} 位`}
-                  </span>
-                  {myQueueEntries.length > 1 ? <Tag color="blue">共 {myQueueEntries.length} 份</Tag> : null}
+              <div className="monitor-workbench-summary__metrics">
+                <div className="monitor-workbench-progress">
+                  <span>{selectedDevice.task_name || (selectedTaskCompleted ? '最近任务' : '任务进度')}</span>
+                  <strong>{Number.isFinite(selectedProgress) ? Math.max(0, Math.min(100, selectedProgress)) + '%' : '-'}</strong>
+                  <Progress
+                    percent={Number.isFinite(selectedProgress) ? Math.max(0, Math.min(100, selectedProgress)) : 0}
+                    status={selectedDevice.status === 'error' ? 'exception' : selectedProgress === 100 ? 'success' : 'active'}
+                    showInfo={false}
+                  />
                 </div>
-              ) : null}
+                <div className="monitor-workbench-queue-count">
+                  <span>当前排队</span>
+                  <strong>{queueLoading ? '…' : queue.length}</strong>
+                  <small>人</small>
+                </div>
+              </div>
 
-              <Tabs
-                className="monitor-drawer-tabs"
-                activeKey={workbenchTab}
-                onChange={setWorkbenchTab}
-                items={[
-                  {
-                    key: 'queue',
-                    label: `排队情况 (${queue.length})`,
-                    children: (
-                      <div className="monitor-drawer-panel">
-                        <div className="monitor-queue-heading">
-                          <div>
-                            <strong>快速加入排队</strong>
-                            <span>
-                              {activeQueueEntry
-                                ? isUnclaimedPlaceholder(activeQueueEntry)
-                                  ? '当前使用人待认领'
-                                  : `当前使用：${activeQueueEntry.inspector_name}`
-                                : '暂无正在使用人员'}
-                            </span>
-                          </div>
-                          <span>共 {queue.length} 人</span>
-                        </div>
-
-                        <Form
-                          form={form}
-                          layout="vertical"
-                          className="monitor-queue-form"
-                          onFinish={handleJoinQueue}
-                          onValuesChange={(_, values) => setInspectorName(values.inspector_name || '')}
-                        >
-                          <Form.Item
-                            name="inspector_name"
-                            label="检验员"
-                            rules={[{ required: true, message: '请输入检验员姓名' }]}
-                          >
-                            <Input placeholder="输入姓名" maxLength={50} />
-                          </Form.Item>
-                          <Form.Item
-                            name="copies"
-                            label="排队份数"
-                            initialValue={1}
-                            rules={[{ type: 'number', min: 1, max: queueQuota, message: `同类型设备合计最多可排 ${queueQuota} 份` }]}
-                          >
-                            <InputNumber min={1} max={queueQuota} />
-                          </Form.Item>
-                          <Form.Item label=" ">
-                            <Button
-                              type="primary"
-                              htmlType="submit"
-                              icon={<PlusOutlined />}
-                              loading={queueSubmitting}
-                            >
-                              加入排队
-                            </Button>
-                          </Form.Item>
-                        </Form>
-                        <div className="monitor-queue-form__hint">
-                          {selectedDevice.status === 'offline' ? '设备当前离线，仍可提前排队 · ' : ''}
-                          {selectedUsesConfocalQuota
-                            ? '同一浏览器在全部共聚焦设备合计最多排 2 份'
-                            : '同一浏览器在全部普通设备合计最多排 3 份'}
-                          {' · '}加入后轮到您会自动提醒
-                        </div>
-
-                        <div className="monitor-notify-control">
-                          <div>
-                            <strong><BellOutlined /> 完成提醒</strong>
-                            <span>不要求参加排队；监听本设备检测完成</span>
-                          </div>
-                          <Segmented
-                            size="small"
-                            value={notifyMode}
-                            onChange={handleNotifyModeChange}
-                            options={[
-                              { value: 'off', label: '关闭' },
-                              { value: 'once', label: '提醒一次' },
-                              { value: 'always', label: '持续提醒' },
-                            ]}
-                          />
-                        </div>
-
-                        {queueError ? (
-                          <Alert
-                            type="error"
-                            showIcon
-                            message="排队信息加载失败"
-                            description={queueError}
-                            action={<Button size="small" onClick={() => fetchQueue(selectedDevice.id)}>重试</Button>}
-                          />
-                        ) : null}
-
-                        <DragTable
-                          className="monitor-queue-table"
-                          dataSource={queue}
-                          columns={queueColumns}
-                          rowKey="id"
-                          loading={queueLoading}
-                          onDropConfirm={handleDropConfirm}
-                          scroll={{ x: 520 }}
-                          locale={{
-                            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前无人排队" />,
-                          }}
-                        />
-
-                        <Collapse
-                          className="monitor-activity-collapse"
-                          ghost
-                          items={[{
-                            key: 'activity',
-                            label: `今日动态 (${queueLogs.length})`,
-                            children: renderQueueActivity(),
-                          }]}
-                        />
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'results',
-                    label: '最近结果',
-                    children: (
-                      <div className="monitor-drawer-panel monitor-results-panel">
-                        <div className="monitor-current-result">
-                          <div>
-                            <strong>当前任务结果</strong>
-                            <span>
-                              {selectedProgress === 100
-                                ? currentResultReady
-                                  ? '检测已完成，可查看本次结果'
-                                  : '检测已完成，但结果服务暂不可用'
-                                : '检测完成至 100% 后开放'}
-                            </span>
-                          </div>
-                          <Space wrap>
-                            {!selectedIsConfocal ? (
-                              <Button
-                                type="primary"
-                                icon={<FileTextOutlined />}
-                                disabled={!currentResultReady}
-                                onClick={() => setTableModal({ open: true, folder: null })}
-                              >
-                                查看表格
-                              </Button>
-                            ) : null}
-                            <Button
-                              icon={<FileImageOutlined />}
-                              disabled={!currentResultReady}
-                              onClick={() => setImagesModal({ open: true, folder: null })}
-                            >
-                              查看图片
-                            </Button>
-                            {selectedIsConfocal ? (
-                              <Button
-                                type="link"
-                                icon={<FolderOpenOutlined />}
-                                disabled={!currentResultReady}
-                                onClick={() => openCleanupModal(null)}
-                              >
-                                整理结果文件…
-                              </Button>
-                            ) : null}
-                          </Space>
-                        </div>
-                        <div className="monitor-section-label">最近 5 次结果</div>
-                        {renderRecentResults()}
-                      </div>
-                    ),
-                  },
-                ]}
-              />
-
-              <Collapse
-                className="monitor-device-detail-collapse"
-                ghost
-                items={[{
-                  key: 'details',
-                  label: selectedIsConfocal ? '采集详情与设备信息' : '任务与设备详情',
-                  children: (
-                    <div className="monitor-device-details">
-                      <div className="monitor-workbench-context__facts">
-                        <span><small>位置</small>{selectedDevice.location || '-'}</span>
-                        <span><small>型号</small>{selectedDevice.model || '-'}</span>
-                        <span><small>最近心跳</small>{selectedDevice.last_heartbeat ? formatRelativeTime(selectedDevice.last_heartbeat) : '-'}</span>
-                        <span><small>设备温度</small>{formatTemperature(selectedDevice.metrics?.temperature)}</span>
-                      </div>
-
-                      {selectedDevice.task_name && selectedProgress != null && selectedDevice.status !== 'offline' ? (
-                        <div className="monitor-current-task">
-                          <div>
-                            <span>{selectedTaskCompleted ? '最近完成' : '当前任务'}</span>
-                            <strong>{selectedDevice.task_name}</strong>
-                            {selectedTaskCompleted ? (
-                              <small>任务已完成，可在“最近结果”中查看</small>
-                            ) : selectedDevice.task_elapsed_seconds != null ? (
-                              <small>已运行 {Math.max(0, Math.floor(selectedDevice.task_elapsed_seconds / 60))} 分钟</small>
-                            ) : null}
-                          </div>
-                          <Progress
-                            percent={Math.max(0, Math.min(100, selectedProgress))}
-                            status={selectedDevice.status === 'error' ? 'exception' : selectedProgress === 100 ? 'success' : 'active'}
-                          />
-                        </div>
-                      ) : null}
-
-                      {selectedIsConfocal ? (
-                        <div className="monitor-confocal-panel">
-                          <div className="monitor-confocal-panel__heading">
-                            <strong>共聚焦采集详情</strong>
-                            <span>{getOlympusDisplayState(selectedOlympus, selectedDevice.status)}</span>
-                          </div>
-                          <div className="monitor-confocal-grid">
-                            <span><small>组进度</small>{selectedOlympus.group_completed || 0} / {selectedOlympus.group_total || '-'}</span>
-                            <span><small>图像进度</small>{selectedOlympus.image_progress != null ? selectedOlympus.image_progress + '%' : '-'}</span>
-                            <span><small>当前帧</small>{selectedOlympus.frame_current || '-'} / {selectedOlympus.frame_total || '-'}</span>
-                            <span><small>XY 位置</small>{selectedOlympus.xy_position ? selectedOlympus.xy_position.x + ', ' + selectedOlympus.xy_position.y : '-'}</span>
-                            <span><small>Z 位置</small>{selectedOlympus.z_position ?? '-'}</span>
-                            <span><small>Z 范围</small>{selectedOlympus.z_range ? selectedOlympus.z_range.start + ' – ' + selectedOlympus.z_range.end : '-'}</span>
-                          </div>
-                          {selectedOlympus.current_file ? (
-                            <div className="monitor-confocal-path">
-                              <small>当前文件</small><Typography.Text copyable>{selectedOlympus.current_file}</Typography.Text>
-                            </div>
-                          ) : null}
-                          {getValidOutputPath(selectedOlympus.output_path) ? (
-                            <div className="monitor-confocal-path">
-                              <small>输出目录</small>
-                              <Typography.Text copyable={{ text: getValidOutputPath(selectedOlympus.output_path) }} ellipsis>
-                                {getValidOutputPath(selectedOlympus.output_path)}
-                              </Typography.Text>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  ),
-                }]}
+              <Select
+                className="monitor-workbench-switcher"
+                value={selectedDevice.id}
+                onChange={handleSelectDevice}
+                optionFilterProp="label"
+                showSearch
+                options={devices.map(device => ({
+                  value: device.id,
+                  label: `${device.name} · ${(statusConfig[device.status] || statusConfig.offline).text}`,
+                }))}
               />
             </div>
-          ) : null}
-        </Drawer>
+
+            <QueueTimeoutNotice
+              device={selectedDevice}
+              queueCount={queueLoading ? Number(selectedDevice.queue_count || 0) : queue.length}
+              extending={extendingDeviceId === selectedDevice.id}
+              onExtend={() => handleExtendTimeout(selectedDevice.id)}
+            />
+
+            {myNextQueueEntry ? (
+              <div className="monitor-my-queue-state">
+                <CheckCircleOutlined />
+                <span>
+                  {myNextQueueEntry.position === 1
+                    ? '现在已轮到您，请开始使用设备'
+                    : `您已在队列中，当前排第 ${getQueuePositionDisplay(myNextQueueEntry.position)} 位`}
+                </span>
+                {myQueueEntries.length > 1 ? <Tag color="blue">共 {myQueueEntries.length} 份</Tag> : null}
+              </div>
+            ) : null}
+
+            <div className="monitor-workspace-grid">
+              <div
+                ref={queueFormAnchorRef}
+                className={`monitor-queue-anchor${queueFocusPulse ? ' monitor-queue-anchor--focused' : ''}`}
+              >
+                <Card
+                  className="monitor-workspace-card monitor-queue-card"
+                  title={(
+                    <div className="analytics-panel__title">
+                      <span>排队管理</span>
+                      <span className="analytics-panel__hint">
+                        {activeQueueEntry
+                          ? isUnclaimedPlaceholder(activeQueueEntry)
+                            ? '当前使用人待认领'
+                            : `当前使用：${activeQueueEntry.inspector_name}`
+                          : '暂无正在使用人员'}
+                      </span>
+                    </div>
+                  )}
+                  extra={<span className="monitor-card-count">共 {queue.length} 人</span>}
+                >
+                  <Form
+                    form={form}
+                    layout="vertical"
+                    className="monitor-queue-form"
+                    onFinish={handleJoinQueue}
+                    onValuesChange={(_, values) => setInspectorName(values.inspector_name || '')}
+                  >
+                    <Form.Item
+                      name="inspector_name"
+                      label="检验员"
+                      rules={[{ required: true, message: '请输入检验员姓名' }]}
+                    >
+                      <Input placeholder="输入姓名" maxLength={50} />
+                    </Form.Item>
+                    <Form.Item
+                      name="copies"
+                      label="排队份数"
+                      initialValue={1}
+                      rules={[{ type: 'number', min: 1, max: queueQuota, message: `同类型设备合计最多可排 ${queueQuota} 份` }]}
+                    >
+                      <InputNumber min={1} max={queueQuota} />
+                    </Form.Item>
+                    <Form.Item label=" ">
+                      <Button
+                        type="primary"
+                        htmlType="submit"
+                        icon={<PlusOutlined />}
+                        loading={queueSubmitting}
+                      >
+                        加入排队
+                      </Button>
+                    </Form.Item>
+                  </Form>
+                  <div className="monitor-queue-form-meta">
+                    <div className="monitor-queue-form__hint">
+                      {selectedDevice.status === 'offline' ? '设备当前离线，仍可提前排队 · ' : ''}
+                      {selectedUsesConfocalQuota
+                        ? '同一浏览器在全部共聚焦设备合计最多排 2 份'
+                        : '同一浏览器在全部普通设备合计最多排 3 份'}
+                      {' · '}加入后轮到您会自动提醒
+                    </div>
+                    <Tooltip
+                      placement="topRight"
+                      title={`完成提醒（无需参加排队）：设备检测完成时通知。当前为“${notifyModeLabel}”，点击依次切换关闭、提醒一次和持续提醒。`}
+                    >
+                      <Button
+                        className={`monitor-completion-notify monitor-completion-notify--${notifyMode}`}
+                        type="text"
+                        size="small"
+                        icon={notifyMode === 'always' ? <ClockCircleFilled /> : <ClockCircleOutlined />}
+                        aria-label={`完成提醒：当前${notifyModeLabel}，点击切换模式`}
+                        aria-pressed={notifyMode !== 'off'}
+                        onClick={handleToggleNotifyMode}
+                      />
+                    </Tooltip>
+                  </div>
+
+                  {queueError ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      message="排队信息加载失败"
+                      description={queueError}
+                      action={<Button size="small" onClick={() => fetchQueue(selectedDevice.id)}>重试</Button>}
+                    />
+                  ) : null}
+
+                  <DragTable
+                    className="monitor-queue-table"
+                    dataSource={queue}
+                    columns={queueColumns}
+                    rowKey="id"
+                    loading={queueLoading}
+                    onDropConfirm={handleDropConfirm}
+                    scroll={{ x: 620 }}
+                    locale={{
+                      emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前无人排队" />,
+                    }}
+                  />
+                </Card>
+              </div>
+
+              <Card
+                className="monitor-workspace-card monitor-results-card"
+                title={(
+                  <div className="analytics-panel__title">
+                    <span>结果查看</span>
+                    <span className="analytics-panel__hint">当前结果与最近 5 次记录</span>
+                  </div>
+                )}
+              >
+                <div className="monitor-results-panel">
+                  <div className="monitor-current-result">
+                    <div>
+                      <strong>当前任务结果</strong>
+                      <span>
+                        {selectedProgress === 100
+                          ? currentResultReady
+                            ? '检测已完成，可查看本次结果'
+                            : '检测已完成，但结果服务暂不可用'
+                          : '检测完成至 100% 后开放'}
+                      </span>
+                    </div>
+                    <Space wrap>
+                      {!selectedIsConfocal ? (
+                        <Button
+                          type="primary"
+                          icon={<FileTextOutlined />}
+                          disabled={!currentResultReady}
+                          onClick={() => setTableModal({ open: true, folder: null })}
+                        >
+                          查看表格
+                        </Button>
+                      ) : null}
+                      <Button
+                        icon={<FileImageOutlined />}
+                        disabled={!currentResultReady}
+                        onClick={() => setImagesModal({ open: true, folder: null })}
+                      >
+                        查看图片
+                      </Button>
+                      {selectedIsConfocal ? (
+                        <Button
+                          type="link"
+                          icon={<FolderOpenOutlined />}
+                          disabled={!currentResultReady}
+                          onClick={() => openCleanupModal(null)}
+                        >
+                          整理结果文件…
+                        </Button>
+                      ) : null}
+                    </Space>
+                  </div>
+                  <div className="monitor-section-label">最近 5 次结果</div>
+                  {renderRecentResults()}
+                </div>
+              </Card>
+            </div>
+
+            <Collapse
+              className="monitor-workbench-activity"
+              items={[{
+                key: 'activity',
+                label: `今日动态 (${queueLogs.length})`,
+                children: renderQueueActivity(),
+              }]}
+            />
+
+            <Collapse
+              className="monitor-device-detail-collapse"
+              items={[{
+                key: 'details',
+                label: selectedIsConfocal ? '共聚焦采集详情与设备信息' : '任务与设备详情',
+                children: (
+                  <div className="monitor-device-details">
+                    <div className="monitor-workbench-context__facts">
+                      <span><small>位置</small>{selectedDevice.location || '-'}</span>
+                      <span><small>型号</small>{selectedDevice.model || '-'}</span>
+                      <span><small>最近心跳</small>{selectedDevice.last_heartbeat ? formatRelativeTime(selectedDevice.last_heartbeat) : '-'}</span>
+                      <span><small>设备温度</small>{formatTemperature(selectedDevice.metrics?.temperature)}</span>
+                    </div>
+
+                    {selectedDevice.task_name && selectedProgress != null && selectedDevice.status !== 'offline' ? (
+                      <div className="monitor-current-task">
+                        <div>
+                          <span>{selectedTaskCompleted ? '最近完成' : '当前任务'}</span>
+                          <strong>{selectedDevice.task_name}</strong>
+                          {selectedTaskCompleted ? (
+                            <small>任务已完成，可在“结果查看”中打开</small>
+                          ) : selectedDevice.task_elapsed_seconds != null ? (
+                            <small>已运行 {Math.max(0, Math.floor(selectedDevice.task_elapsed_seconds / 60))} 分钟</small>
+                          ) : null}
+                        </div>
+                        <Progress
+                          percent={Math.max(0, Math.min(100, selectedProgress))}
+                          status={selectedDevice.status === 'error' ? 'exception' : selectedProgress === 100 ? 'success' : 'active'}
+                        />
+                      </div>
+                    ) : null}
+
+                    {selectedIsConfocal ? (
+                      <div className="monitor-confocal-panel">
+                        <div className="monitor-confocal-panel__heading">
+                          <strong>共聚焦采集详情</strong>
+                          <span>{getOlympusDisplayState(selectedOlympus, selectedDevice.status)}</span>
+                        </div>
+                        <div className="monitor-confocal-grid">
+                          <span><small>组进度</small>{selectedOlympus.group_completed || 0} / {selectedOlympus.group_total || '-'}</span>
+                          <span><small>图像进度</small>{selectedOlympus.image_progress != null ? selectedOlympus.image_progress + '%' : '-'}</span>
+                          <span><small>当前帧</small>{selectedOlympus.frame_current || '-'} / {selectedOlympus.frame_total || '-'}</span>
+                          <span><small>XY 位置</small>{selectedOlympus.xy_position ? selectedOlympus.xy_position.x + ', ' + selectedOlympus.xy_position.y : '-'}</span>
+                          <span><small>Z 位置</small>{selectedOlympus.z_position ?? '-'}</span>
+                          <span><small>Z 范围</small>{selectedOlympus.z_range ? selectedOlympus.z_range.start + ' – ' + selectedOlympus.z_range.end : '-'}</span>
+                        </div>
+                        {selectedOlympus.current_file ? (
+                          <div className="monitor-confocal-path">
+                            <small>当前文件</small><Typography.Text copyable>{selectedOlympus.current_file}</Typography.Text>
+                          </div>
+                        ) : null}
+                        {getValidOutputPath(selectedOlympus.output_path) ? (
+                          <div className="monitor-confocal-path">
+                            <small>输出目录</small>
+                            <Typography.Text copyable={{ text: getValidOutputPath(selectedOlympus.output_path) }} ellipsis>
+                              {getValidOutputPath(selectedOlympus.output_path)}
+                            </Typography.Text>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ),
+              }]}
+            />
+          </Card>
+        ) : null}
 
         {!selectedIsConfocal ? (
           <ResultsModal
