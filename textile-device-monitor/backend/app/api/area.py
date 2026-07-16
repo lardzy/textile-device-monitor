@@ -24,6 +24,7 @@ class AreaConfigPayload(BaseModel):
     model_mapping: dict[str, str]
     inference_defaults: dict[str, Any] = Field(default_factory=dict)
     archive_enabled: bool = False
+    folder_blacklist: list[str] | None = Field(default=None, max_length=100)
 
 
 class AreaJobCreatePayload(BaseModel):
@@ -81,6 +82,7 @@ def get_area_config(db: Session = Depends(get_db)):
         "inference_defaults": config.get("inference_defaults", {}),
         "archive_last_run_at": config.get("archive_last_run_at"),
         "archive_enabled": bool(config.get("archive_enabled")),
+        "folder_blacklist": config.get("folder_blacklist", []),
     }
 
 
@@ -106,6 +108,7 @@ def update_area_config(payload: AreaConfigPayload, db: Session = Depends(get_db)
         payload.model_mapping,
         payload.inference_defaults,
         payload.archive_enabled,
+        folder_blacklist=payload.folder_blacklist,
     )
     return {
         "root_path": updated.get("root_path"),
@@ -116,6 +119,7 @@ def update_area_config(payload: AreaConfigPayload, db: Session = Depends(get_db)
         "inference_defaults": updated.get("inference_defaults", {}),
         "archive_last_run_at": updated.get("archive_last_run_at"),
         "archive_enabled": bool(updated.get("archive_enabled")),
+        "folder_blacklist": updated.get("folder_blacklist", []),
     }
 
 
@@ -444,7 +448,12 @@ def search_area_folders(
     _ensure_enabled()
     config = area_crud.get_area_config(db)
     try:
-        items = area_job_manager.search_folders(str(config.get("root_path") or ""), q, limit=limit)
+        items = area_job_manager.search_folders(
+            str(config.get("root_path") or ""),
+            q,
+            limit=limit,
+            excluded_folder_names=list(config.get("folder_blacklist") or []),
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"items": items, "query": q, "limit": limit}
@@ -465,9 +474,43 @@ def list_area_recent_folders(
             limit=limit,
             page=page,
             page_size=page_size,
+            excluded_folder_names=list(config.get("folder_blacklist") or []),
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/folders/{folder_name}/preview-images")
+def list_area_folder_preview_images(
+    folder_name: str,
+    limit: int = Query(6, ge=1, le=20),
+    db: Session = Depends(get_db),
+):
+    _ensure_enabled()
+    if "/" in folder_name or "\\" in folder_name:
+        raise HTTPException(status_code=400, detail="invalid_folder_name")
+    config = area_crud.get_area_config(db)
+    try:
+        payload = area_job_manager.list_folder_preview_images(
+            str(config.get("root_path") or ""),
+            folder_name,
+            limit=limit,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "items": [
+            {
+                "name": item.get("name") or "",
+                "url": (
+                    f"/api/area/folders/{folder_name}/image/"
+                    f"{item.get('name') or ''}"
+                ),
+            }
+            for item in payload["items"]
+        ],
+        "limit": payload["limit"],
+    }
 
 
 @router.get("/folders/{folder_name}/images")

@@ -21,6 +21,51 @@ const MAX_CONCURRENT = 4;
 const PREFETCH_ROWS = 4;
 const IMAGE_TIMEOUT_MS = 12000;
 
+// react-window treats its child renderer as a component type. Keeping it at
+// module scope prevents unrelated parent updates from remounting every tile.
+function ImageGridCell({ columnIndex, rowIndex, style, data }) {
+  const index = rowIndex * data.columns + columnIndex;
+  const item = data.items[index];
+
+  if (!item) return <div style={style} />;
+  const cachedUrl = data.thumbCacheRef.current.get(item.cacheKey);
+  const loadFailed = data.failedRef.current.has(item.cacheKey);
+  if (!cachedUrl) {
+    data.enqueueImage(item);
+  }
+  return (
+    <div className="results-images-cell" style={style}>
+      <button
+        type="button"
+        className="results-images-tile"
+        title={item.name}
+        onClick={() => data.onPreview(item)}
+      >
+        <span className="results-images-tile__preview">
+          {cachedUrl ? (
+            <img
+              src={cachedUrl}
+              alt={item.name}
+              loading="lazy"
+              decoding="async"
+            />
+          ) : loadFailed ? (
+            <span className="results-images-tile__error">缩略图加载失败</span>
+          ) : (
+            <Spin size="small" />
+          )}
+        </span>
+        <span className="results-images-tile__name">{item.name}</span>
+      </button>
+    </div>
+  );
+}
+
+const getImageGridItemKey = ({ columnIndex, rowIndex, data }) => {
+  const index = rowIndex * data.columns + columnIndex;
+  return data.items[index]?.cacheKey || `empty-${rowIndex}-${columnIndex}`;
+};
+
 function ResultsImages({
   deviceId: propDeviceId,
   folder: propFolder,
@@ -41,7 +86,7 @@ function ResultsImages({
   const desiredKeysRef = useRef(new Set());
   const visibleCenterRef = useRef(0);
   const failedRef = useRef(new Set());
-  const [, setCacheTick] = useState(0);
+  const [cacheVersion, setCacheTick] = useState(0);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [searchText, setSearchText] = useState('');
@@ -417,43 +462,16 @@ function ResultsImages({
     desiredKeysRef.current = desiredKeys;
   }, [columns, enqueueImage, items, loadAllActive]);
 
-  const Cell = ({ columnIndex, rowIndex, style }) => {
-    const index = rowIndex * columns + columnIndex;
-    const item = filteredItems[index];
-
-    if (!item) return <div style={style} />;
-    const cachedUrl = thumbCacheRef.current.get(item.cacheKey);
-    const loadFailed = failedRef.current.has(item.cacheKey);
-    if (!cachedUrl) {
-      enqueueImage(item);
-    }
-    return (
-      <div className="results-images-cell" style={style}>
-        <button
-          type="button"
-          className="results-images-tile"
-          title={item.name}
-          onClick={() => setPreviewItem(item)}
-        >
-          <span className="results-images-tile__preview">
-            {cachedUrl ? (
-              <img
-                src={cachedUrl}
-                alt={item.name}
-                loading="lazy"
-                decoding="async"
-              />
-            ) : loadFailed ? (
-              <span className="results-images-tile__error">缩略图加载失败</span>
-            ) : (
-              <Spin size="small" />
-            )}
-          </span>
-          <span className="results-images-tile__name">{item.name}</span>
-        </button>
-      </div>
-    );
-  };
+  const gridItemData = useMemo(() => ({
+    cacheVersion,
+    columns,
+    enqueueImage,
+    failedRef,
+    failureVersion: failedCount,
+    items: filteredItems,
+    onPreview: setPreviewItem,
+    thumbCacheRef,
+  }), [cacheVersion, columns, enqueueImage, failedCount, filteredItems]);
 
   const usableGridWidth = Math.max(1, containerWidth - SCROLLBAR_GUTTER);
   const columnWidth = Math.max(1, Math.floor(usableGridWidth / columns));
@@ -594,10 +612,12 @@ function ResultsImages({
               rowCount={rows}
               rowHeight={ROW_HEIGHT}
               width={gridWidth}
+              itemData={gridItemData}
+              itemKey={getImageGridItemKey}
               onItemsRendered={onItemsRendered}
               style={{ overflowX: 'hidden', overflowY: 'auto' }}
             >
-              {Cell}
+              {ImageGridCell}
             </Grid>
           ) : (
             <div className="results-images-state">

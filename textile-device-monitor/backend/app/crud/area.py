@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
+
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -16,8 +17,10 @@ AREA_RESULT_OUTPUT_ROOT_KEY = "area_result_output_root"
 AREA_INFERENCE_DEFAULTS_KEY = "area_inference_defaults"
 AREA_ARCHIVE_LAST_RUN_AT_KEY = "area_archive_last_run_at"
 AREA_ARCHIVE_ENABLED_KEY = "area_archive_enabled"
+AREA_FOLDER_BLACKLIST_KEY = "area_folder_blacklist"
 
 DEFAULT_OLD_ROOT_PATH = r"\\192.168.105.82\材料检测中心\10特纤\02-检验"
+DEFAULT_FOLDER_BLACKLIST = [".recycle", "旧"]
 
 DEFAULT_MODEL_MAPPING: dict[str, str] = {
     "粘纤-莱赛尔": "b_v1_1.3.pth",
@@ -42,7 +45,7 @@ def _set_text_value(db: Session, key: str, value: str) -> None:
         row.value_text = value
 
 
-def _set_json_value(db: Session, key: str, value: dict[str, Any]) -> None:
+def _set_json_value(db: Session, key: str, value: Any) -> None:
     row = _get_config_row(db, key)
     if row is None:
         row = SystemConfig(config_key=key, value_json=value)
@@ -89,6 +92,25 @@ def _normalize_mapping(raw_mapping: Any) -> dict[str, str]:
     return mapping
 
 
+def _normalize_folder_blacklist(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        value = item.strip()
+        key = value.casefold()
+        if not value or len(value) > 255 or "/" in value or "\\" in value or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(value)
+        if len(normalized) >= 100:
+            break
+    return normalized
+
+
 def _normalize_inference_defaults(raw: Any) -> dict[str, Any]:
     normalized = dict(DEFAULT_INFER_OPTIONS)
     if not isinstance(raw, dict):
@@ -128,6 +150,7 @@ def ensure_area_config(db: Session) -> None:
     infer_defaults_row = _get_config_row(db, AREA_INFERENCE_DEFAULTS_KEY)
     archive_last_run_row = _get_config_row(db, AREA_ARCHIVE_LAST_RUN_AT_KEY)
     archive_enabled_row = _get_config_row(db, AREA_ARCHIVE_ENABLED_KEY)
+    folder_blacklist_row = _get_config_row(db, AREA_FOLDER_BLACKLIST_KEY)
     changed = False
 
     if root_row is None or not (root_row.value_text or "").strip():
@@ -158,6 +181,10 @@ def ensure_area_config(db: Session) -> None:
         _set_bool_value(db, AREA_ARCHIVE_ENABLED_KEY, False)
         changed = True
 
+    if folder_blacklist_row is None or not isinstance(folder_blacklist_row.value_json, list):
+        _set_json_value(db, AREA_FOLDER_BLACKLIST_KEY, list(DEFAULT_FOLDER_BLACKLIST))
+        changed = True
+
     if changed:
         db.commit()
 
@@ -171,6 +198,7 @@ def get_area_config(db: Session) -> dict[str, object]:
     infer_defaults_row = _get_config_row(db, AREA_INFERENCE_DEFAULTS_KEY)
     archive_last_run_row = _get_config_row(db, AREA_ARCHIVE_LAST_RUN_AT_KEY)
     archive_enabled_row = _get_config_row(db, AREA_ARCHIVE_ENABLED_KEY)
+    folder_blacklist_row = _get_config_row(db, AREA_FOLDER_BLACKLIST_KEY)
 
     root_path = ((root_row.value_text if root_row else "") or settings.AREA_ROOT_PATH_DEFAULT).strip()
     old_root_path = ((old_root_row.value_text if old_root_row else "") or DEFAULT_OLD_ROOT_PATH).strip()
@@ -183,6 +211,9 @@ def get_area_config(db: Session) -> dict[str, object]:
     )
     archive_last_run_at = (archive_last_run_row.value_text if archive_last_run_row else "") or ""
     archive_enabled = _normalize_bool(archive_enabled_row.value_json if archive_enabled_row else False, False)
+    folder_blacklist = _normalize_folder_blacklist(
+        folder_blacklist_row.value_json if folder_blacklist_row else DEFAULT_FOLDER_BLACKLIST
+    )
 
     return {
         "root_path": root_path,
@@ -192,6 +223,7 @@ def get_area_config(db: Session) -> dict[str, object]:
         "inference_defaults": inference_defaults,
         "archive_last_run_at": archive_last_run_at.strip(),
         "archive_enabled": archive_enabled,
+        "folder_blacklist": folder_blacklist,
     }
 
 
@@ -203,6 +235,7 @@ def update_area_config(
     model_mapping: dict[str, str],
     inference_defaults: dict[str, Any],
     archive_enabled: bool = False,
+    folder_blacklist: list[str] | None = None,
 ) -> dict[str, object]:
     normalized_root = root_path.strip()
     normalized_old_root = old_root_path.strip()
@@ -222,6 +255,12 @@ def update_area_config(
     _set_json_value(db, AREA_MODEL_MAPPING_KEY, normalized_mapping)
     _set_json_value(db, AREA_INFERENCE_DEFAULTS_KEY, normalized_defaults)
     _set_bool_value(db, AREA_ARCHIVE_ENABLED_KEY, archive_enabled)
+    if folder_blacklist is not None:
+        _set_json_value(
+            db,
+            AREA_FOLDER_BLACKLIST_KEY,
+            _normalize_folder_blacklist(folder_blacklist),
+        )
     db.commit()
     return get_area_config(db)
 

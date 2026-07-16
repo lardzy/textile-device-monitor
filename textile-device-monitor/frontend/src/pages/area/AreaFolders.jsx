@@ -169,13 +169,6 @@ function AreaFolders() {
       ),
     },
     {
-      title: '图片数量',
-      dataIndex: 'image_count',
-      width: 130,
-      align: 'right',
-      render: (value) => `${Number(value || 0)} 张`,
-    },
-    {
       title: '更新时间',
       dataIndex: 'updated_at',
       width: 200,

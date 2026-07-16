@@ -834,6 +834,7 @@ class AreaJobManager:
         root_path: str,
         query: str,
         limit: int = 5,
+        excluded_folder_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         normalized_query = str(query or "").strip().lower()
         if not normalized_query:
@@ -844,12 +845,19 @@ class AreaJobManager:
 
         matches: list[tuple[float, Path]] = []
         seen: set[str] = set()
+        excluded = {
+            str(name).strip().casefold()
+            for name in (excluded_folder_names or [])
+            if str(name).strip()
+        }
         for root in roots:
             try:
                 entries = list(root.iterdir())
             except OSError:
                 continue
             for entry in entries:
+                if entry.name.casefold() in excluded:
+                    continue
                 try:
                     if not entry.is_dir():
                         continue
@@ -875,7 +883,6 @@ class AreaJobManager:
                 {
                     "folder_name": entry.name,
                     "updated_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
-                    "image_count": self._count_images_in_dir(entry),
                 }
             )
         return result
@@ -886,6 +893,7 @@ class AreaJobManager:
         limit: int = 5,
         page: int = 1,
         page_size: int = 5,
+        excluded_folder_names: list[str] | None = None,
     ) -> dict[str, Any]:
         roots = self._existing_roots(root_path)
         if not roots:
@@ -893,12 +901,19 @@ class AreaJobManager:
 
         rows: list[tuple[float, Path]] = []
         seen: set[str] = set()
+        excluded = {
+            str(name).strip().casefold()
+            for name in (excluded_folder_names or [])
+            if str(name).strip()
+        }
         for root in roots:
             try:
                 entries = list(root.iterdir())
             except OSError:
                 continue
             for entry in entries:
+                if entry.name.casefold() in excluded:
+                    continue
                 try:
                     if not entry.is_dir():
                         continue
@@ -925,7 +940,6 @@ class AreaJobManager:
             {
                 "folder_name": path.name,
                 "updated_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
-                "image_count": self._count_images_in_dir(path),
             }
             for mtime, path in chunk
         ]
@@ -935,6 +949,29 @@ class AreaJobManager:
             "page": effective_page,
             "page_size": effective_page_size,
         }
+
+    def list_folder_preview_images(
+        self,
+        root_path: str,
+        folder_name: str,
+        limit: int = 6,
+    ) -> dict[str, Any]:
+        folder = self._resolve_target_folder(root_path, folder_name)
+        effective_limit = max(1, min(int(limit or 6), 20))
+        files: list[str] = []
+        try:
+            for item in folder.iterdir():
+                try:
+                    if item.is_file() and item.suffix.lower() in ALLOWED_IMAGE_SUFFIXES:
+                        files.append(item.name)
+                        if len(files) >= effective_limit:
+                            break
+                except OSError:
+                    continue
+        except OSError:
+            files = []
+        files.sort(key=lambda name: name.lower())
+        return {"items": [{"name": item} for item in files], "limit": effective_limit}
 
     def list_folder_images(
         self,

@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 import xlrd
@@ -123,6 +124,89 @@ def _excel_col_to_index(col: str) -> int:
 class AreaJobsTests(unittest.TestCase):
     def test_parse_model_classes_alias(self):
         self.assertEqual(parse_model_classes("棉-粘-莱-莫"), ["棉", "粘纤", "莱赛尔", "莫代尔"])
+
+    def test_folder_discovery_does_not_scan_child_contents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "root"
+            older = root / "sample-older"
+            newer = root / "sample-newer"
+            older.mkdir(parents=True)
+            newer.mkdir()
+            (root / ".recycle").mkdir()
+            (root / "旧").mkdir()
+            (older / "old-image.jpg").write_bytes(b"old")
+            (newer / "new-image.png").write_bytes(b"new")
+
+            now = time.time()
+            os.utime(older, (now - 60, now - 60))
+            os.utime(newer, (now, now))
+
+            manager = AreaJobManager()
+            try:
+                with patch.object(
+                    manager,
+                    "_count_images_in_dir",
+                    side_effect=AssertionError("folder discovery must not scan child contents"),
+                ) as count_images:
+                    search_items = manager.search_folders(
+                        str(root),
+                        "sample",
+                        limit=10,
+                        excluded_folder_names=[".recycle", "旧"],
+                    )
+                    blocked_search_items = manager.search_folders(
+                        str(root),
+                        "旧",
+                        limit=10,
+                        excluded_folder_names=[".recycle", "旧"],
+                    )
+                    recent = manager.list_recent_folders(
+                        str(root),
+                        limit=10,
+                        page=1,
+                        page_size=10,
+                        excluded_folder_names=[".recycle", "旧"],
+                    )
+
+                count_images.assert_not_called()
+                self.assertEqual(
+                    [item["folder_name"] for item in search_items],
+                    ["sample-newer", "sample-older"],
+                )
+                self.assertEqual(blocked_search_items, [])
+                self.assertEqual(
+                    [item["folder_name"] for item in recent["items"]],
+                    ["sample-newer", "sample-older"],
+                )
+                for item in [*search_items, *recent["items"]]:
+                    self.assertNotIn("image_count", item)
+            finally:
+                manager.stop()
+
+    def test_folder_preview_stops_after_requested_image_limit(self):
+        class _FakeEntry:
+            def __init__(self, name: str) -> None:
+                self.name = name
+                self.suffix = Path(name).suffix
+
+            def is_file(self) -> bool:
+                return True
+
+        class _FakeFolder:
+            def iterdir(self):
+                yield _FakeEntry("note.txt")
+                for index in range(6):
+                    yield _FakeEntry(f"image-{index}.jpg")
+                raise AssertionError("limited preview must stop after six images")
+
+        manager = AreaJobManager()
+        try:
+            with patch.object(manager, "_resolve_target_folder", return_value=_FakeFolder()):
+                payload = manager.list_folder_preview_images("unused", "sample", limit=6)
+            self.assertEqual(len(payload["items"]), 6)
+            self.assertEqual(payload["limit"], 6)
+        finally:
+            manager.stop()
 
     def test_cleanup_preview_does_not_move_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:

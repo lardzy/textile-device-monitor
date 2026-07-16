@@ -38,6 +38,20 @@ const DEFAULT_OPTIONS = {
   nms_conf_thresh: 0.05,
   nms_thresh: 0.5,
 };
+const DEFAULT_FOLDER_BLACKLIST = ['.recycle', '旧'];
+
+function normalizeFolderBlacklist(values) {
+  const normalized = [];
+  const seen = new Set();
+  (Array.isArray(values) ? values : []).forEach((item) => {
+    const value = String(item || '').trim();
+    const key = value.toLocaleLowerCase();
+    if (!value || value.includes('/') || value.includes('\\') || seen.has(key)) return;
+    seen.add(key);
+    normalized.push(value);
+  });
+  return normalized.slice(0, 100);
+}
 
 function AreaSettings() {
   const [loading, setLoading] = useState(true);
@@ -47,6 +61,7 @@ function AreaSettings() {
   const [rootPath, setRootPath] = useState('');
   const [oldRootPath, setOldRootPath] = useState('');
   const [outputRoot, setOutputRoot] = useState('');
+  const [folderBlacklist, setFolderBlacklist] = useState(DEFAULT_FOLDER_BLACKLIST);
   const [archiveEnabled, setArchiveEnabled] = useState(false);
   const [mappingRows, setMappingRows] = useState([]);
   const [options, setOptions] = useState(DEFAULT_OPTIONS);
@@ -60,6 +75,7 @@ function AreaSettings() {
     root_path: rootPath.trim(),
     old_root_path: oldRootPath.trim(),
     result_output_root: outputRoot.trim(),
+    folder_blacklist: normalizeFolderBlacklist(folderBlacklist),
     archive_enabled: archiveEnabled,
     model_mapping: mappingRows.reduce((result, row) => {
       const name = String(row.model_name || '').trim();
@@ -68,7 +84,7 @@ function AreaSettings() {
       return result;
     }, {}),
     inference_defaults: { ...DEFAULT_OPTIONS, ...options },
-  }), [archiveEnabled, mappingRows, oldRootPath, options, outputRoot, rootPath]);
+  }), [archiveEnabled, folderBlacklist, mappingRows, oldRootPath, options, outputRoot, rootPath]);
 
   const serialized = useMemo(() => JSON.stringify(buildPayload()), [buildPayload]);
   const dirty = Boolean(snapshot && snapshot !== serialized);
@@ -83,6 +99,11 @@ function AreaSettings() {
       root_path: config?.root_path || '',
       old_root_path: config?.old_root_path || '',
       result_output_root: config?.result_output_root || '',
+      folder_blacklist: normalizeFolderBlacklist(
+        Array.isArray(config?.folder_blacklist)
+          ? config.folder_blacklist
+          : DEFAULT_FOLDER_BLACKLIST,
+      ),
       archive_enabled: Boolean(config?.archive_enabled),
       model_mapping: config?.model_mapping || {},
       inference_defaults: { ...DEFAULT_OPTIONS, ...(config?.inference_defaults || {}) },
@@ -90,6 +111,7 @@ function AreaSettings() {
     setRootPath(nextPayload.root_path);
     setOldRootPath(nextPayload.old_root_path);
     setOutputRoot(nextPayload.result_output_root);
+    setFolderBlacklist(nextPayload.folder_blacklist);
     setArchiveEnabled(nextPayload.archive_enabled);
     setMappingRows(rows);
     setOptions(nextPayload.inference_defaults);
@@ -298,6 +320,20 @@ function AreaSettings() {
             <label>
               <span>结果输出路径</span>
               <Input value={outputRoot} onChange={(event) => setOutputRoot(event.target.value)} />
+            </label>
+            <label>
+              <span>数据目录黑名单</span>
+              <Select
+                mode="tags"
+                value={folderBlacklist}
+                tokenSeparators={[',', '，']}
+                placeholder="输入要隐藏的目录名称后按回车"
+                options={folderBlacklist.map((name) => ({ value: name, label: name }))}
+                onChange={(values) => setFolderBlacklist(normalizeFolderBlacklist(values))}
+              />
+              <Typography.Text type="secondary">
+                目录搜索和最近目录会按名称直接忽略这些文件夹，不读取其中内容。
+              </Typography.Text>
             </label>
           </div>
         </section>

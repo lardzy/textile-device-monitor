@@ -67,7 +67,7 @@ function NewAreaJobDrawer({ open, modelOptions, onClose, onCreated }) {
     }
     let active = true;
     setPreviewLoading(true);
-    areaApi.listFolderImages(selectedFolder.folder_name, { page: 1, page_size: 6 })
+    areaApi.listFolderPreviewImages(selectedFolder.folder_name, { limit: 6 })
       .then((payload) => {
         if (active) setPreviewItems(payload?.items || []);
       })
@@ -130,13 +130,6 @@ function NewAreaJobDrawer({ open, modelOptions, onClose, onCreated }) {
       ),
     },
     {
-      title: '图片',
-      dataIndex: 'image_count',
-      width: 80,
-      align: 'right',
-      render: (value) => `${Number(value || 0)} 张`,
-    },
-    {
       title: '更新时间',
       dataIndex: 'updated_at',
       width: 170,
@@ -155,7 +148,7 @@ function NewAreaJobDrawer({ open, modelOptions, onClose, onCreated }) {
         <div className="area-drawer-footer">
           <Typography.Text type="secondary">
             {selectedFolder
-              ? `${selectedFolder.folder_name} · ${Number(selectedFolder.image_count || 0)} 张图片`
+              ? selectedFolder.folder_name
               : '尚未选择数据目录'}
           </Typography.Text>
           <Space>
@@ -217,22 +210,26 @@ function NewAreaJobDrawer({ open, modelOptions, onClose, onCreated }) {
         <div className="area-form-section">
           <div className="area-section-heading">
             <Typography.Title level={5}>图片预览</Typography.Title>
-            <Typography.Text type="secondary">{Number(selectedFolder.image_count || 0)} 张</Typography.Text>
+            <Typography.Text type="secondary">最多加载 6 张</Typography.Text>
           </div>
           <Spin spinning={previewLoading}>
-            <Image.PreviewGroup>
-              <div className="area-preview-strip">
-                {previewItems.map((item) => (
-                  <Image
-                    key={item.name}
-                    src={areaApi.getFolderImageUrl(selectedFolder.folder_name, item.name)}
-                    alt={item.name}
-                    loading="lazy"
-                    fallback="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-                  />
-                ))}
-              </div>
-            </Image.PreviewGroup>
+            {previewItems.length ? (
+              <Image.PreviewGroup>
+                <div className="area-preview-strip">
+                  {previewItems.map((item) => (
+                    <Image
+                      key={item.name}
+                      src={areaApi.getFolderImageUrl(selectedFolder.folder_name, item.name)}
+                      alt={item.name}
+                      loading="lazy"
+                      fallback="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+                    />
+                  ))}
+                </div>
+              </Image.PreviewGroup>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可预览图片" />
+            )}
           </Spin>
         </div>
       ) : null}

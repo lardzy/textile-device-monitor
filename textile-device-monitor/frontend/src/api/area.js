@@ -10,6 +10,7 @@ export const areaApi = {
   runArchive: () => api.post('/area/archive/run'),
   searchFolders: (params) => api.get('/area/folders/search', { params }),
   listRecentFolders: (params) => api.get('/area/folders/recent', { params }),
+  listFolderPreviewImages: (folderName, params) => api.get(`/area/folders/${encodeURIComponent(folderName)}/preview-images`, { params }),
   listFolderImages: (folderName, params) => api.get(`/area/folders/${encodeURIComponent(folderName)}/images`, { params }),
   getFolderImageUrl: (folderName, filename) => `/api/area/folders/${encodeURIComponent(folderName)}/image/${encodeURIComponent(filename)}`,
   cleanupFolder: (folderName, data) => api.post(`/area/folders/${encodeURIComponent(folderName)}/cleanup`, data),
