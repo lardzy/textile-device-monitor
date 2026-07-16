@@ -24,7 +24,7 @@ import {
   Table,
   Typography,
 } from 'antd';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { areaApi } from '../../api/area';
 import { formatAreaDateTime, getAreaErrorMessage } from './areaUtils';
 
@@ -42,6 +42,7 @@ function AreaFolders() {
   const [previewTotal, setPreviewTotal] = useState(0);
   const [previewPage, setPreviewPage] = useState(1);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const previewRequestIdRef = useRef(0);
 
   const [cleanupFolder, setCleanupFolder] = useState(null);
   const [cleanupPreview, setCleanupPreview] = useState(null);
@@ -74,18 +75,22 @@ function AreaFolders() {
   }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadPreviewImages = useCallback(async (folderName, nextPage = 1) => {
+    const requestId = previewRequestIdRef.current + 1;
+    previewRequestIdRef.current = requestId;
     setPreviewLoading(true);
     try {
       const payload = await areaApi.listFolderImages(folderName, { page: nextPage, page_size: 50 });
+      if (previewRequestIdRef.current !== requestId) return;
       setPreviewItems(payload?.items || []);
       setPreviewTotal(Number(payload?.total || 0));
       setPreviewPage(Number(payload?.page || nextPage));
     } catch (error) {
+      if (previewRequestIdRef.current !== requestId) return;
       message.error(getAreaErrorMessage(error, '图片加载失败'));
       setPreviewItems([]);
       setPreviewTotal(0);
     } finally {
-      setPreviewLoading(false);
+      if (previewRequestIdRef.current === requestId) setPreviewLoading(false);
     }
   }, []);
 
@@ -94,6 +99,19 @@ function AreaFolders() {
     setPreviewPage(1);
     loadPreviewImages(folder.folder_name, 1);
   };
+
+  const closePreview = useCallback(() => {
+    previewRequestIdRef.current += 1;
+    setPreviewFolder(null);
+    setPreviewItems([]);
+    setPreviewTotal(0);
+    setPreviewPage(1);
+    setPreviewLoading(false);
+  }, []);
+
+  useEffect(() => () => {
+    previewRequestIdRef.current += 1;
+  }, []);
 
   const openCleanup = (folder) => {
     setCleanupFolder(folder);
@@ -205,6 +223,8 @@ function AreaFolders() {
     setPage(1);
   };
 
+  const previewFolderName = previewFolder?.folder_name || '';
+
   return (
     <div className="area-page">
       <div className="area-page-toolbar">
@@ -249,11 +269,11 @@ function AreaFolders() {
       <Drawer
         open={Boolean(previewFolder)}
         width="min(920px, calc(100vw - 24px))"
-        title={previewFolder ? `${previewFolder.folder_name} · ${previewTotal} 张图片` : '图片预览'}
-        onClose={() => setPreviewFolder(null)}
+        title={previewFolderName ? `${previewFolderName} · ${previewTotal} 张图片` : '图片预览'}
+        onClose={closePreview}
       >
         <Spin spinning={previewLoading}>
-          {previewItems.length ? (
+          {previewFolderName && previewItems.length ? (
             <Image.PreviewGroup>
               <List
                 className="area-folder-gallery"
@@ -263,7 +283,7 @@ function AreaFolders() {
                   <List.Item>
                     <div className="area-folder-image">
                       <Image
-                        src={areaApi.getFolderImageUrl(previewFolder.folder_name, item.name)}
+                        src={areaApi.getFolderImageUrl(previewFolderName, item.name)}
                         alt={item.name}
                         loading="lazy"
                       />
@@ -275,13 +295,13 @@ function AreaFolders() {
             </Image.PreviewGroup>
           ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="目录中没有图片" />}
         </Spin>
-        {previewTotal > 50 ? (
+        {previewFolderName && previewTotal > 50 ? (
           <Pagination
             current={previewPage}
             pageSize={50}
             total={previewTotal}
             showSizeChanger={false}
-            onChange={(nextPage) => loadPreviewImages(previewFolder.folder_name, nextPage)}
+            onChange={(nextPage) => loadPreviewImages(previewFolderName, nextPage)}
           />
         ) : null}
       </Drawer>
