@@ -1,7 +1,7 @@
 import { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
-import { Alert, Badge, Button, Card, Checkbox, Collapse, Empty, Form, Input, InputNumber, List, message, Modal, Popconfirm, Progress, Select, Skeleton, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Badge, Button, Card, Checkbox, Collapse, Dropdown, Empty, Form, Input, InputNumber, List, message, Modal, Popconfirm, Progress, Select, Skeleton, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import { CheckCircleOutlined, ClockCircleFilled, ClockCircleOutlined, DeleteOutlined, DownOutlined, ExclamationCircleOutlined, FileImageOutlined, FileTextOutlined, FolderOpenOutlined, HolderOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
@@ -1769,8 +1769,9 @@ function DeviceMonitor() {
     return true;
   };
 
-  const handleToggleNotifyMode = async () => {
-    const nextMode = notifyMode === 'off' ? 'once' : notifyMode === 'once' ? 'always' : 'off';
+  const handleNotifyModeSelect = async ({ key }) => {
+    const nextMode = key;
+    if (!['off', 'once', 'always'].includes(nextMode) || nextMode === notifyMode) return;
     const applied = await handleNotifyModeChange(nextMode);
     if (!applied) return;
     if (nextMode === 'off') {
@@ -1787,6 +1788,39 @@ function DeviceMonitor() {
     : notifyMode === 'always'
       ? '持续提醒'
       : '关闭';
+
+  const completionNotifyMenuItems = [
+    {
+      key: 'off',
+      icon: <ClockCircleOutlined />,
+      label: (
+        <span className="monitor-completion-notify-option">
+          <strong>关闭</strong>
+          <small>不监听本设备检测完成</small>
+        </span>
+      ),
+    },
+    {
+      key: 'once',
+      icon: <ClockCircleOutlined />,
+      label: (
+        <span className="monitor-completion-notify-option">
+          <strong>提醒一次</strong>
+          <small>下次检测完成后提醒并自动关闭</small>
+        </span>
+      ),
+    },
+    {
+      key: 'always',
+      icon: <ClockCircleFilled />,
+      label: (
+        <span className="monitor-completion-notify-option">
+          <strong>持续提醒</strong>
+          <small>本设备每次检测完成都提醒</small>
+        </span>
+      ),
+    },
+  ];
 
   const handleDropConfirm = (dragDescriptor, targetDescriptor) => {
     const resolvedDrop = resolveStableQueueDrop(
@@ -2148,7 +2182,7 @@ function DeviceMonitor() {
             <div className="monitor-workbench-summary">
               <div className="monitor-workbench-summary__identity">
                 <span>当前操作设备</span>
-                <div>
+                <div className="monitor-workbench-summary__identity-title">
                   <Typography.Title level={4}>{selectedDevice.name}</Typography.Title>
                   <Badge
                     status={selectedConfig.color}
@@ -2180,17 +2214,41 @@ function DeviceMonitor() {
                 </div>
               </div>
 
-              <Select
-                className="monitor-workbench-switcher"
-                value={selectedDevice.id}
-                onChange={handleSelectDevice}
-                optionFilterProp="label"
-                showSearch
-                options={devices.map(device => ({
-                  value: device.id,
-                  label: `${device.name} · ${(statusConfig[device.status] || statusConfig.offline).text}`,
-                }))}
-              />
+              <div className="monitor-workbench-actions">
+                <Select
+                  className="monitor-workbench-switcher"
+                  value={selectedDevice.id}
+                  onChange={handleSelectDevice}
+                  optionFilterProp="label"
+                  showSearch
+                  options={devices.map(device => ({
+                    value: device.id,
+                    label: `${device.name} · ${(statusConfig[device.status] || statusConfig.offline).text}`,
+                  }))}
+                />
+                <div className="monitor-completion-notify-control">
+                  <Dropdown
+                    trigger={['click']}
+                    placement="bottomRight"
+                    menu={{
+                      items: completionNotifyMenuItems,
+                      selectable: true,
+                      selectedKeys: [notifyMode],
+                      onClick: handleNotifyModeSelect,
+                    }}
+                  >
+                    <Button
+                      className={`monitor-completion-notify monitor-completion-notify--${notifyMode}`}
+                      type="text"
+                      size="small"
+                      icon={notifyMode === 'always' ? <ClockCircleFilled /> : <ClockCircleOutlined />}
+                      title={`完成提醒：当前${notifyModeLabel}，点击设置`}
+                      aria-label={`完成提醒：当前${notifyModeLabel}，点击选择提醒模式`}
+                      aria-pressed={notifyMode !== 'off'}
+                    />
+                  </Dropdown>
+                </div>
+              </div>
             </div>
 
             <QueueTimeoutNotice
@@ -2274,20 +2332,6 @@ function DeviceMonitor() {
                         : '同一浏览器在全部普通设备合计最多排 3 份'}
                       {' · '}加入后轮到您会自动提醒
                     </div>
-                    <Tooltip
-                      placement="topRight"
-                      title={`完成提醒（无需参加排队）：设备检测完成时通知。当前为“${notifyModeLabel}”，点击依次切换关闭、提醒一次和持续提醒。`}
-                    >
-                      <Button
-                        className={`monitor-completion-notify monitor-completion-notify--${notifyMode}`}
-                        type="text"
-                        size="small"
-                        icon={notifyMode === 'always' ? <ClockCircleFilled /> : <ClockCircleOutlined />}
-                        aria-label={`完成提醒：当前${notifyModeLabel}，点击切换模式`}
-                        aria-pressed={notifyMode !== 'off'}
-                        onClick={handleToggleNotifyMode}
-                      />
-                    </Tooltip>
                   </div>
 
                   {queueError ? (
