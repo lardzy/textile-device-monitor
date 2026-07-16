@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
 import importlib.util
 import sys
 import types
 import unittest
+from uuid import UUID
 
 
 CLIENT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +25,8 @@ if importlib.util.find_spec("requests") is None:
 if importlib.util.find_spec("psutil") is None:
     sys.modules["psutil"] = types.ModuleType("psutil")
 
+from modules import api_client as api_client_module
+from modules.api_client import ApiClient
 from modules.status_reporter import StatusReporter
 
 
@@ -89,6 +93,27 @@ class _SnapshotProgressReader:
         }
 
 
+class _SuccessHttpResponse:
+    status_code = 200
+
+    @staticmethod
+    def json():
+        return {"success": True, "message": "ok", "data": {"queue_count": 0}}
+
+
+class _RetrySession:
+    def __init__(self):
+        self.payloads = []
+
+    def request(self, method, url, json, timeout):
+        self.payloads.append(dict(json))
+        if len(self.payloads) == 1:
+            raise api_client_module.requests.exceptions.Timeout(
+                "first request timed out"
+            )
+        return _SuccessHttpResponse()
+
+
 class StatusReporterTests(unittest.TestCase):
     def test_report_uses_single_progress_snapshot(self):
         logger = _Logger()
@@ -108,6 +133,53 @@ class StatusReporterTests(unittest.TestCase):
         self.assertEqual(api_client.calls[0]["status"], "idle")
         self.assertEqual(api_client.calls[0]["task_progress"], 100)
         self.assertEqual(api_client.calls[0]["task_key"], "/data/task-a")
+        UUID(api_client.calls[0]["report_id"])
+        reported_at = datetime.fromisoformat(api_client.calls[0]["reported_at"])
+        self.assertIsNotNone(reported_at.tzinfo)
+
+    def test_each_sampling_cycle_gets_a_distinct_report_id(self):
+        logger = _Logger()
+        api_client = _ApiClient([_Response(), _Response()])
+        reporter = StatusReporter(
+            api_client=api_client,
+            progress_reader=_SnapshotProgressReader(),
+            metrics_collector=_MetricsCollector(),
+            device_code="dev-1",
+            logger=logger,
+        )
+
+        reporter.report_once()
+        reporter.report_once()
+
+        self.assertNotEqual(
+            api_client.calls[0]["report_id"],
+            api_client.calls[1]["report_id"],
+        )
+
+    def test_http_retry_reuses_the_same_report_id_and_timestamp(self):
+        logger = _Logger()
+        api_client = ApiClient("http://server", logger)
+        retry_session = _RetrySession()
+        api_client.session = retry_session
+        api_client.max_retries = 2
+
+        response = api_client.report_status(
+            device_code="dev-1",
+            status="idle",
+            report_id="760d7727-b8fa-45f8-9492-c91e93a7363b",
+            reported_at="2026-07-17T00:00:00+00:00",
+        )
+
+        self.assertIsNotNone(response)
+        self.assertEqual(len(retry_session.payloads), 2)
+        self.assertEqual(
+            retry_session.payloads[0]["report_id"],
+            retry_session.payloads[1]["report_id"],
+        )
+        self.assertEqual(
+            retry_session.payloads[0]["reported_at"],
+            retry_session.payloads[1]["reported_at"],
+        )
 
     def test_report_logs_recovery_after_consecutive_failures(self):
         logger = _Logger()

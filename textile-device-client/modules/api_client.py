@@ -280,13 +280,18 @@ class ApiClient:
         task_progress: Optional[int] = None,
         metrics: Optional[Dict[str, Any]] = None,
         client_base_url: Optional[str] = None,
+        report_id: Optional[str] = None,
+        reported_at: Optional[str] = None,
     ) -> Optional[MessageResponse]:
         """上报设备状态
 
         Args:
             device_code: 设备编码
             status: 设备状态
+            report_id: 单次采样幂等 UUID；同一次传输重试必须复用
+            reported_at: 带时区的 UTC 采样时间
             task_id: 任务ID（可选）
+            task_key: 稳定任务标识（可选）
             task_name: 任务名称（可选）
             task_progress: 任务进度 0-100（可选）
             metrics: 设备指标（可选）
@@ -295,6 +300,8 @@ class ApiClient:
             MessageResponse or None
         """
         data = {
+            "report_id": report_id,
+            "reported_at": reported_at,
             "status": status,
             "task_id": task_id,
             "task_key": task_key,

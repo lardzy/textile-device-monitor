@@ -12,6 +12,7 @@ import {
   Table,
   Tooltip,
   Typography,
+  message,
 } from 'antd';
 import {
   CheckCircleOutlined,
@@ -45,6 +46,7 @@ import { DISPLAY_TIMEZONE, displayNow, toDisplayDayjs } from '../utils/dateHelpe
 import './analytics.css';
 
 const { RangePicker } = DatePicker;
+const MAX_STATS_RANGE_DAYS = 366;
 
 const STATUS_COLORS = {
   idle: '#52c41a',
@@ -101,6 +103,33 @@ const escapeCsvValue = (value) => {
   let text = value == null ? '' : String(value);
   if (/^[=+\-@]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
+};
+
+const normalizeSummaryItem = (item) => {
+  const totalTasks = Number(item?.total_tasks || 0);
+  const completedTasks = Number(item?.completed_tasks || 0);
+  const cohortStartedTasks = Number(item?.cohort_started_tasks ?? totalTasks);
+  const cohortCompletedTasks = Number(
+    item?.cohort_completed_tasks ?? Math.min(completedTasks, cohortStartedTasks),
+  );
+  const fallbackRate = cohortStartedTasks > 0
+    ? (cohortCompletedTasks / cohortStartedTasks) * 100
+    : 0;
+  const completionRate = Number(item?.completion_rate ?? fallbackRate);
+  return {
+    ...item,
+    total_tasks: totalTasks,
+    completed_tasks: completedTasks,
+    cohort_started_tasks: cohortStartedTasks,
+    cohort_completed_tasks: cohortCompletedTasks,
+    completion_rate: Number.isFinite(completionRate)
+      ? Math.max(0, Math.min(100, completionRate))
+      : 0,
+    avg_duration: Number(item?.avg_duration || 0),
+    max_duration: Number(item?.max_duration || 0),
+    min_duration: Number(item?.min_duration || 0),
+    utilization_rate: Number(item?.utilization_rate || item?.utilization || 0),
+  };
 };
 
 function KpiCard({ icon, iconColor, iconBackground, label, value, suffix, note, tooltip }) {
@@ -191,15 +220,8 @@ function Statistics() {
     }
 
     if (summaryResult.status === 'fulfilled') {
-      const normalized = (Array.isArray(summaryResult.value) ? summaryResult.value : []).map(item => ({
-        ...item,
-        total_tasks: Number(item?.total_tasks || 0),
-        completed_tasks: Number(item?.completed_tasks || 0),
-        avg_duration: Number(item?.avg_duration || 0),
-        max_duration: Number(item?.max_duration || 0),
-        min_duration: Number(item?.min_duration || 0),
-        utilization_rate: Number(item?.utilization_rate || item?.utilization || 0),
-      }));
+      const normalized = (Array.isArray(summaryResult.value) ? summaryResult.value : [])
+        .map(normalizeSummaryItem);
       setSummary(normalized);
     } else {
       setSummary([]);
@@ -247,7 +269,17 @@ function Statistics() {
   const totals = useMemo(() => {
     const started = visibleSummary.reduce((sum, item) => sum + item.total_tasks, 0);
     const completed = visibleSummary.reduce((sum, item) => sum + item.completed_tasks, 0);
-    const completionRate = started > 0 ? (completed / started) * 100 : 0;
+    const cohortStarted = visibleSummary.reduce(
+      (sum, item) => sum + item.cohort_started_tasks,
+      0,
+    );
+    const cohortCompleted = visibleSummary.reduce(
+      (sum, item) => sum + item.cohort_completed_tasks,
+      0,
+    );
+    const completionRate = cohortStarted > 0
+      ? (cohortCompleted / cohortStarted) * 100
+      : 0;
     const durationWeight = visibleSummary.reduce((sum, item) => sum + item.completed_tasks, 0);
     const avgDuration = durationWeight > 0
       ? visibleSummary.reduce((sum, item) => sum + item.avg_duration * item.completed_tasks, 0) / durationWeight
@@ -255,7 +287,15 @@ function Statistics() {
     const avgUtilization = visibleSummary.length > 0
       ? visibleSummary.reduce((sum, item) => sum + item.utilization_rate, 0) / visibleSummary.length
       : 0;
-    return { started, completed, completionRate, avgDuration, avgUtilization };
+    return {
+      started,
+      completed,
+      cohortStarted,
+      cohortCompleted,
+      completionRate,
+      avgDuration,
+      avgUtilization,
+    };
   }, [visibleSummary]);
 
   const statusData = useMemo(() => {
@@ -284,16 +324,29 @@ function Statistics() {
 
   const handleExport = () => {
     if (!visibleSummary.length) return;
-    const headers = ['设备名称', '设备编号', '开始任务', '完成任务', '完成率(%)', '平均耗时(秒)', '最长耗时(秒)', '最短耗时(秒)', '利用率(%)'];
+    const headers = [
+      '设备名称',
+      '设备编号',
+      '开始任务',
+      '完成任务',
+      '完成率计入开始任务',
+      '完成率计入完成任务',
+      '完成率(%)',
+      '平均耗时(秒)',
+      '最长耗时(秒)',
+      '最短耗时(秒)',
+      '利用率(%)',
+    ];
     const rows = visibleSummary.map(item => {
       const device = deviceMap.get(item.device_id);
-      const completionRate = item.total_tasks > 0 ? (item.completed_tasks / item.total_tasks) * 100 : 0;
       return [
         item.device_name || device?.name || `设备 ${item.device_id}`,
         device?.device_code || '',
         item.total_tasks,
         item.completed_tasks,
-        completionRate.toFixed(2),
+        item.cohort_started_tasks,
+        item.cohort_completed_tasks,
+        item.completion_rate.toFixed(2),
         item.avg_duration,
         item.max_duration,
         item.min_duration,
@@ -326,11 +379,15 @@ function Statistics() {
     { title: '开始任务', dataIndex: 'total_tasks', width: 105, sorter: (a, b) => a.total_tasks - b.total_tasks },
     { title: '完成任务', dataIndex: 'completed_tasks', width: 105, sorter: (a, b) => a.completed_tasks - b.completed_tasks },
     {
-      title: '完成率',
+      title: (
+        <Tooltip title="按范围内开始的任务计算；跨范围完成只计入完成量，不计入完成率分子">
+          完成率
+        </Tooltip>
+      ),
       key: 'completion_rate',
       width: 115,
-      sorter: (a, b) => (a.total_tasks ? a.completed_tasks / a.total_tasks : 0) - (b.total_tasks ? b.completed_tasks / b.total_tasks : 0),
-      render: (_, record) => `${record.total_tasks > 0 ? ((record.completed_tasks / record.total_tasks) * 100).toFixed(1) : '0.0'}%`,
+      sorter: (a, b) => a.completion_rate - b.completion_rate,
+      render: (_, record) => `${record.completion_rate.toFixed(1)}%`,
     },
     {
       title: '平均耗时',
@@ -403,7 +460,16 @@ function Statistics() {
               allowClear={false}
               disabledDate={current => current && current > displayNow().endOf('day')}
               onChange={(value) => {
-                if (value?.[0] && value?.[1]) setDateRange(value);
+                if (!value?.[0] || !value?.[1]) return;
+                const rangeDays = value[1].startOf('day').diff(
+                  value[0].startOf('day'),
+                  'day',
+                ) + 1;
+                if (rangeDays > MAX_STATS_RANGE_DAYS) {
+                  message.warning(`统计日期范围最多支持 ${MAX_STATS_RANGE_DAYS} 天`);
+                  return;
+                }
+                setDateRange(value);
               }}
             />
           </div>
@@ -465,8 +531,8 @@ function Statistics() {
               label="任务完成率"
               value={totals.completionRate.toFixed(1)}
               suffix="%"
-              note="完成任务数 ÷ 开始任务数"
-              tooltip="只有同时记录到开始和完成事件的任务才参与计算"
+              note={`本范围开始 ${totals.cohortStarted} 项，范围内完成 ${totals.cohortCompleted} 项`}
+              tooltip="按所选范围内开始的任务作为分母；只有同一任务也在该范围内完成时计入分子"
             />
             <KpiCard
               icon={<ClockCircleOutlined />}

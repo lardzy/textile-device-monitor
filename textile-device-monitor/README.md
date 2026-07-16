@@ -97,6 +97,7 @@ DATABASE_URL=postgresql://admin:password123@postgres:5432/textile_monitor
 SECRET_KEY=your-secret-key-change-in-production
 HEARTBEAT_TIMEOUT=30
 DATA_RETENTION_DAYS=30
+STATUS_REPORT_RETENTION_HOURS=48
 CORS_ORIGINS=["http://localhost", "http://localhost:80"]
 ```
 
@@ -109,6 +110,8 @@ CORS_ORIGINS=["http://localhost", "http://localhost:80"]
 **请求参数**:
 ```json
 {
+  "report_id": "8cb6d4df-3177-43e9-a04f-c9023af18e50", // 可选；重试必须复用
+  "reported_at": "2026-07-16T15:00:00Z",              // 可选；必须包含时区
   "status": "idle|busy|maintenance|error",
   "task_id": "TASK_20240116_001",           // 可选
   "task_name": "棉纤维检测",                // 可选
@@ -123,7 +126,7 @@ CORS_ORIGINS=["http://localhost", "http://localhost:80"]
 
 **上报频率**: 建议5秒一次
 
-**离线判定**: 30秒未上报自动标记为离线
+**离线判定**: 90秒未上报自动标记为离线
 
 ### Python示例代码
 ```python
@@ -194,19 +197,32 @@ while True:
    - 设备描述
 
 ### 排队使用
-1. 访问"排队辅助"页面
+1. 在“设备监控”中选择设备并快速前往排队区
 2. 输入检验员姓名（自动保存）
-3. 选择设备
-4. 点击"加入排队"
-5. 可通过上下箭头调整位置
-6. 查看今日修改历史
+3. 点击“加入排队”
+4. 需要调整顺序时可按住排队表格任意非按钮区域拖动整行
+5. 查看今日修改历史
 
 ### 设备上报完成
-设备完成检测后调用：
+设备完成检测后，继续通过状态上报接口提交完成状态；同一次上报的
+HTTP 重试必须复用同一个 `report_id`：
 ```http
-POST http://服务器IP:8000/api/queue/{device_id}/complete
+POST http://服务器IP:8000/api/devices/{device_code}/status
+
+{
+  "status": "idle",
+  "task_progress": 100,
+  "report_id": "同一次上报保持不变的 UUID",
+  "reported_at": "UTC 时间"
+}
 ```
-排队列表会自动减少1
+后端会在同一事务内记录完成事件、历史并结算一个队首。旧的
+`POST /api/queue/{device_id}/complete` 已停用并返回 410，避免一次物理完成
+被两个入口重复结算。
+
+统计完成率按查询范围内开始的任务作为分母；任务跨日完成时归入其
+“开始日期”所在的趋势分桶，跨出整个查询范围的完成只计完成量、不进入
+该范围完成率分子。所有统计接口最长支持 366 天。
 
 ### 历史查询
 1. 访问"历史记录"页面
@@ -224,11 +240,15 @@ POST http://服务器IP:8000/api/queue/{device_id}/complete
 3. 选择日期范围
 4. 查看图表分析
 
+统计日期范围最多为366天。完成率以“所选范围内开始的任务”为分母，
+仅当同一任务也在该范围内完成时计入分子；跨范围完成仍计入完成量。
+
 ## 维护说明
 
 ### 数据清理
 - 每天凌晨2点自动清理30天前的历史记录
 - 每天凌晨2点自动清理昨天的排队修改日志
+- 每天凌晨2点清理超过 `STATUS_REPORT_RETENTION_HOURS` 的状态幂等收据
 
 ### 日志查看
 ```bash

@@ -1,12 +1,43 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from app.database import get_db
 from app.models import Device
 from app.crud import stats as stats_crud
 
 router = APIRouter(prefix="/stats", tags=["stats"])
+
+MAX_STATS_RANGE_DAYS = 366
+
+
+def _business_today() -> date:
+    return datetime.now(stats_crud.get_stats_timezone()).date()
+
+
+def _validate_stats_range(
+    start_date: date,
+    end_date: date,
+    *,
+    stat_type: Optional[str] = None,
+) -> None:
+    if stat_type is not None and stat_type not in stats_crud.VALID_STAT_TYPES:
+        raise HTTPException(status_code=422, detail="Invalid stat_type")
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=422,
+            detail="start_date must not be after end_date",
+        )
+    range_days = (end_date - start_date).days + 1
+    if range_days > MAX_STATS_RANGE_DAYS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "stats_range_too_large",
+                "message": f"统计日期范围最多支持 {MAX_STATS_RANGE_DAYS} 天",
+                "max_days": MAX_STATS_RANGE_DAYS,
+            },
+        )
 
 
 @router.get("/trend")
@@ -18,13 +49,7 @@ def get_statistics_trend(
     db: Session = Depends(get_db),
 ):
     """按日、周或月返回基于设备状态事件的实时趋势。"""
-    if stat_type not in stats_crud.VALID_STAT_TYPES:
-        raise HTTPException(status_code=422, detail="Invalid stat_type")
-    if start_date > end_date:
-        raise HTTPException(
-            status_code=422,
-            detail="start_date must not be after end_date",
-        )
+    _validate_stats_range(start_date, end_date, stat_type=stat_type)
     if device_id is not None:
         device = db.query(Device.id).filter(Device.id == device_id).first()
         if not device:
@@ -60,11 +85,15 @@ def get_device_statistics(
     db: Session = Depends(get_db),
 ):
     """获取指定设备的统计数据"""
+    today = _business_today()
     if not start_date:
-        start_date = date.today() - timedelta(days=30)
+        start_date = today - timedelta(days=30)
     if not end_date:
-        end_date = date.today()
+        end_date = today
 
+    _validate_stats_range(start_date, end_date, stat_type=stat_type)
+    # 该旧接口保留原 List[Statistic] 合同，避免影响潜在外部调用者；
+    # 新统计页面使用 /summary 与 /trend 的任务事件口径。
     return stats_crud.get_statistics(db, device_id, stat_type, start_date, end_date)
 
 
@@ -76,9 +105,12 @@ def get_summary_statistics(
     db: Session = Depends(get_db),
 ):
     """获取汇总统计数据"""
+    today = _business_today()
     if not start_date:
-        start_date = date.today() - timedelta(days=7)
+        start_date = today - timedelta(days=7)
     if not end_date:
-        end_date = date.today()
+        end_date = today
+
+    _validate_stats_range(start_date, end_date, stat_type=stat_type)
 
     return stats_crud.get_summary_stats(db, stat_type, start_date, end_date)

@@ -214,6 +214,8 @@ POST /api/devices/{device_code}/status
 Content-Type: application/json
 
 {
+  "report_id": "8cb6d4df-3177-43e9-a04f-c9023af18e50",
+  "reported_at": "2026-07-16T15:00:00Z",
   "status": "busy",
   "task_id": "TASK_20240118_143000",
   "task_name": "AI显微镜检测",
@@ -226,6 +228,9 @@ Content-Type: application/json
   }
 }
 ```
+
+`report_id` 是单次采样的幂等键；同一次 HTTP 重试必须复用相同值，
+下一次状态采样再生成新的 UUID。`reported_at` 必须使用带时区的 UTC 时间。
 
 ### 健康检查
 ```

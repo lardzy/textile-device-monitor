@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import JSONResponse
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -12,7 +13,6 @@ from app.schemas import (
     QueueTimeoutExtend,
 )
 from app.crud import queue as queue_crud
-from app.crud import devices as device_crud
 from app.models import QueueChangeLog, DeviceStatus as ModelDeviceStatus
 from app.config import settings
 from app.websocket.manager import websocket_manager
@@ -36,7 +36,9 @@ async def join_queue(queue: QueueCreate, db: Session = Depends(get_db)):
             detail="缺少浏览器ID，无法加入排队",
         )
 
-    device = device_crud.get_device(db, queue.device_id)
+    # The device row is the queue-wide mutex. Quota checks, position selection,
+    # insertion and the final snapshot all belong to this one transaction.
+    device = queue_crud.lock_device_queue(db, queue.device_id)
     if not device:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
@@ -48,6 +50,7 @@ async def join_queue(queue: QueueCreate, db: Session = Depends(get_db)):
         and device_metrics.get("device_type") == "laser_confocal"
     )
     limit = 2 if is_confocal else 3
+    queue_crud.lock_user_quota(db, queue.created_by_id, is_confocal)
     used = queue_crud.count_user_quota(db, queue.created_by_id, is_confocal)
     remaining = limit - used
 
@@ -63,11 +66,18 @@ async def join_queue(queue: QueueCreate, db: Session = Depends(get_db)):
     effective_copies = min(copies, remaining)
     queue.copies = effective_copies
 
-    queue_records = queue_crud.join_queue(db, queue)
+    try:
+        queue_records = queue_crud.join_queue(db, queue)
+        queue_count = queue_crud.get_queue_count(db, queue.device_id)
+        created_records = [
+            queue_crud.serialize_queue_record(record) for record in queue_records
+        ]
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     if queue_records:
-        queue_count = queue_crud.get_queue_count(db, queue.device_id)
-
         await websocket_manager.broadcast(
             {
                 "type": "queue_update",
@@ -77,12 +87,12 @@ async def join_queue(queue: QueueCreate, db: Session = Depends(get_db)):
                     "inspector_name": queue.inspector_name,
                     "position": queue_records[0].position,
                     "queue_count": queue_count,
-                    "queue_records": queue_records,
+                    "queue_records": created_records,
                 },
             }
         )
 
-    return queue_records
+    return created_records
 
 
 @router.put("/{queue_id}/position", response_model=QueueRecord)
@@ -90,32 +100,33 @@ async def change_queue_position(
     queue_id: int, position_change: PositionChange, db: Session = Depends(get_db)
 ):
     """修改排队位置"""
-    existing_record = queue_crud.get_queue_record(db, queue_id)
-    if not existing_record:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Queue record not found"
-        )
-
-    old_position = existing_record.position
-
     try:
         queue_result = queue_crud.update_queue_position(db, queue_id, position_change)
         if not queue_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Queue record not found"
             )
-        queue_record, auto_removed = queue_result
+        queue_record, auto_removed, old_position = queue_result
+        queue_count = queue_crud.get_queue_count(db, queue_record.device_id)
+        db.commit()
+    except queue_crud.QueueVersionConflict as exc:
+        payload = {
+            "code": "queue_version_conflict",
+            "message": str(exc),
+            "current_version": exc.current_version,
+            "queue": exc.queue,
+        }
+        db.rollback()
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=payload)
     except ValueError as e:
-        if "Concurrency conflict" in str(e):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="该记录已被其他用户修改，请刷新后重试",
-            ) from e
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
         ) from e
+    except Exception:
+        db.rollback()
+        raise
 
-    queue_count = queue_crud.get_queue_count(db, queue_record.device_id)
     action = "placeholder_auto_remove" if auto_removed else "position_change"
     await websocket_manager.broadcast(
         {
@@ -143,17 +154,32 @@ async def claim_placeholder(
     """认领占位人员"""
     try:
         queue_record = queue_crud.claim_placeholder(db, queue_id, payload)
+        if queue_record:
+            queue_count = queue_crud.get_queue_count(db, queue_record.device_id)
+        db.commit()
+    except queue_crud.QueueVersionConflict as exc:
+        payload = {
+            "code": "queue_version_conflict",
+            "message": str(exc),
+            "current_version": exc.current_version,
+            "queue": exc.queue,
+        }
+        db.rollback()
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=payload)
     except ValueError as exc:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
+    except Exception:
+        db.rollback()
+        raise
 
     if not queue_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Queue record not found"
         )
 
-    queue_count = queue_crud.get_queue_count(db, queue_record.device_id)
     await websocket_manager.broadcast(
         {
             "type": "queue_update",
@@ -178,66 +204,60 @@ async def leave_queue(
     db: Session = Depends(get_db),
 ):
     """离开排队"""
-    queue_record = queue_crud.get_queue_record(db, queue_id)
-
-    if not queue_record:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Queue record not found"
-        )
-
-    device_id = queue_record.device_id
-    deleted_record = queue_crud.delete_queue(db, queue_id, changed_by_id)
-
-    if deleted_record:
+    try:
+        deleted_record = queue_crud.delete_queue(db, queue_id, changed_by_id)
+        if not deleted_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Queue record not found",
+            )
+        device_id = deleted_record.device_id
         queue_count = queue_crud.get_queue_count(db, device_id)
-        action = (
-            "placeholder_delete"
-            if deleted_record.is_placeholder and deleted_record.auto_remove_when_inactive
-            else "leave"
-        )
-        await websocket_manager.broadcast(
-            {
-                "type": "queue_update",
-                "data": {
-                    "device_id": device_id,
-                    "action": action,
-                    "queue_id": queue_id,
-                    "queue_count": queue_count,
-                },
-            }
-        )
+        db.commit()
+    except queue_crud.QueueVersionConflict as exc:
+        payload = {
+            "code": "queue_version_conflict",
+            "message": str(exc),
+            "current_version": exc.current_version,
+            "queue": exc.queue,
+        }
+        db.rollback()
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=payload)
+    except Exception:
+        db.rollback()
+        raise
+
+    action = (
+        "placeholder_delete"
+        if deleted_record.is_placeholder and deleted_record.auto_remove_when_inactive
+        else "leave"
+    )
+    await websocket_manager.broadcast(
+        {
+            "type": "queue_update",
+            "data": {
+                "device_id": device_id,
+                "action": action,
+                "queue_id": queue_id,
+                "queue_count": queue_count,
+            },
+        }
+    )
 
     return {"message": "Queue record deleted successfully"}
 
 
 @router.post("/{device_id}/complete", response_model=MessageResponse)
 async def complete_task(device_id: int, db: Session = Depends(get_db)):
-    """设备完成一单（减少排队数量）"""
-    completed_record = queue_crud.complete_first_in_queue(db, device_id)
-
-    queue_count = queue_crud.get_queue_count(db, device_id)
-
-    if completed_record:
-        await websocket_manager.broadcast(
-            {
-                "type": "queue_update",
-                "data": {
-                    "device_id": device_id,
-                    "action": "complete",
-                    "queue_id": completed_record.id,
-                    "completed_by": completed_record.inspector_name,
-                    "completed_by_id": completed_record.created_by_id,
-                    "queue_count": queue_count,
-                },
-            }
-        )
-
-    return MessageResponse(
-        success=True,
-        message="Task completed",
-        data={
+    """Retired: queue settlement must be driven by an idempotent status report."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "queue_completion_endpoint_retired",
+            "message": (
+                "该接口已停用；请通过设备状态上报并携带 report_id 完成队首结算"
+            ),
             "device_id": device_id,
-            "queue_count": queue_count,
         },
     )
 
@@ -247,7 +267,7 @@ async def extend_queue_timeout(
     device_id: int, payload: QueueTimeoutExtend, db: Session = Depends(get_db)
 ):
     """延长排队超时计时（+5分钟）"""
-    device = device_crud.get_device(db, device_id)
+    device = queue_crud.lock_device_queue(db, device_id)
     if not device:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
@@ -309,8 +329,11 @@ async def extend_queue_timeout(
         remark=remark,
     )
     db.add(timeout_log)
-    db.commit()
-    db.refresh(device)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     await websocket_manager.broadcast(
         {

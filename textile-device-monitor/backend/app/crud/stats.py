@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from bisect import bisect_right
+from collections import deque
 from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional
 
@@ -23,6 +25,95 @@ from app.services.device_tracking import (
 
 
 VALID_STAT_TYPES = frozenset({"daily", "weekly", "monthly"})
+
+
+def _task_event_identity(event: DeviceStateEvent) -> str:
+    """Return a stable identity for pairing starts and completions in one window."""
+    task_key = str(event.task_key or "").strip()
+    if task_key:
+        return f"key:{task_key}"
+    task_name = str(event.task_name or "").strip()
+    if task_name:
+        return f"name:{task_name}"
+    return "unkeyed"
+
+
+def calculate_completion_cohort(events: list[DeviceStateEvent]) -> tuple[int, int]:
+    """Count tasks started in the window and those completed in the same window.
+
+    Completion events whose start happened before the window remain part of the
+    completion-volume metric, but do not distort the completion-rate cohort.
+    """
+    pending_starts: dict[str, int] = {}
+    started_tasks = 0
+    completed_started_tasks = 0
+    ordered_events = sorted(
+        events,
+        key=lambda event: (normalize_datetime(event.occurred_at), event.id or 0),
+    )
+    for event in ordered_events:
+        identity = _task_event_identity(event)
+        if event.event_type == EVENT_TASK_START:
+            started_tasks += 1
+            pending_starts[identity] = pending_starts.get(identity, 0) + 1
+            continue
+        if event.event_type != EVENT_TASK_COMPLETE:
+            continue
+        pending_count = pending_starts.get(identity, 0)
+        if pending_count <= 0:
+            continue
+        completed_started_tasks += 1
+        if pending_count == 1:
+            pending_starts.pop(identity, None)
+        else:
+            pending_starts[identity] = pending_count - 1
+    return started_tasks, completed_started_tasks
+
+
+def calculate_completion_cohort_buckets(
+    events_by_device: dict[int, list[DeviceStateEvent]],
+    periods: list[tuple[datetime, datetime]],
+) -> list[tuple[int, int]]:
+    """Pair across the whole range and attribute completion to the start bucket."""
+    if not periods:
+        return []
+
+    period_starts = [normalize_datetime(period[0]) for period in periods]
+    period_ends = [normalize_datetime(period[1]) for period in periods]
+    started = [0 for _ in periods]
+    completed = [0 for _ in periods]
+
+    for device_events in events_by_device.values():
+        pending_starts: dict[str, deque[int]] = {}
+        for event in sorted(
+            device_events,
+            key=lambda item: (normalize_datetime(item.occurred_at), item.id or 0),
+        ):
+            occurred_at = normalize_datetime(event.occurred_at)
+            period_index = bisect_right(period_starts, occurred_at) - 1
+            if (
+                period_index < 0
+                or period_index >= len(periods)
+                or occurred_at >= period_ends[period_index]
+            ):
+                continue
+
+            identity = _task_event_identity(event)
+            if event.event_type == EVENT_TASK_START:
+                started[period_index] += 1
+                pending_starts.setdefault(identity, deque()).append(period_index)
+                continue
+            if event.event_type != EVENT_TASK_COMPLETE:
+                continue
+            pending = pending_starts.get(identity)
+            if not pending:
+                continue
+            start_period_index = pending.popleft()
+            completed[start_period_index] += 1
+            if not pending:
+                pending_starts.pop(identity, None)
+
+    return list(zip(started, completed))
 
 
 def create_daily_statistic(
@@ -56,7 +147,7 @@ def get_statistics(
     return query.order_by(Statistic.stat_date).all()
 
 
-def get_realtime_stats(db: Session) -> Dict:
+def get_realtime_stats(db: Session, *, now: Optional[datetime] = None) -> Dict:
     total_devices = db.query(Device).count()
     online_devices = db.query(Device).filter(Device.status != "offline").count()
     idle_devices = db.query(Device).filter(Device.status == "idle").count()
@@ -66,15 +157,25 @@ def get_realtime_stats(db: Session) -> Dict:
     )
     error_devices = db.query(Device).filter(Device.status == "error").count()
 
-    today = date.today()
-    start_of_day = datetime.combine(today, datetime.min.time())
-    end_of_day = datetime.combine(today, datetime.max.time())
+    # “今日”必须按统计业务时区解释，再转换成 UTC 查询数据库。
+    # 直接使用宿主机的 date.today() 会在服务器时区与 STATS_TIMEZONE
+    # 不一致时跨错自然日（尤其是上海零点附近）。
+    stats_tz = get_stats_timezone()
+    current_time = now or datetime.now(stats_tz)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=stats_tz)
+    else:
+        current_time = current_time.astimezone(stats_tz)
+    today = current_time.date()
+    start_of_day, end_of_day = get_window_bounds(today, today, now=current_time)
+    normalized_start = normalize_datetime(start_of_day)
+    normalized_end = normalize_datetime(end_of_day)
 
     today_reports = (
         db.query(DeviceStatusHistory)
         .filter(
-            DeviceStatusHistory.reported_at >= start_of_day,
-            DeviceStatusHistory.reported_at <= end_of_day,
+            DeviceStatusHistory.reported_at >= normalized_start,
+            DeviceStatusHistory.reported_at <= normalized_end,
         )
         .count()
     )
@@ -110,16 +211,18 @@ def _build_stats_payload(
     start_at: datetime,
     end_at: datetime,
 ) -> dict:
+    normalized_start_at = normalize_datetime(start_at)
+    normalized_end_at = normalize_datetime(end_at)
     initial_event = tracking_crud.get_latest_state_event_before(
         db,
         device_id=device_id,
-        before=start_at,
+        before=normalized_start_at,
     )
     events = tracking_crud.get_state_events_in_range(
         db,
         device_id=device_id,
-        start_at=start_at,
-        end_at=end_at,
+        start_at=normalized_start_at,
+        end_at=normalized_end_at,
     )
     initial_status = initial_event.status if initial_event else OFFLINE_STATUS
     utilization = calculate_utilization(
@@ -129,29 +232,30 @@ def _build_stats_payload(
         end_at=end_at,
     )
 
-    completed_tasks = tracking_crud.count_state_events(
-        db,
-        device_id=device_id,
-        event_type=EVENT_TASK_COMPLETE,
-        start_at=start_at,
-        end_at=end_at,
+    total_tasks = sum(1 for event in events if event.event_type == EVENT_TASK_START)
+    completed_tasks = sum(
+        1 for event in events if event.event_type == EVENT_TASK_COMPLETE
     )
-    total_tasks = tracking_crud.count_state_events(
-        db,
-        device_id=device_id,
-        event_type=EVENT_TASK_START,
-        start_at=start_at,
-        end_at=end_at,
+    cohort_started_tasks, cohort_completed_tasks = calculate_completion_cohort(events)
+    completion_rate = (
+        (cohort_completed_tasks / cohort_started_tasks) * 100
+        if cohort_started_tasks > 0
+        else 0.0
     )
 
     return {
         "total_tasks": total_tasks,
         "completed_tasks": completed_tasks,
+        "cohort_started_tasks": cohort_started_tasks,
+        "cohort_completed_tasks": cohort_completed_tasks,
+        "completion_rate": round(completion_rate, 2),
         "busy_seconds": int(utilization.busy_seconds),
         "total_seconds": int(utilization.total_seconds),
         "utilization_rate": round(utilization.utilization_rate, 2),
         "event_count": len(events),
-        "busy_event_count": len([event for event in events if event.status == BUSY_STATUS]),
+        "busy_event_count": len(
+            [event for event in events if event.status == BUSY_STATUS]
+        ),
     }
 
 
@@ -160,7 +264,7 @@ def get_device_realtime_stats(db: Session, device_id: int) -> Dict:
     if not device:
         return {}
 
-    today = date.today()
+    today = datetime.now(get_stats_timezone()).date()
     start_at, end_at = get_window_bounds(today, today)
     stats_payload = _build_stats_payload(
         db,
@@ -187,6 +291,8 @@ def calculate_device_stats(
     db: Session, device_id: int, start_date: date, end_date: date
 ) -> dict:
     start_at, end_at = get_window_bounds(start_date, end_date)
+    normalized_start_at = normalize_datetime(start_at)
+    normalized_end_at = normalize_datetime(end_at)
     stats_payload = _build_stats_payload(
         db,
         device_id=device_id,
@@ -198,8 +304,8 @@ def calculate_device_stats(
         db.query(DeviceStatusHistory)
         .filter(
             DeviceStatusHistory.device_id == device_id,
-            DeviceStatusHistory.reported_at >= start_at,
-            DeviceStatusHistory.reported_at <= end_at,
+            DeviceStatusHistory.reported_at >= normalized_start_at,
+            DeviceStatusHistory.reported_at <= normalized_end_at,
             DeviceStatusHistory.task_duration_seconds.isnot(None),
         )
         .all()
@@ -217,6 +323,9 @@ def calculate_device_stats(
     return {
         "total_tasks": stats_payload["total_tasks"],
         "completed_tasks": stats_payload["completed_tasks"],
+        "cohort_started_tasks": stats_payload["cohort_started_tasks"],
+        "cohort_completed_tasks": stats_payload["cohort_completed_tasks"],
+        "completion_rate": stats_payload["completion_rate"],
         "avg_duration": int(avg_duration),
         "max_duration": int(max_duration),
         "min_duration": int(min_duration),
@@ -386,15 +495,20 @@ def get_trend_stats(
         )
         event_index_by_device[current_device_id] = 0
 
+    cohort_buckets = calculate_completion_cohort_buckets(
+        events_by_device,
+        periods,
+    )
     items: list[dict] = []
     duration_index = 0
-    for period_start, period_end in periods:
+    for period_index, (period_start, period_end) in enumerate(periods):
         bucket_start = _floor_period_start(period_start, stat_type)
         bucket_end = _next_period_start(bucket_start, stat_type)
         busy_seconds = 0.0
         total_seconds = 0.0
         total_tasks = 0
         completed_tasks = 0
+        cohort_started_tasks, cohort_completed_tasks = cohort_buckets[period_index]
         normalized_period_end = normalize_datetime(period_end)
         period_durations: list[int] = []
 
@@ -430,13 +544,17 @@ def get_trend_stats(
             completed_tasks += sum(
                 1 for event in period_events if event.event_type == EVENT_TASK_COMPLETE
             )
-
             if period_events:
                 current_status_by_device[current_device_id] = period_events[-1].status
             event_index_by_device[current_device_id] = event_index
 
         utilization_rate = (
             (busy_seconds / total_seconds) * 100 if total_seconds > 0 else 0.0
+        )
+        completion_rate = (
+            (cohort_completed_tasks / cohort_started_tasks) * 100
+            if cohort_started_tasks > 0
+            else 0.0
         )
         items.append(
             {
@@ -446,6 +564,9 @@ def get_trend_stats(
                 "period_end": period_end.isoformat(),
                 "total_tasks": total_tasks,
                 "completed_tasks": completed_tasks,
+                "cohort_started_tasks": cohort_started_tasks,
+                "cohort_completed_tasks": cohort_completed_tasks,
+                "completion_rate": round(completion_rate, 2),
                 "avg_duration_seconds": int(
                     sum(period_durations) / len(period_durations)
                 )

@@ -1,9 +1,10 @@
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import DeviceStatusHistory, QueueChangeLog
+from app.crud import device_tracking as tracking_crud
 from app.config import settings
 from app.services.ocr_jobs import cleanup_expired_ocr_jobs
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 import asyncio
 
 
@@ -11,7 +12,11 @@ async def cleanup_old_data():
     """清理30天前的历史数据"""
     db = SessionLocal()
     try:
-        cutoff_date = datetime.now() - timedelta(days=settings.DATA_RETENTION_DAYS)
+        now = datetime.now(timezone.utc)
+        cutoff_date = now - timedelta(days=settings.DATA_RETENTION_DAYS)
+        report_cutoff = now - timedelta(
+            hours=settings.STATUS_REPORT_RETENTION_HOURS
+        )
 
         # 删除30天前的状态历史记录
         deleted_history = (
@@ -31,6 +36,11 @@ async def cleanup_old_data():
             .delete()
         )
 
+        deleted_status_reports = tracking_crud.delete_status_report_receipts_before(
+            db,
+            report_cutoff,
+        )
+
         db.commit()
 
         deleted_ocr_jobs = cleanup_expired_ocr_jobs(settings.OCR_RETENTION_HOURS)
@@ -39,6 +49,7 @@ async def cleanup_old_data():
             "Cleaned up "
             f"{deleted_history} history records, "
             f"{deleted_logs} log records, "
+            f"{deleted_status_reports} status report receipts, "
             f"{deleted_ocr_jobs} OCR job artifacts"
         )
 

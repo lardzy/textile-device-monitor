@@ -14,8 +14,10 @@ def create_status_history(
     task_progress: Optional[int] = None,
     device_metrics: Optional[dict] = None,
     task_duration_seconds: Optional[int] = None,
+    reported_at: Optional[datetime] = None,
+    commit: bool = True,
 ) -> DeviceStatusHistory:
-    history = DeviceStatusHistory(
+    history_data = dict(
         device_id=device_id,
         status=status,
         task_id=task_id,
@@ -24,9 +26,15 @@ def create_status_history(
         task_duration_seconds=task_duration_seconds,
         device_metrics=device_metrics,
     )
+    if reported_at is not None:
+        history_data["reported_at"] = reported_at
+    history = DeviceStatusHistory(**history_data)
     db.add(history)
-    db.commit()
-    db.refresh(history)
+    if commit:
+        db.commit()
+        db.refresh(history)
+    else:
+        db.flush()
     return history
 
 

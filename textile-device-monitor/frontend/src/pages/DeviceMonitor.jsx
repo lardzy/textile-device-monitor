@@ -11,6 +11,8 @@ import ResultsImages from './ResultsImages';
 import wsClient from '../websocket/client';
 import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHelper';
 import { addQueueNoticeEntry, getDeviceId, getInspectorName, getOrCreateQueueUserId, getQueueNoticeEntries, getQueueNoticeModes, removeQueueNoticeEntry, saveDeviceId, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
+import { buildCompletionNoticeClaim, buildQueueTurnNoticeClaim, claimNotificationOnce } from '../utils/notificationDedup';
+import { getQueueSnapshotSignature, queueRecordIdEquals, resolveStableQueueDrop } from '../utils/queueDrag';
 import './analytics.css';
 import './device-monitor.css';
 
@@ -335,13 +337,24 @@ const isConfocalDevice = (device) => {
   return device.metrics?.device_type === 'laser_confocal' || Boolean(device.metrics?.olympus);
 };
 
-const DraggableRow = ({ index, onDropConfirm, isActive, children, className, style, ...restProps }) => {
+const DraggableRow = ({
+  recordId,
+  recordVersion,
+  recordPosition,
+  queueSnapshot,
+  onDropConfirm,
+  isActive,
+  children,
+  className,
+  style,
+  ...restProps
+}) => {
   const ref = useRef(null);
   const [{ isOver, dropClassName }, drop] = useDrop({
     accept: type,
     collect: (monitor) => {
-      const { index: dragIndex } = monitor.getItem() || {};
-      if (dragIndex === index) {
+      const { recordId: dragRecordId } = monitor.getItem() || {};
+      if (queueRecordIdEquals(dragRecordId, recordId)) {
         return {};
       }
       return {
@@ -350,16 +363,25 @@ const DraggableRow = ({ index, onDropConfirm, isActive, children, className, sty
       };
     },
     drop: (item) => {
-      const dragIndex = item.index;
-      if (dragIndex === index) {
+      if (queueRecordIdEquals(item.recordId, recordId)) {
         return;
       }
-      onDropConfirm(dragIndex, index);
+      onDropConfirm(item, {
+        recordId,
+        recordVersion,
+        recordPosition,
+        queueSnapshot,
+      });
     },
   });
   const [{ isDragging }, drag] = useDrag({
     type,
-    item: { index },
+    item: {
+      recordId,
+      recordVersion,
+      recordPosition,
+      queueSnapshot,
+    },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
@@ -391,9 +413,13 @@ const queueTableComponents = {
 };
 
 const DragTable = ({ columns, dataSource, onDropConfirm, onRow, ...props }) => {
+  const queueSnapshot = getQueueSnapshotSignature(dataSource);
   const getRowProps = (record, index) => ({
     ...(onRow?.(record, index) || {}),
-    index,
+    recordId: record?.id,
+    recordVersion: record?.version,
+    recordPosition: record?.position,
+    queueSnapshot,
     onDropConfirm,
     isActive: record?.position === 1,
   });
@@ -518,10 +544,12 @@ function DeviceMonitor() {
   const [claimForm] = Form.useForm();
   const [modal, modalContextHolder] = Modal.useModal();
   const devicesRef = useRef([]);
+  const queueRef = useRef([]);
   const selectedDeviceIdRef = useRef(selectedDeviceId);
   const devicesFetchInFlightRef = useRef(false);
   const devicesLiveRevisionRef = useRef(new Map());
   const queueRequestIdRef = useRef(0);
+  const queueSnapshotsByDeviceRef = useRef(new Map());
   const resultsRequestIdRef = useRef(0);
   const queueForegroundRequestIdRef = useRef(null);
   const resultsForegroundRequestIdRef = useRef(null);
@@ -532,6 +560,7 @@ function DeviceMonitor() {
   const lastProgressRef = useRef(new Map());
   const activeQueueRef = useRef(new Map());
   const deviceNotifyTimersRef = useRef(new Map());
+  const queueCompletionTimersRef = useRef(new Map());
   const queueUserIdRef = useRef(getOrCreateQueueUserId());
   const resultsLoadedDeviceIdRef = useRef(null);
   const mountedRef = useRef(true);
@@ -569,6 +598,10 @@ function DeviceMonitor() {
   }, [devices]);
 
   useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+
+  useEffect(() => {
     selectedDeviceIdRef.current = selectedDeviceId;
     if (selectedDeviceId != null) saveDeviceId(selectedDeviceId);
   }, [selectedDeviceId]);
@@ -585,6 +618,8 @@ function DeviceMonitor() {
       destroyManagedModals();
       deviceNotifyTimersRef.current.forEach(timer => window.clearTimeout(timer));
       deviceNotifyTimersRef.current.clear();
+      queueCompletionTimersRef.current.forEach(timer => window.clearTimeout(timer));
+      queueCompletionTimersRef.current.clear();
       pendingQueueRefreshRef.current.clear();
       queueNotifyIntentRef.current.clear();
       queueNoticeModalIdsRef.current.clear();
@@ -658,7 +693,13 @@ function DeviceMonitor() {
   };
 
   const fetchQueue = async (deviceId, options = {}) => {
-    const { notify = false, reason, updateState = true, silent = false } = options;
+    const {
+      notify = false,
+      reason,
+      notificationContext,
+      updateState = true,
+      silent = false,
+    } = options;
     const isForeground = updateState && !silent;
     if (!deviceId) return;
     if (notify) {
@@ -666,6 +707,7 @@ function DeviceMonitor() {
       queueNotifyIntentRef.current.set(deviceId, {
         notify: true,
         reason: reason || pendingIntent?.reason,
+        notificationContext: notificationContext || pendingIntent?.notificationContext,
       });
     }
     if (silent && updateState && queueForegroundRequestIdRef.current != null) {
@@ -673,6 +715,7 @@ function DeviceMonitor() {
       pendingQueueRefreshRef.current.set(deviceId, {
         notify: Boolean(notify || pending?.notify),
         reason: reason || pending?.reason,
+        notificationContext: notificationContext || pending?.notificationContext,
       });
       return;
     }
@@ -692,6 +735,7 @@ function DeviceMonitor() {
       const sortedQueue = (data.queue || [])
         .slice()
         .sort((a, b) => a.position - b.position);
+      queueSnapshotsByDeviceRef.current.set(deviceId, sortedQueue);
       const sortedLogs = (data.logs || []).slice().sort((a, b) => new Date(b.change_time) - new Date(a.change_time));
       const canUpdateState = updateState
         && queueRequestIdRef.current === requestId
@@ -713,7 +757,12 @@ function DeviceMonitor() {
       )));
       const notifyIntent = queueNotifyIntentRef.current.get(deviceId);
       if (notifyIntent?.notify || activeNoticePending) {
-        await notifyActiveQueueEntry(sortedQueue, deviceId, notifyIntent?.reason || reason);
+        await notifyActiveQueueEntry(
+          sortedQueue,
+          deviceId,
+          notifyIntent?.reason || reason,
+          notifyIntent?.notificationContext || notificationContext
+        );
         if (queueNotifyIntentRef.current.get(deviceId) === notifyIntent) {
           queueNotifyIntentRef.current.delete(deviceId);
         }
@@ -825,23 +874,28 @@ function DeviceMonitor() {
   };
 
   const requestNotificationPermission = async () => {
-    if (!('Notification' in window)) {
-      message.warning('当前浏览器不支持系统通知');
-      return false;
-    }
-    if (Notification.permission === 'granted') {
+    try {
+      if (!('Notification' in window)) {
+        message.warning('当前浏览器不支持系统通知');
+        return false;
+      }
+      if (Notification.permission === 'granted') {
+        return true;
+      }
+      if (Notification.permission === 'denied') {
+        message.warning('系统通知已被禁用，请在浏览器设置中开启');
+        return false;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        message.warning('未获得系统通知权限');
+        return false;
+      }
       return true;
-    }
-    if (Notification.permission === 'denied') {
-      message.warning('系统通知已被禁用，请在浏览器设置中开启');
+    } catch (error) {
+      message.warning('系统通知权限申请失败，但不会影响排队操作');
       return false;
     }
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') {
-      message.warning('未获得系统通知权限');
-      return false;
-    }
-    return true;
   };
 
   const showPersistentNotice = (title, content, options = {}) => {
@@ -895,6 +949,20 @@ function DeviceMonitor() {
     return notifyModesRef.current[key] || 'off';
   };
 
+  const claimCompletionNotice = async (source = {}) => {
+    const deviceId = source.device_id ?? source.deviceId ?? source.id;
+    if (deviceId == null) return false;
+    const device = devicesRef.current.find(item => String(item.id) === String(deviceId));
+    const claim = buildCompletionNoticeClaim({
+      ...source,
+      device_id: deviceId,
+      task_id: source.task_id ?? source.taskId ?? device?.task_id,
+      task_key: source.task_key ?? source.taskKey ?? device?.task_key,
+      task_name: source.task_name ?? source.taskName ?? device?.task_name,
+    });
+    return claimNotificationOnce(claim);
+  };
+
   const syncActiveQueueEntry = (deviceId, queueList) => {
     if (deviceId == null) return;
     const activeEntry = getActiveQueueEntry(queueList);
@@ -917,7 +985,7 @@ function DeviceMonitor() {
     });
   };
 
-  const notifyActiveQueueEntry = async (queueList, deviceId, reason) => {
+  const notifyActiveQueueEntry = async (queueList, deviceId, reason, notificationContext = {}) => {
     if (deviceId == null) return;
     const activeEntry = getActiveQueueEntry(queueList);
     const activeId = activeEntry ? activeEntry.id : null;
@@ -939,6 +1007,35 @@ function DeviceMonitor() {
     ));
     if ((activeId === previousId && !hasPendingNotice) || queueNoticeModalIdsRef.current.has(activeId)) {
       return;
+    }
+
+    // “轮到您”是排队后的强制提醒，不能被同一完成边沿上的可选
+    // “检测完成”提醒占用去重窗口。它按稳定队列记录单独去重。
+    const claimed = await claimNotificationOnce(buildQueueTurnNoticeClaim(deviceId, activeId));
+    if (!mountedRef.current || !claimed) {
+      return;
+    }
+
+    if (reason === 'complete') {
+      const completionTimer = queueCompletionTimersRef.current.get(deviceId);
+      if (completionTimer) {
+        window.clearTimeout(completionTimer);
+        queueCompletionTimersRef.current.delete(deviceId);
+      }
+      const deviceTimer = deviceNotifyTimersRef.current.get(deviceId);
+      if (deviceTimer) {
+        window.clearTimeout(deviceTimer);
+        deviceNotifyTimersRef.current.delete(deviceId);
+      }
+      if (getNotifyModeByDevice(deviceId) === 'once') {
+        setNotifyModes(prev => ({ ...prev, [String(deviceId)]: 'off' }));
+      }
+      // 先取得“轮到您”提醒，再占用完成提醒的短租约，避免同一
+      // 完成边沿随后再弹出一条含义较弱的完成/移除通知。
+      await claimCompletionNotice({
+        ...notificationContext,
+        device_id: deviceId,
+      });
     }
     queueNoticeModalIdsRef.current.add(activeId);
 
@@ -972,22 +1069,24 @@ function DeviceMonitor() {
     const timerId = setTimeout(async () => {
       timers.delete(device.id);
       if (!mountedRef.current) return;
-      showPersistentNotice(
-        '检测完成提醒',
-        `${device.name || '设备'} 检测完成`
-      );
+      const claimed = await claimCompletionNotice(device);
+      if (!mountedRef.current || !claimed) return;
       if (mode === 'once') {
         setNotifyModes(prev => ({
           ...prev,
           [String(device.id)]: 'off'
         }));
       }
+      showPersistentNotice(
+        '检测完成提醒',
+        `${device.name || '设备'} 检测完成`
+      );
       const permitted = await requestNotificationPermission();
       if (!mountedRef.current || !permitted) {
         return;
       }
       sendDeviceNotification(device);
-    }, 600);
+    }, 1200);
     timers.set(device.id, timerId);
   };
 
@@ -1066,19 +1165,41 @@ function DeviceMonitor() {
     }
   };
 
-  const notifyQueueCompletion = async (payload) => {
+  const notifyQueueCompletion = (payload) => {
     if (!payload) return;
     const userId = queueUserIdRef.current;
     if (!userId) return;
     if (payload.completed_by_id && payload.completed_by_id === userId) {
-      const deviceName = payload.device_name || '设备';
-      const inspectorName = payload.completed_by || '检验员';
-      const content = `${deviceName} 检测完成，${inspectorName} 已从排队移除`;
-      showPersistentNotice('检测完成提醒', content);
-      const permitted = await requestNotificationPermission();
-      if (mountedRef.current && permitted) {
-        sendCustomNotification('检测完成提醒', content);
+      const deviceId = payload.device_id;
+      if (deviceId == null) return;
+      const previousQueue = queueSnapshotsByDeviceRef.current.get(deviceId) || [];
+      const completedIndex = previousQueue.findIndex(record => (
+        queueRecordIdEquals(record.id, payload.queue_id)
+      ));
+      const nextRecord = completedIndex >= 0 ? previousQueue[completedIndex + 1] : null;
+      if (nextRecord?.created_by_id === userId) {
+        // 同一浏览器连续排了多份时，下一份的“轮到您”提醒信息量更高。
+        // 预占完成提醒租约，等待随后刷新队列触发强制轮到提醒。
+        void claimCompletionNotice(payload);
+        return;
       }
+      const existingTimer = queueCompletionTimersRef.current.get(deviceId);
+      if (existingTimer) window.clearTimeout(existingTimer);
+      const timerId = window.setTimeout(async () => {
+        queueCompletionTimersRef.current.delete(deviceId);
+        if (!mountedRef.current) return;
+        const claimed = await claimCompletionNotice(payload);
+        if (!mountedRef.current || !claimed) return;
+        const deviceName = payload.device_name || '设备';
+        const inspectorName = payload.completed_by || '检验员';
+        const content = `${deviceName} 检测完成，${inspectorName} 已从排队移除`;
+        showPersistentNotice('检测完成提醒', content);
+        const permitted = await requestNotificationPermission();
+        if (mountedRef.current && permitted) {
+          sendCustomNotification('检测完成提醒', content);
+        }
+      }, 900);
+      queueCompletionTimersRef.current.set(deviceId, timerId);
     }
   };
 
@@ -1189,9 +1310,19 @@ function DeviceMonitor() {
       }
       const currentSelectedId = selectedDeviceIdRef.current;
       if (data.device_id === currentSelectedId) {
-        fetchQueue(currentSelectedId, { notify: true, reason: data.action, silent: true });
+        fetchQueue(currentSelectedId, {
+          notify: true,
+          reason: data.action,
+          notificationContext: data,
+          silent: true,
+        });
       } else {
-        fetchQueue(data.device_id, { notify: true, reason: data.action, updateState: false });
+        fetchQueue(data.device_id, {
+          notify: true,
+          reason: data.action,
+          notificationContext: data,
+          updateState: false,
+        });
       }
       setDevices(prev => prev.map(device =>
         device.id === data.device_id
@@ -1466,9 +1597,6 @@ function DeviceMonitor() {
   const handleJoinQueue = async (values) => {
     setQueueSubmitting(true);
     try {
-      if ('Notification' in window && Notification.permission === 'default') {
-        await requestNotificationPermission();
-      }
       const nextInspectorName = values.inspector_name.trim();
       const records = await queueApi.join({
         inspector_name: nextInspectorName,
@@ -1504,6 +1632,16 @@ function DeviceMonitor() {
         copies: 1,
       });
       fetchQueue(selectedDeviceId, { notify: true, reason: 'join', silent: true });
+
+      // 排队成功是主流程，通知授权只能作为成功后的附加动作；浏览器
+      // 拒绝、阻止或延迟权限弹窗都不能回滚或伪装成排队失败。
+      try {
+        if ('Notification' in window && Notification.permission === 'default') {
+          void requestNotificationPermission();
+        }
+      } catch (notificationError) {
+        message.warning('已成功加入排队，但浏览器未能申请系统通知权限');
+      }
     } catch (error) {
       message.error(error?.message || '加入排队失败');
     } finally {
@@ -1511,7 +1649,7 @@ function DeviceMonitor() {
     }
   };
 
-  const handleChangePosition = async (record, newPosition) => {
+  const handleChangePosition = (record, newPosition, dropContext = null) => {
     const deviceId = selectedDeviceIdRef.current;
     const fromLabel = getQueuePositionLabel(record.position);
     const toLabel = getQueuePositionLabel(newPosition);
@@ -1522,18 +1660,62 @@ function DeviceMonitor() {
       cancelText: '取消',
       onOk: async () => {
         try {
+          let recordToMove = record;
+          let targetPosition = newPosition;
+          let targetRecord = null;
+          if (dropContext) {
+            const latestData = await queueApi.getByDevice(deviceId);
+            const latestQueue = (latestData?.queue || [])
+              .slice()
+              .sort((a, b) => a.position - b.position);
+            const latestDrop = resolveStableQueueDrop(
+              latestQueue,
+              dropContext.dragDescriptor,
+              dropContext.targetDescriptor
+            );
+            if (!latestDrop.ok) {
+              message.warning('排队顺序已发生变化，本次拖动已取消，请重新拖动');
+              fetchQueue(deviceId, { silent: true });
+              return;
+            }
+            recordToMove = latestDrop.dragRecord;
+            targetRecord = latestDrop.targetRecord;
+            targetPosition = latestDrop.newPosition;
+          }
+
           const changedBy = inspectorName?.trim() || '系统';
-          await queueApi.updatePosition(record.id, {
-            new_position: newPosition,
+          await queueApi.updatePosition(recordToMove.id, {
+            new_position: targetPosition,
             changed_by: changedBy,
-            version: record.version,
+            version: recordToMove.version,
             changed_by_id: queueUserIdRef.current,
+            ...(targetRecord ? {
+              target_queue_id: targetRecord.id,
+              target_version: targetRecord.version,
+            } : {}),
           });
           message.success('修改位置成功');
           fetchQueue(deviceId, { notify: true, reason: 'position_change', silent: true });
         } catch (error) {
           if (error?.status === 409) {
-            message.error('该记录已被其他用户修改，请刷新后重试');
+            message.error(error?.body?.message || '队列已被其他用户修改，请重新拖动');
+            const conflictQueue = error?.body?.queue;
+            if (
+              Array.isArray(conflictQueue)
+              && selectedDeviceIdRef.current === deviceId
+            ) {
+              const sortedConflictQueue = conflictQueue
+                .slice()
+                .sort((a, b) => a.position - b.position);
+              queueSnapshotsByDeviceRef.current.set(deviceId, sortedConflictQueue);
+              queueRef.current = sortedConflictQueue;
+              setQueue(sortedConflictQueue);
+              setDevices(prev => prev.map(device => (
+                device.id === deviceId
+                  ? { ...device, queue_count: sortedConflictQueue.length }
+                  : device
+              )));
+            }
             fetchQueue(deviceId, { silent: true });
           } else {
             message.error(error?.detail?.message || error?.message || '修改位置失败');
@@ -1606,13 +1788,25 @@ function DeviceMonitor() {
       ? '持续提醒'
       : '关闭';
 
-  const handleDropConfirm = (dragIndex, dropIndex) => {
-    const dragRecord = queue[dragIndex];
-    const dropRecord = queue[dropIndex];
-    if (!dragRecord || !dropRecord) return;
+  const handleDropConfirm = (dragDescriptor, targetDescriptor) => {
+    const resolvedDrop = resolveStableQueueDrop(
+      queueRef.current,
+      dragDescriptor,
+      targetDescriptor
+    );
+    if (!resolvedDrop.ok) {
+      if (resolvedDrop.reason !== 'same_record') {
+        message.warning('排队顺序在拖动期间已更新，请重新拖动');
+        const deviceId = selectedDeviceIdRef.current;
+        if (deviceId) fetchQueue(deviceId, { silent: true });
+      }
+      return;
+    }
 
-    const newPosition = dropRecord.position;
-    handleChangePosition(dragRecord, newPosition);
+    handleChangePosition(resolvedDrop.dragRecord, resolvedDrop.newPosition, {
+      dragDescriptor,
+      targetDescriptor,
+    });
   };
 
   const queueColumns = [

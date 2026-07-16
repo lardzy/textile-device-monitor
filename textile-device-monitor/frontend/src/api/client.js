@@ -22,9 +22,12 @@ api.interceptors.response.use(
     return response.data;
   },
   (error) => {
-    const detail = error.response?.data?.detail;
+    const responseBody = error.response?.data;
+    const detail = responseBody?.detail;
     const message =
-      (typeof detail === 'string' ? detail : detail?.code)
+      (typeof detail === 'string' ? detail : detail?.message || detail?.code)
+      || responseBody?.message
+      || responseBody?.code
       || (error.response?.status === 413 ? 'file_too_large' : null)
       || error.message
       || '请求失败';
@@ -32,6 +35,8 @@ api.interceptors.response.use(
     const apiError = new Error(message);
     apiError.status = error.response?.status;
     apiError.detail = detail;
+    apiError.code = responseBody?.code || detail?.code;
+    apiError.body = responseBody;
     return Promise.reject(apiError);
   }
 );

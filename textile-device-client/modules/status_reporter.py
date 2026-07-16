@@ -4,8 +4,9 @@
 
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Callable, cast
+from uuid import uuid4
 from .api_client import ApiClient
 from .progress_reader import ProgressReader
 from .metrics_collector import MetricsCollector
@@ -107,6 +108,10 @@ class StatusReporter:
         response = self.api_client.report_status(
             device_code=self.device_code,
             status=device_status,
+            # ApiClient retries the same payload, so every transport retry reuses
+            # this idempotency key while the next sampling cycle gets a new one.
+            report_id=str(uuid4()),
+            reported_at=datetime.now(timezone.utc).isoformat(),
             task_id=task_id,
             task_key=task_key,
             task_name=task_name,

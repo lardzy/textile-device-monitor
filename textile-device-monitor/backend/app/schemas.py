@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from enum import Enum
+from uuid import UUID
 
 
 class DeviceStatus(str, Enum):
@@ -62,6 +63,8 @@ class Device(DeviceBase):
 
 
 class StatusReport(BaseModel):
+    report_id: Optional[UUID] = None
+    reported_at: Optional[datetime] = None
     status: DeviceStatus
     task_id: Optional[str] = Field(None, max_length=100)
     task_key: Optional[str] = Field(None, max_length=500)
@@ -69,6 +72,15 @@ class StatusReport(BaseModel):
     task_progress: Optional[int] = Field(None, ge=0, le=100)
     metrics: Optional[Dict[str, Any]] = None
     client_base_url: Optional[str] = Field(None, max_length=200)
+
+    @field_validator("reported_at")
+    @classmethod
+    def normalize_reported_at(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("reported_at must include a timezone")
+        return value.astimezone(timezone.utc)
 
 
 class DeviceStatusHistory(BaseModel):
@@ -98,6 +110,10 @@ class PositionChange(BaseModel):
     changed_by: str = Field(..., min_length=1, max_length=50)
     version: int
     changed_by_id: Optional[str] = Field(None, max_length=64)
+    # 新前端会同时提交拖动时的目标记录身份。后端在设备锁内再次
+    # 校验，避免目标行被删除/换位后仍按旧的数字位置移动到其他人。
+    target_queue_id: Optional[int] = Field(None, gt=0)
+    target_version: Optional[int] = Field(None, ge=0)
 
 
 class QueueRecord(BaseModel):

@@ -8,10 +8,12 @@ from sqlalchemy import (
     Float,
     Date,
     Boolean,
+    Index,
     UniqueConstraint,
     Enum as SQLEnum,
     JSON,
 )
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -64,6 +66,12 @@ class Device(Base):
     )
 
     status_history = relationship("DeviceStatusHistory", back_populates="device")
+    status_reports = relationship(
+        "DeviceStatusReport",
+        back_populates="device",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     task_state = relationship(
         "DeviceTaskState",
         back_populates="device",
@@ -88,6 +96,37 @@ class DeviceStatusHistory(Base):
     reported_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     device = relationship("Device", back_populates="status_history")
+
+
+class DeviceStatusReport(Base):
+    """Durable receipt used to make device status reports idempotent."""
+
+    __tablename__ = "device_status_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "device_id",
+            "report_id",
+            name="uq_device_status_reports_device_report",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(
+        Integer,
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    report_id = Column(String(36), nullable=False)
+    reported_at = Column(DateTime(timezone=True), nullable=False)
+    processed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True,
+    )
+
+    device = relationship("Device", back_populates="status_reports")
 
 
 class DeviceTaskState(Base):
@@ -124,6 +163,16 @@ class DeviceStateEvent(Base):
 
 class QueueRecord(Base):
     __tablename__ = "queue_records"
+    __table_args__ = (
+        Index(
+            "uq_queue_records_waiting_device_position",
+            "device_id",
+            "position",
+            unique=True,
+            postgresql_where=text("status = 'WAITING'"),
+            sqlite_where=text("status = 'WAITING'"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     inspector_name = Column(String(50), nullable=False)

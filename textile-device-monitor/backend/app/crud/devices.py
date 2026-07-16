@@ -6,6 +6,7 @@ from app.models import (
     DeviceStatus,
     DeviceStateEvent,
     DeviceStatusHistory,
+    DeviceStatusReport,
     DeviceTaskState,
     QueueRecord,
     QueueChangeLog,
@@ -24,6 +25,20 @@ def get_device(db: Session, device_id: int) -> Optional[Device]:
 
 def get_device_by_code(db: Session, device_code: str) -> Optional[Device]:
     return db.query(Device).filter(Device.device_code == device_code).first()
+
+
+def get_device_by_code_for_update(db: Session, device_code: str) -> Optional[Device]:
+    """Lock one device while a status report is settled.
+
+    PostgreSQL emits ``SELECT ... FOR UPDATE``. SQLite intentionally ignores
+    the clause, while the receipt unique constraint still protects idempotency.
+    """
+    return (
+        db.query(Device)
+        .filter(Device.device_code == device_code)
+        .with_for_update()
+        .first()
+    )
 
 
 def get_devices(db: Session, skip: int = 0, limit: int = 100) -> List[Device]:
@@ -53,7 +68,14 @@ def update_device(
 
 
 def delete_device(db: Session, device_id: int) -> bool:
-    db_device = get_device(db, device_id)
+    # 与状态上报、排队变更保持同一锁顺序：先锁 devices，再修改其
+    # 子记录。否则并发删除可能与“device -> queue”事务形成锁环。
+    db_device = (
+        db.query(Device)
+        .filter(Device.id == device_id)
+        .with_for_update()
+        .first()
+    )
     if not db_device:
         return False
 
@@ -67,6 +89,9 @@ def delete_device(db: Session, device_id: int) -> bool:
     )
     db.query(DeviceStatusHistory).filter(
         DeviceStatusHistory.device_id == device_id
+    ).delete(synchronize_session=False)
+    db.query(DeviceStatusReport).filter(
+        DeviceStatusReport.device_id == device_id
     ).delete(synchronize_session=False)
     db.query(DeviceStateEvent).filter(
         DeviceStateEvent.device_id == device_id
@@ -152,6 +177,7 @@ def update_device_status(  # 更新设备状态
     metrics: Optional[dict] = None,
     client_base_url: Optional[str] = None,
     touch_heartbeat: bool = True,
+    commit: bool = True,
 ) -> Device:
     now = datetime.now(timezone.utc)
     new_task = False
@@ -253,8 +279,11 @@ def update_device_status(  # 更新设备状态
 
     if touch_heartbeat:
         device.last_heartbeat = now
-    db.commit()
-    db.refresh(device)
+    if commit:
+        db.commit()
+        db.refresh(device)
+    else:
+        db.flush()
     return device
 
 

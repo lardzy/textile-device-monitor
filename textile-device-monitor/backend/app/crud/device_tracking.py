@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import DeviceStateEvent, DeviceTaskState
+from app.models import DeviceStateEvent, DeviceStatusReport, DeviceTaskState
 from app.services.device_tracking import TaskStateSnapshot
 
 
@@ -13,15 +13,27 @@ def get_task_state(db: Session, device_id: int) -> Optional[DeviceTaskState]:
     return db.query(DeviceTaskState).filter(DeviceTaskState.device_id == device_id).first()
 
 
-def get_or_create_task_state(db: Session, device_id: int) -> DeviceTaskState:
-    state = get_task_state(db, device_id)
+def get_or_create_task_state(
+    db: Session,
+    device_id: int,
+    *,
+    commit: bool = True,
+    for_update: bool = False,
+) -> DeviceTaskState:
+    query = db.query(DeviceTaskState).filter(DeviceTaskState.device_id == device_id)
+    if for_update:
+        query = query.with_for_update()
+    state = query.first()
     if state:
         return state
 
     state = DeviceTaskState(device_id=device_id)
     db.add(state)
-    db.commit()
-    db.refresh(state)
+    if commit:
+        db.commit()
+        db.refresh(state)
+    else:
+        db.flush()
     return state
 
 
@@ -41,14 +53,19 @@ def save_task_state(
     db: Session,
     state: DeviceTaskState,
     snapshot: TaskStateSnapshot,
+    *,
+    commit: bool = True,
 ) -> DeviceTaskState:
     state.task_key = snapshot.task_key
     state.task_name = snapshot.task_name
     state.observed_in_progress = snapshot.observed_in_progress
     state.last_status = snapshot.last_status
     state.last_progress = snapshot.last_progress
-    db.commit()
-    db.refresh(state)
+    if commit:
+        db.commit()
+        db.refresh(state)
+    else:
+        db.flush()
     return state
 
 
@@ -62,6 +79,7 @@ def create_state_event(
     task_name: Optional[str],
     task_progress: Optional[int],
     occurred_at: Optional[datetime] = None,
+    commit: bool = True,
 ) -> DeviceStateEvent:
     event_data = dict(
         device_id=device_id,
@@ -75,9 +93,54 @@ def create_state_event(
         event_data["occurred_at"] = occurred_at
     event = DeviceStateEvent(**event_data)
     db.add(event)
-    db.commit()
-    db.refresh(event)
+    if commit:
+        db.commit()
+        db.refresh(event)
+    else:
+        db.flush()
     return event
+
+
+def get_status_report_receipt(
+    db: Session,
+    *,
+    device_id: int,
+    report_id: str,
+) -> Optional[DeviceStatusReport]:
+    return (
+        db.query(DeviceStatusReport)
+        .filter(
+            DeviceStatusReport.device_id == device_id,
+            DeviceStatusReport.report_id == report_id,
+        )
+        .first()
+    )
+
+
+def create_status_report_receipt(
+    db: Session,
+    *,
+    device_id: int,
+    report_id: str,
+    reported_at: datetime,
+) -> DeviceStatusReport:
+    receipt = DeviceStatusReport(
+        device_id=device_id,
+        report_id=report_id,
+        reported_at=reported_at,
+    )
+    db.add(receipt)
+    db.flush()
+    return receipt
+
+
+def delete_status_report_receipts_before(db: Session, cutoff: datetime) -> int:
+    """Delete old idempotency receipts without committing the caller transaction."""
+    return (
+        db.query(DeviceStatusReport)
+        .filter(DeviceStatusReport.processed_at < cutoff)
+        .delete(synchronize_session=False)
+    )
 
 
 def get_latest_state_event_before(

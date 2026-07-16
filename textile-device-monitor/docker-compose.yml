@@ -45,6 +45,7 @@ services:
       HEARTBEAT_TIMEOUT: 90
       HEARTBEAT_CHECK_INTERVAL: 10
       DATA_RETENTION_DAYS: 30
+      STATUS_REPORT_RETENTION_HOURS: 48
       CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
       AREA_WEIGHTS_DIR: /opt/area_weights
       AREA_INFER_URL: http://area-infer:9001

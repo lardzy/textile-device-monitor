@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime, timezone
 import asyncio
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.schemas import (
     Device,
@@ -26,6 +27,28 @@ def schedule_websocket_broadcast(message: dict) -> None:
     if not websocket_manager.active_connections:
         return
     asyncio.create_task(websocket_manager.broadcast(message))
+
+
+def _enum_value(value) -> str:
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _status_snapshot(device, queue_count: int) -> dict:
+    """Build the committed device snapshot used by responses and WebSocket events."""
+    return {
+        "device_id": device.id,
+        "device_code": device.device_code,
+        "device_name": device.name,
+        "status": _enum_value(device.status),
+        "task_id": device.task_id,
+        "task_name": device.task_name,
+        "task_progress": device.task_progress,
+        "task_started_at": device.task_started_at,
+        "task_elapsed_seconds": device.task_elapsed_seconds,
+        "metrics": device.metrics,
+        "last_heartbeat": device.last_heartbeat,
+        "queue_count": queue_count,
+    }
 
 
 @router.get("", response_model=List[Device])
@@ -118,13 +141,7 @@ async def delete_device(device_id: int, db: Session = Depends(get_db)):
 async def report_device_status(
     device_code: str, status_report: StatusReport, db: Session = Depends(get_db)
 ):
-    """设备状态上报接口（供外部设备程序调用）"""
-    device = device_crud.get_device_by_code(db, device_code)
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
-        )
-
+    """Settle one device report atomically and broadcast only committed state."""
     from app.crud import history as history_crud
     from app.crud import device_tracking as tracking_crud
     from app.crud import queue as queue_crud
@@ -136,113 +153,162 @@ async def report_device_status(
         resolve_tracking_task_key,
     )
 
-    previous_status = (
-        device.status.value if hasattr(device.status, "value") else str(device.status)
-    )
-    observed_at = datetime.now(timezone.utc)
-    device_id = int(device.id)  # type: ignore[arg-type]
+    observed_at = status_report.reported_at or datetime.now(timezone.utc)
+    report_id = str(status_report.report_id) if status_report.report_id else None
+    completed_message = None
+    placeholder_message = None
 
-    device_crud.update_device_heartbeat(db, device)
-    device_crud.update_device_status(
-        db,
-        device,
-        ModelDeviceStatus(status_report.status),
-        status_report.task_id,
-        status_report.task_name,
-        status_report.task_progress,
-        status_report.metrics,
-        status_report.client_base_url,
-    )
+    try:
+        # All reports for one device are serialized in PostgreSQL. The lock is
+        # deliberately acquired before checking the receipt, so a retry waits
+        # for the original transaction and then observes its committed receipt.
+        device = device_crud.get_device_by_code_for_update(db, device_code)
+        if not device:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Device not found",
+            )
 
-    current_status = (
-        device.status.value if hasattr(device.status, "value") else str(device.status)
-    )
-    is_laser_confocal = (
-        isinstance(status_report.metrics, dict)
-        and status_report.metrics.get("device_type") == "laser_confocal"
-    )
-    normalized_task_key = resolve_tracking_task_key(
-        status_report.task_key,
-        status_report.task_name,
-    )
-    task_state = tracking_crud.get_or_create_task_state(db, device_id)
-    state_snapshot = tracking_crud.snapshot_task_state(task_state)
-    decision = advance_task_state(
-        state_snapshot,
-        status=current_status,
-        task_key=normalized_task_key,
-        task_name=status_report.task_name,
-        task_progress=status_report.task_progress,
-        is_laser_confocal=is_laser_confocal,
-    )
-
-    if previous_status != current_status:
-        tracking_crud.create_state_event(
+        device_id = int(device.id)  # type: ignore[arg-type]
+        if report_id and tracking_crud.get_status_report_receipt(
             db,
             device_id=device_id,
-            event_type=EVENT_STATUS,
-            status=current_status,
-            task_key=decision.next_state.task_key,
-            task_name=status_report.task_name,
-            task_progress=status_report.task_progress,
-            occurred_at=observed_at,
-        )
+            report_id=report_id,
+        ):
+            queue_count = queue_crud.get_queue_count(db, device_id)
+            response_snapshot = _status_snapshot(device, queue_count)
+            db.commit()
+            return MessageResponse(
+                success=True,
+                message="Duplicate status report ignored",
+                data={**response_snapshot, "duplicate": True},
+            )
 
-    if decision.emit_task_start:
-        tracking_crud.create_state_event(
-            db,
-            device_id=device_id,
-            event_type=EVENT_TASK_START,
-            status=current_status,
-            task_key=decision.next_state.task_key,
-            task_name=decision.next_state.task_name,
-            task_progress=status_report.task_progress,
-            occurred_at=observed_at,
-        )
+        if report_id:
+            tracking_crud.create_status_report_receipt(
+                db,
+                device_id=device_id,
+                report_id=report_id,
+                reported_at=observed_at,
+            )
 
-    completed_record = None
-    if decision.allow_completion:
-        tracking_crud.create_state_event(
+        previous_status = _enum_value(device.status)
+        device_crud.update_device_status(
             db,
-            device_id=device_id,
-            event_type=EVENT_TASK_COMPLETE,
-            status=current_status,
-            task_key=decision.next_state.task_key,
-            task_name=decision.next_state.task_name,
-            task_progress=status_report.task_progress,
-            occurred_at=observed_at,
-        )
-        task_duration_seconds = (
-            int(device.task_elapsed_seconds)  # type: ignore[arg-type]
-            if device.task_elapsed_seconds is not None
-            else 0
-        )
-        history_crud.create_status_history(
-            db,
-            device_id,
-            current_status,
+            device,
+            ModelDeviceStatus(status_report.status),
             status_report.task_id,
             status_report.task_name,
             status_report.task_progress,
             status_report.metrics,
-            task_duration_seconds,
+            status_report.client_base_url,
+            commit=False,
         )
-        completed_record = queue_crud.complete_first_in_queue(db, device_id)
 
-    tracking_crud.save_task_state(db, task_state, decision.next_state)
+        current_status = _enum_value(device.status)
+        effective_task_id = device.task_id
+        effective_task_name = device.task_name
+        effective_task_progress = device.task_progress
+        effective_metrics = device.metrics
+        is_laser_confocal = (
+            isinstance(effective_metrics, dict)
+            and effective_metrics.get("device_type") == "laser_confocal"
+        )
+        normalized_task_key = resolve_tracking_task_key(
+            status_report.task_key,
+            effective_task_name,
+        )
+        task_state = tracking_crud.get_or_create_task_state(
+            db,
+            device_id,
+            commit=False,
+            for_update=True,
+        )
+        state_snapshot = tracking_crud.snapshot_task_state(task_state)
+        decision = advance_task_state(
+            state_snapshot,
+            status=current_status,
+            task_key=normalized_task_key,
+            task_name=effective_task_name,
+            task_progress=effective_task_progress,
+            is_laser_confocal=is_laser_confocal,
+        )
 
-    placeholder_record = None
-    if (
-        previous_status == ModelDeviceStatus.IDLE.value
-        and current_status == ModelDeviceStatus.BUSY.value
-    ):
-        placeholder_record = queue_crud.create_placeholder_if_missing(db, device_id)
+        if previous_status != current_status:
+            tracking_crud.create_state_event(
+                db,
+                device_id=device_id,
+                event_type=EVENT_STATUS,
+                status=current_status,
+                task_key=decision.next_state.task_key,
+                task_name=effective_task_name,
+                task_progress=effective_task_progress,
+                occurred_at=observed_at,
+                commit=False,
+            )
 
-    queue_count = queue_crud.get_queue_count(db, device_id)
+        if decision.emit_task_start:
+            tracking_crud.create_state_event(
+                db,
+                device_id=device_id,
+                event_type=EVENT_TASK_START,
+                status=current_status,
+                task_key=decision.next_state.task_key,
+                task_name=decision.next_state.task_name,
+                task_progress=effective_task_progress,
+                occurred_at=observed_at,
+                commit=False,
+            )
 
-    if completed_record:
-        schedule_websocket_broadcast(
-            {
+        completed_record = None
+        if decision.allow_completion:
+            tracking_crud.create_state_event(
+                db,
+                device_id=device_id,
+                event_type=EVENT_TASK_COMPLETE,
+                status=current_status,
+                task_key=decision.next_state.task_key,
+                task_name=decision.next_state.task_name,
+                task_progress=effective_task_progress,
+                occurred_at=observed_at,
+                commit=False,
+            )
+            task_duration_seconds = (
+                int(device.task_elapsed_seconds)  # type: ignore[arg-type]
+                if device.task_elapsed_seconds is not None
+                else 0
+            )
+            history_crud.create_status_history(
+                db,
+                device_id,
+                current_status,
+                effective_task_id,
+                effective_task_name,
+                effective_task_progress,
+                effective_metrics,
+                task_duration_seconds,
+                reported_at=observed_at,
+                commit=False,
+            )
+            completed_record = queue_crud.complete_first_in_queue(db, device_id)
+
+        tracking_crud.save_task_state(
+            db,
+            task_state,
+            decision.next_state,
+            commit=False,
+        )
+
+        placeholder_record = None
+        if (
+            previous_status == ModelDeviceStatus.IDLE.value
+            and current_status == ModelDeviceStatus.BUSY.value
+        ):
+            placeholder_record = queue_crud.create_placeholder_if_missing(db, device_id)
+
+        queue_count = queue_crud.get_queue_count(db, device_id)
+        if completed_record:
+            completed_message = {
                 "type": "queue_update",
                 "data": {
                     "device_id": device.id,
@@ -252,13 +318,13 @@ async def report_device_status(
                     "completed_by": completed_record.inspector_name,
                     "completed_by_id": completed_record.created_by_id,
                     "device_name": device.name,
+                    "report_id": report_id,
+                    "reported_at": observed_at,
+                    "task_key": decision.next_state.task_key,
                 },
             }
-        )
-
-    if placeholder_record:
-        schedule_websocket_broadcast(
-            {
+        if placeholder_record:
+            placeholder_message = {
                 "type": "queue_update",
                 "data": {
                     "device_id": device.id,
@@ -269,32 +335,61 @@ async def report_device_status(
                     "device_name": device.name,
                 },
             }
-        )
 
+        # Flush every dependent row before the single commit. No WebSocket work
+        # is scheduled until this succeeds.
+        db.flush()
+        db.commit()
+        db.refresh(device)
+        response_snapshot = _status_snapshot(device, queue_count)
+        response_snapshot.update(
+            {
+                "report_id": report_id,
+                "reported_at": observed_at,
+                "task_key": decision.next_state.task_key,
+            }
+        )
+    except IntegrityError:
+        db.rollback()
+        # SQLite cannot serialize with SELECT FOR UPDATE. Its unique constraint
+        # may therefore be the first duplicate detector; translate that race to
+        # the same successful idempotent response used by PostgreSQL.
+        if report_id:
+            duplicate_device = device_crud.get_device_by_code(db, device_code)
+            if duplicate_device and tracking_crud.get_status_report_receipt(
+                db,
+                device_id=int(duplicate_device.id),
+                report_id=report_id,
+            ):
+                duplicate_count = queue_crud.get_queue_count(
+                    db,
+                    int(duplicate_device.id),
+                )
+                return MessageResponse(
+                    success=True,
+                    message="Duplicate status report ignored",
+                    data={
+                        **_status_snapshot(duplicate_device, duplicate_count),
+                        "duplicate": True,
+                    },
+                )
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+    if completed_message:
+        schedule_websocket_broadcast(completed_message)
+    if placeholder_message:
+        schedule_websocket_broadcast(placeholder_message)
     schedule_websocket_broadcast(
-        {
-            "type": "device_status_update",
-            "data": {
-                "device_id": device.id,
-                "device_code": device.device_code,
-                "device_name": device.name,
-                "status": current_status,
-                "task_id": status_report.task_id,
-                "task_name": status_report.task_name,
-                "task_progress": status_report.task_progress,
-                "task_started_at": device.task_started_at,
-                "task_elapsed_seconds": device.task_elapsed_seconds,
-                "metrics": status_report.metrics,
-                "last_heartbeat": device.last_heartbeat,
-                "queue_count": queue_count,
-            },
-        }
+        {"type": "device_status_update", "data": response_snapshot}
     )
 
     return MessageResponse(
         success=True,
         message="Status updated successfully",
-        data={"device_id": device.id, "queue_count": queue_count},
+        data={**response_snapshot, "duplicate": False},
     )
 
 
