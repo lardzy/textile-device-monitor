@@ -170,6 +170,7 @@ class HistoryQuery(BaseModel):
     end_date: Optional[datetime] = None
     status: Optional[str] = None
     task_id: Optional[str] = None
+    keyword: Optional[str] = None
     page: int = Field(1, ge=1)
     page_size: int = Field(20, ge=1, le=100)
 

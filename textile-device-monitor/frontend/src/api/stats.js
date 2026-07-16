@@ -5,4 +5,5 @@ export const statsApi = {
   getDeviceRealtime: (deviceId) => api.get(`/stats/device/${deviceId}`),
   getByDevice: (deviceId, params) => api.get(`/stats/devices/${deviceId}`, { params }),
   getSummary: (params) => api.get('/stats/summary', { params }),
+  getTrend: (params) => api.get('/stats/trend', { params }),
 };

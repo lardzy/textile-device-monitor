@@ -1,20 +1,21 @@
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
-import { Layout, Menu } from 'antd';
+import { Layout, Menu, Spin } from 'antd';
 import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined, ToolOutlined, ScanOutlined, PieChartOutlined } from '@ant-design/icons';
-import DeviceMonitor from './pages/DeviceMonitor';
-import HistoryQuery from './pages/HistoryQuery';
-import Statistics from './pages/Statistics';
-import DeviceManagement from './pages/DeviceManagement';
-import ResultsTable from './pages/ResultsTable';
-import ResultsImages from './pages/ResultsImages';
-import OcrTool from './pages/OcrTool';
-import AreaShell from './pages/area/AreaShell';
-import AreaTaskCenter from './pages/area/AreaTaskCenter';
-import AreaFolders from './pages/area/AreaFolders';
-import AreaSettings from './pages/area/AreaSettings';
-import AreaJobWorkspace from './pages/area/AreaJobWorkspace';
 import wsClient from './websocket/client';
-import { useState, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
+
+const DeviceMonitor = lazy(() => import('./pages/DeviceMonitor'));
+const HistoryQuery = lazy(() => import('./pages/HistoryQuery'));
+const Statistics = lazy(() => import('./pages/Statistics'));
+const DeviceManagement = lazy(() => import('./pages/DeviceManagement'));
+const ResultsTable = lazy(() => import('./pages/ResultsTable'));
+const ResultsImages = lazy(() => import('./pages/ResultsImages'));
+const OcrTool = lazy(() => import('./pages/OcrTool'));
+const AreaShell = lazy(() => import('./pages/area/AreaShell'));
+const AreaTaskCenter = lazy(() => import('./pages/area/AreaTaskCenter'));
+const AreaFolders = lazy(() => import('./pages/area/AreaFolders'));
+const AreaSettings = lazy(() => import('./pages/area/AreaSettings'));
+const AreaJobWorkspace = lazy(() => import('./pages/area/AreaJobWorkspace'));
 
 const { Header, Content, Sider } = Layout;
 
@@ -51,21 +52,29 @@ const findMenuItemByPath = (pathname) => {
 };
 
 const appRoutes = (
-  <Routes>
-    <Route path="/" element={<DeviceMonitor />} />
-    <Route path="/history" element={<HistoryQuery />} />
-    <Route path="/statistics" element={<Statistics />} />
-    <Route path="/management" element={<DeviceManagement />} />
-    <Route path="/tools/ocr" element={<OcrTool />} />
-    <Route path="/tools/area" element={<AreaShell />}>
-      <Route index element={<AreaTaskCenter />} />
-      <Route path="folders" element={<AreaFolders />} />
-      <Route path="settings" element={<AreaSettings />} />
-      <Route path="jobs/:jobId" element={<AreaJobWorkspace />} />
-    </Route>
-    <Route path="/results/table" element={<ResultsTable />} />
-    <Route path="/results/images" element={<ResultsImages />} />
-  </Routes>
+  <Suspense
+    fallback={(
+      <div style={{ display: 'flex', minHeight: 240, alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" />
+      </div>
+    )}
+  >
+    <Routes>
+      <Route path="/" element={<DeviceMonitor />} />
+      <Route path="/history" element={<HistoryQuery />} />
+      <Route path="/statistics" element={<Statistics />} />
+      <Route path="/management" element={<DeviceManagement />} />
+      <Route path="/tools/ocr" element={<OcrTool />} />
+      <Route path="/tools/area" element={<AreaShell />}>
+        <Route index element={<AreaTaskCenter />} />
+        <Route path="folders" element={<AreaFolders />} />
+        <Route path="settings" element={<AreaSettings />} />
+        <Route path="jobs/:jobId" element={<AreaJobWorkspace />} />
+      </Route>
+      <Route path="/results/table" element={<ResultsTable />} />
+      <Route path="/results/images" element={<ResultsImages />} />
+    </Routes>
+  </Suspense>
 );
 
 function AppLayout() {

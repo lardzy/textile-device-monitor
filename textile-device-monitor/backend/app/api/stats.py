@@ -1,12 +1,42 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import date, datetime, timedelta
+from typing import Optional
+from datetime import date, timedelta
 from app.database import get_db
-from app.schemas import Statistic
+from app.models import Device
 from app.crud import stats as stats_crud
 
 router = APIRouter(prefix="/stats", tags=["stats"])
+
+
+@router.get("/trend")
+def get_statistics_trend(
+    start_date: date = Query(..., description="开始日期"),
+    end_date: date = Query(..., description="结束日期"),
+    stat_type: str = Query("daily", description="统计类型: daily/weekly/monthly"),
+    device_id: Optional[int] = Query(None, description="设备ID"),
+    db: Session = Depends(get_db),
+):
+    """按日、周或月返回基于设备状态事件的实时趋势。"""
+    if stat_type not in stats_crud.VALID_STAT_TYPES:
+        raise HTTPException(status_code=422, detail="Invalid stat_type")
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=422,
+            detail="start_date must not be after end_date",
+        )
+    if device_id is not None:
+        device = db.query(Device.id).filter(Device.id == device_id).first()
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+    return stats_crud.get_trend_stats(
+        db,
+        stat_type=stat_type,
+        start_date=start_date,
+        end_date=end_date,
+        device_id=device_id,
+    )
 
 
 @router.get("/realtime")

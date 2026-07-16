@@ -1,10 +1,8 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, and_
+from sqlalchemy import desc, or_
 from typing import List, Optional, Tuple
 from app.models import DeviceStatusHistory
-from app.schemas import HistoryQuery
-from datetime import datetime, timedelta, date
-from sqlalchemy.sql import func
+from datetime import datetime, date
 
 
 def create_status_history(
@@ -39,6 +37,7 @@ def get_device_history(
     end_date: Optional[datetime] = None,
     status: Optional[str] = None,
     task_id: Optional[str] = None,
+    keyword: Optional[str] = None,
     skip: int = 0,
     limit: int = 20,
 ) -> Tuple[List[DeviceStatusHistory], int]:
@@ -51,13 +50,28 @@ def get_device_history(
         query = query.filter(DeviceStatusHistory.reported_at >= start_date)
 
     if end_date:
-        query = query.filter(DeviceStatusHistory.reported_at <= end_date)
+        query = query.filter(DeviceStatusHistory.reported_at < end_date)
 
     if status:
         query = query.filter(DeviceStatusHistory.status == status)
 
     if task_id:
         query = query.filter(DeviceStatusHistory.task_id == task_id)
+
+    normalized_keyword = keyword.strip() if keyword else ""
+    if normalized_keyword:
+        escaped_keyword = (
+            normalized_keyword.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        pattern = f"%{escaped_keyword}%"
+        query = query.filter(
+            or_(
+                DeviceStatusHistory.task_id.ilike(pattern, escape="\\"),
+                DeviceStatusHistory.task_name.ilike(pattern, escape="\\"),
+            )
+        )
 
     total = query.count()
     history = (

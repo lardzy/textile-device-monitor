@@ -14,9 +14,10 @@ router = APIRouter(prefix="/history", tags=["history"])
 def get_history(
     device_id: Optional[int] = Query(None, description="设备ID"),
     start_date: Optional[datetime] = Query(None, description="开始日期"),
-    end_date: Optional[datetime] = Query(None, description="结束日期"),
+    end_date: Optional[datetime] = Query(None, description="结束时间（不含）"),
     status: Optional[str] = Query(None, description="状态筛选"),
     task_id: Optional[str] = Query(None, description="任务ID"),
+    keyword: Optional[str] = Query(None, description="任务ID或任务名称关键词"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     db: Session = Depends(get_db),
@@ -31,6 +32,7 @@ def get_history(
         end_date=end_date,
         status=status,
         task_id=task_id,
+        keyword=keyword,
         skip=skip,
         limit=page_size,
     )
@@ -50,9 +52,10 @@ def get_history(
 def export_history(
     device_id: Optional[int] = Query(None, description="设备ID"),
     start_date: Optional[datetime] = Query(None, description="开始日期"),
-    end_date: Optional[datetime] = Query(None, description="结束日期"),
+    end_date: Optional[datetime] = Query(None, description="结束时间（不含）"),
     status: Optional[str] = Query(None, description="状态筛选"),
     task_id: Optional[str] = Query(None, description="任务ID"),
+    keyword: Optional[str] = Query(None, description="任务ID或任务名称关键词"),
     db: Session = Depends(get_db),
 ):
     """导出历史记录为Excel"""
@@ -63,6 +66,7 @@ def export_history(
         end_date=end_date,
         status=status,
         task_id=task_id,
+        keyword=keyword,
         skip=0,
         limit=10000,
     )
