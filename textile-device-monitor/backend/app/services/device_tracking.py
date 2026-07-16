@@ -93,6 +93,13 @@ def is_in_progress(status: Optional[str], task_progress: Optional[int]) -> bool:
     return task_progress is not None and 0 < task_progress < 100
 
 
+def has_task_start_evidence(
+    status: Optional[str], task_progress: Optional[int]
+) -> bool:
+    """Return whether a report proves that a new task has started."""
+    return is_in_progress(status, task_progress) and task_progress != 100
+
+
 def _task_key_basename(task_key: Optional[str]) -> Optional[str]:
     normalized_key = normalize_task_key(task_key)
     if normalized_key is None:
@@ -163,7 +170,7 @@ def advance_task_state(
         normalized_key is not None
         and current.task_key == normalized_key
         and current.last_progress == 100
-        and is_in_progress(status, task_progress)
+        and has_task_start_evidence(status, task_progress)
     )
     task_changed = normalized_key is not None and current.task_key != normalized_key
 
@@ -176,16 +183,20 @@ def advance_task_state(
 
     emit_task_start = False
     can_track_this_report = normalized_key is not None and next_state.task_key == normalized_key
-    if can_track_this_report and is_in_progress(status, task_progress):
+    if can_track_this_report and has_task_start_evidence(status, task_progress):
         if not next_state.observed_in_progress:
             emit_task_start = True
         next_state.observed_in_progress = True
 
     allow_completion = (
         can_track_this_report
+        and status != BUSY_STATUS
         and task_progress == 100
         and next_state.observed_in_progress
-        and current.last_progress != 100
+        and (
+            current.last_progress != 100
+            or current.last_status == BUSY_STATUS
+        )
     )
     if allow_completion:
         next_state.observed_in_progress = False

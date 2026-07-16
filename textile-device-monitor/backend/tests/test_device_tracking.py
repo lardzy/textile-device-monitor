@@ -144,6 +144,77 @@ class DeviceTrackingTests(unittest.TestCase):
         self.assertFalse(decision.allow_completion)
         self.assertTrue(decision.next_state.observed_in_progress)
 
+    def test_busy_at_100_does_not_restart_completed_laser_task(self):
+        completed = TaskStateSnapshot(
+            task_key="task-a",
+            task_name="task-a",
+            observed_in_progress=False,
+            last_status="idle",
+            last_progress=100,
+        )
+
+        running = advance_task_state(
+            completed,
+            status="busy",
+            task_key="task-a",
+            task_name="task-a",
+            task_progress=100,
+            is_laser_confocal=True,
+        )
+        repeated = advance_task_state(
+            running.next_state,
+            status="busy",
+            task_key="task-a",
+            task_name="task-a",
+            task_progress=100,
+            is_laser_confocal=True,
+        )
+
+        self.assertFalse(running.emit_task_start)
+        self.assertFalse(repeated.emit_task_start)
+        self.assertFalse(repeated.next_state.observed_in_progress)
+
+        next_task = advance_task_state(
+            repeated.next_state,
+            status="busy",
+            task_key="task-b",
+            task_name="task-b",
+            task_progress=30,
+            is_laser_confocal=True,
+        )
+        self.assertTrue(next_task.emit_task_start)
+        self.assertEqual(next_task.next_state.task_key, "task-b")
+
+    def test_busy_at_100_does_not_complete_active_task(self):
+        current = TaskStateSnapshot(
+            task_key="task-a",
+            task_name="task-a",
+            observed_in_progress=True,
+            last_status="busy",
+            last_progress=80,
+        )
+
+        still_running = advance_task_state(
+            current,
+            status="busy",
+            task_key="task-a",
+            task_name="task-a",
+            task_progress=100,
+            is_laser_confocal=True,
+        )
+        completed = advance_task_state(
+            still_running.next_state,
+            status="idle",
+            task_key="task-a",
+            task_name="task-a",
+            task_progress=100,
+            is_laser_confocal=True,
+        )
+
+        self.assertFalse(still_running.allow_completion)
+        self.assertTrue(still_running.next_state.observed_in_progress)
+        self.assertTrue(completed.allow_completion)
+
     def test_task_name_fallback_supports_legacy_clients(self):
         decision = advance_task_state(
             TaskStateSnapshot(),
