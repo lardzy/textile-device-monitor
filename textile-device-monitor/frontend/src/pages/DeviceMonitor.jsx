@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
-import { Card, Row, Col, Badge, Tag, Progress, Form, Input, InputNumber, Button, Table, List, Select, message, Modal, Tooltip, Checkbox, Typography } from 'antd';
-import { CheckCircleOutlined, ClockCircleOutlined, ClockCircleFilled, ExclamationCircleOutlined, LoadingOutlined, StopOutlined, PlusOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons';
+import { Alert, Badge, Button, Card, Checkbox, Collapse, Drawer, Empty, Form, Input, InputNumber, List, message, Modal, Popconfirm, Progress, Segmented, Select, Skeleton, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { BellOutlined, CheckCircleOutlined, ClockCircleOutlined, DeleteOutlined, ExclamationCircleOutlined, FileImageOutlined, FileTextOutlined, FolderOpenOutlined, HolderOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 import { deviceApi } from '../api/devices';
 import { queueApi } from '../api/queue';
 import { resultsApi } from '../api/results';
@@ -10,7 +10,9 @@ import ResultsModal from '../components/ResultsModal';
 import ResultsImages from './ResultsImages';
 import wsClient from '../websocket/client';
 import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHelper';
-import { addQueueNoticeEntry, getInspectorName, getOrCreateQueueUserId, getQueueNoticeModes, removeQueueNoticeEntry, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
+import { addQueueNoticeEntry, getDeviceId, getInspectorName, getOrCreateQueueUserId, getQueueNoticeEntries, getQueueNoticeModes, removeQueueNoticeEntry, saveDeviceId, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
+import './analytics.css';
+import './device-monitor.css';
 
 
 const statusConfig = {
@@ -67,16 +69,6 @@ const formatUserIdShort = (value) => {
   const text = String(value);
   if (text.length <= 10) return text;
   return text.slice(0, 8);
-};
-
-const renderUserId = (value) => {
-  if (!value) return '-';
-  const shortId = formatUserIdShort(value);
-  return (
-    <Tooltip title={String(value)}>
-      <span>{shortId}</span>
-    </Tooltip>
-  );
 };
 
 const renderUserLabel = (name, userId) => {
@@ -150,6 +142,179 @@ const getQueueTimeoutRemainingSeconds = (device, nowMs) => {
   if (!Number.isFinite(deadlineMs)) return null;
   const remainingMs = deadlineMs - nowMs;
   return Math.max(0, Math.floor(remainingMs / 1000));
+};
+
+const QueueTimeoutNotice = ({ device, queueCount, compact = false, extending = false, onExtend }) => {
+  const [nowMs, setNowMs] = useState(Date.now());
+  const effectiveDevice = queueCount == null ? device : { ...device, queue_count: queueCount };
+  const remainingSeconds = getQueueTimeoutRemainingSeconds(effectiveDevice, nowMs);
+
+  useEffect(() => {
+    if (remainingSeconds == null) return undefined;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [effectiveDevice?.queue_timeout_deadline_at, remainingSeconds == null]);
+
+  if (remainingSeconds == null) return null;
+
+  const extendedCount = Number(effectiveDevice?.queue_timeout_extended_count || 0);
+  const remainingExtends = Math.max(0, 3 - extendedCount);
+  const canExtend = remainingSeconds > 0 && remainingExtends > 0;
+  const warning = remainingSeconds <= 60;
+
+  if (compact) {
+    return (
+      <span className={`monitor-timeout-compact${warning ? ' monitor-timeout-compact--warning' : ''}`}>
+        <ClockCircleOutlined /> {formatCountdown(remainingSeconds)}
+      </span>
+    );
+  }
+
+  return (
+    <div className={`monitor-timeout-notice${warning ? ' monitor-timeout-notice--warning' : ''}`}>
+      <div className="monitor-timeout-notice__content">
+        <ClockCircleOutlined />
+        <div>
+          <strong>{warning ? '即将触发排队顺延' : '设备空闲等待当前使用人'}</strong>
+          <span>
+            剩余 <b>{formatCountdown(remainingSeconds)}</b>，还可延长 {remainingExtends} 次
+          </span>
+        </div>
+      </div>
+      {onExtend ? (
+        <Popconfirm
+          title="确认延长 5 分钟？"
+          description={`本次延长后还剩 ${Math.max(0, remainingExtends - 1)} 次机会。`}
+          okText="确认延长"
+          cancelText="取消"
+          disabled={!canExtend}
+          onConfirm={onExtend}
+        >
+          <Button size="small" loading={extending} disabled={!canExtend}>
+            延长 5 分钟
+          </Button>
+        </Popconfirm>
+      ) : null}
+    </div>
+  );
+};
+
+const DeviceOverviewCard = ({ device, selected, onSelect }) => {
+  const config = statusConfig[device.status] || statusConfig.offline;
+  const confocal = isConfocalDevice(device);
+  const olympus = device.metrics?.olympus || {};
+  const progressValue = device.task_progress == null ? null : Number(device.task_progress);
+  const hasProgress = Number.isFinite(progressValue);
+  const showTaskProgress = !['idle', 'maintenance', 'offline'].includes(device.status) && hasProgress;
+  const progressStatus = device.status === 'error'
+    ? 'exception'
+    : progressValue === 100
+      ? 'success'
+      : 'active';
+  const statusText = device.status === 'offline' ? '离线' : config.text;
+  const rawQueueCount = Number(device.queue_count || 0);
+  const queueCount = Number.isFinite(rawQueueCount) ? Math.max(0, rawQueueCount) : 0;
+
+  return (
+    <button
+      type="button"
+      className={`monitor-device-card${selected ? ' monitor-device-card--selected' : ''}${device.status === 'offline' ? ' monitor-device-card--offline' : ''}`}
+      aria-pressed={selected}
+      aria-label={`选择设备 ${device.name}，当前状态 ${statusText}`}
+      onClick={() => onSelect(device.id)}
+    >
+      <div className="monitor-device-card__header">
+        <div className="monitor-device-card__identity">
+          <strong>{device.name}</strong>
+          <span>{device.device_code || `ID ${device.id}`}</span>
+        </div>
+        <div className="monitor-device-card__signals">
+          <Badge status={config.color} text={statusText} />
+          <span className={`monitor-device-card__queue${queueCount > 0 ? ' monitor-device-card__queue--waiting' : ''}`}>
+            <small>排队</small><strong>{queueCount}</strong><em>人</em>
+          </span>
+        </div>
+      </div>
+
+      <div className="monitor-device-card__task">
+        {showTaskProgress ? (
+          <>
+            <div className="monitor-device-card__task-title">
+              <span>{device.task_name || '当前任务'}</span>
+              <b className={device.status === 'error' ? 'monitor-device-card__progress-value--error' : ''}>
+                {Math.max(0, Math.min(100, progressValue))}%
+              </b>
+            </div>
+            <Progress
+              percent={Math.max(0, Math.min(100, progressValue))}
+              status={progressStatus}
+              showInfo={false}
+              strokeColor={device.status === 'error' ? undefined : { '0%': '#1677ff', '100%': '#52c41a' }}
+            />
+            {confocal && olympus.group_total ? (
+              <span className="monitor-device-card__task-note">
+                {getOlympusDisplayState(olympus, device.status)} · 组 {olympus.group_completed || 0}/{olympus.group_total}
+              </span>
+            ) : device.task_elapsed_seconds != null ? (
+              <span className="monitor-device-card__task-note">
+                已运行 {Math.max(0, Math.floor(device.task_elapsed_seconds / 60))} 分钟
+              </span>
+            ) : null}
+          </>
+        ) : device.status === 'idle' ? (
+          <div className="monitor-device-card__state-copy monitor-device-card__state-copy--idle">
+            <CheckCircleOutlined />
+            <span>
+              <strong>空闲可用</strong>
+              <small>{device.task_name && progressValue === 100 ? `最近完成 ${device.task_name}` : '当前可以安排检测'}</small>
+            </span>
+          </div>
+        ) : device.status === 'maintenance' ? (
+          <div className="monitor-device-card__state-copy monitor-device-card__state-copy--maintenance">
+            <ClockCircleOutlined />
+            <span><strong>维护中</strong><small>暂不建议安排检测任务</small></span>
+          </div>
+        ) : device.status === 'offline' ? (
+          <div className="monitor-device-card__state-copy monitor-device-card__state-copy--offline">
+            <StopOutlined />
+            <span><strong>设备离线</strong><small>连接已中断，数据可能已过期</small></span>
+          </div>
+        ) : device.status === 'busy' ? (
+          <div className="monitor-device-card__state-copy monitor-device-card__state-copy--busy">
+            <LoadingOutlined />
+            <span><strong>正在检测</strong><small>等待客户端上报任务进度</small></span>
+          </div>
+        ) : (
+          <div className="monitor-device-card__state-copy monitor-device-card__state-copy--error">
+            <ExclamationCircleOutlined />
+            <span><strong>设备故障</strong><small>请先检查设备和客户端状态</small></span>
+          </div>
+        )}
+      </div>
+
+      <div className="monitor-device-card__meta">
+        <span><small>位置</small>{device.location || '-'}</span>
+        <span><small>型号</small>{device.model || '-'}</span>
+        <Tooltip
+          title={(device.status === 'offline' ? device.offline_last_seen : device.last_heartbeat)
+            ? formatDateTime(device.status === 'offline' ? device.offline_last_seen : device.last_heartbeat)
+            : undefined}
+        >
+          <span>
+            <small>{device.status === 'offline' ? '离线于' : '心跳'}</small>
+            {(device.status === 'offline' ? device.offline_last_seen : device.last_heartbeat)
+              ? formatRelativeTime(device.status === 'offline' ? device.offline_last_seen : device.last_heartbeat)
+              : '-'}
+          </span>
+        </Tooltip>
+        <span><small>温度</small>{formatTemperature(device.metrics?.temperature)}</span>
+      </div>
+      <div className="monitor-device-card__footer">
+        <QueueTimeoutNotice device={device} compact />
+        {selected ? <span className="monitor-device-card__selected-label">当前操作设备</span> : null}
+      </div>
+    </button>
+  );
 };
 
 const type = 'queue-row';
@@ -289,11 +454,35 @@ const getDefaultRenameName = (folderName) => {
 
 const invalidFolderNamePattern = /[\\/:*?"<>|]/;
 
+const formatTemperature = (value) => {
+  if (value == null || value === '') return '-';
+  const numeric = Number(value);
+  return `${Number.isFinite(numeric) ? numeric : value}°C`;
+};
+
 function DeviceMonitor() {
   const [devices, setDevices] = useState([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(() => {
+    const stored = getDeviceId();
+    const numeric = stored == null ? null : Number(stored);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+  });
   const [queue, setQueue] = useState([]);
   const [queueLogs, setQueueLogs] = useState([]);
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  const [devicesError, setDevicesError] = useState('');
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState('');
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultsError, setResultsError] = useState('');
+  const [resultsAvailability, setResultsAvailability] = useState('ready');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const [queueSubmitting, setQueueSubmitting] = useState(false);
+  const [extendingDeviceId, setExtendingDeviceId] = useState(null);
+  const [searchText, setSearchText] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [deviceTypeFilter, setDeviceTypeFilter] = useState('all');
+  const [sortMode, setSortMode] = useState('default');
   const [inspectorName, setInspectorName] = useState(getInspectorName());
   const [tableModal, setTableModal] = useState({ open: false, folder: null });
   const [imagesModal, setImagesModal] = useState({ open: false, folder: null });
@@ -313,17 +502,50 @@ function DeviceMonitor() {
   });
   const [recentResults, setRecentResults] = useState([]);
   const [notifyModes, setNotifyModes] = useState(() => getQueueNoticeModes());
-  const [nowTime, setNowTime] = useState(Date.now());
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [workbenchTab, setWorkbenchTab] = useState('queue');
   const [form] = Form.useForm();
   const [claimForm] = Form.useForm();
+  const [modal, modalContextHolder] = Modal.useModal();
   const devicesRef = useRef([]);
+  const selectedDeviceIdRef = useRef(selectedDeviceId);
+  const devicesFetchInFlightRef = useRef(false);
+  const devicesLiveRevisionRef = useRef(new Map());
+  const queueRequestIdRef = useRef(0);
+  const resultsRequestIdRef = useRef(0);
+  const queueForegroundRequestIdRef = useRef(null);
+  const resultsForegroundRequestIdRef = useRef(null);
+  const queueDeviceGenerationRef = useRef(new Map());
+  const pendingQueueRefreshRef = useRef(new Map());
+  const queueNotifyIntentRef = useRef(new Map());
   const notifyModesRef = useRef(notifyModes);
   const lastProgressRef = useRef(new Map());
-  const lastQueueCompletionRef = useRef(new Map());
   const activeQueueRef = useRef(new Map());
-  const lastDeviceNotificationRef = useRef(new Map());
   const deviceNotifyTimersRef = useRef(new Map());
   const queueUserIdRef = useRef(getOrCreateQueueUserId());
+  const resultsLoadedDeviceIdRef = useRef(null);
+  const mountedRef = useRef(true);
+  const managedModalHandlesRef = useRef(new Set());
+  const queueNoticeModalIdsRef = useRef(new Set());
+
+  const destroyManagedModals = useCallback(() => {
+    managedModalHandlesRef.current.forEach(handle => handle.destroy());
+    managedModalHandlesRef.current.clear();
+  }, []);
+
+  const openManagedConfirm = useCallback((config) => {
+    let handle;
+    const originalAfterClose = config.afterClose;
+    handle = modal.confirm({
+      ...config,
+      afterClose: () => {
+        managedModalHandlesRef.current.delete(handle);
+        originalAfterClose?.();
+      },
+    });
+    managedModalHandlesRef.current.add(handle);
+    return handle;
+  }, [modal]);
 
 
   const selectedDevice = useMemo(() => {
@@ -335,16 +557,27 @@ function DeviceMonitor() {
   }, [devices]);
 
   useEffect(() => {
+    selectedDeviceIdRef.current = selectedDeviceId;
+    if (selectedDeviceId != null) saveDeviceId(selectedDeviceId);
+  }, [selectedDeviceId]);
+
+  useEffect(() => {
     notifyModesRef.current = notifyModes;
     saveQueueNoticeModes(notifyModes);
   }, [notifyModes]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setNowTime(Date.now());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      destroyManagedModals();
+      deviceNotifyTimersRef.current.forEach(timer => window.clearTimeout(timer));
+      deviceNotifyTimersRef.current.clear();
+      pendingQueueRefreshRef.current.clear();
+      queueNotifyIntentRef.current.clear();
+      queueNoticeModalIdsRef.current.clear();
+    };
+  }, [destroyManagedModals]);
 
   useEffect(() => {
     form.setFieldsValue({
@@ -354,9 +587,13 @@ function DeviceMonitor() {
   }, [form]);
 
   const fetchDevices = async () => {
+    if (devicesFetchInFlightRef.current) return;
+    devicesFetchInFlightRef.current = true;
+    const liveRevisionsAtStart = new Map(devicesLiveRevisionRef.current);
+    if (!devicesRef.current.length) setDevicesLoading(true);
     try {
       const data = await deviceApi.getAll();
-      const sorted = data
+      const sorted = (Array.isArray(data) ? data : [])
         .slice()
         .sort((a, b) => {
           const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -373,6 +610,15 @@ function DeviceMonitor() {
           if (!existing) {
             return item;
           }
+          const liveRevisionAtStart = liveRevisionsAtStart.get(item.id) || 0;
+          const currentLiveRevision = devicesLiveRevisionRef.current.get(item.id) || 0;
+          if (currentLiveRevision !== liveRevisionAtStart) {
+            return {
+              ...item,
+              ...existing,
+              queue_count: existing.queue_count ?? item.queue_count,
+            };
+          }
           return {
             ...existing,
             ...item,
@@ -380,52 +626,186 @@ function DeviceMonitor() {
           };
         });
       });
-      if (!selectedDeviceId && sorted.length > 0) {
-        setSelectedDeviceId(sorted[0].id);
-      }
+      const currentId = selectedDeviceIdRef.current;
+      const nextId = currentId && sorted.some(item => item.id === currentId)
+        ? currentId
+        : sorted[0]?.id || null;
+      selectedDeviceIdRef.current = nextId;
+      setSelectedDeviceId(nextId);
+      setDevicesError('');
+      setLastUpdatedAt(new Date());
     } catch (error) {
-      console.error('Failed to fetch devices:', error);
+      setDevicesError(error?.message || '设备状态加载失败，请检查服务连接');
+    } finally {
+      devicesFetchInFlightRef.current = false;
+      setDevicesLoading(false);
     }
   };
 
   const fetchQueue = async (deviceId, options = {}) => {
-    const { notify = false, reason, updateState = true } = options;
+    const { notify = false, reason, updateState = true, silent = false } = options;
+    const isForeground = updateState && !silent;
     if (!deviceId) return;
+    if (notify) {
+      const pendingIntent = queueNotifyIntentRef.current.get(deviceId);
+      queueNotifyIntentRef.current.set(deviceId, {
+        notify: true,
+        reason: reason || pendingIntent?.reason,
+      });
+    }
+    if (silent && updateState && queueForegroundRequestIdRef.current != null) {
+      const pending = pendingQueueRefreshRef.current.get(deviceId);
+      pendingQueueRefreshRef.current.set(deviceId, {
+        notify: Boolean(notify || pending?.notify),
+        reason: reason || pending?.reason,
+      });
+      return;
+    }
+    const deviceGeneration = (queueDeviceGenerationRef.current.get(deviceId) || 0) + 1;
+    queueDeviceGenerationRef.current.set(deviceId, deviceGeneration);
+    const requestId = updateState ? queueRequestIdRef.current + 1 : null;
+    if (updateState) {
+      queueRequestIdRef.current = requestId;
+      if (isForeground) {
+        queueForegroundRequestIdRef.current = requestId;
+        setQueueLoading(true);
+        setQueueError('');
+      }
+    }
     try {
       const data = await queueApi.getByDevice(deviceId);
       const sortedQueue = (data.queue || [])
         .slice()
         .sort((a, b) => a.position - b.position);
       const sortedLogs = (data.logs || []).slice().sort((a, b) => new Date(b.change_time) - new Date(a.change_time));
-      if (updateState) {
+      const canUpdateState = updateState
+        && queueRequestIdRef.current === requestId
+        && selectedDeviceIdRef.current === deviceId;
+      if (canUpdateState) {
         setQueue(sortedQueue);
         setQueueLogs(sortedLogs);
+        setQueueError('');
+        setDevices(prev => prev.map(device => (
+          device.id === deviceId ? { ...device, queue_count: sortedQueue.length } : device
+        )));
       }
+      if (queueDeviceGenerationRef.current.get(deviceId) !== deviceGeneration) return;
       syncQueueNoticeEntries(sortedQueue, deviceId);
-      if (notify) {
-        await notifyActiveQueueEntry(sortedQueue, deviceId, reason);
+      const activeEntry = getActiveQueueEntry(sortedQueue);
+      const activeNoticePending = Boolean(activeEntry && getQueueNoticeEntries().some(entry => (
+        String(entry.id) === String(activeEntry.id)
+        && String(entry.device_id) === String(deviceId)
+      )));
+      const notifyIntent = queueNotifyIntentRef.current.get(deviceId);
+      if (notifyIntent?.notify || activeNoticePending) {
+        await notifyActiveQueueEntry(sortedQueue, deviceId, notifyIntent?.reason || reason);
+        if (queueNotifyIntentRef.current.get(deviceId) === notifyIntent) {
+          queueNotifyIntentRef.current.delete(deviceId);
+        }
       } else {
         syncActiveQueueEntry(deviceId, sortedQueue);
       }
     } catch (error) {
-      message.error('获取排队列表失败');
+      if (
+        updateState
+        && queueRequestIdRef.current === requestId
+        && selectedDeviceIdRef.current === deviceId
+      ) {
+        if (!silent) {
+          setQueue([]);
+          setQueueLogs([]);
+          setQueueError(error?.message || '排队列表加载失败');
+        }
+      }
+    } finally {
+      if (isForeground && queueForegroundRequestIdRef.current === requestId) {
+        queueForegroundRequestIdRef.current = null;
+      }
+      if (updateState && queueRequestIdRef.current === requestId) {
+        setQueueLoading(false);
+      }
+      if (isForeground && mountedRef.current) {
+        const pending = pendingQueueRefreshRef.current.get(deviceId);
+        if (pending) {
+          pendingQueueRefreshRef.current.delete(deviceId);
+          fetchQueue(deviceId, {
+            ...pending,
+            silent: true,
+            updateState: selectedDeviceIdRef.current === deviceId,
+          });
+        }
+      }
     }
   };
 
-  const fetchRecentResults = async (device) => {
+  const fetchRecentResults = async (device, options = {}) => {
+    const { silent = false } = options;
     if (!device?.id) {
+      resultsRequestIdRef.current += 1;
+      resultsForegroundRequestIdRef.current = null;
+      resultsLoadedDeviceIdRef.current = null;
       setRecentResults([]);
+      setResultsLoading(false);
+      setResultsAvailability('ready');
+      setResultsError('');
       return;
     }
-    if (!device.client_base_url || device.status === 'offline') {
+    if (device.status === 'offline') {
+      resultsRequestIdRef.current += 1;
+      resultsForegroundRequestIdRef.current = null;
+      resultsLoadedDeviceIdRef.current = device.id;
       setRecentResults([]);
+      setResultsLoading(false);
+      setResultsAvailability('offline');
+      setResultsError('');
       return;
+    }
+    if (!device.client_base_url) {
+      resultsRequestIdRef.current += 1;
+      resultsForegroundRequestIdRef.current = null;
+      resultsLoadedDeviceIdRef.current = device.id;
+      setRecentResults([]);
+      setResultsLoading(false);
+      setResultsAvailability('unconfigured');
+      setResultsError('');
+      return;
+    }
+    if (silent && resultsForegroundRequestIdRef.current != null) return;
+    const requestId = resultsRequestIdRef.current + 1;
+    resultsRequestIdRef.current = requestId;
+    if (!silent) {
+      resultsForegroundRequestIdRef.current = requestId;
+      setResultsLoading(true);
+      setResultsError('');
+      setResultsAvailability('ready');
     }
     try {
       const data = await resultsApi.getRecent(device.id, 5);
-      setRecentResults(data.items || []);
+      if (
+        resultsRequestIdRef.current !== requestId
+        || selectedDeviceIdRef.current !== device.id
+      ) return;
+      resultsLoadedDeviceIdRef.current = device.id;
+      setRecentResults(Array.isArray(data?.items) ? data.items : []);
+      setResultsError('');
+      setResultsAvailability('ready');
     } catch (error) {
-      setRecentResults([]);
+      if (
+        resultsRequestIdRef.current !== requestId
+        || selectedDeviceIdRef.current !== device.id
+      ) return;
+      if (!silent) {
+        resultsLoadedDeviceIdRef.current = device.id;
+        setRecentResults([]);
+        setResultsError(error?.status === 502
+          ? '设备结果服务暂时不可达，请检查客户端结果服务和网络'
+          : error?.message || '最近结果加载失败');
+      }
+    } finally {
+      if (!silent && resultsForegroundRequestIdRef.current === requestId) {
+        resultsForegroundRequestIdRef.current = null;
+      }
+      if (resultsRequestIdRef.current === requestId) setResultsLoading(false);
     }
   };
 
@@ -449,8 +829,10 @@ function DeviceMonitor() {
     return true;
   };
 
-  const showPersistentNotice = (title, content) => {
-    Modal.confirm({
+  const showPersistentNotice = (title, content, options = {}) => {
+    if (!mountedRef.current) return;
+    let acknowledged = false;
+    return modal.confirm({
       title,
       content,
       okText: '我知道了',
@@ -459,6 +841,11 @@ function DeviceMonitor() {
       closable: false,
       keyboard: false,
       centered: true,
+      onOk: () => {
+        acknowledged = true;
+        options.onAcknowledge?.();
+      },
+      afterClose: () => options.afterClose?.({ acknowledged }),
     });
   };
 
@@ -504,7 +891,7 @@ function DeviceMonitor() {
     const userId = queueUserIdRef.current;
     if (!userId) return;
     queueList.forEach(record => {
-      if (record?.created_by_id && record.created_by_id === userId) {
+      if (record?.position !== 1 && record?.created_by_id && record.created_by_id === userId) {
         addQueueNoticeEntry({
           id: record.id,
           device_id: deviceId,
@@ -522,7 +909,7 @@ function DeviceMonitor() {
     const previousId = activeQueueRef.current.get(deviceId);
     activeQueueRef.current.set(deviceId, activeId);
 
-    if (!activeEntry || activeId == null || activeId === previousId) {
+    if (!activeEntry || activeId == null) {
       return;
     }
 
@@ -531,29 +918,32 @@ function DeviceMonitor() {
       return;
     }
 
-    removeQueueNoticeEntry(activeId);
+    const hasPendingNotice = getQueueNoticeEntries().some(entry => (
+      String(entry.id) === String(activeId)
+      && String(entry.device_id) === String(deviceId)
+    ));
+    if ((activeId === previousId && !hasPendingNotice) || queueNoticeModalIdsRef.current.has(activeId)) {
+      return;
+    }
+    queueNoticeModalIdsRef.current.add(activeId);
 
     const deviceName = devicesRef.current.find(device => device.id === deviceId)?.name || '';
     const inspectorName = activeEntry.inspector_name || '检验员';
     showPersistentNotice(
       '排队提醒',
-      `${deviceName || '设备'} - ${inspectorName} 已轮到`
+      `${deviceName || '设备'} - ${inspectorName} 已轮到`,
+      {
+        onAcknowledge: () => removeQueueNoticeEntry(activeId),
+        afterClose: () => queueNoticeModalIdsRef.current.delete(activeId),
+      }
     );
 
     const permitted = await requestNotificationPermission();
-    if (!permitted) {
+    if (!mountedRef.current || !permitted) {
       return;
     }
     sendQueueNotification(activeEntry, deviceName);
 
-    if (reason === 'complete') {
-      lastQueueCompletionRef.current.set(deviceId, Date.now());
-      const timer = deviceNotifyTimersRef.current.get(deviceId);
-      if (timer) {
-        clearTimeout(timer);
-        deviceNotifyTimersRef.current.delete(deviceId);
-      }
-    }
   };
 
   const scheduleDeviceNotification = (device) => {
@@ -566,26 +956,22 @@ function DeviceMonitor() {
     }
     const timerId = setTimeout(async () => {
       timers.delete(device.id);
-      const lastQueueTime = lastQueueCompletionRef.current.get(device.id);
-      if (lastQueueTime && Date.now() - lastQueueTime < 2000) {
-        return;
-      }
+      if (!mountedRef.current) return;
       showPersistentNotice(
         '检测完成提醒',
         `${device.name || '设备'} 检测完成`
       );
-      const permitted = await requestNotificationPermission();
-      if (!permitted) {
-        return;
-      }
-      sendDeviceNotification(device);
-      lastDeviceNotificationRef.current.set(device.id, Date.now());
       if (mode === 'once') {
         setNotifyModes(prev => ({
           ...prev,
           [String(device.id)]: 'off'
         }));
       }
+      const permitted = await requestNotificationPermission();
+      if (!mountedRef.current || !permitted) {
+        return;
+      }
+      sendDeviceNotification(device);
     }, 600);
     timers.set(device.id, timerId);
   };
@@ -593,6 +979,7 @@ function DeviceMonitor() {
   const handleExtendTimeout = async (deviceId) => {
     if (!deviceId) return;
     const changedBy = inspectorName?.trim() || '系统';
+    setExtendingDeviceId(deviceId);
     try {
       const response = await queueApi.extendTimeout(deviceId, {
         changed_by: changedBy,
@@ -614,11 +1001,13 @@ function DeviceMonitor() {
         ));
       }
       message.success('已延长5分钟');
-      if (selectedDeviceId === deviceId) {
-        fetchQueue(deviceId);
+      if (selectedDeviceIdRef.current === deviceId) {
+        fetchQueue(deviceId, { silent: true });
       }
     } catch (error) {
       message.error(error.message || '延长超时失败');
+    } finally {
+      setExtendingDeviceId(null);
     }
   };
 
@@ -632,7 +1021,7 @@ function DeviceMonitor() {
       const content = `${deviceName} 已空闲超过1分钟，请尽快开始使用`;
       showPersistentNotice('排队提醒', content);
       const permitted = await requestNotificationPermission();
-      if (permitted) {
+      if (mountedRef.current && permitted) {
         sendCustomNotification('排队提醒', content);
       }
     }
@@ -641,7 +1030,7 @@ function DeviceMonitor() {
       const content = `${deviceName} 当前使用人未开始，请注意顺位变化`;
       showPersistentNotice('排队提醒', content);
       const permitted = await requestNotificationPermission();
-      if (permitted) {
+      if (mountedRef.current && permitted) {
         sendCustomNotification('排队提醒', content);
       }
     }
@@ -656,7 +1045,7 @@ function DeviceMonitor() {
       const content = `${deviceName} 超时未开始使用，系统已将你与下一位互换顺序`;
       showPersistentNotice('排队提醒', content);
       const permitted = await requestNotificationPermission();
-      if (permitted) {
+      if (mountedRef.current && permitted) {
         sendCustomNotification('排队提醒', content);
       }
     }
@@ -672,7 +1061,7 @@ function DeviceMonitor() {
       const content = `${deviceName} 检测完成，${inspectorName} 已从排队移除`;
       showPersistentNotice('检测完成提醒', content);
       const permitted = await requestNotificationPermission();
-      if (permitted) {
+      if (mountedRef.current && permitted) {
         sendCustomNotification('检测完成提醒', content);
       }
     }
@@ -693,8 +1082,16 @@ function DeviceMonitor() {
   useEffect(() => {
     fetchDevices();
 
+    const bumpDeviceLiveRevision = (deviceId) => {
+      if (deviceId == null) return;
+      const current = devicesLiveRevisionRef.current.get(deviceId) || 0;
+      devicesLiveRevisionRef.current.set(deviceId, current + 1);
+    };
+
     wsClient.on('device_status_update', (data) => {
       if (!data || data.device_id == null) return;
+      bumpDeviceLiveRevision(data.device_id);
+      setLastUpdatedAt(new Date());
       setDevices(prev => prev.map(device => 
         device.id === data.device_id 
           ? { ...device, ...data, offline_last_seen: data.status === 'offline' ? device.offline_last_seen : null }
@@ -704,6 +1101,7 @@ function DeviceMonitor() {
 
     wsClient.on('queue_timeout_update', (data) => {
       if (!data || data.device_id == null) return;
+      bumpDeviceLiveRevision(data.device_id);
       const { device_id: deviceId, ...timeoutData } = data;
       setDevices(prev => prev.map(device =>
         device.id === deviceId
@@ -735,9 +1133,11 @@ function DeviceMonitor() {
 
     wsClient.on('device_list_update', (data) => {
       if (!data) return;
+      bumpDeviceLiveRevision(data.device_id ?? data.device?.id);
       if (data.action === 'delete') {
         setDevices(prev => prev.filter(device => device.id !== data.device_id));
-        if (selectedDeviceId === data.device_id) {
+        if (selectedDeviceIdRef.current === data.device_id) {
+          selectedDeviceIdRef.current = null;
           setSelectedDeviceId(null);
         }
         return;
@@ -755,6 +1155,7 @@ function DeviceMonitor() {
 
     wsClient.on('device_offline', (data) => {
       if (!data || data.device_id == null) return;
+      bumpDeviceLiveRevision(data.device_id);
       setDevices(prev => prev.map(device => 
         device.id === data.device_id 
           ? { ...device, status: 'offline', offline_last_seen: data.last_seen || device.last_heartbeat }
@@ -764,14 +1165,16 @@ function DeviceMonitor() {
 
     wsClient.on('queue_update', (data) => {
       if (!data || data.device_id == null) return;
+      bumpDeviceLiveRevision(data.device_id);
       if (data.action === 'complete') {
         notifyQueueCompletion(data);
       }
-      if (['leave', 'placeholder_delete'].includes(data.action) && data.queue_id) {
+      if (['complete', 'leave', 'placeholder_delete'].includes(data.action) && data.queue_id) {
         removeQueueNoticeEntry(data.queue_id);
       }
-      if (data.device_id === selectedDeviceId) {
-        fetchQueue(selectedDeviceId, { notify: true, reason: data.action });
+      const currentSelectedId = selectedDeviceIdRef.current;
+      if (data.device_id === currentSelectedId) {
+        fetchQueue(currentSelectedId, { notify: true, reason: data.action, silent: true });
       } else {
         fetchQueue(data.device_id, { notify: true, reason: data.action, updateState: false });
       }
@@ -784,8 +1187,9 @@ function DeviceMonitor() {
 
     const pollId = setInterval(() => {
       fetchDevices();
-      if (selectedDeviceId) {
-        fetchQueue(selectedDeviceId);
+      const currentSelectedId = selectedDeviceIdRef.current;
+      if (currentSelectedId) {
+        fetchQueue(currentSelectedId, { silent: true });
       }
     }, 8000);
 
@@ -799,10 +1203,23 @@ function DeviceMonitor() {
       wsClient.off('queue_timeout_shift');
       clearInterval(pollId);
     };
-  }, [selectedDeviceId]);
+  }, []);
 
   useEffect(() => {
+    destroyManagedModals();
+    queueRequestIdRef.current += 1;
+    resultsRequestIdRef.current += 1;
+    queueForegroundRequestIdRef.current = null;
+    resultsForegroundRequestIdRef.current = null;
+    resultsLoadedDeviceIdRef.current = null;
+    setQueue([]);
+    setQueueLogs([]);
+    setQueueError('');
+    setQueueLoading(false);
     setRecentResults([]);
+    setResultsError('');
+    setResultsLoading(false);
+    setResultsAvailability('ready');
     if (selectedDeviceId) {
       fetchQueue(selectedDeviceId);
     }
@@ -811,11 +1228,13 @@ function DeviceMonitor() {
     setTableModal({ open: false, folder: null });
     setImagesModal({ open: false, folder: null });
     setCleanupModal(prev => ({ ...prev, open: false, submitting: false }));
-  }, [claimForm, selectedDeviceId]);
+  }, [claimForm, destroyManagedModals, selectedDeviceId]);
 
   useEffect(() => {
     if (!selectedDeviceId || !selectedDevice) return;
-    fetchRecentResults(selectedDevice);
+    fetchRecentResults(selectedDevice, {
+      silent: resultsLoadedDeviceIdRef.current === selectedDevice.id,
+    });
   }, [
     selectedDeviceId,
     selectedDevice?.task_name,
@@ -828,10 +1247,29 @@ function DeviceMonitor() {
     if (!selectedDeviceId) return;
     const pollId = setInterval(() => {
       const device = devicesRef.current.find(item => item.id === selectedDeviceId);
-      fetchRecentResults(device);
+      fetchRecentResults(device, { silent: true });
     }, 60000);
     return () => clearInterval(pollId);
   }, [selectedDeviceId]);
+
+  const handleSelectDevice = (deviceId) => {
+    setWorkbenchOpen(true);
+    if (deviceId !== selectedDeviceIdRef.current) {
+      selectedDeviceIdRef.current = deviceId;
+      setSelectedDeviceId(deviceId);
+      setWorkbenchTab('queue');
+    }
+  };
+
+  const handleRefreshAll = async () => {
+    await fetchDevices();
+    const currentDeviceId = selectedDeviceIdRef.current;
+    const currentDevice = devicesRef.current.find(item => item.id === currentDeviceId);
+    await Promise.all([
+      currentDeviceId ? fetchQueue(currentDeviceId) : Promise.resolve(),
+      currentDevice ? fetchRecentResults(currentDevice) : Promise.resolve(),
+    ]);
+  };
 
   const buildResultsUrl = (type, folder) => {
     if (!selectedDevice?.id) return '';
@@ -897,7 +1335,7 @@ function DeviceMonitor() {
       if (data?.renamed) {
         setImagesModal({ open: false, folder: null });
       }
-      fetchRecentResults(selectedDevice);
+      fetchRecentResults(selectedDevice, { silent: true });
     } catch (error) {
       setCleanupModal(prev => ({ ...prev, submitting: false }));
       const msg = error?.message || '';
@@ -964,7 +1402,7 @@ function DeviceMonitor() {
         submittingAction: null,
       });
       claimForm.resetFields();
-      fetchQueue(selectedDeviceId, { notify: true, reason: 'placeholder_claim' });
+      fetchQueue(selectedDeviceId, { notify: true, reason: 'placeholder_claim', silent: true });
     } catch (error) {
       if (error?.errorFields) {
         return;
@@ -988,7 +1426,7 @@ function DeviceMonitor() {
         submittingAction: null,
       });
       claimForm.resetFields();
-      fetchQueue(selectedDeviceId, { notify: true, reason: 'placeholder_delete' });
+      fetchQueue(selectedDeviceId, { notify: true, reason: 'placeholder_delete', silent: true });
     } catch (error) {
       setClaimModal(prev => ({ ...prev, submittingAction: null }));
       message.error(error?.message || '删除占位人员失败');
@@ -996,7 +1434,11 @@ function DeviceMonitor() {
   };
 
   const handleJoinQueue = async (values) => {
+    setQueueSubmitting(true);
     try {
+      if ('Notification' in window && Notification.permission === 'default') {
+        await requestNotificationPermission();
+      }
       const nextInspectorName = values.inspector_name.trim();
       const records = await queueApi.join({
         inspector_name: nextInspectorName,
@@ -1020,7 +1462,7 @@ function DeviceMonitor() {
       }
 
       if (actualCopies > 0) {
-        message.success(`加入排队成功 (${actualCopies}份)`);
+        message.success(`已加入 ${actualCopies} 份，轮到您时会自动提醒`);
       }
       if (actualCopies > 0 && actualCopies < requestedCopies) {
         message.info(`已按配额加入 ${actualCopies} 份（超出部分忽略）`);
@@ -1031,16 +1473,19 @@ function DeviceMonitor() {
         inspector_name: nextInspectorName,
         copies: 1,
       });
-      fetchQueue(selectedDeviceId, { notify: true, reason: 'join' });
+      fetchQueue(selectedDeviceId, { notify: true, reason: 'join', silent: true });
     } catch (error) {
       message.error(error?.message || '加入排队失败');
+    } finally {
+      setQueueSubmitting(false);
     }
   };
 
   const handleChangePosition = async (record, newPosition) => {
+    const deviceId = selectedDeviceIdRef.current;
     const fromLabel = getQueuePositionLabel(record.position);
     const toLabel = getQueuePositionLabel(newPosition);
-    Modal.confirm({
+    openManagedConfirm({
       title: '确认移动位置',
       content: `确定要将 ${record.inspector_name} 从 ${fromLabel} 移动到 ${toLabel} 吗？`,
       okText: '确认',
@@ -1055,13 +1500,13 @@ function DeviceMonitor() {
             changed_by_id: queueUserIdRef.current,
           });
           message.success('修改位置成功');
-          fetchQueue(selectedDeviceId, { notify: true, reason: 'position_change' });
+          fetchQueue(deviceId, { notify: true, reason: 'position_change', silent: true });
         } catch (error) {
-          if (error.response?.status === 409) {
+          if (error?.status === 409) {
             message.error('该记录已被其他用户修改，请刷新后重试');
-            fetchQueue(selectedDeviceId);
+            fetchQueue(deviceId, { silent: true });
           } else {
-            message.error(error.response?.data?.detail || '修改位置失败');
+            message.error(error?.detail?.message || error?.message || '修改位置失败');
           }
         }
       }
@@ -1069,7 +1514,8 @@ function DeviceMonitor() {
   };
 
   const handleDeleteQueue = async (record) => {
-    Modal.confirm({
+    const deviceId = selectedDeviceIdRef.current;
+    openManagedConfirm({
       title: '确认删除',
       content: `确定要将 ${record.inspector_name} 从排队中移除吗？`,
       okText: '确认',
@@ -1080,7 +1526,7 @@ function DeviceMonitor() {
           await queueApi.leave(record.id, { changed_by_id: queueUserIdRef.current });
           message.success('离开排队成功');
           removeQueueNoticeEntry(record.id);
-          fetchQueue(selectedDeviceId, { notify: true, reason: 'leave' });
+          fetchQueue(deviceId, { notify: true, reason: 'leave', silent: true });
         } catch (error) {
           message.error('离开排队失败');
         }
@@ -1092,9 +1538,8 @@ function DeviceMonitor() {
     ? (notifyModes[String(selectedDeviceId)] || 'off')
     : 'off';
 
-  const handleToggleNotifyMode = async () => {
+  const handleNotifyModeChange = async (nextMode) => {
     if (selectedDeviceId == null) return;
-    const nextMode = notifyMode === 'off' ? 'once' : notifyMode === 'once' ? 'always' : 'off';
     if (nextMode !== 'off') {
       const permitted = await requestNotificationPermission();
       if (!permitted) {
@@ -1111,12 +1556,6 @@ function DeviceMonitor() {
     }));
   };
 
-  const notifyLabel = notifyMode === 'once' ? '只提醒一次' : notifyMode === 'always' ? '一直提醒' : '';
-  const notifyColor = notifyMode === 'off' ? '#bfbfbf' : '#1677ff';
-  const notifyIcon = notifyMode === 'always'
-    ? <ClockCircleFilled style={{ color: notifyColor }} />
-    : <ClockCircleOutlined style={{ color: notifyColor }} />;
-
   const handleDropConfirm = (dragIndex, dropIndex) => {
     const dragRecord = queue[dragIndex];
     const dropRecord = queue[dropIndex];
@@ -1131,12 +1570,12 @@ function DeviceMonitor() {
       title: '',
       dataIndex: 'drag',
       key: 'drag',
-      width: 50,
+      width: 42,
       render: () => (
-        <Tooltip title="拖动整行调整顺序">
-          <HolderOutlined aria-hidden style={{ color: '#8c8c8c' }} />
+        <Tooltip title="按住任意非按钮区域拖动整行">
+          <HolderOutlined className="monitor-queue-drag-indicator" aria-hidden />
         </Tooltip>
-      )
+      ),
     },
     {
       title: '位置',
@@ -1153,17 +1592,18 @@ function DeviceMonitor() {
       title: '检验员',
       dataIndex: 'inspector_name',
       key: 'inspector_name',
-      render: (_, record) => (
-        isUnclaimedPlaceholder(record) ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      render: (_, record) => {
+        const isMine = record.created_by_id && record.created_by_id === queueUserIdRef.current;
+        return (
+          <span className="monitor-queue-person">
             <span>{record.inspector_name}</span>
-            <Tag color="gold">占位</Tag>
+            {isUnclaimedPlaceholder(record) ? <Tag color="gold">占位</Tag> : null}
+            {isMine ? <Tag color="blue">本人</Tag> : null}
           </span>
-        ) : record.inspector_name
-      ),
+        );
+      },
     },
-    { title: '加入时间', dataIndex: 'submitted_at', key: 'submitted_at', render: formatTime },
-    { title: 'ID', dataIndex: 'created_by_id', key: 'created_by_id', width: 90, align: 'center', render: renderUserId },
+    { title: '加入时间', dataIndex: 'submitted_at', key: 'submitted_at', width: 92, render: formatTime },
     {
       title: '操作',
       key: 'actions',
@@ -1172,488 +1612,738 @@ function DeviceMonitor() {
         isUnclaimedPlaceholder(record) ? (
           <Button
             type="link"
-            onMouseDown={(event) => event.stopPropagation()}
+            size="small"
+            onMouseDown={event => event.stopPropagation()}
             onClick={() => openClaimModal(record)}
           >
             认领
           </Button>
         ) : (
-          <Tooltip title="删除">
+          <Tooltip title="移出排队">
             <Button
               type="text"
+              size="small"
               danger
               aria-label="删除排队记录"
               icon={<DeleteOutlined />}
-              onMouseDown={(event) => event.stopPropagation()}
+              onMouseDown={event => event.stopPropagation()}
               onClick={() => handleDeleteQueue(record)}
             />
           </Tooltip>
         )
-      )
-    }
+      ),
+    },
   ];
+
+  const filteredDevices = useMemo(() => {
+    const keyword = searchText.trim().toLocaleLowerCase();
+    const statusPriority = { error: 0, offline: 1, maintenance: 2, busy: 3, idle: 4 };
+    const filtered = devices.filter(device => {
+      const matchesKeyword = !keyword || [device.name, device.device_code, device.model, device.location]
+        .filter(Boolean)
+        .some(value => String(value).toLocaleLowerCase().includes(keyword));
+      const matchesStatus = statusFilter === 'all'
+        || (statusFilter === 'attention' && ['maintenance', 'error', 'offline'].includes(device.status))
+        || device.status === statusFilter;
+      const confocal = isConfocalDevice(device);
+      const matchesType = deviceTypeFilter === 'all'
+        || (deviceTypeFilter === 'confocal' && confocal)
+        || (deviceTypeFilter === 'standard' && !confocal);
+      return matchesKeyword && matchesStatus && matchesType;
+    });
+
+    return filtered.slice().sort((left, right) => {
+      if (sortMode === 'attention') {
+        return (statusPriority[left.status] ?? 9) - (statusPriority[right.status] ?? 9);
+      }
+      if (sortMode === 'queue') {
+        return Number(right.queue_count || 0) - Number(left.queue_count || 0);
+      }
+      const leftTime = left.created_at ? new Date(left.created_at).getTime() : 0;
+      const rightTime = right.created_at ? new Date(right.created_at).getTime() : 0;
+      return leftTime - rightTime || left.id - right.id;
+    });
+  }, [deviceTypeFilter, devices, searchText, sortMode, statusFilter]);
+
+  const selectedConfig = selectedDevice
+    ? statusConfig[selectedDevice.status] || statusConfig.offline
+    : statusConfig.offline;
+  const selectedIsConfocal = isConfocalDevice(selectedDevice);
+  const selectedOlympus = selectedDevice?.metrics?.olympus || {};
+  const selectedProgress = selectedDevice?.task_progress == null ? null : Number(selectedDevice.task_progress);
+  const selectedTaskCompleted = selectedDevice?.status === 'idle' && selectedProgress === 100;
+  const currentResultReady = Boolean(
+    selectedDevice
+    && selectedDevice.status !== 'offline'
+    && selectedDevice.client_base_url
+    && selectedProgress === 100
+  );
+  const activeQueueEntry = getActiveQueueEntry(queue);
+  const selectedUsesConfocalQuota = selectedDevice?.metrics?.device_type === 'laser_confocal';
+  const queueQuota = selectedUsesConfocalQuota ? 2 : 3;
+  const myQueueEntries = queue.filter(record => (
+    record.created_by_id && record.created_by_id === queueUserIdRef.current
+  ));
+  const myNextQueueEntry = myQueueEntries[0] || null;
+
+  const renderRecentResults = () => {
+    if (resultsLoading) return <Skeleton active paragraph={{ rows: 4 }} />;
+    if (resultsAvailability === 'offline') {
+      return <Alert type="warning" showIcon message="设备已离线" description="恢复连接后才能读取设备上的最近结果。" />;
+    }
+    if (resultsAvailability === 'unconfigured') {
+      return <Alert type="info" showIcon message="尚未配置结果服务" description="请先在设备管理中配置客户端结果服务地址。" />;
+    }
+    if (resultsError) {
+      return (
+        <Alert
+          type="error"
+          showIcon
+          message="最近结果加载失败"
+          description={resultsError}
+          action={<Button size="small" onClick={() => fetchRecentResults(selectedDevice)}>重试</Button>}
+        />
+      );
+    }
+    if (!recentResults.length) {
+      return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="设备暂无历史结果" />;
+    }
+    return (
+      <List
+        className="monitor-result-list"
+        dataSource={recentResults}
+        renderItem={item => (
+          <List.Item>
+            <div className="monitor-result-item">
+              <div className="monitor-result-item__main">
+                <strong>{item.task_name || item.folder || '未命名结果'}</strong>
+                <span>{item.updated_at ? formatDateTime(item.updated_at) : item.folder || '-'}</span>
+              </div>
+              <Space size={4} wrap>
+                {!selectedIsConfocal ? (
+                  <Button
+                    size="small"
+                    icon={<FileTextOutlined />}
+                    disabled={!item.folder}
+                    onClick={() => setTableModal({ open: true, folder: item.folder })}
+                  >
+                    表格
+                  </Button>
+                ) : null}
+                <Button
+                  size="small"
+                  icon={<FileImageOutlined />}
+                  disabled={!item.folder}
+                  onClick={() => setImagesModal({ open: true, folder: item.folder })}
+                >
+                  图片
+                </Button>
+                {selectedIsConfocal ? (
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<FolderOpenOutlined />}
+                    disabled={!item.folder}
+                    onClick={() => openCleanupModal(item.folder)}
+                  >
+                    整理
+                  </Button>
+                ) : null}
+              </Space>
+            </div>
+          </List.Item>
+        )}
+      />
+    );
+  };
+
+  const renderQueueActivity = () => {
+    if (queueLoading && !queueLogs.length) return <Skeleton active paragraph={{ rows: 5 }} />;
+    if (!queueLogs.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="今日暂无排队动态" />;
+    return (
+      <List
+        className="monitor-activity-list"
+        dataSource={queueLogs}
+        renderItem={log => {
+          const logDisplay = getQueueLogDisplay(log);
+          return (
+            <List.Item>
+              <div className="monitor-activity-item">
+                <span className="monitor-activity-item__dot" style={{ background: logDisplay.color || '#98a2b3' }} />
+                <div>
+                  <strong style={logDisplay.color ? { color: logDisplay.color } : undefined}>{logDisplay.text}</strong>
+                  <span>{formatDateTime(log.change_time)} · {renderUserLabel(log.changed_by, log.changed_by_id)}</span>
+                </div>
+              </div>
+            </List.Item>
+          );
+        }}
+      />
+    );
+  };
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div>
-      <Row gutter={[16, 16]}>
-        {devices.map(device => {
-          const config = statusConfig[device.status] || statusConfig.offline;
-          const isSelected = device.id === selectedDeviceId;
-          const isConfocal = isConfocalDevice(device);
-          const olympus = device.metrics?.olympus || {};
-          const imageProgress = Number.isFinite(Number(olympus.image_progress))
-            ? Number(olympus.image_progress)
-            : null;
-          const frameCurrent = olympus.frame_current;
-          const frameTotal = olympus.frame_total;
-          const overallProgress = Number.isFinite(Number(device.task_progress))
-            ? Number(device.task_progress)
-            : 0;
-          const groupTotal = olympus.group_total;
-          const groupCompleted = olympus.group_completed;
-          const frameLabel = frameCurrent
-            ? `z${String(frameCurrent).padStart(3, '0')}/${frameTotal || '?'}`
-            : '-';
-          const xyPosition = olympus.xy_position;
-          const zPosition = olympus.z_position;
-          const zRange = olympus.z_range;
-          const timeoutRemainingSeconds = getQueueTimeoutRemainingSeconds(device, nowTime);
-          const showTimeoutCountdown = timeoutRemainingSeconds != null;
-          const isTimeoutWarning = showTimeoutCountdown && timeoutRemainingSeconds <= 60;
-          const extendedCount = device.queue_timeout_extended_count || 0;
-          const remainingExtends = Math.max(0, 3 - extendedCount);
-          const canExtend = remainingExtends > 0;
-          const statusBadge = (
-            <Badge
-              status={config.color}
-              text={device.status === 'offline' ? '离线' : config.text}
+      {modalContextHolder}
+      <div className="analytics-page monitor-page">
+        <Card className="analytics-filter-card monitor-filter-card">
+          <div className="monitor-filter-bar">
+            <Input
+              allowClear
+              prefix={<SearchOutlined />}
+              value={searchText}
+              placeholder="搜索设备名称、编号、型号或位置"
+              onChange={event => setSearchText(event.target.value)}
             />
-          );
-          return (
-            <Col xs={24} sm={12} md={8} lg={6} key={device.id}>
-              <Card 
-                hoverable
-                onClick={() => setSelectedDeviceId(device.id)}
-                style={{ height: '100%', border: isSelected ? '2px solid #1677ff' : undefined }}
-                title={
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>{device.name}</span>
-                    {device.status === 'offline' ? (
-                      <Tooltip title={device.offline_last_seen ? `最后心跳: ${device.offline_last_seen}` : '心跳超时'}>
-                        {statusBadge}
-                      </Tooltip>
-                    ) : statusBadge}
-                  </div>
-                }
-                extra={<span style={{ fontSize: '12px', color: '#666' }}>排队: {device.queue_count || 0}</span>}
-              >
-                <div style={{ marginBottom: '12px' }}>
-                  <Tag color="blue">型号: {device.model || '-'}</Tag>
-                  <Tag color="green">位置: {device.location || '-'}</Tag>
-                </div>
-                
-                {!isConfocal && Number.isFinite(Number(device.task_progress)) && (
-                  <div style={{ marginBottom: '12px' }}>
-                    <div style={{ fontSize: '14px', marginBottom: '4px' }}>
-                      当前任务: {device.task_name || '未知任务'}
-                    </div>
-                    <Progress 
-                      percent={Number(device.task_progress)} 
-                      status="active"
-                      strokeColor={{
-                        '0%': '#108ee9',
-                        '100%': '#87d068',
-                      }}
-                    />
-                  </div>
-                )}
+            <Select
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: 'all', label: '全部状态' },
+                { value: 'busy', label: '检测中' },
+                { value: 'idle', label: '空闲' },
+                { value: 'attention', label: '需要关注' },
+                { value: 'offline', label: '离线' },
+              ]}
+            />
+            <Select
+              value={deviceTypeFilter}
+              onChange={setDeviceTypeFilter}
+              options={[
+                { value: 'all', label: '全部类型' },
+                { value: 'standard', label: '普通设备' },
+                { value: 'confocal', label: '激光共聚焦' },
+              ]}
+            />
+            <Select
+              value={sortMode}
+              onChange={setSortMode}
+              options={[
+                { value: 'default', label: '按设备顺序' },
+                { value: 'attention', label: '需关注优先' },
+                { value: 'queue', label: '排队人数优先' },
+              ]}
+            />
+            <div className="monitor-filter-bar__meta">
+              <span className="monitor-filter-bar__count">
+                显示 <strong>{filteredDevices.length}</strong> / {devices.length} 台
+              </span>
+              <span className="monitor-filter-bar__sync">
+                {lastUpdatedAt ? '同步于 ' + formatTime(lastUpdatedAt) : '等待同步'}
+              </span>
+              <Button
+                type="text"
+                size="small"
+                aria-label="刷新设备状态"
+                icon={<ReloadOutlined />}
+                loading={devicesLoading || queueLoading}
+                onClick={handleRefreshAll}
+              />
+            </div>
+          </div>
+        </Card>
 
-                {isConfocal && (
-                  <div style={{ marginBottom: '12px' }}>
-                    <div style={{ fontSize: '14px', marginBottom: '4px' }}>
-                      当前任务: {device.task_name || '未知任务'}
-                    </div>
-                    <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
-                      设备状态: {getOlympusDisplayState(olympus, device.status)}
-                    </div>
-                    <Progress
-                      percent={overallProgress}
-                      status="active"
-                      format={() => (
-                        groupTotal ? `${overallProgress}% (${groupCompleted || 0}/${groupTotal})` : `${overallProgress}%`
-                      )}
-                    />
-                    {olympus.current_file && (
-                      <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>
-                        当前文件: {olympus.current_file}
-                      </div>
-                    )}
-                    {(() => {
-                      const validOutputPath = getValidOutputPath(olympus.output_path);
-                      return validOutputPath && (
-                        <div
-                          title={validOutputPath}
-                          style={{ fontSize: 12, color: '#666', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                        >
-                          输出路径: {validOutputPath}
-                        </div>
-                      );
-                    })()}
+        {devicesError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="设备状态加载失败"
+            description={devicesError}
+            action={<Button size="small" onClick={fetchDevices}>重试</Button>}
+          />
+        ) : null}
 
-
-                  </div>
-                )}
-
-                <div style={{ fontSize: '13px', color: '#666' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                    <span>心跳: {device.last_heartbeat ? formatRelativeTime(device.last_heartbeat) : '-'}</span>
-                    {showTimeoutCountdown && (
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span
-                          style={{
-                            color: isTimeoutWarning ? '#cf1322' : '#fa8c16',
-                            fontWeight: isTimeoutWarning ? 600 : 500,
-                          }}
-                        >
-                          超时倒计时: {formatCountdown(timeoutRemainingSeconds)}
-                        </span>
-                        <Button
-                          size="small"
-                          type="link"
-                          disabled={timeoutRemainingSeconds <= 0 || !canExtend}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleExtendTimeout(device.id);
-                          }}
-                          title={canExtend ? `还能延长${remainingExtends}次` : '延长次数已达上限'}
-                        >
-                          延长5分钟{!canExtend ? '(已达上限)' : `(${remainingExtends})`}
-                        </Button>
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    {device.metrics?.temperature && <span>温度: {device.metrics.temperature}°C</span>}
-                    {device.metrics?.temperature && device.task_elapsed_seconds != null && <span> | </span>}
-                    {device.task_elapsed_seconds != null && (
-                      <span>当前任务耗时: {Math.floor(device.task_elapsed_seconds / 60)}分钟</span>
-                    )}
-                  </div>
-
-                </div>
+        {devicesLoading && !devices.length ? (
+          <div className="monitor-device-grid">
+            {[1, 2, 3, 4].map(item => (
+              <Card key={item} className="monitor-device-card-skeleton">
+                <Skeleton active paragraph={{ rows: 4 }} />
               </Card>
-            </Col>
-          );
-        })}
-      </Row>
+            ))}
+          </div>
+        ) : filteredDevices.length ? (
+          <div className="monitor-device-grid">
+            {filteredDevices.map(device => (
+              <DeviceOverviewCard
+                key={device.id}
+                device={device}
+                selected={device.id === selectedDeviceId}
+                onSelect={handleSelectDevice}
+              />
+            ))}
+          </div>
+        ) : (
+          <Card className="analytics-panel">
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={devices.length ? '没有符合筛选条件的设备' : '尚未登记设备'}
+            >
+              {devices.length ? (
+                <Button onClick={() => {
+                  setSearchText('');
+                  setStatusFilter('all');
+                  setDeviceTypeFilter('all');
+                }}>
+                  清除筛选
+                </Button>
+              ) : null}
+            </Empty>
+          </Card>
+        )}
 
-      <Row gutter={[16, 16]} style={{ marginTop: 24 }}>
-        <Col span={24}>
-          <Card 
-            title={selectedDevice ? `排队信息 - ${selectedDevice.name}` : '排队信息'}
-            extra={selectedDevice && <span>当前排队人数：{queue.length}</span>}
-          >
-            {selectedDevice ? (
-              <>
-                <Form 
-                  form={form}
-                  layout="inline"
-                  onFinish={handleJoinQueue}
-                  onValuesChange={(_, values) => setInspectorName(values.inspector_name || '')}
-                  style={{ marginBottom: 16 }}
-                >
-                  <Form.Item 
-                    name="inspector_name" 
-                    rules={[{ required: true, message: '请输入检验员姓名' }]}
-                  >
-                    <Input 
-                      placeholder="检验员姓名" 
-                      style={{ width: 150 }}
+        <Drawer
+          className="monitor-device-drawer"
+          title={(
+            <div className="monitor-device-drawer__title">
+              <span>设备快捷操作</span>
+              <small>排队与结果无需滚动到底部</small>
+            </div>
+          )}
+          extra={selectedDevice ? (
+            <Select
+              className="monitor-device-drawer__switcher"
+              size="small"
+              value={selectedDevice.id}
+              onChange={handleSelectDevice}
+              optionFilterProp="label"
+              showSearch
+              options={devices.map(device => ({
+                value: device.id,
+                label: `${device.name} · ${(statusConfig[device.status] || statusConfig.offline).text}`,
+              }))}
+            />
+          ) : null}
+          width="min(680px, 100vw)"
+          open={Boolean(selectedDevice && workbenchOpen)}
+          onClose={() => setWorkbenchOpen(false)}
+          mask={false}
+          push={false}
+          styles={{ body: { padding: 0 } }}
+        >
+          {selectedDevice ? (
+            <div className="monitor-drawer-workbench">
+              <div className="monitor-drawer-summary">
+                <div className="monitor-drawer-summary__identity">
+                  <div>
+                    <Typography.Title level={4}>{selectedDevice.name}</Typography.Title>
+                    <Badge
+                      status={selectedConfig.color}
+                      text={selectedDevice.status === 'offline' ? '离线' : selectedConfig.text}
                     />
-                  </Form.Item>
-                  <Form.Item 
-                    name="copies"
-                    initialValue={1}
-                  >
-                    <InputNumber 
-                      min={1} 
-                      max={10}
-                      placeholder="份数"
-                      style={{ width: 80 }}
+                  </div>
+                  <Space size={6} wrap>
+                    <Tag>{selectedDevice.device_code || '无设备编号'}</Tag>
+                    <Tag color={selectedIsConfocal ? 'purple' : 'blue'}>
+                      {selectedIsConfocal ? '激光共聚焦' : '普通设备'}
+                    </Tag>
+                  </Space>
+                </div>
+                <div className="monitor-drawer-summary__metrics">
+                  <div className="monitor-drawer-progress">
+                    <span>{selectedTaskCompleted ? '最近任务' : '任务进度'}</span>
+                    <strong>{Number.isFinite(selectedProgress) ? Math.max(0, Math.min(100, selectedProgress)) + '%' : '-'}</strong>
+                    <Progress
+                      percent={Number.isFinite(selectedProgress) ? Math.max(0, Math.min(100, selectedProgress)) : 0}
+                      status={selectedDevice.status === 'error' ? 'exception' : selectedProgress === 100 ? 'success' : 'active'}
+                      showInfo={false}
                     />
-                  </Form.Item>
-                  <Form.Item>
-                    <Button type="primary" htmlType="submit" icon={<PlusOutlined />}>
-                      加入排队
-                    </Button>
-                  </Form.Item>
-                  <Form.Item style={{ marginRight: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Button type="text" htmlType="button" onClick={handleToggleNotifyMode} style={{ padding: 0, height: 'auto' }}>
-                        {notifyIcon}
-                      </Button>
-                      {notifyLabel && (
-                        <span style={{ fontSize: 12, color: notifyColor }}>{notifyLabel}</span>
-                      )}
-                    </div>
-                  </Form.Item>
-                </Form>
+                  </div>
+                  <div className="monitor-drawer-queue-count">
+                    <span>当前排队</span>
+                    <strong>{queueLoading ? '…' : queue.length}</strong>
+                    <small>人</small>
+                  </div>
+                </div>
+                <Button size="small" onClick={() => setWorkbenchTab('results')}>查看结果</Button>
+              </div>
 
-                <Row gutter={[16, 16]}>
-                  <Col xs={24} lg={24} xl={12} xxl={11}>
-                    <DragTable 
-                      dataSource={queue}
-                      columns={queueColumns}
-                      rowKey="id"
-                      onDropConfirm={handleDropConfirm}
-                    />
-                  </Col>
-                  <Col xs={24} lg={12} xl={7} xxl={8}>
-                    <Card title="结果查看" size="small" style={{ height: '100%' }}>
-                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                        {!isConfocalDevice(selectedDevice) ? (
-                          <Button
-                            type="primary"
-                            disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
-                            onClick={() => setTableModal({ open: true, folder: null })}
-                          >
-                            查看表格
-                          </Button>
-                        ) : (
-                          <Button
-                            type="primary"
-                            danger
-                            disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
-                            onClick={() => openCleanupModal(null)}
-                          >
-                            删图/重命名文件夹
-                          </Button>
-                        )}
-                        <Button
-                          disabled={!selectedDevice || Number(selectedDevice.task_progress) !== 100}
-                          onClick={() => setImagesModal({ open: true, folder: null })}
-                        >
-                          查看图片
-                        </Button>
-                      </div>
-                      <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
-                        仅在检测完成（进度100%）后可查看结果
-                      </div>
-                      <div style={{ fontSize: 12, color: '#666', marginTop: 12 }}>
-                        最近5次结果
-                      </div>
-                      <List
-                        dataSource={recentResults}
-                        locale={{ emptyText: '暂无历史结果' }}
-                        size="small"
-                        style={{ marginTop: 4 }}
-                        renderItem={item => (
-                          <List.Item style={{ paddingLeft: 0, paddingRight: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-                              <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: '#333' }}>
-                                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  {item.task_name || item.folder || '-'}
-                                </div>
-                              </div>
-                              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                                {!isConfocalDevice(selectedDevice) ? (
-                                  <Button
-                                    size="small"
-                                    disabled={!item.folder}
-                                    onClick={() => setTableModal({ open: true, folder: item.folder })}
-                                  >
-                                    查看表格
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    size="small"
-                                    danger
-                                    disabled={!item.folder}
-                                    onClick={() => openCleanupModal(item.folder)}
-                                  >
-                                    删图/重命名文件夹
-                                  </Button>
-                                )}
-                                <Button
-                                  size="small"
-                                  disabled={!item.folder}
-                                  onClick={() => setImagesModal({ open: true, folder: item.folder })}
-                                >
-                                  查看图片
-                                </Button>
-                              </div>
-                            </div>
-                          </List.Item>
-                        )}
-                      />
-                      {!isConfocalDevice(selectedDevice) && (
-                        <ResultsModal
-                          open={tableModal.open}
-                          title="结果表格"
-                          url={buildResultsUrl('table', tableModal.folder)}
-                          onClose={() => setTableModal({ open: false, folder: null })}
-                        />
-                      )}
-                      <Modal
-                        title="删图/重命名文件夹"
-                        open={cleanupModal.open}
-                        onCancel={closeCleanupModal}
-                        onOk={handleCleanupSubmit}
-                        okText="确认执行"
-                        cancelText="取消"
-                        confirmLoading={cleanupModal.submitting}
-                        okButtonProps={{ danger: true }}
-                        maskClosable={!cleanupModal.submitting}
-                        keyboard={!cleanupModal.submitting}
-                        destroyOnClose={false}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                          <div style={{ color: '#666', fontSize: 12 }}>
-                            仅保留以“_I.jpg”结尾的图片，其余图片会移动到输出目录的 .recycle 文件夹。
-                          </div>
+              <QueueTimeoutNotice
+                device={selectedDevice}
+                queueCount={queueLoading ? Number(selectedDevice.queue_count || 0) : queue.length}
+                extending={extendingDeviceId === selectedDevice.id}
+                onExtend={() => handleExtendTimeout(selectedDevice.id)}
+              />
+
+              {myNextQueueEntry ? (
+                <div className="monitor-my-queue-state">
+                  <CheckCircleOutlined />
+                  <span>
+                    {myNextQueueEntry.position === 1
+                      ? '现在已轮到您，请开始使用设备'
+                      : `您已在队列中，当前排第 ${getQueuePositionDisplay(myNextQueueEntry.position)} 位`}
+                  </span>
+                  {myQueueEntries.length > 1 ? <Tag color="blue">共 {myQueueEntries.length} 份</Tag> : null}
+                </div>
+              ) : null}
+
+              <Tabs
+                className="monitor-drawer-tabs"
+                activeKey={workbenchTab}
+                onChange={setWorkbenchTab}
+                items={[
+                  {
+                    key: 'queue',
+                    label: `排队情况 (${queue.length})`,
+                    children: (
+                      <div className="monitor-drawer-panel">
+                        <div className="monitor-queue-heading">
                           <div>
-                            <div style={{ marginBottom: 4, color: '#555' }}>原文件夹名称（可复制）</div>
-                            <Typography.Text copyable={{ text: cleanupModal.sourceFolderName || '-' }}>
-                              {cleanupModal.sourceFolderName || '-'}
-                            </Typography.Text>
+                            <strong>快速加入排队</strong>
+                            <span>
+                              {activeQueueEntry
+                                ? isUnclaimedPlaceholder(activeQueueEntry)
+                                  ? '当前使用人待认领'
+                                  : `当前使用：${activeQueueEntry.inspector_name}`
+                                : '暂无正在使用人员'}
+                            </span>
                           </div>
-                          <Checkbox
-                            checked={cleanupModal.renameEnabled}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setCleanupModal(prev => ({
-                                ...prev,
-                                renameEnabled: checked,
-                                newFolderName: checked && !prev.newFolderName
-                                  ? getDefaultRenameName(prev.sourceFolderName)
-                                  : prev.newFolderName,
-                              }));
-                            }}
-                          >
-                            同时重命名文件夹
-                          </Checkbox>
-                          <Input
-                            placeholder="请输入新文件夹名称"
-                            disabled={!cleanupModal.renameEnabled}
-                            value={cleanupModal.newFolderName}
-                            maxLength={128}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              setCleanupModal(prev => ({ ...prev, newFolderName: value }));
-                            }}
-                          />
+                          <span>共 {queue.length} 人</span>
                         </div>
-                      </Modal>
-                      <Modal
-                        title="结果图片"
-                        open={imagesModal.open}
-                        onCancel={() => setImagesModal({ open: false, folder: null })}
-                        afterOpenChange={(open) => {
-                          if (open) {
-                            setImagesLayoutVersion(version => version + 1);
-                          }
-                        }}
-                        footer={null}
-                        width="90vw"
-                        style={{ top: 20 }}
-                        bodyStyle={{ height: '80vh', padding: 0, width: '100%', overflow: 'hidden' }}
-                        destroyOnClose
-                      >
-                        {imagesModal.open && (
-                          <ResultsImages
-                            deviceId={selectedDeviceId}
-                            folder={imagesModal.folder}
-                            embedded
-                            layoutVersion={imagesLayoutVersion}
-                          />
-                        )}
-                      </Modal>
-                      <Modal
-                        title="认领占位人员"
-                        open={claimModal.open}
-                        onCancel={closeClaimModal}
-                        onOk={handleClaimPlaceholder}
-                        okText="认领这个占位"
-                        cancelText="取消"
-                        confirmLoading={claimModal.submittingAction === 'claim'}
-                        maskClosable={!claimModal.submittingAction}
-                        keyboard={!claimModal.submittingAction}
-                        footer={[
-                          <Button
-                            key="delete"
-                            danger
-                            onClick={handleDeletePlaceholder}
-                            loading={claimModal.submittingAction === 'delete'}
-                            disabled={Boolean(claimModal.submittingAction && claimModal.submittingAction !== 'delete')}
-                          >
-                            删除这个占位人员
-                          </Button>,
-                          <Button
-                            key="cancel"
-                            onClick={closeClaimModal}
-                            disabled={Boolean(claimModal.submittingAction)}
-                          >
-                            取消
-                          </Button>,
-                          <Button
-                            key="claim"
-                            type="primary"
-                            onClick={handleClaimPlaceholder}
-                            loading={claimModal.submittingAction === 'claim'}
-                            disabled={Boolean(claimModal.submittingAction && claimModal.submittingAction !== 'claim')}
-                          >
-                            认领这个占位
-                          </Button>,
-                        ]}
-                      >
-                        <Form form={claimForm} layout="vertical">
+
+                        <Form
+                          form={form}
+                          layout="vertical"
+                          className="monitor-queue-form"
+                          onFinish={handleJoinQueue}
+                          onValuesChange={(_, values) => setInspectorName(values.inspector_name || '')}
+                        >
                           <Form.Item
-                            label="检验员姓名"
                             name="inspector_name"
+                            label="检验员"
                             rules={[{ required: true, message: '请输入检验员姓名' }]}
                           >
-                            <Input
-                              placeholder="检验员姓名"
-                              maxLength={50}
-                            />
+                            <Input placeholder="输入姓名" maxLength={50} />
+                          </Form.Item>
+                          <Form.Item
+                            name="copies"
+                            label="排队份数"
+                            initialValue={1}
+                            rules={[{ type: 'number', min: 1, max: queueQuota, message: `同类型设备合计最多可排 ${queueQuota} 份` }]}
+                          >
+                            <InputNumber min={1} max={queueQuota} />
+                          </Form.Item>
+                          <Form.Item label=" ">
+                            <Button
+                              type="primary"
+                              htmlType="submit"
+                              icon={<PlusOutlined />}
+                              loading={queueSubmitting}
+                            >
+                              加入排队
+                            </Button>
                           </Form.Item>
                         </Form>
-                      </Modal>
-                    </Card>
-                  </Col>
-                  <Col xs={24} lg={12} xl={5} xxl={5}>
-                    <Card title="历史记录（今日）" size="small" style={{ height: '100%' }}>
-                      <List
-                        dataSource={queueLogs}
-                        style={{ maxHeight: 240, overflowY: 'auto' }}
-                        renderItem={log => {
-                          const logDisplay = getQueueLogDisplay(log);
-                          return (
-                            <List.Item>
-                              <div style={{ width: '100%' }}>
-                                <div style={{ fontSize: '12px', color: '#999' }}>
-                                  {formatDateTime(log.change_time)} - {renderUserLabel(log.changed_by, log.changed_by_id)}
-                                </div>
-                                <div style={logDisplay.color ? { color: logDisplay.color, fontWeight: 600 } : undefined}>
-                                  {logDisplay.text}
-                                </div>
-                              </div>
-                            </List.Item>
-                          );
-                        }}
-                      />
-                    </Card>
-                  </Col>
-                </Row>
+                        <div className="monitor-queue-form__hint">
+                          {selectedDevice.status === 'offline' ? '设备当前离线，仍可提前排队 · ' : ''}
+                          {selectedUsesConfocalQuota
+                            ? '同一浏览器在全部共聚焦设备合计最多排 2 份'
+                            : '同一浏览器在全部普通设备合计最多排 3 份'}
+                          {' · '}加入后轮到您会自动提醒
+                        </div>
 
-              </>
-            ) : (
-              <div style={{ color: '#999' }}>请选择设备查看排队信息</div>
-            )}
-          </Card>
-        </Col>
-      </Row>
+                        <div className="monitor-notify-control">
+                          <div>
+                            <strong><BellOutlined /> 完成提醒</strong>
+                            <span>不要求参加排队；监听本设备检测完成</span>
+                          </div>
+                          <Segmented
+                            size="small"
+                            value={notifyMode}
+                            onChange={handleNotifyModeChange}
+                            options={[
+                              { value: 'off', label: '关闭' },
+                              { value: 'once', label: '提醒一次' },
+                              { value: 'always', label: '持续提醒' },
+                            ]}
+                          />
+                        </div>
+
+                        {queueError ? (
+                          <Alert
+                            type="error"
+                            showIcon
+                            message="排队信息加载失败"
+                            description={queueError}
+                            action={<Button size="small" onClick={() => fetchQueue(selectedDevice.id)}>重试</Button>}
+                          />
+                        ) : null}
+
+                        <DragTable
+                          className="monitor-queue-table"
+                          dataSource={queue}
+                          columns={queueColumns}
+                          rowKey="id"
+                          loading={queueLoading}
+                          onDropConfirm={handleDropConfirm}
+                          scroll={{ x: 520 }}
+                          locale={{
+                            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前无人排队" />,
+                          }}
+                        />
+
+                        <Collapse
+                          className="monitor-activity-collapse"
+                          ghost
+                          items={[{
+                            key: 'activity',
+                            label: `今日动态 (${queueLogs.length})`,
+                            children: renderQueueActivity(),
+                          }]}
+                        />
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'results',
+                    label: '最近结果',
+                    children: (
+                      <div className="monitor-drawer-panel monitor-results-panel">
+                        <div className="monitor-current-result">
+                          <div>
+                            <strong>当前任务结果</strong>
+                            <span>
+                              {selectedProgress === 100
+                                ? currentResultReady
+                                  ? '检测已完成，可查看本次结果'
+                                  : '检测已完成，但结果服务暂不可用'
+                                : '检测完成至 100% 后开放'}
+                            </span>
+                          </div>
+                          <Space wrap>
+                            {!selectedIsConfocal ? (
+                              <Button
+                                type="primary"
+                                icon={<FileTextOutlined />}
+                                disabled={!currentResultReady}
+                                onClick={() => setTableModal({ open: true, folder: null })}
+                              >
+                                查看表格
+                              </Button>
+                            ) : null}
+                            <Button
+                              icon={<FileImageOutlined />}
+                              disabled={!currentResultReady}
+                              onClick={() => setImagesModal({ open: true, folder: null })}
+                            >
+                              查看图片
+                            </Button>
+                            {selectedIsConfocal ? (
+                              <Button
+                                type="link"
+                                icon={<FolderOpenOutlined />}
+                                disabled={!currentResultReady}
+                                onClick={() => openCleanupModal(null)}
+                              >
+                                整理结果文件…
+                              </Button>
+                            ) : null}
+                          </Space>
+                        </div>
+                        <div className="monitor-section-label">最近 5 次结果</div>
+                        {renderRecentResults()}
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+
+              <Collapse
+                className="monitor-device-detail-collapse"
+                ghost
+                items={[{
+                  key: 'details',
+                  label: selectedIsConfocal ? '采集详情与设备信息' : '任务与设备详情',
+                  children: (
+                    <div className="monitor-device-details">
+                      <div className="monitor-workbench-context__facts">
+                        <span><small>位置</small>{selectedDevice.location || '-'}</span>
+                        <span><small>型号</small>{selectedDevice.model || '-'}</span>
+                        <span><small>最近心跳</small>{selectedDevice.last_heartbeat ? formatRelativeTime(selectedDevice.last_heartbeat) : '-'}</span>
+                        <span><small>设备温度</small>{formatTemperature(selectedDevice.metrics?.temperature)}</span>
+                      </div>
+
+                      {selectedDevice.task_name && selectedProgress != null && selectedDevice.status !== 'offline' ? (
+                        <div className="monitor-current-task">
+                          <div>
+                            <span>{selectedTaskCompleted ? '最近完成' : '当前任务'}</span>
+                            <strong>{selectedDevice.task_name}</strong>
+                            {selectedTaskCompleted ? (
+                              <small>任务已完成，可在“最近结果”中查看</small>
+                            ) : selectedDevice.task_elapsed_seconds != null ? (
+                              <small>已运行 {Math.max(0, Math.floor(selectedDevice.task_elapsed_seconds / 60))} 分钟</small>
+                            ) : null}
+                          </div>
+                          <Progress
+                            percent={Math.max(0, Math.min(100, selectedProgress))}
+                            status={selectedDevice.status === 'error' ? 'exception' : selectedProgress === 100 ? 'success' : 'active'}
+                          />
+                        </div>
+                      ) : null}
+
+                      {selectedIsConfocal ? (
+                        <div className="monitor-confocal-panel">
+                          <div className="monitor-confocal-panel__heading">
+                            <strong>共聚焦采集详情</strong>
+                            <span>{getOlympusDisplayState(selectedOlympus, selectedDevice.status)}</span>
+                          </div>
+                          <div className="monitor-confocal-grid">
+                            <span><small>组进度</small>{selectedOlympus.group_completed || 0} / {selectedOlympus.group_total || '-'}</span>
+                            <span><small>图像进度</small>{selectedOlympus.image_progress != null ? selectedOlympus.image_progress + '%' : '-'}</span>
+                            <span><small>当前帧</small>{selectedOlympus.frame_current || '-'} / {selectedOlympus.frame_total || '-'}</span>
+                            <span><small>XY 位置</small>{selectedOlympus.xy_position ? selectedOlympus.xy_position.x + ', ' + selectedOlympus.xy_position.y : '-'}</span>
+                            <span><small>Z 位置</small>{selectedOlympus.z_position ?? '-'}</span>
+                            <span><small>Z 范围</small>{selectedOlympus.z_range ? selectedOlympus.z_range.start + ' – ' + selectedOlympus.z_range.end : '-'}</span>
+                          </div>
+                          {selectedOlympus.current_file ? (
+                            <div className="monitor-confocal-path">
+                              <small>当前文件</small><Typography.Text copyable>{selectedOlympus.current_file}</Typography.Text>
+                            </div>
+                          ) : null}
+                          {getValidOutputPath(selectedOlympus.output_path) ? (
+                            <div className="monitor-confocal-path">
+                              <small>输出目录</small>
+                              <Typography.Text copyable={{ text: getValidOutputPath(selectedOlympus.output_path) }} ellipsis>
+                                {getValidOutputPath(selectedOlympus.output_path)}
+                              </Typography.Text>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ),
+                }]}
+              />
+            </div>
+          ) : null}
+        </Drawer>
+
+        {!selectedIsConfocal ? (
+          <ResultsModal
+            open={tableModal.open}
+            title={(selectedDevice?.name || '设备') + ' · 结果表格'}
+            url={buildResultsUrl('table', tableModal.folder)}
+            onClose={() => setTableModal({ open: false, folder: null })}
+          />
+        ) : null}
+
+        <Modal
+          title={(selectedDevice?.name || '设备') + ' · 结果图片'}
+          open={imagesModal.open}
+          onCancel={() => setImagesModal({ open: false, folder: null })}
+          afterOpenChange={open => {
+            if (open) setImagesLayoutVersion(version => version + 1);
+          }}
+          footer={null}
+          width="90vw"
+          style={{ top: 20 }}
+          styles={{ body: { height: '80vh', padding: 0, width: '100%', overflow: 'hidden' } }}
+          destroyOnClose
+        >
+          {imagesModal.open && selectedDeviceId ? (
+            <ResultsImages
+              deviceId={selectedDeviceId}
+              folder={imagesModal.folder}
+              embedded
+              layoutVersion={imagesLayoutVersion}
+            />
+          ) : null}
+        </Modal>
+
+        <Modal
+          title="整理共聚焦结果文件"
+          open={cleanupModal.open}
+          onCancel={closeCleanupModal}
+          onOk={handleCleanupSubmit}
+          okText="确认整理"
+          cancelText="取消"
+          confirmLoading={cleanupModal.submitting}
+          okButtonProps={{ danger: true }}
+          maskClosable={!cleanupModal.submitting}
+          keyboard={!cleanupModal.submitting}
+          destroyOnClose={false}
+        >
+          <div className="monitor-cleanup-dialog">
+            <Alert
+              type="warning"
+              showIcon
+              message="文件整理规则"
+              description="仅保留以 _I.jpg 结尾的图片，其余图片会移动到输出目录的 .recycle 文件夹。"
+            />
+            <div>
+              <small>设备</small>
+              <strong>{selectedDevice?.name || '-'}</strong>
+            </div>
+            <div>
+              <small>原文件夹名称（可复制）</small>
+              <Typography.Text copyable={{ text: cleanupModal.sourceFolderName || '-' }}>
+                {cleanupModal.sourceFolderName || '-'}
+              </Typography.Text>
+            </div>
+            <Checkbox
+              checked={cleanupModal.renameEnabled}
+              onChange={event => {
+                const checked = event.target.checked;
+                setCleanupModal(prev => ({
+                  ...prev,
+                  renameEnabled: checked,
+                  newFolderName: checked && !prev.newFolderName
+                    ? getDefaultRenameName(prev.sourceFolderName)
+                    : prev.newFolderName,
+                }));
+              }}
+            >
+              同时重命名文件夹
+            </Checkbox>
+            <Input
+              placeholder="请输入新文件夹名称"
+              disabled={!cleanupModal.renameEnabled}
+              value={cleanupModal.newFolderName}
+              maxLength={128}
+              onChange={event => setCleanupModal(prev => ({ ...prev, newFolderName: event.target.value }))}
+            />
+          </div>
+        </Modal>
+
+        <Modal
+          title="认领占位人员"
+          open={claimModal.open}
+          onCancel={closeClaimModal}
+          maskClosable={!claimModal.submittingAction}
+          keyboard={!claimModal.submittingAction}
+          footer={[
+            <Button
+              key="delete"
+              danger
+              onClick={handleDeletePlaceholder}
+              loading={claimModal.submittingAction === 'delete'}
+              disabled={Boolean(claimModal.submittingAction && claimModal.submittingAction !== 'delete')}
+            >
+              删除占位
+            </Button>,
+            <Button key="cancel" onClick={closeClaimModal} disabled={Boolean(claimModal.submittingAction)}>
+              取消
+            </Button>,
+            <Button
+              key="claim"
+              type="primary"
+              onClick={handleClaimPlaceholder}
+              loading={claimModal.submittingAction === 'claim'}
+              disabled={Boolean(claimModal.submittingAction && claimModal.submittingAction !== 'claim')}
+            >
+              确认认领
+            </Button>,
+          ]}
+        >
+          <Form form={claimForm} layout="vertical">
+            <Form.Item
+              label="检验员姓名"
+              name="inspector_name"
+              rules={[{ required: true, message: '请输入检验员姓名' }]}
+            >
+              <Input placeholder="检验员姓名" maxLength={50} />
+            </Form.Item>
+          </Form>
+        </Modal>
       </div>
     </DndProvider>
   );
