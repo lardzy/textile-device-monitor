@@ -278,6 +278,9 @@ async def report_device_status(
                 if device.task_elapsed_seconds is not None
                 else 0
             )
+            # Settle the queue first and snapshot the completed person on the
+            # history row. Both writes still belong to this single transaction.
+            completed_record = queue_crud.complete_first_in_queue(db, device_id)
             history_crud.create_status_history(
                 db,
                 device_id,
@@ -288,9 +291,11 @@ async def report_device_status(
                 effective_metrics,
                 task_duration_seconds,
                 reported_at=observed_at,
+                inspector_name=(
+                    completed_record.inspector_name if completed_record else None
+                ),
                 commit=False,
             )
-            completed_record = queue_crud.complete_first_in_queue(db, device_id)
 
         tracking_crud.save_task_state(
             db,

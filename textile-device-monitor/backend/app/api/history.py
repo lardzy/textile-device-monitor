@@ -17,7 +17,7 @@ def get_history(
     end_date: Optional[datetime] = Query(None, description="结束时间（不含）"),
     status: Optional[str] = Query(None, description="状态筛选"),
     task_id: Optional[str] = Query(None, description="任务ID"),
-    keyword: Optional[str] = Query(None, description="任务ID或任务名称关键词"),
+    keyword: Optional[str] = Query(None, description="任务ID、任务名称或排队人员关键词"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     db: Session = Depends(get_db),
@@ -55,7 +55,7 @@ def export_history(
     end_date: Optional[datetime] = Query(None, description="结束时间（不含）"),
     status: Optional[str] = Query(None, description="状态筛选"),
     task_id: Optional[str] = Query(None, description="任务ID"),
-    keyword: Optional[str] = Query(None, description="任务ID或任务名称关键词"),
+    keyword: Optional[str] = Query(None, description="任务ID、任务名称或排队人员关键词"),
     db: Session = Depends(get_db),
 ):
     """导出历史记录为Excel"""

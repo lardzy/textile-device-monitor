@@ -201,6 +201,7 @@ const QueueTimeoutNotice = ({ device, queueCount, compact = false, extending = f
 
 const DeviceOverviewCard = ({ device, selected, onSelect, onQuickQueue }) => {
   const config = statusConfig[device.status] || statusConfig.offline;
+  const visualStatus = statusConfig[device.status] ? device.status : 'offline';
   const confocal = isConfocalDevice(device);
   const olympus = device.metrics?.olympus || {};
   const progressValue = device.task_progress == null ? null : Number(device.task_progress);
@@ -219,7 +220,7 @@ const DeviceOverviewCard = ({ device, selected, onSelect, onQuickQueue }) => {
     <div className={`monitor-device-card-shell${selected ? ' monitor-device-card-shell--selected' : ''}`}>
       <button
         type="button"
-        className={`monitor-device-card${selected ? ' monitor-device-card--selected' : ''}${device.status === 'offline' ? ' monitor-device-card--offline' : ''}`}
+        className={`monitor-device-card monitor-device-card--status-${visualStatus}${selected ? ' monitor-device-card--selected' : ''}${device.status === 'offline' ? ' monitor-device-card--offline' : ''}`}
         aria-pressed={selected}
         aria-label={`选择设备 ${device.name}，当前状态 ${statusText}`}
         onClick={() => onSelect(device.id)}
@@ -250,7 +251,8 @@ const DeviceOverviewCard = ({ device, selected, onSelect, onQuickQueue }) => {
               percent={Math.max(0, Math.min(100, progressValue))}
               status={progressStatus}
               showInfo={false}
-              strokeColor={device.status === 'error' ? undefined : { '0%': '#1677ff', '100%': '#52c41a' }}
+              strokeColor={device.status === 'error' ? undefined : progressValue === 100 ? '#389e0d' : '#1677ff'}
+              aria-label={`${device.name} 当前任务进度 ${Math.max(0, Math.min(100, progressValue))}%`}
             />
             {confocal && olympus.group_total ? (
               <span className="monitor-device-card__task-note">
@@ -2205,6 +2207,7 @@ function DeviceMonitor() {
                     percent={Number.isFinite(selectedProgress) ? Math.max(0, Math.min(100, selectedProgress)) : 0}
                     status={selectedDevice.status === 'error' ? 'exception' : selectedProgress === 100 ? 'success' : 'active'}
                     showInfo={false}
+                    aria-label={`${selectedDevice.name} 当前任务进度 ${Number.isFinite(selectedProgress) ? Math.max(0, Math.min(100, selectedProgress)) : 0}%`}
                   />
                 </div>
                 <div className="monitor-workbench-queue-count">

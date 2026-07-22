@@ -15,6 +15,7 @@ def create_status_history(
     device_metrics: Optional[dict] = None,
     task_duration_seconds: Optional[int] = None,
     reported_at: Optional[datetime] = None,
+    inspector_name: Optional[str] = None,
     commit: bool = True,
 ) -> DeviceStatusHistory:
     history_data = dict(
@@ -22,6 +23,7 @@ def create_status_history(
         status=status,
         task_id=task_id,
         task_name=task_name,
+        inspector_name=inspector_name,
         task_progress=task_progress,
         task_duration_seconds=task_duration_seconds,
         device_metrics=device_metrics,
@@ -78,6 +80,7 @@ def get_device_history(
             or_(
                 DeviceStatusHistory.task_id.ilike(pattern, escape="\\"),
                 DeviceStatusHistory.task_name.ilike(pattern, escape="\\"),
+                DeviceStatusHistory.inspector_name.ilike(pattern, escape="\\"),
             )
         )
 

@@ -90,6 +90,9 @@ class DeviceStatusHistory(Base):
     status = Column(String(20), nullable=False)
     task_id = Column(String(100))
     task_name = Column(String(200))
+    # Snapshot the queue entry settled by this task completion. Do not derive
+    # this later from the live queue because it keeps changing after completion.
+    inspector_name = Column(String(50))
     task_progress = Column(Integer)
     task_duration_seconds = Column(Integer)
     device_metrics = Column(JSON_VARIANT)

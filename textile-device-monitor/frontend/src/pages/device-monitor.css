@@ -1,9 +1,40 @@
 .monitor-page {
-  gap: 14px;
+  --monitor-border: #cbd5e1;
+  --monitor-border-strong: #b8c5d6;
+  --monitor-text: #172033;
+  --monitor-text-secondary: #475467;
+  --monitor-text-muted: #667085;
+  gap: 16px;
+  margin: -8px;
+  padding: 14px;
+  background: #f3f6fa;
+  border: 1px solid #e0e6ee;
+  border-radius: 14px;
+}
+
+.monitor-filter-card.ant-card {
+  border-color: var(--monitor-border);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
 }
 
 .monitor-filter-card .ant-card-body {
   padding: 16px 18px;
+}
+
+.monitor-filter-card .ant-input-affix-wrapper,
+.monitor-filter-card .ant-select-selector,
+.monitor-workbench-switcher .ant-select-selector,
+.monitor-queue-form .ant-input,
+.monitor-queue-form .ant-input-number {
+  border-color: #bfcbd9 !important;
+}
+
+.monitor-filter-card .ant-input-affix-wrapper:hover,
+.monitor-filter-card .ant-select-selector:hover,
+.monitor-workbench-switcher .ant-select-selector:hover,
+.monitor-queue-form .ant-input:hover,
+.monitor-queue-form .ant-input-number:hover {
+  border-color: #69b1ff !important;
 }
 
 .monitor-filter-bar {
@@ -14,7 +45,7 @@
 }
 
 .monitor-filter-bar__count {
-  color: #667085;
+  color: var(--monitor-text-secondary);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -28,7 +59,7 @@
 }
 
 .monitor-filter-bar__sync {
-  color: #98a2b3;
+  color: var(--monitor-text-muted);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -56,18 +87,35 @@
   font: inherit;
   text-align: left;
   background: #fff;
-  border: 1px solid #e4eaf1;
+  border: 1px solid var(--monitor-border);
   border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.035);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.075);
   cursor: pointer;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
   width: 100%;
   height: 100%;
 }
 
+.monitor-device-card::before {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  background: var(--monitor-status-accent, #98a2b3);
+  content: '';
+}
+
+.monitor-device-card--status-idle { --monitor-status-accent: #389e0d; }
+.monitor-device-card--status-busy { --monitor-status-accent: #1677ff; }
+.monitor-device-card--status-maintenance { --monitor-status-accent: #d48806; }
+.monitor-device-card--status-error { --monitor-status-accent: #cf1322; }
+.monitor-device-card--status-offline { --monitor-status-accent: #667085; }
+
 .monitor-device-card:hover {
-  border-color: #91caff;
-  box-shadow: 0 8px 24px rgba(22, 119, 255, 0.1);
+  border-color: #69b1ff;
+  box-shadow: 0 9px 24px rgba(15, 23, 42, 0.13);
   transform: translateY(-1px);
 }
 
@@ -77,13 +125,13 @@
 }
 
 .monitor-device-card--selected {
-  background: linear-gradient(180deg, #f7fbff 0%, #fff 55%);
+  background: linear-gradient(180deg, #edf6ff 0%, #fff 54%);
   border-color: #1677ff;
-  box-shadow: 0 8px 24px rgba(22, 119, 255, 0.14);
+  box-shadow: 0 0 0 2px #1677ff, 0 10px 26px rgba(22, 119, 255, 0.18);
 }
 
 .monitor-device-card--offline {
-  background: #fafbfc;
+  background: #f8fafc;
 }
 
 .monitor-device-card__header {
@@ -91,8 +139,8 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 15px 16px 12px;
-  border-bottom: 1px solid #eef2f6;
+  padding: 15px 16px 12px 18px;
+  border-bottom: 1px solid #dfe6ef;
 }
 
 .monitor-device-card__identity {
@@ -102,8 +150,9 @@
 .monitor-device-card__identity strong {
   display: block;
   overflow: hidden;
-  color: #25324b;
-  font-size: 15px;
+  color: var(--monitor-text);
+  font-size: 16px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -111,13 +160,54 @@
 .monitor-device-card__identity span {
   display: block;
   margin-top: 2px;
-  color: #8a94a6;
-  font-size: 11px;
+  color: #5f6c80;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .monitor-device-card__header .ant-badge {
   flex: 0 0 auto;
+  padding: 3px 8px;
   white-space: nowrap;
+  border: 1px solid #d6dde7;
+  border-radius: 999px;
+}
+
+.monitor-device-card__header .ant-badge-status-text {
+  margin-inline-start: 6px;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.monitor-device-card--status-idle .monitor-device-card__header .ant-badge {
+  color: #237804;
+  background: #edf9e8;
+  border-color: #b7dfaa;
+}
+
+.monitor-device-card--status-busy .monitor-device-card__header .ant-badge {
+  color: #0958d9;
+  background: #eaf3ff;
+  border-color: #9ec9ff;
+}
+
+.monitor-device-card--status-maintenance .monitor-device-card__header .ant-badge {
+  color: #874d00;
+  background: #fff7df;
+  border-color: #f2cf7a;
+}
+
+.monitor-device-card--status-error .monitor-device-card__header .ant-badge {
+  color: #b42318;
+  background: #fff1f0;
+  border-color: #f3aaa4;
+}
+
+.monitor-device-card--status-offline .monitor-device-card__header .ant-badge {
+  color: #475467;
+  background: #eef1f5;
+  border-color: #cbd2dc;
 }
 
 .monitor-device-card__signals {
@@ -135,11 +225,11 @@
   justify-content: center;
   gap: 3px;
   padding: 4px 8px;
-  color: #667085;
+  color: #475467;
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  background: #f2f4f7;
-  border: 1px solid #e4e7ec;
+  background: #eef1f5;
+  border: 1px solid #cfd6e0;
   border-radius: 8px;
 }
 
@@ -150,14 +240,15 @@
 }
 
 .monitor-device-card__queue strong {
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 700;
   line-height: 1;
 }
 
 .monitor-device-card__queue--waiting {
-  color: #0958d9;
-  background: #e6f4ff;
-  border-color: #91caff;
+  color: #084caa;
+  background: #dbeafe;
+  border-color: #60a5fa;
 }
 
 .monitor-device-card__task {
@@ -175,7 +266,7 @@
 
 .monitor-device-card__task-title span {
   overflow: hidden;
-  color: #344054;
+  color: #25324b;
   font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -185,7 +276,7 @@
 .monitor-device-card__task-title b {
   flex: 0 0 auto;
   color: #1677ff;
-  font-size: 22px;
+  font-size: 25px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
@@ -199,15 +290,19 @@
 }
 
 .monitor-device-card__task .ant-progress-bg {
-  height: 8px !important;
+  height: 10px !important;
+}
+
+.monitor-device-card__task .ant-progress-inner {
+  background: #dbe4ef;
 }
 
 .monitor-device-card__task-note {
   display: block;
   overflow: hidden;
   margin-top: 3px;
-  color: #667085;
-  font-size: 11px;
+  color: #5b687b;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -218,10 +313,11 @@
   align-items: center;
   gap: 9px;
   padding: 10px 12px;
-  color: #667085;
+  color: var(--monitor-text-secondary);
   font-size: 12px;
   line-height: 1.5;
-  background: #f7f9fc;
+  background: #f5f7fa;
+  border: 1px solid #d9e1ea;
   border-radius: 9px;
 }
 
@@ -254,18 +350,19 @@
   white-space: nowrap;
 }
 
-.monitor-device-card__state-copy--busy { color: #0958d9; background: #e6f4ff; }
-.monitor-device-card__state-copy--idle { color: #237804; background: #f6ffed; }
-.monitor-device-card__state-copy--maintenance { color: #ad6800; background: #fffbe6; }
-.monitor-device-card__state-copy--error { color: #cf1322; background: #fff2f0; }
-.monitor-device-card__state-copy--offline { color: #667085; background: #f2f4f7; }
+.monitor-device-card__state-copy--busy { color: #0958d9; background: #eaf3ff; border-color: #9ec9ff; }
+.monitor-device-card__state-copy--idle { color: #237804; background: #edf9e8; border-color: #b7dfaa; }
+.monitor-device-card__state-copy--maintenance { color: #874d00; background: #fff7df; border-color: #f2cf7a; }
+.monitor-device-card__state-copy--error { color: #b42318; background: #fff1f0; border-color: #f3aaa4; }
+.monitor-device-card__state-copy--offline { color: #475467; background: #eef1f5; border-color: #cbd2dc; }
 
 .monitor-device-card__meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 12px;
   margin-top: auto;
-  padding: 8px 16px 4px;
+  padding: 10px 16px 4px 18px;
+  border-top: 1px solid #e3e9f1;
 }
 
 .monitor-device-card__meta span,
@@ -273,7 +370,7 @@
 .monitor-confocal-grid span {
   min-width: 0;
   overflow: hidden;
-  color: #475467;
+  color: #344054;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -286,9 +383,9 @@
 .monitor-cleanup-dialog small {
   display: block;
   margin-bottom: 2px;
-  color: #8a94a6;
-  font-size: 10px;
-  font-weight: 500;
+  color: var(--monitor-text-muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .monitor-device-card__footer {
@@ -331,15 +428,16 @@
 
 .monitor-device-card-skeleton.ant-card {
   min-height: 238px;
-  border-color: #e8edf3;
+  border-color: var(--monitor-border);
   border-radius: 12px;
 }
 
 .monitor-workbench.ant-card {
   overflow: hidden;
-  border: 1px solid #dfe7f0;
+  border: 1px solid var(--monitor-border-strong);
+  border-top: 4px solid #1677ff;
   border-radius: 14px;
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.055);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
 }
 
 .monitor-workbench > .ant-card-body {
@@ -352,8 +450,8 @@
   align-items: center;
   gap: 24px;
   padding: 18px 22px;
-  background: linear-gradient(135deg, #f1f7ff 0%, #fff 72%);
-  border-bottom: 1px solid #e8edf3;
+  background: linear-gradient(135deg, #eaf3ff 0%, #f8fbff 52%, #fff 100%);
+  border-bottom: 1px solid #cfd8e3;
 }
 
 .monitor-workbench-summary__identity {
@@ -364,7 +462,7 @@
   display: block;
   margin-bottom: 3px;
   color: #1677ff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
 }
@@ -380,7 +478,8 @@
 .monitor-workbench-summary__identity h4.ant-typography {
   overflow: hidden;
   margin: 0;
-  color: #25324b;
+  color: var(--monitor-text);
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -390,6 +489,11 @@
   min-width: 0;
   align-items: center;
   gap: 14px;
+  padding: 11px 14px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid #c5d9f1;
+  border-radius: 11px;
+  box-shadow: 0 2px 8px rgba(22, 119, 255, 0.07);
 }
 
 .monitor-workbench-progress {
@@ -405,8 +509,9 @@
 .monitor-workbench-progress > span,
 .monitor-workbench-queue-count > span,
 .monitor-workbench-queue-count > small {
-  color: #8a94a6;
-  font-size: 10px;
+  color: #5f6c80;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .monitor-workbench-progress > span {
@@ -418,7 +523,8 @@
 .monitor-workbench-progress > strong {
   margin: 1px 0 2px;
   color: #1677ff;
-  font-size: 20px;
+  font-size: 26px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
@@ -427,11 +533,19 @@
   margin: 0;
 }
 
+.monitor-workbench-progress .ant-progress-bg {
+  height: 9px !important;
+}
+
+.monitor-workbench-progress .ant-progress-inner {
+  background: #dbe4ef;
+}
+
 .monitor-workbench-queue-count {
   min-width: 58px;
   padding-left: 13px;
   text-align: center;
-  border-left: 1px solid #dfe7f0;
+  border-left: 1px solid #b9c9dc;
 }
 
 .monitor-workbench-queue-count > span {
@@ -439,8 +553,9 @@
 }
 
 .monitor-workbench-queue-count > strong {
-  color: #0958d9;
-  font-size: 24px;
+  color: #084caa;
+  font-size: 26px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -470,12 +585,12 @@
   gap: 8px;
   margin: 12px 22px 0;
   padding: 9px 72px;
-  color: #0958d9;
-  font-size: 12px;
-  font-weight: 600;
+  color: #003eb3;
+  font-size: 13px;
+  font-weight: 650;
   text-align: center;
-  background: #e6f4ff;
-  border: 1px solid #91caff;
+  background: #dceeff;
+  border: 1px solid #69b1ff;
   border-radius: 9px;
 }
 
@@ -512,20 +627,31 @@
 }
 
 .monitor-queue-anchor--focused {
-  box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.2), 0 10px 28px rgba(22, 119, 255, 0.12);
+  box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.24), 0 10px 28px rgba(22, 119, 255, 0.16);
 }
 
 .monitor-workspace-card.ant-card {
   overflow: hidden;
-  border-color: #e1e8f0;
+  border-color: #cbd6e2;
   border-radius: 11px;
-  box-shadow: none;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.055);
+}
+
+.monitor-workspace-card.monitor-queue-card.ant-card {
+  border-color: #9fc1ed;
+  box-shadow: 0 4px 14px rgba(22, 119, 255, 0.09);
 }
 
 .monitor-workspace-card > .ant-card-head {
   min-height: 52px;
   padding: 0 17px;
-  border-bottom-color: #eef2f6;
+  background: #f7f9fc;
+  border-bottom-color: #d9e2ec;
+}
+
+.monitor-workspace-card.monitor-queue-card > .ant-card-head {
+  background: #eef6ff;
+  border-bottom-color: #bfd5ef;
 }
 
 .monitor-workspace-card > .ant-card-body {
@@ -533,19 +659,19 @@
 }
 
 .monitor-card-count {
-  color: #667085;
+  color: #475467;
   font-size: 12px;
 }
 
 .monitor-device-detail-collapse {
   margin: 0 22px 22px;
   background: #fff;
-  border: 1px solid #e8edf3;
+  border: 1px solid #cbd6e2;
   border-radius: 10px;
 }
 
 .monitor-device-detail-collapse > .ant-collapse-item > .ant-collapse-header {
-  color: #475467;
+  color: #344054;
   font-size: 12px;
 }
 
@@ -569,8 +695,8 @@
   gap: 24px;
   margin: 0;
   padding: 14px 16px;
-  background: #f8fafc;
-  border: 1px solid #edf1f5;
+  background: #f5f7fa;
+  border: 1px solid #d9e1ea;
   border-radius: 10px;
 }
 
@@ -682,6 +808,23 @@
   margin-bottom: 8px;
 }
 
+.monitor-queue-form .ant-form-item-label > label {
+  color: #344054;
+  font-weight: 600;
+}
+
+.monitor-queue-form .ant-input,
+.monitor-queue-form .ant-input-number,
+.monitor-queue-form .ant-btn {
+  min-height: 36px;
+}
+
+.monitor-queue-form .ant-btn-primary {
+  min-width: 112px;
+  font-weight: 650;
+  box-shadow: 0 3px 8px rgba(22, 119, 255, 0.22);
+}
+
 .monitor-queue-form .ant-input-number {
   width: 100%;
 }
@@ -692,7 +835,7 @@
 
 .monitor-queue-form__hint {
   min-width: 0;
-  color: #8a94a6;
+  color: #5f6c80;
   font-size: 11px;
 }
 
@@ -702,14 +845,14 @@
 
 .monitor-completion-notify.ant-btn {
   position: relative;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   padding: 0;
-  color: #98a2b3;
+  color: #667085;
   background: #fff;
-  border: 1px solid #e4e7ec;
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
@@ -772,7 +915,7 @@
 }
 
 .monitor-completion-notify-option small {
-  color: #8a94a6;
+  color: #667085;
   font-size: 11px;
 }
 
@@ -781,13 +924,16 @@
 }
 
 .monitor-queue-table .ant-table-thead > tr > th {
-  color: #667085;
-  font-size: 11px;
-  background: #f7f9fc;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 650;
+  background: #eef3f8;
+  border-bottom-color: #d5dee9;
 }
 
 .monitor-queue-table .ant-table-tbody > tr > td {
   vertical-align: middle;
+  border-bottom-color: #e1e7ef;
 }
 
 .monitor-queue-drag-indicator {
@@ -815,12 +961,12 @@
 .monitor-workbench-activity {
   margin: 0 22px 12px;
   background: #fff;
-  border: 1px solid #e8edf3;
+  border: 1px solid #cbd6e2;
   border-radius: 10px;
 }
 
 .monitor-workbench-activity > .ant-collapse-item > .ant-collapse-header {
-  color: #667085;
+  color: #475467;
   font-size: 12px;
 }
 
@@ -830,8 +976,8 @@
 
 .monitor-current-result {
   padding: 12px;
-  background: #f7f9fc;
-  border: 1px solid #edf1f5;
+  background: #f5f7fa;
+  border: 1px solid #d9e1ea;
   border-radius: 9px;
 }
 
@@ -844,12 +990,12 @@
   display: block;
 }
 
-.monitor-current-result strong { color: #344054; }
-.monitor-current-result span { margin-top: 2px; color: #8a94a6; font-size: 11px; }
+.monitor-current-result strong { color: #25324b; }
+.monitor-current-result span { margin-top: 2px; color: #667085; font-size: 11px; }
 
 .monitor-section-label {
   margin: 15px 0 5px;
-  color: #667085;
+  color: #475467;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -885,7 +1031,7 @@
 }
 
 .monitor-result-item__main strong { color: #344054; font-size: 12px; }
-.monitor-result-item__main span { margin-top: 2px; color: #8a94a6; font-size: 10px; }
+.monitor-result-item__main span { margin-top: 2px; color: #667085; font-size: 10px; }
 
 .monitor-activity-grid {
   display: grid;
@@ -919,7 +1065,7 @@
 .monitor-activity-item__copy > strong {
   display: block;
   overflow: hidden;
-  color: #475467;
+  color: #344054;
   font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -932,7 +1078,7 @@
   align-items: center;
   gap: 8px;
   margin-top: 3px;
-  color: #8a94a6;
+  color: #667085;
   font-size: 10px;
 }
 
@@ -1029,6 +1175,11 @@
 }
 
 @media (max-width: 720px) {
+  .monitor-page {
+    margin: -4px;
+    padding: 10px;
+  }
+
   .monitor-device-grid {
     grid-template-columns: 1fr;
   }

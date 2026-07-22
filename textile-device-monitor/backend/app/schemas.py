@@ -89,6 +89,7 @@ class DeviceStatusHistory(BaseModel):
     status: str
     task_id: Optional[str]
     task_name: Optional[str]
+    inspector_name: Optional[str] = None
     task_progress: Optional[int]
     task_duration_seconds: Optional[int]
     device_metrics: Optional[Dict[str, Any]]

@@ -303,6 +303,12 @@ function HistoryQuery() {
       ),
     },
     {
+      title: '排队人员',
+      dataIndex: 'inspector_name',
+      width: 130,
+      render: value => value || <Typography.Text type="secondary">未记录</Typography.Text>,
+    },
+    {
       title: '检测耗时',
       dataIndex: 'task_duration_seconds',
       width: 125,
@@ -411,8 +417,8 @@ function HistoryQuery() {
               </Form.Item>
             </Col>
             <Col xs={24} sm={12} xl={6}>
-              <Form.Item name="keyword" label="任务关键字">
-                <Input allowClear prefix={<SearchOutlined />} placeholder="任务名称或任务 ID" />
+              <Form.Item name="keyword" label="任务或人员">
+                <Input allowClear prefix={<SearchOutlined />} placeholder="任务名称、任务 ID 或排队人员" />
               </Form.Item>
             </Col>
             <Col xs={24} md={16} xl={8}>
@@ -463,7 +469,7 @@ function HistoryQuery() {
           loading={loading}
           columns={columns}
           dataSource={data}
-          scroll={{ x: 1320 }}
+          scroll={{ x: 1450 }}
           onRow={record => ({
             onClick: () => setDetailRecord(record),
             style: { cursor: 'pointer' },
@@ -513,6 +519,7 @@ function HistoryQuery() {
                 {detailRecord.task_id || '-'}
               </Typography.Text>
             </Descriptions.Item>
+            <Descriptions.Item label="排队人员">{detailRecord.inspector_name || '未记录'}</Descriptions.Item>
             <Descriptions.Item label="最终状态">
               <Tag color={(STATUS_MAP[detailRecord.status] || {}).color || 'default'}>
                 {(STATUS_MAP[detailRecord.status] || {}).label || detailRecord.status || '未知'}

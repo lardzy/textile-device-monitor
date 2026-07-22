@@ -666,7 +666,7 @@ function AreaJobWorkspace() {
                 ]}
               />
             </div>
-            <Spin spinning={imagesLoading}>
+            <Spin spinning={imagesLoading} wrapperClassName="area-image-list-spin">
               <div className="area-image-list">
                 {images.map((item) => {
                   const active = Number(item.image_id) === Number(selectedImageId);

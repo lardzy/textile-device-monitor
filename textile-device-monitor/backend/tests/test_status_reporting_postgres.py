@@ -173,6 +173,12 @@ class PostgreSQLStatusReportingTests(unittest.TestCase):
                 .count(),
                 1,
             )
+            history_record = (
+                db.query(DeviceStatusHistory)
+                .filter_by(device_id=self.device_id)
+                .one()
+            )
+            self.assertEqual(history_record.inspector_name, "Alice")
             self.assertEqual(
                 db.query(QueueRecord)
                 .filter_by(device_id=self.device_id, status=TaskStatus.COMPLETED)

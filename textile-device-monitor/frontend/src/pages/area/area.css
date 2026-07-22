@@ -359,10 +359,26 @@
   border-bottom: 1px solid #edf0f2;
 }
 
+.area-image-list-spin {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.area-image-list-spin > .ant-spin-container {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .area-image-list {
   height: 100%;
+  min-height: 0;
   padding: 6px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .area-image-item {

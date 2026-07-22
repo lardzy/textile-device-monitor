@@ -6,6 +6,14 @@ import pandas as pd
 from io import BytesIO
 
 
+def _excel_safe_text(value: Any) -> str:
+    """Prevent user-entered text from being interpreted as a formula."""
+    text_value = "" if value is None else str(value)
+    if text_value.startswith(("=", "+", "-", "@")):
+        return f"'{text_value}"
+    return text_value
+
+
 def export_history_to_excel(history: Sequence[Any]) -> Response:
     """将历史记录导出为Excel"""
     data = []
@@ -14,12 +22,15 @@ def export_history_to_excel(history: Sequence[Any]) -> Response:
             {
                 "ID": record.id,
                 "设备ID": record.device_id,
-                "状态": record.status,
-                "任务ID": record.task_id or "",
-                "任务名称": record.task_name or "",
+                "状态": _excel_safe_text(record.status),
+                "任务ID": _excel_safe_text(record.task_id),
+                "任务名称": _excel_safe_text(record.task_name),
+                "排队人员": _excel_safe_text(
+                    getattr(record, "inspector_name", None)
+                ),
                 "进度": record.task_progress or 0,
                 "耗时(秒)": record.task_duration_seconds or 0,
-                "设备指标": str(record.device_metrics) if record.device_metrics else "",
+                "设备指标": _excel_safe_text(record.device_metrics),
                 "上报时间": record.reported_at.strftime("%Y-%m-%d %H:%M:%S"),
             }
         )

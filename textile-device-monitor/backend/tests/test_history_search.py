@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 import unittest
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
+from openpyxl import load_workbook
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
+from app import database as database_module
 from app.api.history import export_history, get_history
 from app.crud import history as history_crud
 from app.models import Base, Device, DeviceStatusHistory
+from app.utils.exporters import export_history_to_excel
 
 
 class HistorySearchTests(unittest.TestCase):
@@ -39,13 +43,19 @@ class HistorySearchTests(unittest.TestCase):
         self.db.close()
         Base.metadata.drop_all(bind=self.engine)
 
-    def _add_history(self, task_id: str, task_name: str) -> None:
+    def _add_history(
+        self,
+        task_id: str,
+        task_name: str,
+        inspector_name: str | None = None,
+    ) -> None:
         self.db.add(
             DeviceStatusHistory(
                 device_id=self.device.id,
                 status="idle",
                 task_id=task_id,
                 task_name=task_name,
+                inspector_name=inspector_name,
                 task_progress=100,
                 reported_at=datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc),
             )
@@ -78,6 +88,89 @@ class HistorySearchTests(unittest.TestCase):
 
         self.assertEqual(total, 1)
         self.assertEqual(history[0].task_id, "literal-100%_done")
+
+    def test_keyword_matches_persisted_queue_person(self):
+        self._add_history("task-person", "Person Search", "张三")
+
+        history, total = history_crud.get_device_history(
+            self.db,
+            keyword="张三",
+            limit=20,
+        )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(history[0].inspector_name, "张三")
+
+    def test_list_and_excel_include_queue_person_snapshot(self):
+        self._add_history("task-export", "Export Task", "李工")
+
+        response = get_history(
+            device_id=self.device.id,
+            start_date=None,
+            end_date=None,
+            status=None,
+            task_id="task-export",
+            keyword=None,
+            page=1,
+            page_size=20,
+            db=self.db,
+        )
+        self.assertEqual(response["data"][0]["inspector_name"], "李工")
+
+        history_record = (
+            self.db.query(DeviceStatusHistory)
+            .filter(DeviceStatusHistory.task_id == "task-export")
+            .one()
+        )
+        excel_response = export_history_to_excel([history_record])
+        workbook = load_workbook(BytesIO(excel_response.body), read_only=True)
+        worksheet = workbook["设备状态历史"]
+        headers = [cell.value for cell in next(worksheet.iter_rows(max_row=1))]
+        values = [cell.value for cell in next(worksheet.iter_rows(min_row=2, max_row=2))]
+        exported = dict(zip(headers, values))
+        self.assertEqual(exported["排队人员"], "李工")
+
+    def test_excel_escapes_formula_like_queue_person(self):
+        self._add_history("task-safe-export", "Safe Export", "=1+1")
+        history_record = (
+            self.db.query(DeviceStatusHistory)
+            .filter(DeviceStatusHistory.task_id == "task-safe-export")
+            .one()
+        )
+
+        excel_response = export_history_to_excel([history_record])
+        workbook = load_workbook(BytesIO(excel_response.body), read_only=True)
+        worksheet = workbook["设备状态历史"]
+        headers = [cell.value for cell in next(worksheet.iter_rows(max_row=1))]
+        values = [cell.value for cell in next(worksheet.iter_rows(min_row=2, max_row=2))]
+        exported = dict(zip(headers, values))
+        self.assertEqual(exported["排队人员"], "'=1+1")
+
+    def test_compatibility_schema_adds_queue_person_column(self):
+        legacy_engine = create_engine("sqlite:///:memory:")
+        try:
+            with legacy_engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "CREATE TABLE device_status_history ("
+                        "id INTEGER PRIMARY KEY, device_id INTEGER NOT NULL, "
+                        "status VARCHAR(20) NOT NULL)"
+                    )
+                )
+
+            with patch.object(database_module, "engine", legacy_engine):
+                database_module.ensure_device_status_history_schema()
+                database_module.ensure_device_status_history_schema()
+
+            columns = {
+                column["name"]
+                for column in inspect(legacy_engine).get_columns(
+                    "device_status_history"
+                )
+            }
+            self.assertIn("inspector_name", columns)
+        finally:
+            legacy_engine.dispose()
 
     def test_end_date_is_exclusive(self):
         boundary = datetime(2026, 7, 2, 0, 0, tzinfo=timezone.utc)

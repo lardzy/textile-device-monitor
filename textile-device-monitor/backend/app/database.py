@@ -17,6 +17,33 @@ def get_db():
         db.close()
 
 
+def ensure_device_status_history_schema() -> None:
+    """Add nullable history snapshot fields for existing installations."""
+    inspector = inspect(engine)
+    if "device_status_history" not in inspector.get_table_names():
+        return
+
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("device_status_history")
+    }
+    if "inspector_name" in columns:
+        return
+
+    add_column = (
+        "ADD COLUMN IF NOT EXISTS"
+        if engine.dialect.name == "postgresql"
+        else "ADD COLUMN"
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE device_status_history "
+                f"{add_column} inspector_name VARCHAR(50)"
+            )
+        )
+
+
 def ensure_queue_record_schema() -> None:
     inspector = inspect(engine)
     if "queue_records" not in inspector.get_table_names():

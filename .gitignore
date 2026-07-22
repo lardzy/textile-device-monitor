@@ -16,3 +16,4 @@ __pycache__/
 /textile-device-monitor/frontend/dist/
 /textile-device-monitor/runtime/
 /textile-device-client/config.json
+/textile-device-monitor/.env

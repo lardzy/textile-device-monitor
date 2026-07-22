@@ -161,6 +161,12 @@ class StatusReportingTests(unittest.TestCase):
             self.db.query(DeviceStatusHistory).filter_by(device_id=self.device.id).count(),
             1,
         )
+        history_record = (
+            self.db.query(DeviceStatusHistory)
+            .filter_by(device_id=self.device.id)
+            .one()
+        )
+        self.assertEqual(history_record.inspector_name, "Alice")
         self.db.refresh(queue_record)
         self.assertEqual(queue_record.status, TaskStatus.COMPLETED)
         self.assertEqual(
