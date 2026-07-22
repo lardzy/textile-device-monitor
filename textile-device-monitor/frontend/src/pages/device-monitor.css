@@ -79,7 +79,7 @@
   position: relative;
   display: flex;
   min-width: 0;
-  min-height: 268px;
+  min-height: 216px;
   overflow: hidden;
   flex-direction: column;
   padding: 0;
@@ -87,35 +87,18 @@
   font: inherit;
   text-align: left;
   background: #fff;
-  border: 1px solid var(--monitor-border);
+  border: 1px solid #d8dee8;
   border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.075);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   cursor: pointer;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
   width: 100%;
   height: 100%;
 }
 
-.monitor-device-card::before {
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 4px;
-  background: var(--monitor-status-accent, #98a2b3);
-  content: '';
-}
-
-.monitor-device-card--status-idle { --monitor-status-accent: #389e0d; }
-.monitor-device-card--status-busy { --monitor-status-accent: #1677ff; }
-.monitor-device-card--status-maintenance { --monitor-status-accent: #d48806; }
-.monitor-device-card--status-error { --monitor-status-accent: #cf1322; }
-.monitor-device-card--status-offline { --monitor-status-accent: #667085; }
-
 .monitor-device-card:hover {
-  border-color: #69b1ff;
-  box-shadow: 0 9px 24px rgba(15, 23, 42, 0.13);
+  border-color: #8bb8ef;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.11);
   transform: translateY(-1px);
 }
 
@@ -125,9 +108,9 @@
 }
 
 .monitor-device-card--selected {
-  background: linear-gradient(180deg, #edf6ff 0%, #fff 54%);
+  background: #fbfdff;
   border-color: #1677ff;
-  box-shadow: 0 0 0 2px #1677ff, 0 10px 26px rgba(22, 119, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.14), 0 8px 20px rgba(15, 23, 42, 0.11);
 }
 
 .monitor-device-card--offline {
@@ -138,9 +121,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 15px 16px 12px 18px;
-  border-bottom: 1px solid #dfe6ef;
+  gap: 10px;
+  padding: 12px 14px 9px;
 }
 
 .monitor-device-card__identity {
@@ -215,16 +197,16 @@
   flex: 0 0 auto;
   align-items: flex-end;
   flex-direction: column;
-  gap: 7px;
+  gap: 5px;
 }
 
 .monitor-device-card__queue {
   display: inline-flex;
-  min-width: 66px;
+  min-width: 60px;
   align-items: baseline;
   justify-content: center;
   gap: 3px;
-  padding: 4px 8px;
+  padding: 3px 7px;
   color: #475467;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -240,7 +222,7 @@
 }
 
 .monitor-device-card__queue strong {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1;
 }
@@ -252,8 +234,8 @@
 }
 
 .monitor-device-card__task {
-  min-height: 102px;
-  padding: 13px 16px 8px;
+  min-height: 78px;
+  padding: 8px 14px 5px;
 }
 
 .monitor-device-card__task-title {
@@ -290,7 +272,7 @@
 }
 
 .monitor-device-card__task .ant-progress-bg {
-  height: 10px !important;
+  height: 7px !important;
 }
 
 .monitor-device-card__task .ant-progress-inner {
@@ -309,10 +291,10 @@
 
 .monitor-device-card__state-copy {
   display: flex;
-  min-height: 70px;
+  min-height: 54px;
   align-items: center;
   gap: 9px;
-  padding: 10px 12px;
+  padding: 7px 10px;
   color: var(--monitor-text-secondary);
   font-size: 12px;
   line-height: 1.5;
@@ -323,7 +305,7 @@
 
 .monitor-device-card__state-copy .anticon {
   flex: 0 0 auto;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .monitor-device-card__state-copy span {
@@ -336,7 +318,7 @@
 }
 
 .monitor-device-card__state-copy strong {
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.4;
 }
 
@@ -359,9 +341,9 @@
 .monitor-device-card__meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 12px;
+  gap: 12px;
   margin-top: auto;
-  padding: 10px 16px 4px 18px;
+  padding: 7px 14px 8px;
   border-top: 1px solid #e3e9f1;
 }
 
@@ -390,22 +372,22 @@
 
 .monitor-device-card__footer {
   display: flex;
-  min-height: 32px;
+  min-height: 28px;
   align-items: center;
   justify-content: flex-start;
   gap: 7px;
-  padding: 2px 16px 10px;
+  padding: 0 14px 7px;
 }
 
 .monitor-device-card-shell--selected .monitor-device-card__footer {
-  padding-right: 132px;
+  padding-right: 124px;
 }
 
 .monitor-device-card__quick-action {
   position: absolute;
   z-index: 2;
-  right: 16px;
-  bottom: 9px;
+  right: 12px;
+  bottom: 7px;
   box-shadow: 0 4px 12px rgba(22, 119, 255, 0.22);
 }
 
@@ -427,7 +409,7 @@
 }
 
 .monitor-device-card-skeleton.ant-card {
-  min-height: 238px;
+  min-height: 216px;
   border-color: var(--monitor-border);
   border-radius: 12px;
 }
@@ -1258,7 +1240,7 @@
   }
 
   .monitor-device-card {
-    min-height: 224px;
+    min-height: 206px;
   }
 
   .monitor-device-card__quick-action {

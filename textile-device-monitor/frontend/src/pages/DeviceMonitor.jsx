@@ -298,19 +298,6 @@ const DeviceOverviewCard = ({ device, selected, onSelect, onQuickQueue }) => {
       <div className="monitor-device-card__meta">
         <span><small>位置</small>{device.location || '-'}</span>
         <span><small>型号</small>{device.model || '-'}</span>
-        <Tooltip
-          title={(device.status === 'offline' ? device.offline_last_seen : device.last_heartbeat)
-            ? formatDateTime(device.status === 'offline' ? device.offline_last_seen : device.last_heartbeat)
-            : undefined}
-        >
-          <span>
-            <small>{device.status === 'offline' ? '离线于' : '心跳'}</small>
-            {(device.status === 'offline' ? device.offline_last_seen : device.last_heartbeat)
-              ? formatRelativeTime(device.status === 'offline' ? device.offline_last_seen : device.last_heartbeat)
-              : '-'}
-          </span>
-        </Tooltip>
-        <span><small>温度</small>{formatTemperature(device.metrics?.temperature)}</span>
       </div>
         <div className="monitor-device-card__footer">
           <QueueTimeoutNotice device={device} compact />
