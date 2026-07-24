@@ -15,6 +15,7 @@ logger = logging.getLogger("area-infer")
 class WarmupRequest(BaseModel):
     model_name: str = Field(..., min_length=1)
     model_file: str = Field(..., min_length=1)
+    class_mapping_version: int | None = Field(default=None, ge=1)
 
 
 class InferRequest(BaseModel):
@@ -22,6 +23,7 @@ class InferRequest(BaseModel):
     model_file: str = Field(..., min_length=1)
     image_bytes_b64: str = Field(..., min_length=1)
     inference_options: dict[str, Any] | None = None
+    class_mapping_version: int | None = Field(default=None, ge=1)
 
 
 @app.get("/health")
@@ -39,6 +41,7 @@ def warmup(payload: WarmupRequest) -> dict[str, Any]:
         return engine.warmup(
             model_name=payload.model_name,
             model_file=payload.model_file,
+            class_mapping_version=payload.class_mapping_version,
         )
     except InferServiceError as exc:
         logger.exception("warmup_failed code=%s message=%s", exc.code, exc.message)
@@ -54,6 +57,7 @@ def infer(payload: InferRequest) -> dict[str, Any]:
             model_file=payload.model_file,
             image_bytes_b64=payload.image_bytes_b64,
             inference_options=payload.inference_options,
+            class_mapping_version=payload.class_mapping_version,
         )
     except InferServiceError as exc:
         logger.exception("infer_failed code=%s message=%s", exc.code, exc.message)

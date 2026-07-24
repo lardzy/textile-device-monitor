@@ -157,6 +157,7 @@ async def report_device_status(
     report_id = str(status_report.report_id) if status_report.report_id else None
     completed_message = None
     placeholder_message = None
+    placeholder_removed_message = None
 
     try:
         # All reports for one device are serialized in PostgreSQL. The lock is
@@ -311,6 +312,15 @@ async def report_device_status(
         ):
             placeholder_record = queue_crud.create_placeholder_if_missing(db, device_id)
 
+        removed_placeholders = []
+        if (
+            is_laser_confocal
+            and current_status == ModelDeviceStatus.IDLE.value
+        ):
+            removed_placeholders = queue_crud.cleanup_idle_orphan_placeholders(
+                db, device_id
+            )
+
         queue_count = queue_crud.get_queue_count(db, device_id)
         if completed_record:
             completed_message = {
@@ -337,6 +347,19 @@ async def report_device_status(
                     "queue_id": placeholder_record.id,
                     "queue_count": queue_count,
                     "inspector_name": placeholder_record.inspector_name,
+                    "device_name": device.name,
+                },
+            }
+        if removed_placeholders:
+            placeholder_removed_message = {
+                "type": "queue_update",
+                "data": {
+                    "device_id": device.id,
+                    "action": "placeholder_auto_remove",
+                    "queue_count": queue_count,
+                    "auto_removed_queue_ids": [
+                        record.id for record in removed_placeholders
+                    ],
                     "device_name": device.name,
                 },
             }
@@ -387,6 +410,8 @@ async def report_device_status(
         schedule_websocket_broadcast(completed_message)
     if placeholder_message:
         schedule_websocket_broadcast(placeholder_message)
+    if placeholder_removed_message:
+        schedule_websocket_broadcast(placeholder_removed_message)
     schedule_websocket_broadcast(
         {"type": "device_status_update", "data": response_snapshot}
     )

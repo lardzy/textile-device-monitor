@@ -53,6 +53,10 @@ import {
   polygonArea,
   polygonBbox,
 } from './areaUtils';
+import {
+  isCurrentAreaRequest,
+  shouldApplyAreaImageResponse,
+} from './areaRequestGuard';
 
 const COLORS = ['#1677ff', '#13a8a8', '#52c41a', '#722ed1', '#fa8c16', '#eb2f96'];
 const MIN_SCALE = 0.05;
@@ -102,10 +106,14 @@ function AreaJobWorkspace() {
 
   const canvasRef = useRef(null);
   const dragRef = useRef(null);
+  const imagesRequestSeqRef = useRef(0);
+  const detailRequestSeqRef = useRef(0);
+  const selectedImageIdRef = useRef(selectedImageId);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [viewport, setViewport] = useState({ scale: 1, x: 0, y: 0 });
   const [manualViewport, setManualViewport] = useState(false);
 
+  selectedImageIdRef.current = selectedImageId;
   const classNames = detail?.class_names || [];
   const imageMeta = detail?.image || null;
   const naturalWidth = Number(imageMeta?.width || 0);
@@ -150,6 +158,8 @@ function AreaJobWorkspace() {
   }, [jobId]);
 
   const loadImages = useCallback(async ({ preserveSelection = true } = {}) => {
+    const requestSeq = imagesRequestSeqRef.current + 1;
+    imagesRequestSeqRef.current = requestSeq;
     setImagesLoading(true);
     try {
       const payload = await areaApi.getEditorImages(jobId, {
@@ -158,37 +168,69 @@ function AreaJobWorkspace() {
         q: imageQuery || undefined,
         state: imageFilter,
       });
+      if (!isCurrentAreaRequest(requestSeq, imagesRequestSeqRef.current)) return;
       const nextItems = payload?.items || [];
       setImages(nextItems);
       setImagesTotal(Number(payload?.total || 0));
       const selectionStillVisible = nextItems.some((item) => Number(item.image_id) === Number(selectedImageId));
       if ((!preserveSelection || !selectionStillVisible) && nextItems[0]) {
+        detailRequestSeqRef.current += 1;
+        selectedImageIdRef.current = Number(nextItems[0].image_id);
+        setDetailLoading(true);
         setSearchParams({ image: String(nextItems[0].image_id) }, { replace: true });
       }
-      if (!nextItems.length) setDetail(null);
+      if (!nextItems.length) {
+        detailRequestSeqRef.current += 1;
+        setDetailLoading(false);
+        setDetail(null);
+        setInstances([]);
+        setSelectedInstanceKey('');
+      }
     } catch (error) {
+      if (!isCurrentAreaRequest(requestSeq, imagesRequestSeqRef.current)) return;
       message.error(getAreaErrorMessage(error, '图片列表加载失败'));
       setImages([]);
       setImagesTotal(0);
     } finally {
-      setImagesLoading(false);
+      if (isCurrentAreaRequest(requestSeq, imagesRequestSeqRef.current)) {
+        setImagesLoading(false);
+      }
     }
   }, [imageFilter, imageQuery, jobId, selectedImageId, setSearchParams]);
 
   const loadDetail = useCallback(async (imageId) => {
     if (!imageId) return;
+    const requestSeq = detailRequestSeqRef.current + 1;
+    detailRequestSeqRef.current = requestSeq;
     setDetailLoading(true);
     try {
       const payload = await areaApi.getEditorImage(jobId, imageId);
+      if (!shouldApplyAreaImageResponse({
+        requestSeq,
+        currentRequestSeq: detailRequestSeqRef.current,
+        requestedImageId: imageId,
+        selectedImageId: selectedImageIdRef.current,
+      })) return;
       applyDetail(payload);
     } catch (error) {
+      if (!shouldApplyAreaImageResponse({
+        requestSeq,
+        currentRequestSeq: detailRequestSeqRef.current,
+        requestedImageId: imageId,
+        selectedImageId: selectedImageIdRef.current,
+      })) return;
       setDetail(null);
       setInstances([]);
       message.error(getAreaErrorMessage(error, '图片详情加载失败'));
     } finally {
-      setDetailLoading(false);
+      if (requestSeq === detailRequestSeqRef.current) setDetailLoading(false);
     }
   }, [applyDetail, jobId]);
+
+  useEffect(() => () => {
+    imagesRequestSeqRef.current += 1;
+    detailRequestSeqRef.current += 1;
+  }, [jobId]);
 
   useEffect(() => {
     loadJob();
@@ -295,7 +337,11 @@ function AreaJobWorkspace() {
 
   const selectImage = useCallback((imageId) => {
     if (Number(imageId) === Number(selectedImageId)) return;
-    guardDirty(() => setSearchParams({ image: String(imageId) }));
+    guardDirty(() => {
+      detailRequestSeqRef.current += 1;
+      setDetailLoading(true);
+      setSearchParams({ image: String(imageId) });
+    });
   }, [guardDirty, selectedImageId, setSearchParams]);
 
   const finishDraft = useCallback((points = draftPoints) => {
@@ -486,6 +532,14 @@ function AreaJobWorkspace() {
 
   const saveEditor = async () => {
     if (!detail || !selectedImageId) return;
+    const editingImageId = selectedImageId;
+    const editingRequestSeq = detailRequestSeqRef.current;
+    const isCurrentEditingRequest = () => shouldApplyAreaImageResponse({
+      requestSeq: editingRequestSeq,
+      currentRequestSeq: detailRequestSeqRef.current,
+      requestedImageId: editingImageId,
+      selectedImageId: selectedImageIdRef.current,
+    });
     setSaving(true);
     try {
       const result = await areaApi.saveEditorImage(jobId, selectedImageId, {
@@ -500,12 +554,15 @@ function AreaJobWorkspace() {
           is_deleted: Boolean(item.is_deleted),
         })),
       });
-      if (result?.detail) applyDetail(result.detail);
-      else await loadDetail(selectedImageId);
+      if (isCurrentEditingRequest()) {
+        if (result?.detail) applyDetail(result.detail);
+        else await loadDetail(editingImageId);
+        message.success('当前图片已保存');
+      }
       await loadImages({ preserveSelection: true });
-      message.success('当前图片已保存');
     } catch (error) {
       if (error.status === 409 && error.message === 'edit_version_conflict') {
+        if (!isCurrentEditingRequest()) return;
         const editorText = error.detail?.edited_by_id ? `，更新终端：${error.detail.edited_by_id}` : '';
         Modal.confirm({
           title: '图片结果已被更新',
@@ -513,10 +570,16 @@ function AreaJobWorkspace() {
           okText: '加载最新版本',
           okButtonProps: { danger: true },
           cancelText: '保留当前修改',
-          onOk: () => loadDetail(selectedImageId),
+          onOk: () => (
+            isCurrentEditingRequest()
+              ? loadDetail(editingImageId)
+              : undefined
+          ),
         });
       } else {
-        message.error(getAreaErrorMessage(error, '保存失败'));
+        if (isCurrentEditingRequest()) {
+          message.error(getAreaErrorMessage(error, '保存失败'));
+        }
       }
     } finally {
       setSaving(false);
@@ -531,20 +594,32 @@ function AreaJobWorkspace() {
       okButtonProps: { danger: true },
       cancelText: '取消',
       async onOk() {
+        const resettingImageId = selectedImageId;
+        const resettingRequestSeq = detailRequestSeqRef.current;
+        const isCurrentResetRequest = () => shouldApplyAreaImageResponse({
+          requestSeq: resettingRequestSeq,
+          currentRequestSeq: detailRequestSeqRef.current,
+          requestedImageId: resettingImageId,
+          selectedImageId: selectedImageIdRef.current,
+        });
         try {
           const result = await areaApi.resetEditorImage(jobId, selectedImageId, {
             edited_by_id: queueUserId.current,
             expected_edit_version: Number(detail?.image?.edit_version || 0),
           });
-          if (result?.detail) applyDetail(result.detail);
-          else await loadDetail(selectedImageId);
+          if (isCurrentResetRequest()) {
+            if (result?.detail) applyDetail(result.detail);
+            else await loadDetail(resettingImageId);
+            message.success('已恢复初始识别结果');
+          }
           await loadImages({ preserveSelection: true });
-          message.success('已恢复初始识别结果');
         } catch (error) {
-          if (error.status === 409) {
-            message.error('图片已被其他终端更新，请先加载最新版本');
-          } else {
-            message.error(getAreaErrorMessage(error, '恢复失败'));
+          if (isCurrentResetRequest()) {
+            if (error.status === 409) {
+              message.error('图片已被其他终端更新，请先加载最新版本');
+            } else {
+              message.error(getAreaErrorMessage(error, '恢复失败'));
+            }
           }
           throw error;
         }

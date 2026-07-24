@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.crud import area as area_crud
 from app.database import get_db
-from app.services.area_jobs import AreaEditConflictError, area_job_manager
+from app.services.area_jobs import (
+    OVERLAY_CLASS_MAPPING_VERSION,
+    AreaEditConflictError,
+    area_job_manager,
+)
 
 router = APIRouter(prefix="/area", tags=["area"])
 
@@ -64,6 +68,22 @@ def _with_artifact_urls(job: dict) -> dict:
             "images": f"/api/area/jobs/{job_id}/artifacts/images",
             "editor_images": f"/api/area/jobs/{job_id}/editor/images",
         }
+    return payload
+
+
+def _with_editor_image_urls(job_id: str, image_id: int, detail: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(detail)
+    image = dict(payload.get("image") or {})
+    overlay_filename = str(image.get("overlay_filename") or "")
+    edit_version = max(0, int(image.get("edit_version") or 0))
+    image["overlay_url"] = (
+        f"/api/area/jobs/{job_id}/artifacts/image/{overlay_filename}"
+        f"?v={edit_version}&mapping={OVERLAY_CLASS_MAPPING_VERSION}"
+        if overlay_filename
+        else ""
+    )
+    image["source_url"] = f"/api/area/jobs/{job_id}/editor/images/{image_id}/source"
+    payload["image"] = image
     return payload
 
 
@@ -302,6 +322,7 @@ def list_area_images(
         item_payload = dict(item)
         item_payload["url"] = (
             f"/api/area/jobs/{job_id}/artifacts/image/{overlay_filename}"
+            f"?mapping={OVERLAY_CLASS_MAPPING_VERSION}"
             if overlay_filename
             else ""
         )
@@ -378,29 +399,23 @@ def get_area_editor_image(job_id: str, image_id: int):
     payload = area_job_manager.get_editor_image(job_id, image_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="image_not_found")
-    image = payload.get("image") or {}
-    overlay_filename = image.get("overlay_filename") or ""
-    image["overlay_url"] = (
-        f"/api/area/jobs/{job_id}/artifacts/image/{overlay_filename}"
-        if overlay_filename
-        else ""
-    )
-    image["source_url"] = f"/api/area/jobs/{job_id}/editor/images/{image_id}/source"
-    payload["image"] = image
-    return payload
+    return _with_editor_image_urls(job_id, image_id, payload)
 
 
 @router.put("/jobs/{job_id}/editor/images/{image_id}")
 def save_area_editor_image(job_id: str, image_id: int, payload: AreaEditorSavePayload):
     _ensure_enabled()
     try:
-        return area_job_manager.save_editor_image(
+        result = area_job_manager.save_editor_image(
             job_id=job_id,
             image_id=image_id,
             instances_payload=payload.instances,
             edited_by_id=payload.edited_by_id,
             expected_edit_version=payload.expected_edit_version,
         )
+        if isinstance(result.get("detail"), dict):
+            result["detail"] = _with_editor_image_urls(job_id, image_id, result["detail"])
+        return result
     except AreaEditConflictError as exc:
         raise HTTPException(
             status_code=409,
@@ -419,12 +434,15 @@ def save_area_editor_image(job_id: str, image_id: int, payload: AreaEditorSavePa
 def reset_area_editor_image(job_id: str, image_id: int, payload: AreaEditorResetPayload):
     _ensure_enabled()
     try:
-        return area_job_manager.reset_editor_image(
+        result = area_job_manager.reset_editor_image(
             job_id=job_id,
             image_id=image_id,
             edited_by_id=payload.edited_by_id,
             expected_edit_version=payload.expected_edit_version,
         )
+        if isinstance(result.get("detail"), dict):
+            result["detail"] = _with_editor_image_urls(job_id, image_id, result["detail"])
+        return result
     except AreaEditConflictError as exc:
         raise HTTPException(
             status_code=409,

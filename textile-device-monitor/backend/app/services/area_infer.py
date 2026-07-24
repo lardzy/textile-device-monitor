@@ -16,6 +16,30 @@ LABEL_ALIAS = {
     "莫": "莫代尔",
 }
 
+CANONICAL_CLASS_MAPPINGS = {
+    "trusted_metadata_v1",
+    "canonicalized_by_backend_v1",
+    "caller_display_order_v1",
+}
+
+# Older area-infer images used the display-name order as the class-index order.
+# The actual index order of these two weights is reversed, so old responses
+# need one compatibility conversion before they are persisted.
+LEGACY_CLASS_SWAP_BY_MODEL: dict[str, dict[str, str]] = {
+    "棉-莱赛尔": {
+        "棉": "莱赛尔",
+        "莱赛尔": "棉",
+    },
+    "粘纤-莱赛尔": {
+        "粘纤": "莱赛尔",
+        "莱赛尔": "粘纤",
+    },
+}
+LEGACY_CLASS_SWAP_MODEL_FILES: dict[str, str] = {
+    "棉-莱赛尔": "b_c1_1.3.pth",
+    "粘纤-莱赛尔": "b_v1_1.3.pth",
+}
+
 
 @dataclass
 class AreaInstance:
@@ -56,6 +80,8 @@ KNOWN_INFER_ERRORS = {
     "infer_bad_response",
 }
 
+CLASS_MAPPING_VERSION = 1
+
 
 def parse_model_classes(model_name: str) -> list[str]:
     classes: list[str] = []
@@ -69,6 +95,54 @@ def parse_model_classes(model_name: str) -> list[str]:
         if item not in deduped:
             deduped.append(item)
     return deduped or ["未分类"]
+
+
+def normalize_model_name(model_name: str) -> str:
+    token = str(model_name or "").replace(" ", "").strip()
+    if not token:
+        return ""
+    return "-".join(parse_model_classes(token))
+
+
+def normalize_class_name(class_name: str) -> str:
+    token = str(class_name or "").strip() or "未分类"
+    return LABEL_ALIAS.get(token, token)
+
+
+def uses_canonical_class_mapping(engine_meta: dict[str, Any] | None) -> bool:
+    if not isinstance(engine_meta, dict):
+        return False
+    return str(engine_meta.get("class_mapping") or "").strip() in CANONICAL_CLASS_MAPPINGS
+
+
+def requires_legacy_class_remap(
+    model_name: str,
+    model_file: str | None = None,
+) -> bool:
+    normalized_model = normalize_model_name(model_name)
+    expected_file = LEGACY_CLASS_SWAP_MODEL_FILES.get(normalized_model)
+    if not expected_file:
+        return False
+    supplied_file = Path(str(model_file or "").strip()).name
+    if supplied_file:
+        return supplied_file.casefold() == expected_file.casefold()
+    return True
+
+
+def canonicalize_infer_class_name(
+    model_name: str,
+    class_name: str,
+    *,
+    engine_meta: dict[str, Any] | None,
+    model_file: str | None = None,
+) -> str:
+    normalized = normalize_class_name(class_name)
+    if uses_canonical_class_mapping(engine_meta):
+        return normalized
+    if not requires_legacy_class_remap(model_name, model_file):
+        return normalized
+    mapping = LEGACY_CLASS_SWAP_BY_MODEL.get(normalize_model_name(model_name), {})
+    return mapping.get(normalized, normalized)
 
 
 class AreaPredictor:
@@ -155,6 +229,7 @@ class AreaPredictor:
         payload = {
             "model_name": model_name,
             "model_file": model_file,
+            "class_mapping_version": CLASS_MAPPING_VERSION,
         }
         try:
             response = requests.post(f"{base_url}/v1/warmup", json=payload, timeout=timeout)
@@ -195,6 +270,7 @@ class AreaPredictor:
         request_payload = {
             "model_name": model_name,
             "model_file": model_file or weight_path.name,
+            "class_mapping_version": CLASS_MAPPING_VERSION,
             "image_bytes_b64": base64.b64encode(image_path.read_bytes()).decode("utf-8"),
             "inference_options": dict(DEFAULT_INFER_OPTIONS) | dict(inference_options or {}),
         }
@@ -223,19 +299,40 @@ class AreaPredictor:
         if not isinstance(payload, dict):
             raise RuntimeError("infer_bad_response")
 
+        raw_engine_meta = payload.get("engine_meta")
+        if not isinstance(raw_engine_meta, dict):
+            raw_engine_meta = {}
+        upstream_mapping = str(raw_engine_meta.get("class_mapping") or "").strip()
+        requested_model_file = model_file or weight_path.name
+        legacy_remap_required = (
+            not uses_canonical_class_mapping(raw_engine_meta)
+            and requires_legacy_class_remap(model_name, requested_model_file)
+        )
+        engine_meta = dict(raw_engine_meta)
+        if not uses_canonical_class_mapping(engine_meta):
+            if upstream_mapping:
+                engine_meta["upstream_class_mapping"] = upstream_mapping
+            engine_meta["class_mapping"] = "canonicalized_by_backend_v1"
+            engine_meta["class_names"] = parse_model_classes(model_name)
+            if legacy_remap_required:
+                engine_meta["legacy_class_remap_applied"] = True
+
         classes = parse_model_classes(model_name)
         per_class: dict[str, int] = {name: 0 for name in classes}
         raw_per_class = payload.get("per_class_area_px")
         if isinstance(raw_per_class, dict):
             for class_name, area in raw_per_class.items():
-                key = str(class_name or "").strip()
-                if not key:
-                    continue
+                key = canonicalize_infer_class_name(
+                    model_name,
+                    str(class_name or ""),
+                    engine_meta=raw_engine_meta,
+                    model_file=requested_model_file,
+                )
                 try:
                     area_px = int(area)
                 except (TypeError, ValueError):
                     area_px = 0
-                per_class[key] = max(0, area_px)
+                per_class[key] = per_class.get(key, 0) + max(0, area_px)
 
         instances: list[AreaInstance] = []
         raw_instances = payload.get("instances")
@@ -243,7 +340,12 @@ class AreaPredictor:
             for item in raw_instances:
                 if not isinstance(item, dict):
                     continue
-                class_name = str(item.get("class_name") or "").strip() or "未分类"
+                class_name = canonicalize_infer_class_name(
+                    model_name,
+                    str(item.get("class_name") or ""),
+                    engine_meta=raw_engine_meta,
+                    model_file=requested_model_file,
+                )
                 bbox_raw = item.get("bbox")
                 if not isinstance(bbox_raw, (list, tuple)) or len(bbox_raw) != 4:
                     continue
@@ -306,10 +408,6 @@ class AreaPredictor:
         if total_area <= 0:
             total_area = int(sum(max(0, int(inst.area_px)) for inst in instances))
         total_area = max(0, total_area)
-
-        engine_meta = payload.get("engine_meta")
-        if not isinstance(engine_meta, dict):
-            engine_meta = {}
 
         return AreaImageInferenceResult(
             image_name=str(payload.get("image_name") or image_path.name),

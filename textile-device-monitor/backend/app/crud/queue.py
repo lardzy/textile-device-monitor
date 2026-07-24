@@ -11,6 +11,7 @@ from app.schemas import QueueCreate, PositionChange, QueueClaimRequest
 PLACEHOLDER_NAME = "占位人员"
 PLACEHOLDER_CREATE_REMARK = "系统因设备从空闲进入检测中，自动创建占位人员"
 PLACEHOLDER_AUTO_REMOVE_REMARK = "占位人员已不在正在使用位置，系统自动移除"
+PLACEHOLDER_IDLE_REMOVE_REMARK = "设备已空闲且无人排队，系统自动移除占位人员"
 PLACEHOLDER_DELETE_REMARK = "占位人员已被手动删除"
 
 
@@ -251,6 +252,51 @@ def cleanup_inactive_placeholders(db: Session, device_id: int) -> List[QueueReco
         normalize_queue_positions(db, device_id)
 
     return removed_records
+
+
+def cleanup_idle_orphan_placeholders(
+    db: Session, device_id: int
+) -> List[QueueRecord]:
+    """Remove unclaimed placeholders when they are the device's only waiters.
+
+    A laser-confocal device can briefly report ``busy`` while its last sample is
+    being removed. That transition creates an unclaimed placeholder, but the
+    following ``idle`` report proves nobody is using the device. Claimed
+    placeholders and queues containing a real person are deliberately left
+    untouched.
+    """
+    if lock_device_queue(db, device_id) is None:
+        return []
+
+    queue = get_queue_by_device(db, device_id)
+    orphan_placeholders = [
+        record
+        for record in queue
+        if record.is_placeholder and record.auto_remove_when_inactive
+    ]
+    if not orphan_placeholders or len(orphan_placeholders) != len(queue):
+        return []
+
+    removed_at = datetime.now(timezone.utc)
+    for record in orphan_placeholders:
+        old_position = record.position
+        record.status = TaskStatus.COMPLETED
+        record.completed_at = removed_at
+        record.version = (record.version or 0) + 1
+        _add_queue_log(
+            db,
+            queue_id=record.id,
+            old_position=old_position,
+            new_position=-1,
+            changed_by="系统",
+            changed_by_id=None,
+            change_type="placeholder_auto_remove",
+            remark=PLACEHOLDER_IDLE_REMOVE_REMARK,
+        )
+
+    db.flush()
+    normalize_queue_positions(db, device_id)
+    return orphan_placeholders
 
 
 def update_queue_position(

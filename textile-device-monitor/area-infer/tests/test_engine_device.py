@@ -72,6 +72,22 @@ class EngineDeviceRoutingTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.code, "infer_service_unavailable")
 
+    def test_model_cache_separates_legacy_and_canonical_mapping_modes(self) -> None:
+        engine = self._new_engine("cpu", "warn_continue")
+
+        legacy_key = engine._model_cache_key(
+            "model.pth",
+            ("棉", "粘纤"),
+            "legacy_display_order",
+        )
+        canonical_key = engine._model_cache_key(
+            "model.pth",
+            ("棉", "粘纤"),
+            "trusted_metadata_v1",
+        )
+
+        self.assertNotEqual(legacy_key, canonical_key)
+
 
 if __name__ == "__main__":
     unittest.main()

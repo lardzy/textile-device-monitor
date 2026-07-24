@@ -45,16 +45,7 @@ OVERLAY_CLASS_LABEL_EN: dict[str, str] = {
     "再生纤维素纤维": "RCF",
     "未分类": "Unknown",
 }
-OVERLAY_LABEL_CLASS_SWAP_BY_MODEL: dict[str, dict[str, str]] = {
-    "棉-莱赛尔": {
-        "棉": "莱赛尔",
-        "莱赛尔": "棉",
-    },
-    "粘纤-莱赛尔": {
-        "粘纤": "莱赛尔",
-        "莱赛尔": "粘纤",
-    },
-}
+OVERLAY_CLASS_MAPPING_VERSION = "semantic-v1"
 
 INVALID_OUTPUT_CHARS_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 MAX_TEMPLATE_INSTANCE_ROWS = 2990
@@ -248,7 +239,9 @@ class AreaJobManager:
             output_dir=str(output_dir),
             overlay_dir=str(overlay_dir),
             result_json_path=str(output_dir / f"{safe_output_name}.json"),
-            excel_path=str(output_dir / f"{safe_output_name}.xls"),
+            excel_path=str(
+                output_dir / self._excel_output_filename(normalized_folder)
+            ),
             infer_url=normalized_infer_url,
             infer_timeout_sec=normalized_infer_timeout,
             inference_options=normalized_options,
@@ -657,6 +650,7 @@ class AreaJobManager:
             image_row = (
                 db.query(AreaJobImage)
                 .filter(AreaJobImage.id == image_id, AreaJobImage.job_id == job.id)
+                .with_for_update()
                 .first()
             )
             if image_row is None:
@@ -683,7 +677,10 @@ class AreaJobManager:
                 instance_id = int(payload.get("instance_id") or 0)
                 row = inst_map.get(instance_id)
                 is_deleted = bool(payload.get("is_deleted", False))
-                class_name = str(payload.get("class_name") or (row.class_name if row is not None else "")).strip()
+                class_name = str(
+                    payload.get("class_name")
+                    or (row.class_name if row is not None else "")
+                ).strip()
                 if class_name not in valid_classes:
                     raise ValueError("invalid_class_name")
 
@@ -740,8 +737,8 @@ class AreaJobManager:
                 .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
                 .all()
             )
-            self._render_overlay_for_image(job, image_row, refreshed_instances)
             self._rebuild_job_outputs(db, job)
+            self._render_overlay_for_image(job, image_row, refreshed_instances)
             db.commit()
             detail = self.get_editor_image(job_id, image_id)
             return {
@@ -776,6 +773,7 @@ class AreaJobManager:
             image_row = (
                 db.query(AreaJobImage)
                 .filter(AreaJobImage.id == image_id, AreaJobImage.job_id == job.id)
+                .with_for_update()
                 .first()
             )
             if image_row is None:
@@ -813,8 +811,8 @@ class AreaJobManager:
                 .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
                 .all()
             )
-            self._render_overlay_for_image(job, image_row, refreshed_instances)
             self._rebuild_job_outputs(db, job)
+            self._render_overlay_for_image(job, image_row, refreshed_instances)
             db.commit()
             detail = self.get_editor_image(job_id, image_id)
             return {
@@ -1420,6 +1418,13 @@ class AreaJobManager:
         token = re.sub(r"\s+", "_", token)
         return token[:120]
 
+    def _excel_output_filename(self, folder_name: str) -> str:
+        sample_prefix = self._safe_output_component(folder_name)
+        template_name = Path(settings.AREA_EXCEL_TEMPLATE_PATH).name
+        if not template_name:
+            template_name = "-面积识别结果.xls"
+        return f"{sample_prefix}{template_name}"
+
     def _root_path_candidates(self, root_path: str) -> list[Path]:
         raw = root_path.strip()
         if not raw:
@@ -1567,18 +1572,8 @@ class AreaJobManager:
             value = value * 26 + (ord(ch) - ord("A") + 1)
         return value - 1
 
-    def _build_template_class_id_map(self, model_name: str, class_names: list[str]) -> dict[str, int]:
-        class_id_map = {class_name: idx + 1 for idx, class_name in enumerate(class_names)}
-        normalized_model_name = str(model_name or "").replace(" ", "")
-        # Keep compatibility with legacy template numbering for the cotton-lyocell model.
-        if normalized_model_name == "棉-莱赛尔" and {"棉", "莱赛尔"}.issubset(class_id_map):
-            class_id_map["棉"] = 2
-            class_id_map["莱赛尔"] = 1
-        # Keep compatibility with legacy template numbering for viscose-lyocell model.
-        if normalized_model_name == "粘纤-莱赛尔" and {"粘纤", "莱赛尔"}.issubset(class_id_map):
-            class_id_map["粘纤"] = 2
-            class_id_map["莱赛尔"] = 1
-        return class_id_map
+    def _build_template_class_id_map(self, class_names: list[str]) -> dict[str, int]:
+        return {class_name: idx + 1 for idx, class_name in enumerate(class_names)}
 
     def _build_excel(
         self,
@@ -1596,7 +1591,7 @@ class AreaJobManager:
             raise AreaExcelTemplateError("excel_template_invalid", "template_class_slots_exceeded")
         if len(template_instances) > MAX_TEMPLATE_INSTANCE_ROWS:
             raise AreaExcelTemplateError("excel_template_capacity_exceeded")
-        class_id_map = self._build_template_class_id_map(job.model_name, class_names)
+        class_id_map = self._build_template_class_id_map(class_names)
         write_rows: list[dict[str, float | int]] = []
         for row in template_instances:
             class_name = str(row.get("class_name") or "").strip()
@@ -1750,7 +1745,11 @@ class AreaJobManager:
         data = mask.getdata()
         return sum(1 for value in data if value > 0)
 
-    def _refresh_image_area_stats(self, db, image_row: AreaJobImage) -> None:
+    def _refresh_image_area_stats(
+        self,
+        db,
+        image_row: AreaJobImage,
+    ) -> None:
         rows = (
             db.query(AreaJobInstance)
             .filter(AreaJobInstance.image_id == image_row.id)
@@ -1768,28 +1767,32 @@ class AreaJobManager:
         image_row.per_class_area_px = per_class
         image_row.total_area_px = total
 
-    def _render_overlay_for_image(self, job: AreaJob, image_row: AreaJobImage, rows: list[AreaJobInstance]) -> None:
+    def _render_overlay_for_image(
+        self,
+        job: AreaJob,
+        image_row: AreaJobImage,
+        rows: list[AreaJobInstance],
+    ) -> bool:
         source_path = Path(image_row.source_image_path)
         if not source_path.exists():
-            return
+            return False
         try:
             base = Image.open(source_path).convert("RGBA")
         except Exception:
-            return
+            return False
 
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay, "RGBA")
         classes = parse_model_classes(job.model_name)
-        normalized_model_name = str(job.model_name or "").replace(" ", "")
-        overlay_label_swap = OVERLAY_LABEL_CLASS_SWAP_BY_MODEL.get(normalized_model_name, {})
-        class_to_color: dict[str, tuple[int, int, int]] = {}
-        for idx, name in enumerate(classes):
-            class_to_color[name] = PALETTE[idx % len(PALETTE)]
+        class_to_color = {
+            name: PALETTE[idx % len(PALETTE)]
+            for idx, name in enumerate(classes)
+        }
         font = ImageFont.load_default()
 
         for item in sorted(rows, key=lambda r: (int(r.sort_index or 0), int(r.id or 0))):
-            cls_name = item.class_name
-            color = class_to_color.get(cls_name, PALETTE[0])
+            class_name = str(item.class_name or "").strip() or "未分类"
+            color = class_to_color.get(class_name, PALETTE[0])
             alpha = 20 if item.is_deleted else 110
             outline_alpha = 90 if item.is_deleted else 220
             polygon = item.polygon if isinstance(item.polygon, list) else []
@@ -1812,41 +1815,40 @@ class AreaJobManager:
                     x1 = 0
                     y1 = 0
 
-            label_class_name = overlay_label_swap.get(cls_name, cls_name)
-            label = OVERLAY_CLASS_LABEL_EN.get(label_class_name)
+            label = OVERLAY_CLASS_LABEL_EN.get(class_name)
             if not label:
                 label = "C1"
-                if cls_name in classes:
-                    label = f"C{classes.index(cls_name) + 1}"
+                if class_name in classes:
+                    label = f"C{classes.index(class_name) + 1}"
             draw.text((x1 + 2, y1 + 2), label, fill=(255, 255, 255, 220), font=font)
 
         out = Image.alpha_composite(base, overlay).convert("RGB")
         target = Path(job.overlay_dir) / image_row.overlay_filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        out.save(target)
-
-    def _rerender_all_overlays_for_job(self, db, job: AreaJob) -> None:
-        image_rows = (
-            db.query(AreaJobImage)
-            .filter(AreaJobImage.job_id == job.id)
-            .order_by(AreaJobImage.image_name.asc())
-            .all()
-        )
-        for image_row in image_rows:
-            instances = (
-                db.query(AreaJobInstance)
-                .filter(AreaJobInstance.image_id == image_row.id)
-                .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
-                .all()
-            )
-            self._render_overlay_for_image(job, image_row, instances)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=target.parent,
+                prefix=f".{target.stem}-",
+                suffix=".png",
+                delete=False,
+            ) as fh:
+                temp_path = Path(fh.name)
+            out.save(temp_path, format="PNG")
+            os.replace(temp_path, target)
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+        return True
 
     def _rebuild_job_outputs(self, db, job: AreaJob) -> None:
         classes = parse_model_classes(job.model_name)
         safe_output_name = self._safe_output_component(job.folder_name)
         output_dir = Path(job.output_dir)
         job.result_json_path = str(output_dir / f"{safe_output_name}.json")
-        job.excel_path = str(output_dir / f"{safe_output_name}.xls")
+        job.excel_path = str(
+            output_dir / self._excel_output_filename(job.folder_name)
+        )
         image_rows = (
             db.query(AreaJobImage)
             .filter(AreaJobImage.job_id == job.id)
@@ -1878,7 +1880,11 @@ class AreaJobManager:
                 continue
 
             succeeded_images += 1
-            per_class = image_row.per_class_area_px if isinstance(image_row.per_class_area_px, dict) else {}
+            per_class = (
+                image_row.per_class_area_px
+                if isinstance(image_row.per_class_area_px, dict)
+                else {}
+            )
             rows = (
                 db.query(AreaJobInstance)
                 .filter(AreaJobInstance.image_id == image_row.id)
@@ -1889,7 +1895,9 @@ class AreaJobManager:
             for item in rows:
                 if item.is_deleted:
                     continue
-                per_class_inst[item.class_name] = per_class_inst.get(item.class_name, 0) + 1
+                per_class_inst[item.class_name] = (
+                    per_class_inst.get(item.class_name, 0) + 1
+                )
                 try:
                     area_px = int(item.area_px or 0)
                 except (TypeError, ValueError):
@@ -1904,7 +1912,10 @@ class AreaJobManager:
                     }
                 )
 
-            total_area = max(1, int(sum(max(0, int(v)) for v in per_class.values())))
+            total_area = max(
+                1,
+                int(sum(max(0, int(value)) for value in per_class.values())),
+            )
             for class_name in classes:
                 area_px = int(per_class.get(class_name, 0) or 0)
                 if area_px > 0:
@@ -1937,7 +1948,11 @@ class AreaJobManager:
 
         payload = {
             "job_id": job.job_id,
-            "status": "succeeded_with_errors" if failed_images > 0 and succeeded_images > 0 else ("failed" if succeeded_images <= 0 else "succeeded"),
+            "status": (
+                "succeeded_with_errors"
+                if failed_images > 0 and succeeded_images > 0
+                else ("failed" if succeeded_images <= 0 else "succeeded")
+            ),
             "summary": summary_rows,
             "per_image": detail_rows,
         }
@@ -2080,7 +2095,11 @@ class AreaJobManager:
                             .order_by(AreaJobInstance.sort_index.asc(), AreaJobInstance.id.asc())
                             .all()
                         )
-                        self._render_overlay_for_image(job_row, image_row, instances_for_render)
+                        self._render_overlay_for_image(
+                            job_row,
+                            image_row,
+                            instances_for_render,
+                        )
 
                         with self._lock:
                             record.succeeded_images += 1

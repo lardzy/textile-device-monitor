@@ -48,3 +48,32 @@ test('area image list scrolls vertically without turning the page into the scrol
   assert.match(list, /overflow-y:\s*auto/);
   assert.match(list, /overscroll-behavior:\s*contain/);
 });
+
+test('area editor renders the backend semantic class names', () => {
+  assert.match(workspaceSource, /detail\?\.class_names/);
+  assert.match(
+    workspaceSource,
+    /<Select value=\{selectedInstance\.class_name\} options=\{classNames\.map/,
+  );
+  assert.match(workspaceSource, /<strong>\{item\.class_name\}<\/strong>/);
+});
+
+test('late image detail responses cannot overwrite the currently selected image', () => {
+  assert.match(workspaceSource, /const detailRequestSeqRef = useRef\(0\)/);
+  assert.match(
+    workspaceSource,
+    /shouldApplyAreaImageResponse\(\{[\s\S]*currentRequestSeq:\s*detailRequestSeqRef\.current[\s\S]*selectedImageId:\s*selectedImageIdRef\.current/,
+  );
+  assert.match(
+    workspaceSource,
+    /const selectImage[\s\S]*detailRequestSeqRef\.current \+= 1/,
+  );
+  assert.match(
+    workspaceSource,
+    /error\.status === 409[\s\S]*isCurrentEditingRequest\(\)/,
+  );
+  assert.match(
+    workspaceSource,
+    /const imagesRequestSeqRef = useRef\(0\)[\s\S]*isCurrentAreaRequest\(requestSeq, imagesRequestSeqRef\.current\)/,
+  );
+});

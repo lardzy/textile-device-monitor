@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
@@ -150,6 +151,146 @@ class QueuePlaceholderTests(unittest.TestCase):
             sum(1 for log in self._get_logs(device.id) if log.change_type == "placeholder_create"),
             0,
         )
+
+    def test_confocal_idle_removes_placeholder_created_by_short_busy_pulse(self):
+        device = self._create_device(status=DeviceStatus.IDLE)
+        queue_crud.join_queue(
+            self.db,
+            QueueCreate(
+                inspector_name="Alice",
+                device_id=device.id,
+                created_by_id="user-alice",
+            ),
+        )
+
+        def report(status, progress):
+            return asyncio.run(
+                report_device_status(
+                    device.device_code,
+                    StatusReport(
+                        status=status,
+                        task_id="task-last",
+                        task_key="task-last",
+                        task_name="task-last",
+                        task_progress=progress,
+                        metrics={"device_type": "laser_confocal"},
+                    ),
+                    db=self.db,
+                )
+            )
+
+        report(SchemaDeviceStatus.BUSY, 20)
+        report(SchemaDeviceStatus.IDLE, 100)
+        self.assertEqual(queue_crud.get_queue_by_device(self.db, device.id), [])
+
+        report(SchemaDeviceStatus.BUSY, 100)
+        waiting = queue_crud.get_queue_by_device(self.db, device.id)
+        self.assertEqual(len(waiting), 1)
+        placeholder_id = waiting[0].id
+        self.assertTrue(waiting[0].is_placeholder)
+
+        messages = []
+        with patch(
+            "app.api.devices.schedule_websocket_broadcast",
+            side_effect=messages.append,
+        ):
+            response = report(SchemaDeviceStatus.IDLE, 100)
+
+        self.assertEqual(queue_crud.get_queue_by_device(self.db, device.id), [])
+        removed = queue_crud.get_queue_record(self.db, placeholder_id)
+        self.assertIsNotNone(removed)
+        self.assertEqual(removed.status, TaskStatus.COMPLETED)
+        self.assertEqual(response.data["queue_count"], 0)
+        removal_message = next(
+            message
+            for message in messages
+            if message["type"] == "queue_update"
+            and message["data"]["action"] == "placeholder_auto_remove"
+        )
+        self.assertEqual(
+            removal_message["data"]["auto_removed_queue_ids"],
+            [placeholder_id],
+        )
+        removal_logs = [
+            log
+            for log in self._get_logs(device.id)
+            if log.change_type == "placeholder_auto_remove"
+        ]
+        self.assertEqual(len(removal_logs), 1)
+        self.assertEqual(
+            removal_logs[0].remark,
+            queue_crud.PLACEHOLDER_IDLE_REMOVE_REMARK,
+        )
+
+    def test_confocal_idle_keeps_placeholder_when_real_person_is_waiting(self):
+        device = self._create_device(status=DeviceStatus.IDLE)
+        placeholder = queue_crud.create_placeholder_if_missing(self.db, device.id)
+        self.assertIsNotNone(placeholder)
+        real_record = queue_crud.join_queue(
+            self.db,
+            QueueCreate(
+                inspector_name="Bob",
+                device_id=device.id,
+                created_by_id="user-bob",
+            ),
+        )[0]
+
+        asyncio.run(
+            report_device_status(
+                device.device_code,
+                StatusReport(
+                    status=SchemaDeviceStatus.IDLE,
+                    task_progress=100,
+                    metrics={"device_type": "laser_confocal"},
+                ),
+                db=self.db,
+            )
+        )
+
+        waiting = queue_crud.get_queue_by_device(self.db, device.id)
+        self.assertEqual(
+            [record.id for record in waiting],
+            [placeholder.id, real_record.id],
+        )
+        self.assertEqual(
+            sum(
+                1
+                for log in self._get_logs(device.id)
+                if log.change_type == "placeholder_auto_remove"
+            ),
+            0,
+        )
+
+    def test_confocal_idle_keeps_claimed_placeholder(self):
+        device = self._create_device(status=DeviceStatus.IDLE)
+        placeholder = queue_crud.create_placeholder_if_missing(self.db, device.id)
+        self.assertIsNotNone(placeholder)
+        claimed = queue_crud.claim_placeholder(
+            self.db,
+            placeholder.id,
+            QueueClaimRequest(
+                inspector_name="Alice",
+                claimed_by_id="user-alice",
+            ),
+        )
+        self.assertIsNotNone(claimed)
+
+        asyncio.run(
+            report_device_status(
+                device.device_code,
+                StatusReport(
+                    status=SchemaDeviceStatus.IDLE,
+                    task_progress=100,
+                    metrics={"device_type": "laser_confocal"},
+                ),
+                db=self.db,
+            )
+        )
+
+        waiting = queue_crud.get_queue_by_device(self.db, device.id)
+        self.assertEqual([record.id for record in waiting], [placeholder.id])
+        self.assertFalse(waiting[0].is_placeholder)
+        self.assertFalse(waiting[0].auto_remove_when_inactive)
 
     def test_claimed_placeholder_is_not_auto_removed_after_manual_reorder(self):
         device = self._create_device()

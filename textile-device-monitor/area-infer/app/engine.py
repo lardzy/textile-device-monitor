@@ -13,6 +13,11 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from app.model_metadata import (
+    MODEL_METADATA_VERSION,
+    resolve_requested_class_mapping,
+)
+
 
 PALETTE: list[tuple[int, int, int]] = [
     (255, 87, 34),
@@ -25,34 +30,11 @@ PALETTE: list[tuple[int, int, int]] = [
     (216, 27, 96),
 ]
 
-LABEL_ALIAS: dict[str, str] = {
-    "粘": "粘纤",
-    "莱": "莱赛尔",
-    "莫": "莫代尔",
-}
-
-
 class InferServiceError(RuntimeError):
     def __init__(self, code: str, message: str = "") -> None:
         super().__init__(message or code)
         self.code = code
         self.message = message or code
-
-
-def parse_model_classes(model_name: str) -> list[str]:
-    classes: list[str] = []
-    for item in str(model_name or "").split("-"):
-        token = item.strip()
-        if not token:
-            continue
-        classes.append(LABEL_ALIAS.get(token, token))
-
-    deduped: list[str] = []
-    for item in classes:
-        if item not in deduped:
-            deduped.append(item)
-    return deduped or ["未分类"]
-
 
 @dataclass
 class _ModelRuntime:
@@ -64,6 +46,7 @@ class _ModelRuntime:
     cfg_obj: Any
     net: Any
     loaded_at: float
+    class_mapping: str
 
 
 class AreaNativeEngine:
@@ -83,7 +66,7 @@ class AreaNativeEngine:
         self._gpu_policy = self._normalize_gpu_policy(gpu_policy)
         self._lock = threading.RLock()
         self._runtime_loaded = False
-        self._cache: dict[tuple[str, tuple[str, ...], str], _ModelRuntime] = {}
+        self._cache: dict[tuple[str, tuple[str, ...], str, str], _ModelRuntime] = {}
 
         self._torch = None
         self._cfg = None
@@ -297,14 +280,41 @@ class AreaNativeEngine:
             raise InferServiceError("infer_model_load_failed", f"weight_not_found:{path}")
         return path
 
-    def _model_cache_key(self, model_file: str, class_names: tuple[str, ...]) -> tuple[str, tuple[str, ...], str]:
-        return (Path(model_file).name, class_names, self._effective_device_key)
+    def _model_cache_key(
+        self,
+        model_file: str,
+        class_names: tuple[str, ...],
+        class_mapping: str,
+    ) -> tuple[str, tuple[str, ...], str, str]:
+        return (
+            Path(model_file).name,
+            class_names,
+            self._effective_device_key,
+            class_mapping,
+        )
 
-    def _load_model(self, *, model_name: str, model_file: str) -> _ModelRuntime:
+    def _load_model(
+        self,
+        *,
+        model_name: str,
+        model_file: str,
+        class_mapping_version: int | None = None,
+    ) -> _ModelRuntime:
         self._ensure_runtime()
 
-        classes = tuple(parse_model_classes(model_name))
-        cache_key = self._model_cache_key(model_file=model_file, class_names=classes)
+        try:
+            classes, class_mapping = resolve_requested_class_mapping(
+                model_name=model_name,
+                model_file=model_file,
+                class_mapping_version=class_mapping_version,
+            )
+        except ValueError as exc:
+            raise InferServiceError("infer_model_load_failed", str(exc)) from exc
+        cache_key = self._model_cache_key(
+            model_file=model_file,
+            class_names=classes,
+            class_mapping=class_mapping,
+        )
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -320,7 +330,11 @@ class AreaNativeEngine:
             except Exception as exc:
                 if self._effective_device_key == "cuda" and self._gpu_policy == "warn_continue":
                     self._fallback_to_cpu(f"model_to_cuda_failed:{exc}")
-                    return self._load_model(model_name=model_name, model_file=model_file)
+                    return self._load_model(
+                        model_name=model_name,
+                        model_file=model_file,
+                        class_mapping_version=class_mapping_version,
+                    )
                 raise InferServiceError("infer_service_unavailable", f"model_to_device_failed:{exc}") from exc
             net.eval()
             net.detect.use_fast_nms = True
@@ -339,6 +353,7 @@ class AreaNativeEngine:
             cfg_obj=cfg_obj,
             net=net,
             loaded_at=time.time(),
+            class_mapping=class_mapping,
         )
         self._cache[cache_key] = runtime
         return runtime
@@ -358,6 +373,7 @@ class AreaNativeEngine:
                         "cfg_name": item.cfg_name,
                         "device": item.device,
                         "loaded_at": item.loaded_at,
+                        "class_mapping": item.class_mapping,
                     }
                     for item in self._cache.values()
                 ],
@@ -367,15 +383,27 @@ class AreaNativeEngine:
                 },
             }
 
-    def warmup(self, *, model_name: str, model_file: str) -> dict[str, Any]:
+    def warmup(
+        self,
+        *,
+        model_name: str,
+        model_file: str,
+        class_mapping_version: int | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
-            runtime = self._load_model(model_name=model_name, model_file=model_file)
+            runtime = self._load_model(
+                model_name=model_name,
+                model_file=model_file,
+                class_mapping_version=class_mapping_version,
+            )
             return {
                 "status": "ok",
                 "model_file": runtime.model_file,
                 "class_names": list(runtime.class_names),
                 "cfg_name": runtime.cfg_name,
                 "device": runtime.device,
+                "class_mapping": runtime.class_mapping,
+                "model_metadata_version": MODEL_METADATA_VERSION,
                 **self._runtime_device_payload(),
             }
 
@@ -447,10 +475,15 @@ class AreaNativeEngine:
         model_file: str,
         image_bytes_b64: str,
         inference_options: dict[str, Any] | None,
+        class_mapping_version: int | None = None,
     ) -> dict[str, Any]:
         t0 = time.time()
         with self._lock:
-            runtime = self._load_model(model_name=model_name, model_file=model_file)
+            runtime = self._load_model(
+                model_name=model_name,
+                model_file=model_file,
+                class_mapping_version=class_mapping_version,
+            )
             options = self._normalize_options(inference_options)
             self._apply_cfg(runtime.cfg_obj)
 
@@ -479,7 +512,11 @@ class AreaNativeEngine:
             except Exception as exc:
                 if self._effective_device_key == "cuda" and self._gpu_policy == "warn_continue":
                     self._fallback_to_cpu(f"infer_on_cuda_failed:{exc}")
-                    runtime = self._load_model(model_name=model_name, model_file=model_file)
+                    runtime = self._load_model(
+                        model_name=model_name,
+                        model_file=model_file,
+                        class_mapping_version=class_mapping_version,
+                    )
                     self._apply_cfg(runtime.cfg_obj)
                     net = runtime.net
                     net.detect.top_k = int(options["nms_top_k"])
@@ -557,6 +594,9 @@ class AreaNativeEngine:
                     "engine": "linux_native_yolact",
                     "cfg_name": runtime.cfg_name,
                     "model_file": runtime.model_file,
+                    "class_names": list(runtime.class_names),
+                    "class_mapping": runtime.class_mapping,
+                    "model_metadata_version": MODEL_METADATA_VERSION,
                     **self._runtime_device_payload(),
                     "elapsed_ms": round((time.time() - t0) * 1000.0, 2),
                     "instance_count": len(instances),

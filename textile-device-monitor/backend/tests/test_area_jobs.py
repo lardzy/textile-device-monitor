@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -12,8 +14,13 @@ import xlrd
 import xlwt
 
 from app.config import settings
+from app.models import AreaJob, AreaJobImage, AreaJobInstance
 from app.services.area_infer import AreaImageInferenceResult, AreaInstance, parse_model_classes
-from app.services.area_jobs import AREA_PX2_TO_UM2, AreaEditConflictError, AreaJobManager
+from app.services.area_jobs import (
+    AREA_PX2_TO_UM2,
+    AreaEditConflictError,
+    AreaJobManager,
+)
 
 
 class _FakePredictor:
@@ -49,7 +56,10 @@ class _FakePredictor:
             per_class_area_px={class_name: 120},
             instances=[AreaInstance(class_name=class_name, area_px=120, bbox=(1, 1, 5, 5))],
             overlay_image=overlay,
-            engine_meta={"engine": "mock-native"},
+            engine_meta={
+                "engine": "mock-native",
+                "class_mapping": "canonicalized_by_backend_v1",
+            },
         )
 
 
@@ -124,6 +134,106 @@ def _excel_col_to_index(col: str) -> int:
 class AreaJobsTests(unittest.TestCase):
     def test_parse_model_classes_alias(self):
         self.assertEqual(parse_model_classes("棉-粘-莱-莫"), ["棉", "粘纤", "莱赛尔", "莫代尔"])
+
+    def test_excel_class_ids_follow_semantic_header_order(self):
+        manager = AreaJobManager()
+        try:
+            classes = ["粘纤", "莱赛尔"]
+            self.assertEqual(
+                manager._build_template_class_id_map(classes),
+                {"粘纤": 1, "莱赛尔": 2},
+            )
+        finally:
+            manager.stop()
+
+    def test_excel_output_filename_prefixes_the_original_template_name(self):
+        manager = AreaJobManager()
+        old_template = settings.AREA_EXCEL_TEMPLATE_PATH
+        try:
+            settings.AREA_EXCEL_TEMPLATE_PATH = (
+                "/opt/area_templates/-面积法-定量试验原始记录-新系统.xls"
+            )
+            self.assertEqual(
+                manager._excel_output_filename("26X910095-1"),
+                "26X910095-1-面积法-定量试验原始记录-新系统.xls",
+            )
+        finally:
+            settings.AREA_EXCEL_TEMPLATE_PATH = old_template
+            manager.stop()
+
+    def test_excel_payload_uses_semantic_header_order(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            template_path = (
+                Path(tmpdir) / "-面积法-定量试验原始记录-新系统.xls"
+            )
+            _create_xls_template(template_path)
+            old_template = settings.AREA_EXCEL_TEMPLATE_PATH
+            captured_payloads: list[dict] = []
+
+            def fake_run(cmd, **kwargs):
+                captured_payloads.append(
+                    json.loads(Path(cmd[-1]).read_text(encoding="utf-8"))
+                )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            manager = AreaJobManager()
+            try:
+                settings.AREA_EXCEL_TEMPLATE_PATH = str(template_path)
+                job = AreaJob(
+                    folder_name="sample",
+                    model_name="粘纤-莱赛尔",
+                )
+                with patch("app.services.area_jobs.subprocess.run", side_effect=fake_run):
+                    manager._build_excel(
+                        job=job,
+                        excel_path=Path(tmpdir) / "sample.xls",
+                        template_instances=[{"class_name": "粘纤", "area_px": 120}],
+                    )
+
+                self.assertEqual(captured_payloads[0]["rows"][0]["class_id"], 1)
+                self.assertEqual(
+                    captured_payloads[0]["class_names"],
+                    ["粘纤", "莱赛尔"],
+                )
+            finally:
+                settings.AREA_EXCEL_TEMPLATE_PATH = old_template
+                manager.stop()
+
+    def test_overlay_uses_the_stored_semantic_class_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "source.png"
+            Image.new("RGB", (24, 24), color=(255, 255, 255)).save(source_path)
+            manager = AreaJobManager()
+            try:
+                image_row = AreaJobImage(
+                    source_image_path=str(source_path),
+                    overlay_filename="overlay.png",
+                    width=24,
+                    height=24,
+                )
+                instance = AreaJobInstance(
+                    id=1,
+                    class_name="莱赛尔",
+                    bbox=[1, 1, 10, 10],
+                    polygon=[[1, 1], [10, 1], [10, 10], [1, 10]],
+                    area_px=81,
+                    sort_index=0,
+                    is_deleted=False,
+                )
+                job = AreaJob(
+                    model_name="粘纤-莱赛尔",
+                    overlay_dir=tmpdir,
+                )
+                with patch("app.services.area_jobs.ImageDraw.Draw") as draw_factory:
+                    manager._render_overlay_for_image(job, image_row, [instance])
+                self.assertEqual(draw_factory.return_value.text.call_args.args[1], "Lyocell")
+
+                instance.class_name = "粘纤"
+                with patch("app.services.area_jobs.ImageDraw.Draw") as draw_factory:
+                    manager._render_overlay_for_image(job, image_row, [instance])
+                self.assertEqual(draw_factory.return_value.text.call_args.args[1], "Viscose")
+            finally:
+                manager.stop()
 
     def test_folder_discovery_does_not_scan_child_contents(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -277,6 +387,7 @@ class AreaJobsTests(unittest.TestCase):
                 settings.AREA_EXCEL_TEMPLATE_PATH = str(template)
                 manager = AreaJobManager()
                 manager._predictor = _FakePredictor()
+                manager._build_excel = lambda **_kwargs: None
                 job = manager.create_job(
                     folder_name=target.name,
                     model_name="棉-莱赛尔",
@@ -290,7 +401,11 @@ class AreaJobsTests(unittest.TestCase):
                     if payload["status"] not in {"queued", "running"}:
                         break
                     time.sleep(0.1)
-                self.assertIn(payload["status"], {"succeeded", "succeeded_with_errors"})
+                self.assertIn(
+                    payload["status"],
+                    {"succeeded", "succeeded_with_errors"},
+                    payload,
+                )
                 image = manager.list_editor_images(job["job_id"], page_size=10)["items"][0]
                 detail = manager.get_editor_image(job["job_id"], image["image_id"])
                 existing = detail["instances"][0]
@@ -345,7 +460,7 @@ class AreaJobsTests(unittest.TestCase):
             weights_dir = Path(tmpdir) / "weights"
             weights_dir.mkdir(parents=True, exist_ok=True)
             (weights_dir / "b_c1_1.3.pth").write_bytes(b"mock")
-            template_path = Path(tmpdir) / "template.xls"
+            template_path = Path(tmpdir) / "-面积法-定量试验原始记录-新系统.xls"
             _create_xls_template(template_path)
 
             old_output = settings.AREA_OUTPUT_DIR
@@ -372,7 +487,11 @@ class AreaJobsTests(unittest.TestCase):
                     time.sleep(0.1)
                 payload = manager.get_job(job["job_id"])
                 self.assertIsNotNone(payload)
-                self.assertIn(payload["status"], {"succeeded", "succeeded_with_errors"})
+                self.assertIn(
+                    payload["status"],
+                    {"succeeded", "succeeded_with_errors"},
+                    payload,
+                )
                 self.assertIn("score_threshold", payload["inference_options"])
                 self.assertIn("top_k", payload["inference_options"])
                 self.assertIn("nms_top_k", payload["inference_options"])
@@ -385,7 +504,10 @@ class AreaJobsTests(unittest.TestCase):
                 self.assertIsNotNone(excel_path)
                 self.assertTrue(excel_path.exists())
                 self.assertEqual(excel_path.suffix.lower(), ".xls")
-                self.assertEqual(excel_path.name, "sample-001.xls")
+                self.assertEqual(
+                    excel_path.name,
+                    "sample-001-面积法-定量试验原始记录-新系统.xls",
+                )
                 self.assertTrue(excel_path.parent.name.startswith("sample-001_"))
 
                 book = xlrd.open_workbook(str(excel_path))
@@ -398,7 +520,7 @@ class AreaJobsTests(unittest.TestCase):
                 self.assertEqual(sheet_raw.cell_value(8, col_ba), "sample-001")
                 self.assertEqual(sheet_raw.cell_value(10, col_ba), "棉")
                 self.assertEqual(sheet_raw.cell_value(10, col_bb), "莱赛尔")
-                self.assertEqual(int(sheet_raw.cell_value(10, col_n)), 2)
+                self.assertEqual(int(sheet_raw.cell_value(10, col_n)), 1)
                 self.assertAlmostEqual(sheet_raw.cell_value(10, col_o), 120 * AREA_PX2_TO_UM2, places=6)
                 self.assertEqual(sheet_report.cell_value(7, _excel_col_to_index("F")), "sample-001")
                 manager.stop()
