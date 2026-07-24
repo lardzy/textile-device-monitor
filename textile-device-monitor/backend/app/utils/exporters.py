@@ -5,6 +5,8 @@ from typing import Sequence, Any
 import pandas as pd
 from io import BytesIO
 
+from app.services.device_tracking import get_stats_timezone, normalize_datetime
+
 
 def _excel_safe_text(value: Any) -> str:
     """Prevent user-entered text from being interpreted as a formula."""
@@ -12,6 +14,17 @@ def _excel_safe_text(value: Any) -> str:
     if text_value.startswith(("=", "+", "-", "@")):
         return f"'{text_value}"
     return text_value
+
+
+def _format_reported_at(value: Any) -> str:
+    """Format persisted UTC timestamps in the configured business timezone."""
+    if value is None:
+        return ""
+    return (
+        normalize_datetime(value)
+        .astimezone(get_stats_timezone())
+        .strftime("%Y-%m-%d %H:%M:%S")
+    )
 
 
 def export_history_to_excel(history: Sequence[Any]) -> Response:
@@ -31,7 +44,7 @@ def export_history_to_excel(history: Sequence[Any]) -> Response:
                 "进度": record.task_progress or 0,
                 "耗时(秒)": record.task_duration_seconds or 0,
                 "设备指标": _excel_safe_text(record.device_metrics),
-                "上报时间": record.reported_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "上报时间": _format_reported_at(record.reported_at),
             }
         )
 

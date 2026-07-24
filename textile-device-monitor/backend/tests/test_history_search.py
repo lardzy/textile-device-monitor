@@ -126,9 +126,32 @@ class HistorySearchTests(unittest.TestCase):
         workbook = load_workbook(BytesIO(excel_response.body), read_only=True)
         worksheet = workbook["设备状态历史"]
         headers = [cell.value for cell in next(worksheet.iter_rows(max_row=1))]
-        values = [cell.value for cell in next(worksheet.iter_rows(min_row=2, max_row=2))]
+        values = [
+            cell.value
+            for cell in next(worksheet.iter_rows(min_row=2, max_row=2))
+        ]
         exported = dict(zip(headers, values))
         self.assertEqual(exported["排队人员"], "李工")
+
+    def test_excel_exports_reported_at_in_business_timezone(self):
+        self._add_history("task-timezone", "Timezone Export")
+        history_record = (
+            self.db.query(DeviceStatusHistory)
+            .filter(DeviceStatusHistory.task_id == "task-timezone")
+            .one()
+        )
+
+        excel_response = export_history_to_excel([history_record])
+        workbook = load_workbook(BytesIO(excel_response.body), read_only=True)
+        worksheet = workbook["设备状态历史"]
+        headers = [cell.value for cell in next(worksheet.iter_rows(max_row=1))]
+        values = [
+            cell.value
+            for cell in next(worksheet.iter_rows(min_row=2, max_row=2))
+        ]
+        exported = dict(zip(headers, values))
+
+        self.assertEqual(exported["上报时间"], "2026-07-01 08:00:00")
 
     def test_excel_escapes_formula_like_queue_person(self):
         self._add_history("task-safe-export", "Safe Export", "=1+1")
