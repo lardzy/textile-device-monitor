@@ -559,7 +559,7 @@ export default function ExecutionRunWorkspace() {
       <ExecutionChrome
         title={run.workflow_name || snapshot.definition.metadata?.name || '执行工作台'}
         subtitle={`运行编号 ${run.id || runId}`}
-        backTo={{ path: `/execution?number=${encodeURIComponent(run.inspection_number || variables.inspection_number || '')}`, label: '流程目录' }}
+        backTo={{ path: '/execution/runs', label: '执行记录' }}
         actions={actions}
       />
 

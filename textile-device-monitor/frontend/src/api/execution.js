@@ -57,6 +57,26 @@ export const upsertExecutionCredential = (systemKey, payload) =>
 export const getExecutionWorkflows = async (params = {}) =>
   listPayload(await executionClient.get('/workflows', { params }), ['items', 'workflows']);
 
+export const getExecutionCatalogRecommendations = async (
+  {
+    inspectionNumber = '',
+    preferredCategories = [],
+  } = {},
+  { signal } = {},
+) => {
+  const params = new URLSearchParams();
+  if (inspectionNumber.trim()) {
+    params.set('inspection_number', inspectionNumber.trim());
+  }
+  preferredCategories.forEach((category) => {
+    params.append('preferred_categories', category);
+  });
+  return listPayload(
+    await executionClient.get('/catalog/recommendations', { params, signal }),
+    ['items', 'recommendations'],
+  );
+};
+
 export const getExecutionWorkflow = workflowId =>
   executionClient.get(`/workflows/${workflowId}`);
 
@@ -99,6 +119,17 @@ export const createExecutionRun = payload =>
 
 export const getExecutionRuns = async (params = {}) =>
   listPayload(await executionClient.get('/runs', { params }), ['items', 'runs']);
+
+export const getExecutionRunsPage = async (params = {}) => {
+  const payload = await executionClient.get('/runs', { params });
+  const items = listPayload(payload, ['items', 'runs']);
+  return {
+    items,
+    total: Number(payload?.total ?? items.length),
+    offset: Number(payload?.offset ?? params.offset ?? 0),
+    limit: Number(payload?.limit ?? params.limit ?? items.length),
+  };
+};
 
 export const getExecutionRun = runId =>
   executionClient.get(`/runs/${runId}`);

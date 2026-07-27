@@ -74,10 +74,11 @@ services:
       EXECUTION_COOKIE_SECURE: "true"
       EXECUTION_BOOTSTRAP_ADMIN_USERNAME: ${EXECUTION_BOOTSTRAP_ADMIN_USERNAME:-}
       EXECUTION_BOOTSTRAP_ADMIN_PASSWORD: ${EXECUTION_BOOTSTRAP_ADMIN_PASSWORD:-}
-      EXECUTION_SOURCE_ROOT: /data/execution-input
+      EXECUTION_SOURCE_ROOT: "${EXECUTION_SOURCE_ROOT:-/data/execution-source/10特纤/02-检验}"
       EXECUTION_RUNTIME_ROOT: /data/execution-runtime
       EXECUTION_PUBLISH_ROOT: /data/execution-publish
       EXECUTION_INDEX_INTERVAL_SECONDS: ${EXECUTION_INDEX_INTERVAL_SECONDS:-300}
+      EXECUTION_AUTO_INDEX_ROOT_IDS: ${EXECUTION_AUTO_INDEX_ROOT_IDS:-regenerated_fiber_records}
       EXECUTION_WORKER_POLL_SECONDS: ${EXECUTION_WORKER_POLL_SECONDS:-1}
       EXECUTION_WORKER_LEASE_SECONDS: ${EXECUTION_WORKER_LEASE_SECONDS:-60}
       EXECUTION_NODE_MAX_ATTEMPTS: ${EXECUTION_NODE_MAX_ATTEMPTS:-5}
@@ -90,6 +91,10 @@ services:
       - area_root_cifs:/data/share66
       - area_old_cifs:/data/share82
       - area_out_cifs:/data/share66_out
+      - type: volume
+        source: area_out_cifs
+        target: /data/execution-source
+        read_only: true
       - type: bind
         source: "${AREA_MODEL_HOST_PATH:-./runtime/area-models}"
         target: /opt/area_weights
@@ -97,10 +102,6 @@ services:
       - type: bind
         source: "${AREA_TEMPLATE_HOST_PATH:-./runtime/area-templates}"
         target: /opt/area_templates
-        read_only: true
-      - type: bind
-        source: "${EXECUTION_SOURCE_HOST_PATH:-./runtime/execution-input}"
-        target: /data/execution-input
         read_only: true
       - type: bind
         source: "${EXECUTION_RUNTIME_HOST_PATH:-./runtime/execution-runtime}"
@@ -141,10 +142,11 @@ services:
       EXECUTION_SESSION_SECRET: "${EXECUTION_SESSION_SECRET:?EXECUTION_SESSION_SECRET is required}"
       EXECUTION_CREDENTIAL_KEY: "${EXECUTION_CREDENTIAL_KEY:?EXECUTION_CREDENTIAL_KEY is required}"
       EXECUTION_COOKIE_SECURE: "true"
-      EXECUTION_SOURCE_ROOT: /data/execution-input
+      EXECUTION_SOURCE_ROOT: "${EXECUTION_SOURCE_ROOT:-/data/execution-source/10特纤/02-检验}"
       EXECUTION_RUNTIME_ROOT: /data/execution-runtime
       EXECUTION_PUBLISH_ROOT: /data/execution-publish
       EXECUTION_INDEX_INTERVAL_SECONDS: ${EXECUTION_INDEX_INTERVAL_SECONDS:-300}
+      EXECUTION_AUTO_INDEX_ROOT_IDS: ${EXECUTION_AUTO_INDEX_ROOT_IDS:-regenerated_fiber_records}
       EXECUTION_WORKER_POLL_SECONDS: ${EXECUTION_WORKER_POLL_SECONDS:-1}
       EXECUTION_WORKER_LEASE_SECONDS: ${EXECUTION_WORKER_LEASE_SECONDS:-60}
       EXECUTION_NODE_MAX_ATTEMPTS: ${EXECUTION_NODE_MAX_ATTEMPTS:-5}
@@ -154,9 +156,9 @@ services:
       EXECUTION_OUTBOX_RETENTION_DAYS: ${EXECUTION_OUTBOX_RETENTION_DAYS:-7}
       EXECUTION_SSE_MAX_SECONDS: ${EXECUTION_SSE_MAX_SECONDS:-300}
     volumes:
-      - type: bind
-        source: "${EXECUTION_SOURCE_HOST_PATH:-./runtime/execution-input}"
-        target: /data/execution-input
+      - type: volume
+        source: area_out_cifs
+        target: /data/execution-source
         read_only: true
       - type: bind
         source: "${EXECUTION_RUNTIME_HOST_PATH:-./runtime/execution-runtime}"

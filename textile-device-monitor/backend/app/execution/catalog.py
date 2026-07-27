@@ -166,6 +166,106 @@ def _default_definition(
     }
 
 
+def _regenerated_method_definition(
+    *,
+    slug: str,
+    name: str,
+    node_type: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "metadata": {
+            "slug": slug,
+            "name": name,
+            "category": "regenerated_fiber",
+        },
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "inspection_number": {
+                    "type": "string",
+                    "title": "检验编号",
+                    "minLength": 1,
+                }
+            },
+            "required": ["inspection_number"],
+            "additionalProperties": False,
+        },
+        "global_schema": {"type": "object", "properties": {}},
+        "root_slots": [
+            {
+                "name": "source",
+                "root_id": "regenerated_fiber_records",
+                "access": "read",
+            }
+        ],
+        "credential_slots": [],
+        "nodes": [
+            {
+                "id": "start",
+                "type": "core.start",
+                "type_version": 1,
+                "name": "开始",
+                "config": {},
+                "input_mapping": {},
+                "ui": {"x": 40, "y": 180},
+            },
+            {
+                "id": "query",
+                "type": node_type,
+                "type_version": 1,
+                "name": name,
+                "config": {
+                    "root_id": "regenerated_fiber_records",
+                    "limit": 6,
+                },
+                "input_mapping": {
+                    "inspection_number": "$.inputs.inspection_number"
+                },
+                "ui": {"x": 280, "y": 180},
+            },
+            {
+                "id": "select",
+                "type": "human.file_selection",
+                "type_version": 1,
+                "name": "选择原始资料",
+                "config": {
+                    "title": "请选择本次执行使用的原始资料",
+                    "allow_multiple": True,
+                },
+                "input_mapping": {
+                    "candidates": "$.nodes.query.output.candidates"
+                },
+                "ui": {"x": 540, "y": 180},
+            },
+            {
+                "id": "result",
+                "type": "result.aggregate",
+                "type_version": 1,
+                "name": "汇总选择结果",
+                "config": {},
+                "input_mapping": {"selection": "$.nodes.select.output"},
+                "ui": {"x": 800, "y": 180},
+            },
+            {
+                "id": "end",
+                "type": "core.end",
+                "type_version": 1,
+                "name": "结束",
+                "config": {},
+                "input_mapping": {"result": "$.nodes.result.output"},
+                "ui": {"x": 1040, "y": 180},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "query"},
+            {"id": "e2", "source": "query", "target": "select"},
+            {"id": "e3", "source": "select", "target": "result"},
+            {"id": "e4", "source": "result", "target": "end"},
+        ],
+    }
+
+
 def _controlled_write_test_definition() -> dict[str, Any]:
     node_specs = (
         ("start", "core.start", "开始", {}),
@@ -319,14 +419,6 @@ DEFAULT_WORKFLOWS = (
         None,
     ),
     (
-        "regenerated-fiber-source-selection",
-        "再生纤原始资料发现与选择",
-        "regenerated_fiber",
-        "regenerated_fiber_records",
-        True,
-        "数据根未配置",
-    ),
-    (
         "hemp-cotton-source-selection",
         "麻棉原始资料发现与选择",
         "hemp_cotton",
@@ -342,6 +434,24 @@ DEFAULT_WORKFLOWS = (
         True,
         None,
     ),
+)
+
+REGENERATED_METHOD_WORKFLOWS = (
+    (
+        "regenerated-fiber-count-method",
+        "再生纤-根数法",
+        "file.regenerated_fiber_count_method",
+    ),
+    (
+        "regenerated-fiber-area-method",
+        "再生纤-面积法",
+        "file.regenerated_fiber_area_method",
+    ),
+)
+
+LEGACY_REGENERATED_WORKFLOW = (
+    "regenerated-fiber-source-selection",
+    "再生纤原始资料发现与选择",
 )
 
 
@@ -421,6 +531,113 @@ def ensure_default_catalog(db: Session) -> None:
                 release_note="系统初始化版本",
             )
         )
+
+    workflows_by_slug = {
+        workflow.slug: workflow
+        for workflow in db.query(ExecutionWorkflow).all()
+    }
+    for slug, name, node_type in REGENERATED_METHOD_WORKFLOWS:
+        if slug in workflows_by_slug:
+            continue
+        definition = _regenerated_method_definition(
+            slug=slug,
+            name=name,
+            node_type=node_type,
+        )
+        capabilities = {"read": True, "write": False}
+        workflow = ExecutionWorkflow(
+            slug=slug,
+            category_id=categories_by_key["regenerated_fiber"].id,
+            name=name,
+            description=(
+                "按检验编号查找文件，并校验指定工作表及 B14:J14 "
+                "已保存结果后供人工选择。"
+            ),
+            draft_definition=deepcopy(definition),
+            draft_revision=1,
+            published_version_number=1,
+            capabilities=deepcopy(capabilities),
+            required_input_count=1,
+            is_enabled=True,
+        )
+        db.add(workflow)
+        db.flush()
+        db.add(
+            ExecutionWorkflowVersion(
+                workflow_id=workflow.id,
+                version_number=1,
+                schema_version="1.0",
+                definition=deepcopy(definition),
+                checksum=definition_checksum(definition),
+                capabilities=deepcopy(capabilities),
+                contract_checksum=workflow_contract_checksum(
+                    definition,
+                    capabilities,
+                ),
+                release_note="再生纤文件识别首版",
+            )
+        )
+        workflows_by_slug[slug] = workflow
+
+    # Older installations contain one generic regenerated-fiber workflow. It
+    # is hidden only when its ownership, draft, and published version all prove
+    # that it is the untouched system default. Any administrator-edited copy is
+    # deliberately preserved.
+    legacy_slug, _legacy_name = LEGACY_REGENERATED_WORKFLOW
+    legacy = workflows_by_slug.get(legacy_slug)
+    if legacy is not None:
+        original = _default_definition(
+            slug=legacy_slug,
+            name="再生纤原始资料发现与选择",
+            category_key="regenerated_fiber",
+            root_id="regenerated_fiber_records",
+        )
+        version_one = next(
+            (
+                version
+                for version in legacy.versions
+                if version.version_number == 1
+            ),
+            None,
+        )
+        untouched = bool(
+            legacy.created_by_id is None
+            and legacy.updated_by_id is None
+            and legacy.draft_revision == 1
+            and definition_checksum(legacy.draft_definition)
+            == definition_checksum(original)
+            and len(legacy.versions) == 1
+            and version_one is not None
+            and version_one.checksum == definition_checksum(original)
+        )
+        if untouched:
+            deprecated_capabilities = {
+                "read": True,
+                "write": False,
+                "hidden": True,
+                "system_deprecated": True,
+            }
+            legacy.capabilities = deepcopy(deprecated_capabilities)
+            legacy.is_enabled = False
+            legacy.availability_code = "system_replaced"
+            legacy.availability_message = "已由再生纤根数法和面积法流程替代"
+            legacy.published_version_number = 2
+            db.add(
+                ExecutionWorkflowVersion(
+                    workflow_id=legacy.id,
+                    version_number=2,
+                    schema_version="1.0",
+                    definition=deepcopy(original),
+                    checksum=definition_checksum(original),
+                    capabilities=deepcopy(deprecated_capabilities),
+                    contract_checksum=workflow_contract_checksum(
+                        original,
+                        deprecated_capabilities,
+                    ),
+                    release_note="系统默认流程已由两个专用流程替代",
+                )
+            )
+
     system_test_slug = "system-controlled-xlsx-write-test"
     if system_test_slug not in existing_slugs:
         definition = _controlled_write_test_definition()

@@ -143,6 +143,46 @@ describe('ExecutionTaskInbox', () => {
     expect(within(document.body).queryByText('发布路径')).not.toBeInTheDocument();
   });
 
+  it('超长候选文件名保留完整核对信息，但不在窄栏重复展示完整路径', async () => {
+    const longName = '260144785-这是一个用于验证窄栏布局不会横向溢出的超长面积法定量试验原始记录-新系统.xls';
+    const longPath = `7月/${longName}`;
+    const claimedTask = {
+      ...openTask,
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(claimedTask),
+          node_run: {
+            node_id: 'select-files',
+            input_data: {
+              candidates: [{
+                id: 'candidate-long',
+                relative_path: longPath,
+                name: longName,
+                suffix: '.xls',
+              }],
+            },
+          },
+        })),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('选择原始记录'));
+
+    const fileName = await screen.findByTitle(longName);
+    expect(fileName).toHaveTextContent(longName);
+    expect(screen.getByText('7月 · .xls')).toBeInTheDocument();
+    expect(screen.getByTitle(`${longPath} · .xls`)).toBeInTheDocument();
+    expect(screen.queryByText(longPath)).not.toBeInTheDocument();
+    await user.click(fileName.closest('label'));
+    expect(fileName.closest('label').querySelector('input')).toBeChecked();
+  });
+
   it('人工任务发生 409 时刷新详情，避免继续使用旧 revision', async () => {
     let detailRequests = 0;
     server.use(

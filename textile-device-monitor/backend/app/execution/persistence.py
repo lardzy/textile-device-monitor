@@ -263,6 +263,9 @@ def enqueue_due_index_jobs(
         else getattr(settings, "EXECUTION_INDEX_INTERVAL_SECONDS", 300)
     )
     cutoff = utcnow() - timedelta(seconds=max(interval, 10))
+    auto_root_ids = settings.execution_auto_index_root_ids()
+    if not auto_root_ids:
+        return 0
     created = 0
     roots = (
         db.query(ExecutionStorageRoot)
@@ -270,6 +273,7 @@ def enqueue_due_index_jobs(
             ExecutionStorageRoot.is_active.is_(True),
             ExecutionStorageRoot.is_available.is_(True),
             ExecutionStorageRoot.access_mode == "read",
+            ExecutionStorageRoot.root_id.in_(auto_root_ids),
         )
         .all()
     )
@@ -421,25 +425,43 @@ def persist_scan(
         )
         metadata = dict(row.metadata_json or {}) if row is not None else {}
         if needs_metadata:
-            try:
-                path = (
-                    gateway.resolve(item.ref, expected_type="file")
-                    if gateway is not None
-                    else Path(root.local_path).joinpath(
-                        *item.ref.relative_path.split("/")
-                    )
-                )
-                metadata = extract_index_metadata(
-                    path,
-                    expected_category=root.category_key,
-                )
-            except Exception as exc:
+            if root.root_id == "regenerated_fiber_records":
+                # This shared directory can contain many historical
+                # workbooks. The background scan remains metadata-only; the
+                # two regenerated-fiber nodes open only filename-matched
+                # candidates on demand.
                 metadata = {
                     "metadata_version": METADATA_VERSION,
                     "expected_category": root.category_key,
-                    "parse_status": "failed",
-                    "parse_error": f"{type(exc).__name__}: {exc}"[:500],
+                    "format": item.suffix,
+                    "kind": (
+                        "workbook"
+                        if item.suffix
+                        in {".xls", ".xlsx", ".xlsm", ".xlt", ".xltx", ".xltm"}
+                        else "file"
+                    ),
+                    "parse_status": "deferred",
                 }
+            else:
+                try:
+                    path = (
+                        gateway.resolve(item.ref, expected_type="file")
+                        if gateway is not None
+                        else Path(root.local_path).joinpath(
+                            *item.ref.relative_path.split("/")
+                        )
+                    )
+                    metadata = extract_index_metadata(
+                        path,
+                        expected_category=root.category_key,
+                    )
+                except Exception as exc:
+                    metadata = {
+                        "metadata_version": METADATA_VERSION,
+                        "expected_category": root.category_key,
+                        "parse_status": "failed",
+                        "parse_error": f"{type(exc).__name__}: {exc}"[:500],
+                    }
         metadata["category"] = item.category
         inspection_number = _extract_inspection_number(item, metadata)
         if row is None:
@@ -750,4 +772,9 @@ def register_persistence_executors() -> None:
         return
     node_registry.set_executor("file.index_query", 1, _file_query_executor)
     node_registry.set_executor("electron.group", 1, _electron_group_executor)
+    from app.execution.regenerated_fiber import (
+        register_regenerated_fiber_executors,
+    )
+
+    register_regenerated_fiber_executors()
     _EXECUTORS_REGISTERED = True

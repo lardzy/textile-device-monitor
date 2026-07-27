@@ -445,6 +445,30 @@ def test_valid_compose_security_contract(tmp_path) -> None:
     assert minimum_days == 30
 
 
+def test_valid_compose_allows_read_only_named_source_volume(tmp_path) -> None:
+    config = _compose_config(tmp_path)
+    for service_name in ("backend", "execution-worker"):
+        service = config["services"][service_name]
+        service["environment"]["EXECUTION_SOURCE_ROOT"] = (
+            "/data/execution-source/10特纤/02-检验"
+        )
+        source_mount = next(
+            mount
+            for mount in service["volumes"]
+            if mount["target"] == "/data/execution-input"
+        )
+        source_mount.update(
+            {
+                "type": "volume",
+                "source": "textile-area-out",
+                "target": "/data/execution-source",
+                "read_only": True,
+            }
+        )
+
+    validate_compose_config(config, repo_root=tmp_path / "repo")
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [

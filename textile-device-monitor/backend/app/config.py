@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     EXECUTION_RUNTIME_ROOT: str = "/data/execution-runtime"
     EXECUTION_PUBLISH_ROOT: str = "/data/execution-publish"
     EXECUTION_INDEX_INTERVAL_SECONDS: int = 300
+    EXECUTION_AUTO_INDEX_ROOT_IDS: str = "regenerated_fiber_records"
     EXECUTION_WORKER_POLL_SECONDS: float = 1.0
     EXECUTION_WORKER_LEASE_SECONDS: int = 60
     EXECUTION_NODE_MAX_ATTEMPTS: int = 5
@@ -115,6 +116,15 @@ class Settings(BaseSettings):
             for origin in self.CORS_ORIGINS.split(",")
             if origin.strip()
         ]
+
+    def execution_auto_index_root_ids(self) -> list[str]:
+        return list(
+            dict.fromkeys(
+                root_id.strip()
+                for root_id in self.EXECUTION_AUTO_INDEX_ROOT_IDS.split(",")
+                if root_id.strip()
+            )
+        )
 
     def management_cidrs(self) -> list[
         ipaddress.IPv4Network | ipaddress.IPv6Network

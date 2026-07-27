@@ -95,6 +95,7 @@ from app.execution.mutation_runtime import (
     write_file_mutation,
 )
 from app.execution.registry import node_registry
+from app.execution.regenerated_fiber import catalog_recommendations
 from app.execution.schemas import (
     CredentialUpsert,
     FileRefreshRequest,
@@ -353,6 +354,7 @@ def _workflow_dict(
     workflow: ExecutionWorkflow,
     *,
     include_definition: bool = False,
+    include_published_definition: bool = False,
 ) -> dict[str, Any]:
     published_definition: dict[str, Any] = {}
     published_capabilities = _published_workflow_capabilities(workflow)
@@ -401,6 +403,9 @@ def _workflow_dict(
     if include_definition:
         value["draft_definition"] = workflow.draft_definition
         value["draft_capabilities"] = workflow.capabilities or {}
+    if include_published_definition:
+        # 运行准备页只读取不可变的已发布版本，绝不把管理员草稿暴露给普通用户。
+        value["published_definition"] = published_definition
     return value
 
 
@@ -1010,6 +1015,15 @@ def _run_dict(
             else None
         ),
         "created_by_id": run.created_by_id,
+        "created_by": (
+            {
+                "id": run.created_by.id,
+                "username": run.created_by.username,
+                "display_name": run.created_by.display_name,
+            }
+            if run.created_by is not None
+            else None
+        ),
         "created_at": run.created_at.isoformat(),
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
@@ -1032,6 +1046,53 @@ def _run_dict(
     if artifacts is not None:
         value["artifacts"] = [_artifact_dict(artifact) for artifact in artifacts]
     return value
+
+
+def _run_summary_dict(run: ExecutionRun) -> dict[str, Any]:
+    node_runs = list(run.node_runs)
+    completed_node_statuses = {"completed", "succeeded", "skipped"}
+    open_human_statuses = {"open", "pending", "claimed"}
+    open_human_task_count = sum(
+        1
+        for node in node_runs
+        if node.human_task is not None
+        and node.human_task.status in open_human_statuses
+    )
+    return {
+        "id": run.id,
+        "workflow_id": run.workflow_id,
+        "workflow_name": run.workflow.name,
+        "workflow_version_id": run.workflow_version_id,
+        "inspection_number": run.inspection_number,
+        "mode": run.mode,
+        "status": run.status,
+        "error": (
+            {"code": run.error_code, "message": run.error_message}
+            if run.error_code
+            else None
+        ),
+        "created_by_id": run.created_by_id,
+        "created_by": (
+            {
+                "id": run.created_by.id,
+                "username": run.created_by.username,
+                "display_name": run.created_by.display_name,
+            }
+            if run.created_by is not None
+            else None
+        ),
+        "node_progress": {
+            "completed": sum(
+                1 for node in node_runs if node.status in completed_node_statuses
+            ),
+            "total": len(node_runs),
+        },
+        "open_human_task_count": open_human_task_count,
+        "created_at": run.created_at.isoformat(),
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "updated_at": run.updated_at.isoformat(),
+    }
 
 
 def _index_job_dict(job: ExecutionIndexJob, root: ExecutionStorageRoot) -> dict[str, Any]:
@@ -1406,6 +1467,48 @@ def node_types(_auth: AuthContext = Depends(permission("workflow.design"))):
     return {"items": [item.public_dict() for item in node_registry.all()]}
 
 
+@router.get("/catalog/recommendations")
+def workflow_recommendations(
+    inspection_number: str = Query(default="", max_length=200),
+    preferred_categories: list[str] = Query(default=[]),
+    auth: AuthContext = Depends(permission("workflow.read")),
+    db: Session = Depends(get_db),
+):
+    items, cache_updated = catalog_recommendations(
+        db,
+        inspection_number=inspection_number,
+        preferred_categories=preferred_categories,
+        include_hidden=has_permission(db, auth.user, "workflow.design"),
+    )
+    if cache_updated:
+        db.commit()
+    item_query_states = {
+        item.get("query_state")
+        for item in items
+        if item.get("query_state")
+    }
+    if "too_many_matches" in item_query_states:
+        query_state = "too_many_matches"
+    elif "complete" in item_query_states or "validated" in item_query_states:
+        query_state = "complete"
+    elif "incomplete" in item_query_states:
+        query_state = "incomplete"
+    else:
+        query_state = "empty"
+    return {
+        "inspection_number": inspection_number.strip(),
+        "query_state": query_state,
+        "preferred_categories": list(
+            dict.fromkeys(
+                category.strip()
+                for category in preferred_categories
+                if category.strip()
+            )
+        ),
+        "items": items,
+    }
+
+
 @router.post("/workflows/import", status_code=201)
 def import_workflow(
     payload: WorkflowImportRequest,
@@ -1525,10 +1628,10 @@ def workflows(
         ExecutionCategory.sort_order.asc(),
         ExecutionWorkflow.updated_at.desc(),
     ).all():
-        if (
-            _published_workflow_capabilities(item).get("hidden")
-            and not include_draft
-        ):
+        published_capabilities = _published_workflow_capabilities(item)
+        if published_capabilities.get("system_deprecated"):
+            continue
+        if published_capabilities.get("hidden") and not include_draft:
             continue
         value = _workflow_dict(item, include_definition=include_draft)
         recent = (
@@ -1594,6 +1697,7 @@ def workflow_detail(
     return _workflow_dict(
         workflow,
         include_definition=has_permission(db, auth.user, "workflow.design"),
+        include_published_definition=True,
     )
 
 
@@ -1738,7 +1842,13 @@ def test_workflow(
 @router.get("/runs")
 def list_runs(
     status: Optional[str] = None,
+    status_group: Optional[str] = Query(
+        default=None,
+        pattern=r"^(active|terminal)$",
+    ),
     inspection_number: Optional[str] = None,
+    workflow_id: Optional[str] = None,
+    offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     auth: AuthContext = Depends(permission("workflow.run")),
     db: Session = Depends(get_db),
@@ -1748,17 +1858,48 @@ def list_runs(
         statement = statement.filter(ExecutionRun.created_by_id == auth.user.id)
     if status:
         statement = statement.filter(ExecutionRun.status == status)
+    if status_group == "active":
+        statement = statement.filter(
+            ExecutionRun.status.in_(
+                [
+                    "created",
+                    "pending",
+                    "queued",
+                    "running",
+                    "waiting_human",
+                    "paused",
+                    "cancel_pending",
+                    "failure_pending",
+                ]
+            )
+        )
+    elif status_group == "terminal":
+        statement = statement.filter(
+            ExecutionRun.status.in_(
+                ["completed", "succeeded", "failed", "cancelled"]
+            )
+        )
     if inspection_number:
         statement = statement.filter(
             ExecutionRun.inspection_number.ilike(f"%{inspection_number}%")
         )
+    if workflow_id:
+        statement = statement.filter(ExecutionRun.workflow_id == workflow_id)
+    total = statement.count()
     return {
         "items": [
-            _run_dict(item, include_definition=False)
-            for item in statement.order_by(ExecutionRun.created_at.desc())
+            _run_summary_dict(item)
+            for item in statement.order_by(
+                ExecutionRun.created_at.desc(),
+                ExecutionRun.id.desc(),
+            )
+            .offset(offset)
             .limit(limit)
             .all()
-        ]
+        ],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
     }
 
 

@@ -524,26 +524,61 @@ def _bind_roots(
     services: dict[str, Any],
     service_name: str,
     roots: dict[str, PurePosixPath],
-) -> dict[str, Path]:
-    mounts = {
-        mount["target"]: mount
-        for mount in services[service_name].get("volumes", [])
-    }
-    host_roots: dict[str, Path] = {}
+) -> dict[str, tuple[str, str]]:
+    mounts = services[service_name].get("volumes", [])
+    mount_identities: dict[str, tuple[str, str]] = {}
+    bind_roots: dict[str, Path] = {}
     for role, target in roots.items():
-        mount = mounts.get(str(target))
-        if not mount or mount.get("type") != "bind":
-            _fail(f"{service_name} {target} 必须使用宿主机 bind mount")
+        candidates: list[tuple[int, dict[str, Any], PurePosixPath]] = []
+        for mount in mounts:
+            raw_mount_target = str(mount.get("target", "")).strip()
+            if not raw_mount_target:
+                continue
+            mount_target = PurePosixPath(
+                posixpath.normpath(raw_mount_target)
+            )
+            if mount_target == target or mount_target in target.parents:
+                candidates.append(
+                    (len(mount_target.parts), mount, mount_target)
+                )
+        if not candidates:
+            _fail(f"{service_name} {target} 缺少执行目录挂载")
+        _, mount, mount_target = max(candidates, key=lambda item: item[0])
+        relative_target = target.relative_to(mount_target)
+        mount_type = str(mount.get("type", ""))
         read_only = bool(mount.get("read_only", False))
         if role == "source" and not read_only:
             _fail(f"{service_name} 源资料挂载必须只读")
         if role != "source" and read_only:
             _fail(f"{service_name} {role} 挂载必须可写")
-        host_roots[role] = Path(mount["source"]).expanduser().resolve(
-            strict=False
-        )
-    _reject_overlaps(host_roots, location=f"{service_name} 宿主机")
-    return host_roots
+        if mount_type == "volume":
+            if role != "source":
+                _fail(
+                    f"{service_name} {role} 必须使用宿主机 bind mount"
+                )
+            volume_name = str(mount.get("source", "")).strip()
+            if not volume_name:
+                _fail(f"{service_name} 源资料命名卷缺少 source")
+            volume_location = (
+                volume_name
+                if relative_target == PurePosixPath(".")
+                else f"{volume_name}/{relative_target.as_posix()}"
+            )
+            mount_identities[role] = ("volume", volume_location)
+            continue
+        if mount_type != "bind":
+            _fail(
+                f"{service_name} {target} 必须使用 bind mount，"
+                "源资料也可使用只读命名卷"
+            )
+        host_path = (
+            Path(mount["source"]).expanduser()
+            / Path(*relative_target.parts)
+        ).resolve(strict=False)
+        bind_roots[role] = host_path
+        mount_identities[role] = ("bind", str(host_path))
+    _reject_overlaps(bind_roots, location=f"{service_name} 宿主机")
+    return mount_identities
 
 
 def validate_compose_config(

@@ -330,14 +330,29 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
                     || candidate.key
                     || candidate.base_name
                     || candidate.name;
+                  const displayName = candidate.name
+                    || candidate.base_name
+                    || String(path).split(/[\\/]/).pop();
+                  const pathParts = String(path || '').split(/[\\/]/);
+                  const parentPath = pathParts.length > 1
+                    ? pathParts.slice(0, -1).join('/')
+                    : '根目录';
                   const fileCount = Array.isArray(candidate.files)
                     ? `${candidate.files.length} 个关联文件`
                     : candidate.suffix;
+                  const secondaryText = [parentPath, fileCount]
+                    .filter(Boolean)
+                    .join(' · ');
                   return (
                     <Checkbox key={candidateId(candidate)} value={String(candidateId(candidate))}>
-                      <span className="execution-candidate-list__item">
-                        <strong>{candidate.name || candidate.base_name || path}</strong>
-                        <small>{path}{fileCount ? ` · ${fileCount}` : ''}</small>
+                      <span
+                        className="execution-candidate-list__item"
+                        title={String(path || displayName)}
+                      >
+                        <strong title={displayName}>{displayName}</strong>
+                        <small title={`${path}${fileCount ? ` · ${fileCount}` : ''}`}>
+                          {secondaryText}
+                        </small>
                       </span>
                     </Checkbox>
                   );

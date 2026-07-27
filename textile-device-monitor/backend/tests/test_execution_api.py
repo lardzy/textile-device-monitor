@@ -9,11 +9,13 @@ from sqlalchemy.orm import sessionmaker
 from app.api.execution import (
     AuthContext,
     human_task_detail,
+    list_runs,
     login,
     router,
     run_detail,
     run_event_history,
     update_user,
+    workflow_detail,
     workflows,
 )
 from app.database import Base
@@ -188,6 +190,76 @@ class ExecutionApiContractTests(unittest.TestCase):
             ("POST", "/execution/v1/files/refresh"),
         }
         self.assertTrue(expected.issubset(paths), expected - paths)
+
+    def test_workflow_detail_exposes_only_the_published_definition_to_user(self):
+        run = self._create_owned_run(self.user, suffix="published-preview")
+
+        payload = workflow_detail(
+            run.workflow_id,
+            auth=AuthContext(session=None, user=self.user),
+            db=self.db,
+        )
+
+        self.assertEqual(
+            payload["published_definition"]["metadata"]["name"],
+            "事件分页-published-preview",
+        )
+        self.assertNotIn("draft_definition", payload)
+
+    def test_run_list_supports_status_groups_and_stable_pagination(self):
+        running = self._create_owned_run(self.user, suffix="running-list")
+        waiting = self._create_owned_run(self.user, suffix="waiting-list")
+        completed = self._create_owned_run(self.user, suffix="completed-list")
+        running.status = "running"
+        waiting.status = "waiting_human"
+        completed.status = "completed"
+        self.db.commit()
+        auth = AuthContext(session=None, user=self.user)
+
+        first_page = list_runs(
+            status=None,
+            status_group="active",
+            inspection_number=None,
+            workflow_id=None,
+            offset=0,
+            limit=1,
+            auth=auth,
+            db=self.db,
+        )
+        second_page = list_runs(
+            status=None,
+            status_group="active",
+            inspection_number=None,
+            workflow_id=None,
+            offset=1,
+            limit=1,
+            auth=auth,
+            db=self.db,
+        )
+        terminal_page = list_runs(
+            status=None,
+            status_group="terminal",
+            inspection_number=None,
+            workflow_id=None,
+            offset=0,
+            limit=20,
+            auth=auth,
+            db=self.db,
+        )
+
+        self.assertEqual(first_page["total"], 2)
+        self.assertEqual(len(first_page["items"]), 1)
+        self.assertEqual(len(second_page["items"]), 1)
+        self.assertNotEqual(
+            first_page["items"][0]["id"],
+            second_page["items"][0]["id"],
+        )
+        self.assertEqual(terminal_page["total"], 1)
+        self.assertEqual(
+            terminal_page["items"][0]["inspection_number"],
+            "EVENT-completed-list",
+        )
+        self.assertIn("node_progress", first_page["items"][0])
 
     def test_mutation_routes_enforce_permission_and_csrf_contract(self):
         expected = {

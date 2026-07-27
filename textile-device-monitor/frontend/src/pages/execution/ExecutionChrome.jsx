@@ -1,6 +1,8 @@
 import { Avatar, Button, Dropdown, Space, Tag, Typography } from 'antd';
 import {
   LogoutOutlined,
+  ApartmentOutlined,
+  HistoryOutlined,
   InboxOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
@@ -26,6 +28,7 @@ export default function ExecutionChrome({
     canManageCredentials,
     canManageUsers,
     canHandleHumanTasks,
+    canDesignWorkflow,
     logout,
   } = useExecutionAuth();
 
@@ -52,6 +55,12 @@ export default function ExecutionChrome({
         icon: <InboxOutlined />,
         label: '人工任务收件箱',
         onClick: () => navigate('/execution/tasks'),
+      },
+      canDesignWorkflow && {
+        key: 'workflow-admin',
+        icon: <ApartmentOutlined />,
+        label: '流程设计与发布',
+        onClick: () => navigate('/execution/admin'),
       },
       (canManageCredentials || canManageUsers) && {
         key: 'settings',
@@ -92,6 +101,15 @@ export default function ExecutionChrome({
         </div>
       </div>
       <Space size={12}>
+        {location.pathname !== '/execution/runs' && (
+          <Button
+            type="text"
+            icon={<HistoryOutlined />}
+            onClick={() => navigate('/execution/runs')}
+          >
+            执行记录
+          </Button>
+        )}
         {canHandleHumanTasks && !location.pathname.startsWith('/execution/tasks') && (
           <Button
             type="text"

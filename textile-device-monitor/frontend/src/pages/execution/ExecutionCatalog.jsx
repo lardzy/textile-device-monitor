@@ -1,21 +1,23 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Button,
   Card,
-  Divider,
   Empty,
-  Form,
   Input,
-  Modal,
   Select,
   Skeleton,
   Space,
   Tag,
   Tooltip,
   Typography,
-  message,
 } from 'antd';
 import {
   ApartmentOutlined,
@@ -24,6 +26,7 @@ import {
   ClockCircleOutlined,
   EditOutlined,
   FileSearchOutlined,
+  LoadingOutlined,
   LockOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -31,18 +34,12 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
-  createExecutionRun,
+  getExecutionCatalogRecommendations,
   getExecutionCategories,
-  getExecutionRuns,
   getExecutionWorkflows,
 } from '../../api/execution';
-import {
-  clearExecutionRunRequest,
-  prepareExecutionRunRequest,
-} from '../../utils/executionRunRequest';
 import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
-import SchemaFields from './SchemaFields';
 import './execution.css';
 
 const { Paragraph, Text, Title } = Typography;
@@ -53,9 +50,14 @@ const getCategory = (workflow) => {
   }
   return {
     id: workflow.category_id || workflow.category || 'uncategorized',
+    key: workflow.category_key,
     name: workflow.category_name || workflow.category || '未分类',
   };
 };
+
+const categoryKeyOf = category => String(
+  category?.key || category?.id || category?.slug || category?.name || 'uncategorized',
+);
 
 const workflowIdOf = workflow => workflow.id || workflow.workflow_id || workflow.slug;
 
@@ -81,26 +83,6 @@ const availabilityOf = (workflow) => {
   };
 };
 
-const withInspectionNumber = (schema = {}) => ({
-  type: 'object',
-  ...schema,
-  properties: {
-    inspection_number: {
-      type: 'string',
-      title: '检验编号',
-      description: '默认带入流程目录顶部输入的编号，可在开始前核对修改。',
-    },
-    ...(schema.properties || {}),
-  },
-  required: [...new Set(['inspection_number', ...(schema.required || [])])],
-});
-
-const schemaDefaults = schema => Object.fromEntries(
-  Object.entries(schema?.properties || {})
-    .filter(([, field]) => field.default !== undefined)
-    .map(([name, field]) => [name, field.default]),
-);
-
 const runStatusMeta = {
   running: { color: 'processing', text: '最近运行中' },
   waiting_human: { color: 'warning', text: '等待人工处理' },
@@ -112,12 +94,69 @@ const runStatusMeta = {
   cancelled: { color: 'default', text: '最近已取消' },
 };
 
+const recommendationConditionLabels = {
+  category: '优先类别',
+  source_root: '数据根',
+  filename: '文件名',
+  worksheet: '工作表',
+  content_range: '内容范围',
+};
+
+const recommendationDisplay = (recommendation, loading) => {
+  if (loading) {
+    return {
+      color: 'processing',
+      icon: <LoadingOutlined spin />,
+      text: '正在识别',
+      detail: '正在根据编号和优先类别识别适用流程',
+    };
+  }
+  if (!recommendation) {
+    return null;
+  }
+  if (
+    (recommendation.index_state && recommendation.index_state !== 'ready')
+    || ['index_unavailable', 'index_pending'].includes(recommendation.state)
+  ) {
+    return {
+      color: 'warning',
+      icon: <ClockCircleOutlined />,
+      text: '索引暂不可用',
+      detail: recommendation.message || '文件索引尚未就绪，您仍可手动选择并运行流程',
+    };
+  }
+  const matchedConditions = recommendation.matched_conditions || [];
+  const conditionText = matchedConditions.length
+    ? matchedConditions
+      .map(condition => recommendationConditionLabels[condition] || condition)
+      .join('、')
+    : '暂无';
+  const score = Number(recommendation.score || 0);
+  if (recommendation.full_match && Number(recommendation.candidate_count || 0) > 0) {
+    const candidateCount = Number(recommendation.candidate_count);
+    return {
+      color: 'success',
+      icon: <CheckCircleFilled />,
+      text: `找到 ${candidateCount} 个符合文件`,
+      detail: `已满足完整文件规则；匹配条件：${conditionText}`,
+    };
+  }
+  return {
+    color: score > 0 ? 'blue' : 'default',
+    icon: score > 0 ? <FileSearchOutlined /> : <SearchOutlined />,
+    text: score > 0 ? `匹配 ${score} 项` : '暂未匹配',
+    detail: score > 0
+      ? `匹配条件：${conditionText}`
+      : '当前编号和优先类别暂未匹配此流程',
+  };
+};
+
 function WorkflowCard({
   workflow,
   canRun,
   onRun,
-  onDesign,
-  creating,
+  recommendation,
+  recommendationLoading,
 }) {
   const category = getCategory(workflow);
   const workflowId = workflowIdOf(workflow);
@@ -137,9 +176,18 @@ function WorkflowCard({
     : capabilities.write === true)
     || workflow.write_enabled
     || workflow.access_mode === 'write';
+  const candidatePreview = recommendation?.candidate_preview;
+  const candidatePreviewName = candidatePreview?.name
+    || candidatePreview?.filename;
+  const recommendationMeta = recommendationDisplay(
+    recommendation,
+    recommendationLoading,
+  );
 
   return (
     <Card
+      id={`execution-workflow-${workflowId}`}
+      data-workflow-id={workflowId}
       className={`execution-workflow-card ${available ? '' : 'is-unavailable'}`}
       hoverable={actionable}
       onClick={() => actionable && onRun(workflow)}
@@ -151,7 +199,6 @@ function WorkflowCard({
           <Button
             type="link"
             disabled={!actionable}
-            loading={creating === workflowId}
             onClick={(event) => {
               event.stopPropagation();
               if (actionable) {
@@ -162,21 +209,7 @@ function WorkflowCard({
             {available ? '开始执行' : '暂不可运行'} <ArrowRightOutlined />
           </Button>
         </Tooltip>,
-        onDesign ? (
-          <Button
-            key="design"
-            type="text"
-            icon={<EditOutlined />}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDesign(workflow);
-            }}
-          >
-            设计
-          </Button>
-        ) : (
-          <span key="version">v{version || '—'}</span>
-        ),
+        <span key="version">v{version || '—'}</span>,
       ]}
     >
       <div className="execution-workflow-card__top">
@@ -198,6 +231,28 @@ function WorkflowCard({
         <span><CheckCircleFilled /> 已发布 v{version || '—'}</span>
         <span><FileSearchOutlined /> {requiredCount} 项必填</span>
       </div>
+      {recommendationMeta && (
+        <Tooltip title={recommendationMeta.detail}>
+          <Tag
+            className="execution-workflow-card__recommendation"
+            color={recommendationMeta.color}
+            icon={recommendationMeta.icon}
+          >
+            {recommendationMeta.text}
+          </Tag>
+        </Tooltip>
+      )}
+      {candidatePreviewName && (
+        <Tooltip
+          title={candidatePreview?.relative_path || candidatePreviewName}
+          placement="topLeft"
+        >
+          <div className="execution-workflow-card__file-preview">
+            <FileSearchOutlined />
+            <span>示例文件：{candidatePreviewName}</span>
+          </div>
+        </Tooltip>
+      )}
       <div className="execution-workflow-card__footer">
         {!available ? (
           <Tooltip title={availability.message}>
@@ -221,13 +276,9 @@ function WorkflowCard({
 }
 
 export default function ExecutionCatalog() {
-  const [runForm] = Form.useForm();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const {
-    canDesignWorkflow,
-    canRunWorkflow,
-  } = useExecutionAuth();
+  const { canRunWorkflow } = useExecutionAuth();
   const [inspectionNumber, setInspectionNumber] = useState(
     searchParams.get('number') || '',
   );
@@ -238,36 +289,30 @@ export default function ExecutionCatalog() {
   const [workflows, setWorkflows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [creating, setCreating] = useState(null);
-  const [runWorkflow, setRunWorkflow] = useState(null);
-  const [runFormDefaults, setRunFormDefaults] = useState(null);
+  const [recommendationSnapshot, setRecommendationSnapshot] = useState(null);
+  const [recommendationLoading, setRecommendationLoading] = useState(false);
+  const [recommendationFailed, setRecommendationFailed] = useState(false);
+  const [pendingScrollWorkflowId, setPendingScrollWorkflowId] = useState(null);
+  const recommendationTimerRef = useRef(null);
+  const recommendationAbortRef = useRef(null);
+  const recommendationRequestIdRef = useRef(0);
 
   const loadCatalog = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [categoryRows, workflowRows, runRows] = await Promise.all([
+      const [categoryRows, workflowRows] = await Promise.all([
         getExecutionCategories(),
         getExecutionWorkflows({ published: true }),
-        canRunWorkflow ? getExecutionRuns({ limit: 200 }) : Promise.resolve([]),
       ]);
-      const latestRunByWorkflow = new Map();
-      runRows.forEach((run) => {
-        if (!latestRunByWorkflow.has(run.workflow_id)) {
-          latestRunByWorkflow.set(run.workflow_id, run);
-        }
-      });
       setCategories(categoryRows);
-      setWorkflows(workflowRows.map(workflow => ({
-        ...workflow,
-        last_run: workflow.last_run || latestRunByWorkflow.get(workflowIdOf(workflow)),
-      })));
+      setWorkflows(workflowRows);
     } catch (requestError) {
       setError(requestError);
     } finally {
       setLoading(false);
     }
-  }, [canRunWorkflow]);
+  }, []);
 
   useEffect(() => {
     loadCatalog();
@@ -282,9 +327,118 @@ export default function ExecutionCatalog() {
     setSearchParams(next, { replace: true });
   }, [inspectionNumber, selectedCategories, setSearchParams]);
 
+  const normalizedRecommendationQuery = useMemo(() => ({
+    inspectionNumber: inspectionNumber.trim(),
+    preferredCategories: [...selectedCategories].sort(),
+  }), [inspectionNumber, selectedCategories]);
+
+  const recommendationQueryKey = useMemo(
+    () => JSON.stringify(normalizedRecommendationQuery),
+    [normalizedRecommendationQuery],
+  );
+
+  const requestRecommendations = useCallback(async (
+    query,
+    { scrollToFirst = false } = {},
+  ) => {
+    recommendationAbortRef.current?.abort();
+    const controller = new AbortController();
+    recommendationAbortRef.current = controller;
+    const requestId = recommendationRequestIdRef.current + 1;
+    recommendationRequestIdRef.current = requestId;
+    const queryKey = JSON.stringify(query);
+    setRecommendationLoading(true);
+    setRecommendationFailed(false);
+    try {
+      const rows = await getExecutionCatalogRecommendations(query, {
+        signal: controller.signal,
+      });
+      if (
+        controller.signal.aborted
+        || recommendationRequestIdRef.current !== requestId
+      ) {
+        return;
+      }
+      const rankedRows = rows.map((row, index) => ({
+        ...row,
+        rank: Number.isFinite(Number(row.rank)) ? Number(row.rank) : index,
+      }));
+      setRecommendationSnapshot({ queryKey, rows: rankedRows });
+      if (scrollToFirst) {
+        setPendingScrollWorkflowId(rankedRows[0]?.workflow_id || null);
+      }
+    } catch (requestError) {
+      if (
+        controller.signal.aborted
+        || recommendationRequestIdRef.current !== requestId
+      ) {
+        return;
+      }
+      setRecommendationSnapshot(null);
+      setRecommendationFailed(true);
+    } finally {
+      if (recommendationRequestIdRef.current === requestId) {
+        setRecommendationLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (recommendationTimerRef.current) {
+      clearTimeout(recommendationTimerRef.current);
+    }
+    recommendationAbortRef.current?.abort();
+    recommendationRequestIdRef.current += 1;
+    setPendingScrollWorkflowId(null);
+
+    const hasRecommendationCriteria = Boolean(
+      normalizedRecommendationQuery.inspectionNumber
+      || normalizedRecommendationQuery.preferredCategories.length,
+    );
+    if (!hasRecommendationCriteria) {
+      setRecommendationSnapshot(null);
+      setRecommendationLoading(false);
+      setRecommendationFailed(false);
+      return undefined;
+    }
+
+    setRecommendationLoading(true);
+    setRecommendationFailed(false);
+    recommendationTimerRef.current = setTimeout(() => {
+      requestRecommendations(normalizedRecommendationQuery);
+    }, 350);
+
+    return () => {
+      if (recommendationTimerRef.current) {
+        clearTimeout(recommendationTimerRef.current);
+      }
+      recommendationAbortRef.current?.abort();
+      recommendationRequestIdRef.current += 1;
+    };
+  }, [normalizedRecommendationQuery, requestRecommendations]);
+
+  const runRecommendationImmediately = useCallback(() => {
+    if (recommendationTimerRef.current) {
+      clearTimeout(recommendationTimerRef.current);
+    }
+    const hasRecommendationCriteria = Boolean(
+      normalizedRecommendationQuery.inspectionNumber
+      || normalizedRecommendationQuery.preferredCategories.length,
+    );
+    if (!hasRecommendationCriteria) {
+      setRecommendationSnapshot(null);
+      setRecommendationLoading(false);
+      setRecommendationFailed(false);
+      return;
+    }
+    requestRecommendations(normalizedRecommendationQuery, {
+      scrollToFirst: true,
+    });
+  }, [normalizedRecommendationQuery, requestRecommendations]);
+
   const categoryOptions = useMemo(() => {
     const fromApi = categories.map(category => ({
-      value: String(category.id || category.slug || category.name),
+      value: categoryKeyOf(category),
       label: category.name,
     }));
     if (fromApi.length) {
@@ -292,97 +446,103 @@ export default function ExecutionCatalog() {
     }
     return [...new Map(workflows.map((workflow) => {
       const category = getCategory(workflow);
-      return [String(category.id), { value: String(category.id), label: category.name }];
+      const categoryKey = categoryKeyOf(category);
+      return [categoryKey, { value: categoryKey, label: category.name }];
     })).values()];
   }, [categories, workflows]);
 
+  const activeRecommendations = useMemo(() => {
+    if (recommendationSnapshot?.queryKey !== recommendationQueryKey) {
+      return null;
+    }
+    return recommendationSnapshot.rows;
+  }, [recommendationQueryKey, recommendationSnapshot]);
+
+  const recommendationByWorkflow = useMemo(
+    () => new Map(
+      (activeRecommendations || []).map(row => [String(row.workflow_id), row]),
+    ),
+    [activeRecommendations],
+  );
+
   const groupedWorkflows = useMemo(() => {
     const groups = new Map();
+    const defaultWorkflowOrder = new Map(
+      workflows.map((workflow, index) => [String(workflowIdOf(workflow)), index]),
+    );
+    const defaultCategoryOrder = new Map(
+      categories.map((category, index) => [categoryKeyOf(category), index]),
+    );
+    const recommendationRank = new Map(
+      (activeRecommendations || []).map((row, index) => [
+        String(row.workflow_id),
+        Number.isFinite(Number(row.rank)) ? Number(row.rank) : index,
+      ]),
+    );
     workflows.forEach((workflow) => {
       const category = getCategory(workflow);
-      const id = String(category.id);
-      if (selectedCategories.length && !selectedCategories.includes(id)) {
-        return;
-      }
+      const id = categoryKeyOf(category);
       if (!groups.has(id)) {
-        groups.set(id, { category, workflows: [] });
+        groups.set(id, {
+          category: { ...category, key: id },
+          defaultOrder: defaultCategoryOrder.get(id) ?? groups.size,
+          workflows: [],
+        });
       }
       groups.get(id).workflows.push(workflow);
     });
-    return [...groups.values()];
-  }, [selectedCategories, workflows]);
+    const orderedGroups = [...groups.values()];
+    if (!activeRecommendations) {
+      return orderedGroups;
+    }
+    const rankOf = workflow => recommendationRank.get(String(workflowIdOf(workflow)))
+      ?? Number.POSITIVE_INFINITY;
+    orderedGroups.forEach((group) => {
+      group.workflows.sort((left, right) => (
+        rankOf(left) - rankOf(right)
+        || (defaultWorkflowOrder.get(String(workflowIdOf(left))) ?? 0)
+          - (defaultWorkflowOrder.get(String(workflowIdOf(right))) ?? 0)
+        || String(workflowIdOf(left)).localeCompare(String(workflowIdOf(right)))
+      ));
+      group.bestRecommendationRank = group.workflows.reduce(
+        (best, workflow) => Math.min(best, rankOf(workflow)),
+        Number.POSITIVE_INFINITY,
+      );
+    });
+    return orderedGroups.sort((left, right) => (
+      left.bestRecommendationRank - right.bestRecommendationRank
+      || left.defaultOrder - right.defaultOrder
+      || categoryKeyOf(left.category).localeCompare(categoryKeyOf(right.category))
+    ));
+  }, [activeRecommendations, categories, workflows]);
+
+  useEffect(() => {
+    if (!pendingScrollWorkflowId) {
+      return;
+    }
+    const card = document.getElementById(
+      `execution-workflow-${pendingScrollWorkflowId}`,
+    );
+    if (!card) {
+      return;
+    }
+    card.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    setPendingScrollWorkflowId(null);
+  }, [groupedWorkflows, pendingScrollWorkflowId]);
 
   const openRunForm = (workflow) => {
     if (!availabilityOf(workflow).available || !canRunWorkflow) {
       return;
     }
-    if (!inspectionNumber.trim()) {
-      message.warning('请先输入检验编号');
-      return;
+    const params = new URLSearchParams();
+    if (inspectionNumber.trim()) {
+      params.set('number', inspectionNumber.trim());
     }
-    const inputSchema = withInspectionNumber(workflow.input_schema || {});
-    const globalSchema = workflow.global_schema || {
-      type: 'object',
-      properties: {},
-    };
-    setRunFormDefaults({
-      input_data: {
-        ...schemaDefaults(inputSchema),
-        inspection_number: inspectionNumber.trim(),
-      },
-      global_data: schemaDefaults(globalSchema),
-    });
-    setRunWorkflow({
-      ...workflow,
-      input_schema: inputSchema,
-      global_schema: globalSchema,
-    });
-  };
-
-  useEffect(() => {
-    if (!runWorkflow || !runFormDefaults) {
-      return;
-    }
-    runForm.resetFields();
-    runForm.setFieldsValue(runFormDefaults);
-  }, [runForm, runFormDefaults, runWorkflow]);
-
-  const startRun = async (values) => {
-    if (!runWorkflow) {
-      return;
-    }
-    const normalizedNumber = values.input_data?.inspection_number?.trim();
-    if (!normalizedNumber) {
-      message.warning('请填写检验编号');
-      return;
-    }
-    const inputData = {
-      ...(values.input_data || {}),
-      inspection_number: normalizedNumber,
-    };
-    const request = prepareExecutionRunRequest({
-      workflow_id: workflowIdOf(runWorkflow),
-      inspection_number: normalizedNumber,
-      input_data: inputData,
-      global_data: values.global_data || {},
-    });
-    const workflowId = workflowIdOf(runWorkflow);
-    setCreating(workflowId);
-    try {
-      const result = await createExecutionRun(request.payload);
-      const run = result?.run || result;
-      const runId = run?.id || run?.run_id;
-      if (!runId) {
-        throw new Error('服务器未返回运行编号');
-      }
-      clearExecutionRunRequest(request.signature);
-      setRunWorkflow(null);
-      navigate(`/execution/runs/${runId}`);
-    } catch (requestError) {
-      message.error(requestError.message || '创建执行任务失败');
-    } finally {
-      setCreating(null);
-    }
+    const query = params.toString();
+    navigate(
+      `/execution/workflows/${encodeURIComponent(workflowIdOf(workflow))}/start`
+      + (query ? `?${query}` : ''),
+    );
   };
 
   return (
@@ -391,27 +551,16 @@ export default function ExecutionCatalog() {
         title="执行系统"
         subtitle="选择流程，让重复的检测工作按标准步骤可靠执行"
         actions={(
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={loadCatalog}>刷新</Button>
-            {canDesignWorkflow && (
-              <Button
-                type="primary"
-                icon={<EditOutlined />}
-                onClick={() => navigate('/execution/admin')}
-              >
-                流程管理
-              </Button>
-            )}
-          </Space>
+          <Button icon={<ReloadOutlined />} onClick={loadCatalog}>刷新</Button>
         )}
       />
 
       <section className="execution-catalog__search">
         <div className="execution-catalog__search-copy">
           <Text className="execution-eyebrow">开始一项检测工作</Text>
-          <Title level={3}>输入编号，选择适用流程</Title>
+          <Title level={3}>查找并选择适用流程</Title>
           <Paragraph>
-            编号会自动带入执行界面；类别可多选，帮助您快速缩小范围。
+            检验编号可选；未填写也能先进入流程，在执行前补充。优先类别只影响推荐顺序。
           </Paragraph>
         </div>
         <div className="execution-catalog__filters">
@@ -419,7 +568,7 @@ export default function ExecutionCatalog() {
             size="large"
             value={inspectionNumber}
             onChange={event => setInspectionNumber(event.target.value)}
-            onPressEnter={() => document.querySelector('.execution-workflow-card:not(.is-unavailable)')?.click()}
+            onPressEnter={runRecommendationImmediately}
             prefix={<SearchOutlined />}
             placeholder="输入检验编号，例如 26X910095-1"
             allowClear
@@ -432,10 +581,21 @@ export default function ExecutionCatalog() {
             value={selectedCategories}
             onChange={setSelectedCategories}
             options={categoryOptions}
-            placeholder="全部类别"
+            placeholder="选择优先类别（可多选）"
             allowClear
-            aria-label="类别筛选"
+            aria-label="优先类别"
           />
+          <div className="execution-catalog__recommendation-hint" aria-live="polite">
+            {recommendationFailed ? (
+              <Text type="warning">推荐识别暂不可用，已保持默认顺序，您仍可手动选择流程。</Text>
+            ) : recommendationLoading ? (
+              <Text type="secondary"><LoadingOutlined spin /> 正在识别适用流程…</Text>
+            ) : activeRecommendations ? (
+              <Text type="secondary">已按匹配程度排序，悬停卡片状态可查看匹配详情。</Text>
+            ) : (
+              <Text type="secondary">可直接选择流程；输入编号后会进一步识别候选文件并优化排序。</Text>
+            )}
+          </div>
         </div>
       </section>
 
@@ -456,7 +616,7 @@ export default function ExecutionCatalog() {
       ) : groupedWorkflows.length ? (
         <div className="execution-workflow-groups">
           {groupedWorkflows.map(group => (
-            <section className="execution-workflow-group" key={group.category.id}>
+            <section className="execution-workflow-group" key={categoryKeyOf(group.category)}>
               <div className="execution-workflow-group__header">
                 <div>
                   <h2>{group.category.name}</h2>
@@ -471,10 +631,16 @@ export default function ExecutionCatalog() {
                     workflow={workflow}
                     canRun={canRunWorkflow}
                     onRun={openRunForm}
-                    onDesign={canDesignWorkflow
-                      ? item => navigate(`/execution/admin/workflows/${workflowIdOf(item)}`)
-                      : null}
-                    creating={creating}
+                    recommendation={recommendationByWorkflow.get(
+                      String(workflowIdOf(workflow)),
+                    )}
+                    recommendationLoading={
+                      recommendationLoading
+                      && Boolean(
+                        normalizedRecommendationQuery.inspectionNumber
+                        || normalizedRecommendationQuery.preferredCategories.length
+                      )
+                    }
                   />
                 ))}
               </div>
@@ -484,50 +650,12 @@ export default function ExecutionCatalog() {
       ) : (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="没有符合当前筛选条件的已发布流程"
+          description="当前没有可显示的已发布流程"
         >
-          <Button onClick={() => setSelectedCategories([])}>清除类别筛选</Button>
+          <Button onClick={loadCatalog}>刷新流程目录</Button>
         </Empty>
       )}
 
-      <Modal
-        title={`开始执行：${runWorkflow?.name || ''}`}
-        open={Boolean(runWorkflow)}
-        okText="确认并开始"
-        cancelText="取消"
-        confirmLoading={Boolean(creating)}
-        onOk={() => runForm.submit()}
-        onCancel={() => {
-          if (!creating) {
-            setRunWorkflow(null);
-          }
-        }}
-        destroyOnHidden
-        forceRender
-        width={620}
-      >
-        <Alert
-          showIcon
-          type="info"
-          message="请在创建运行前核对完整输入"
-          description="必填项和选填项会随本次运行一起保存；进入工作台后仅可查看，不能修改。"
-          style={{ marginBottom: 18 }}
-        />
-        <Form
-          form={runForm}
-          layout="vertical"
-          onFinish={startRun}
-          initialValues={runFormDefaults || undefined}
-        >
-          <SchemaFields schema={runWorkflow?.input_schema} namePrefix="input_data" />
-          {Object.keys(runWorkflow?.global_schema?.properties || {}).length > 0 && (
-            <>
-              <Divider orientation="left">流程全局变量</Divider>
-              <SchemaFields schema={runWorkflow.global_schema} namePrefix="global_data" />
-            </>
-          )}
-        </Form>
-      </Modal>
     </div>
   );
 }

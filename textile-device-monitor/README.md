@@ -69,6 +69,32 @@ TLS 目录必须位于 Git 工作区之外，并包含 `fullchain.pem`、`privke
 和 `root-ca.pem`。`FRONTEND_BIND_ADDRESS` 填服务器当前局域网 IPv4，
 只收紧 Docker 的本机端口绑定，不会修改网卡或 DHCP。
 
+执行系统读取 `//192.168.105.82/材料检测中心` 时复用现有
+`area_out_cifs`。在 `.env` 填写 `SMB_USER_B/SMB_PASS_B` 后，Compose 会把
+该共享卷额外只读挂载到 backend 与 execution-worker 的
+`/data/execution-source`；无需先在 Docker 宿主机手工挂载共享盘。默认
+`EXECUTION_SOURCE_ROOT=/data/execution-source/10特纤/02-检验`，其下直接包含
+`2026-特种毛`、`2026-再生纤`、`2026-麻棉` 和 `2026-电镜`。
+首版后台自动索引由 `EXECUTION_AUTO_INDEX_ROOT_IDS` 控制，默认只扫描
+`regenerated_fiber_records`；其它目录仍可从执行系统手动触发刷新，避免首次
+接入共享盘时批量打开无关历史工作簿。
+
+再生纤根数法优先识别工作表 `根数法报告`，并兼容当前生产模板使用的
+`根数法报告+纯数字`（如 `根数法报告1`）；不会把
+`根数法报告汇总` 当作目标工作表。
+
+当前局域网联调也可把 SMB 凭据单独保存在 Git 已忽略的
+`../.tmp/execution-system-secrets/inspection-systems.env`，并在 Compose
+命令中依次传入主配置和凭据文件：
+
+```bash
+docker compose --env-file .env \
+  --env-file ../.tmp/execution-system-secrets/inspection-systems.env \
+  -f docker-compose.yml -f docker-compose.execution.yml config
+```
+
+后一个文件只补充或覆盖 SMB 凭据，不替代 `.env` 中的数据库、TLS 和应用配置。
+
 3. 按[内部 CA 与本机 hosts 运维手册](docs/internal-ca-operations.md)
 在离线管理员电脑初始化 CA、签发服务器证书，并把不含 CA 私钥的服务器证书
 包部署到 `TLS_DIR_HOST_PATH`。根 CA 私钥不得复制到 Docker 主机。
@@ -168,9 +194,10 @@ Cookie 时会拒绝启动。生产浏览器访问为同源模式，通常保持
   `backend` 而遗漏 Worker，否则新运行不会被执行。
 - `/health/live` 仅表示 API 进程存活；`/health/ready` 还会检查数据库、
   Alembic 版本、Worker 心跳和执行系统 staging/publish 目录。
-- 源资料必须只读映射到 `EXECUTION_SOURCE_HOST_PATH`；中间副本和最终发布分别
-  使用 `EXECUTION_RUNTIME_HOST_PATH`、`EXECUTION_PUBLISH_HOST_PATH`。三者
-  必须彼此独立，不得相同、嵌套或通过符号链接指向同一目录。
+- 源资料通过 `area_out_cifs` 只读映射到 `EXECUTION_SOURCE_ROOT`；中间副本
+  和最终发布分别使用 `EXECUTION_RUNTIME_HOST_PATH`、
+  `EXECUTION_PUBLISH_HOST_PATH`。三者必须彼此独立，不得相同、嵌套或通过
+  符号链接指向同一目录。
 - 受控写入 API 只能沿已发布运行的实际节点路径调用；核对、人工确认和发布
   上下文必须一致，发布栅栏会在物理文件副作用前持久化。
 - 新旧检务系统节点目前是禁用占位节点；复杂 `.xls/.xlsm` 的高保真写入需要
@@ -180,6 +207,8 @@ Cookie 时会拒绝启动。生产浏览器访问为同源模式，通常保持
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.execution.yml \
+  --env-file .env \
+  --env-file ../.tmp/execution-system-secrets/inspection-systems.env \
   up -d --build postgres backend execution-worker frontend
 ```
 

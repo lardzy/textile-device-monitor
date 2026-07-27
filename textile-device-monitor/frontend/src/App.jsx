@@ -23,6 +23,8 @@ const AreaSettings = lazy(() => import('./pages/area/AreaSettings'));
 const AreaJobWorkspace = lazy(() => import('./pages/area/AreaJobWorkspace'));
 const ExecutionLogin = lazy(() => import('./pages/execution/ExecutionLogin'));
 const ExecutionCatalog = lazy(() => import('./pages/execution/ExecutionCatalog'));
+const ExecutionRunPreparation = lazy(() => import('./pages/execution/ExecutionRunPreparation'));
+const ExecutionRunHistory = lazy(() => import('./pages/execution/ExecutionRunHistory'));
 const ExecutionRunWorkspace = lazy(() => import('./pages/execution/ExecutionRunWorkspace'));
 const ExecutionTaskInbox = lazy(() => import('./pages/execution/ExecutionTaskInbox'));
 const ExecutionWorkflowAdmin = lazy(() => import('./pages/execution/ExecutionWorkflowAdmin'));
@@ -92,6 +94,8 @@ const appRoutes = (
           <Route index element={<ExecutionCatalog />} />
           <Route path="tasks" element={<ExecutionTaskInbox />} />
           <Route path="tasks/:taskId" element={<ExecutionTaskInbox />} />
+          <Route path="workflows/:workflowId/start" element={<ExecutionRunPreparation />} />
+          <Route path="runs" element={<ExecutionRunHistory />} />
           <Route path="runs/:runId" element={<ExecutionRunWorkspace />} />
           <Route path="settings" element={<ExecutionSettings />} />
           <Route element={<ExecutionAdminRoute />}>
@@ -116,6 +120,10 @@ function AppLayout() {
   const isAreaWorkspace = location.pathname.startsWith('/tools/area/jobs/');
   const isExecution = location.pathname.startsWith('/execution');
   const isExecutionWorkspace = location.pathname.startsWith('/execution/runs/')
+    || (
+      location.pathname.startsWith('/execution/workflows/')
+      && location.pathname.endsWith('/start')
+    )
     || location.pathname.startsWith('/execution/admin/workflows/');
 
   useEffect(() => {

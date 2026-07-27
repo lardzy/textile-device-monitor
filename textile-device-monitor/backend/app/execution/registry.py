@@ -156,6 +156,72 @@ def _register_builtins() -> None:
             ),
         ),
         NodeType(
+            "file.regenerated_fiber_count_method",
+            1,
+            "再生纤-根数法",
+            "文件",
+            "按编号、工作表和已保存单元格结果识别再生纤根数法记录",
+            required_config=("root_id",),
+            config_schema=_object_schema(
+                {
+                    "root_id": {
+                        "type": "string",
+                        "const": "regenerated_fiber_records",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 6,
+                    },
+                },
+                required=("root_id",),
+            ),
+            input_schema=_object_schema(
+                {"inspection_number": {"type": "string", "minLength": 1}},
+                required=("inspection_number",),
+            ),
+            output_schema=_object_schema(
+                {
+                    "candidates": {"type": "array"},
+                    "count": {"type": "integer"},
+                    "diagnostics": {"type": "object"},
+                }
+            ),
+        ),
+        NodeType(
+            "file.regenerated_fiber_area_method",
+            1,
+            "再生纤-面积法",
+            "文件",
+            "按编号、工作表和已保存单元格结果识别再生纤面积法记录",
+            required_config=("root_id",),
+            config_schema=_object_schema(
+                {
+                    "root_id": {
+                        "type": "string",
+                        "const": "regenerated_fiber_records",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 6,
+                    },
+                },
+                required=("root_id",),
+            ),
+            input_schema=_object_schema(
+                {"inspection_number": {"type": "string", "minLength": 1}},
+                required=("inspection_number",),
+            ),
+            output_schema=_object_schema(
+                {
+                    "candidates": {"type": "array"},
+                    "count": {"type": "integer"},
+                    "diagnostics": {"type": "object"},
+                }
+            ),
+        ),
+        NodeType(
             "excel.classify",
             1,
             "Excel 类型识别",

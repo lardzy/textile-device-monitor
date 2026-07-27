@@ -131,12 +131,29 @@ def test_cors_allow_list_is_trimmed_and_normalized() -> None:
 def test_index_interval_safe_default_is_five_minutes() -> None:
     settings = Settings(APP_ENV="development")
     assert settings.EXECUTION_INDEX_INTERVAL_SECONDS == 300
+    assert settings.execution_auto_index_root_ids() == [
+        "regenerated_fiber_records"
+    ]
     assert settings.EXECUTION_NODE_MAX_ATTEMPTS == 5
     assert settings.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS == 45
     assert settings.PUBLIC_HOSTNAME == "textile-monitor.internal"
     assert settings.PUBLIC_ORIGIN == "https://textile-monitor.internal"
     assert settings.TLS_MIN_VALID_DAYS == 30
     assert settings.HSTS_MAX_AGE == 300
+
+
+def test_execution_auto_index_roots_are_trimmed_and_deduplicated() -> None:
+    settings = Settings(
+        APP_ENV="development",
+        EXECUTION_AUTO_INDEX_ROOT_IDS=(
+            " regenerated_fiber_records, ,regenerated_fiber_records,"
+            "special_wool_records "
+        ),
+    )
+    assert settings.execution_auto_index_root_ids() == [
+        "regenerated_fiber_records",
+        "special_wool_records",
+    ]
 
 
 def test_management_cidrs_are_parsed_as_networks() -> None:
