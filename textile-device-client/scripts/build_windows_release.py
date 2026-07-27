@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import sys
 
-from build_support import DEFAULT_TIMESTAMP_URL
+from build_support import DEFAULT_SERVER_URL, DEFAULT_TIMESTAMP_URL
 from build_windows_installer import build_installer, find_inno_setup_compiler
 from build_windows_onedir import build as build_onedir
 
@@ -44,6 +44,19 @@ def main() -> int:
         default=DEFAULT_TIMESTAMP_URL,
         help="RFC 3161 timestamp server used when --sign is enabled.",
     )
+    parser.add_argument(
+        "--default-server-url",
+        default=DEFAULT_SERVER_URL,
+        help=(
+            "Pure HTTPS origin embedded into new installations "
+            f"(default: {DEFAULT_SERVER_URL})."
+        ),
+    )
+    parser.add_argument(
+        "--tls-ca-bundle",
+        required=True,
+        help="PEM root CA bundle packaged with the Windows client.",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
@@ -71,6 +84,8 @@ def main() -> int:
         clean=True,
         console=False,
         bootloader_debug=False,
+        default_server_url=args.default_server_url.strip(),
+        tls_ca_bundle=args.tls_ca_bundle.strip(),
         **signing_options,
     )
     if onedir_result != 0:

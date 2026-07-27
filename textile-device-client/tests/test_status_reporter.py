@@ -15,11 +15,20 @@ if str(CLIENT_ROOT) not in sys.path:
 
 if importlib.util.find_spec("requests") is None:
     requests_stub = types.ModuleType("requests")
+
+    class _RequestsSessionStub:
+        def __init__(self):
+            self.headers = {}
+            self.trust_env = True
+            self.verify = True
+
     requests_stub.exceptions = types.SimpleNamespace(
+        SSLError=type("SSLError", (Exception,), {}),
         Timeout=TimeoutError,
         ConnectionError=ConnectionError,
+        JSONDecodeError=ValueError,
     )
-    requests_stub.Session = object
+    requests_stub.Session = _RequestsSessionStub
     sys.modules["requests"] = requests_stub
 
 if importlib.util.find_spec("psutil") is None:
@@ -105,7 +114,8 @@ class _RetrySession:
     def __init__(self):
         self.payloads = []
 
-    def request(self, method, url, json, timeout):
+    def request(self, method, url, json, timeout, allow_redirects):
+        self.assert_no_redirects = allow_redirects is False
         self.payloads.append(dict(json))
         if len(self.payloads) == 1:
             raise api_client_module.requests.exceptions.Timeout(
@@ -172,6 +182,7 @@ class StatusReporterTests(unittest.TestCase):
 
         self.assertIsNotNone(response)
         self.assertEqual(len(retry_session.payloads), 2)
+        self.assertTrue(retry_session.assert_no_redirects)
         self.assertEqual(
             retry_session.payloads[0]["report_id"],
             retry_session.payloads[1]["report_id"],

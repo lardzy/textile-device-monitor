@@ -2,24 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from fastapi import HTTPException
 
-db_fd, db_path = tempfile.mkstemp(prefix="textile-monitor-queue-", suffix=".sqlite")
-os.close(db_fd)
-os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
-os.environ["OCR_ENABLED"] = "false"
-os.environ["AREA_ENABLED"] = "false"
-
 from app.api.devices import report_device_status
 from app.api.queue import change_queue_position, complete_task, leave_queue
 from app.crud import queue as queue_crud
-from app.database import SessionLocal, engine, ensure_queue_record_schema
+from app.database import SessionLocal, engine
 from app.models import Base, Device, DeviceStatus, QueueChangeLog, QueueRecord, TaskStatus
 from app.schemas import (
     DeviceStatus as SchemaDeviceStatus,
@@ -33,16 +25,9 @@ from app.websocket.manager import websocket_manager
 
 
 class QueuePlaceholderTests(unittest.TestCase):
-    @classmethod
-    def tearDownClass(cls):
-        engine.dispose()
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
     def setUp(self):
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
-        ensure_queue_record_schema()
         self.db = SessionLocal()
         self.device_counter = 0
 
@@ -658,42 +643,6 @@ class QueuePlaceholderTests(unittest.TestCase):
         waiting = queue_crud.get_queue_by_device(self.db, device.id)
         self.assertEqual([record.position for record in waiting], [1, 2])
         self.assertEqual(len({record.position for record in waiting}), 2)
-
-    def test_compatibility_schema_repairs_duplicates_before_adding_index(self):
-        from sqlalchemy import inspect, text
-
-        device = self._create_device()
-        self.db.execute(
-            text("DROP INDEX uq_queue_records_waiting_device_position")
-        )
-        self.db.commit()
-        self.db.add_all(
-            [
-                QueueRecord(
-                    inspector_name="Alice",
-                    device_id=device.id,
-                    position=1,
-                    status=TaskStatus.WAITING,
-                ),
-                QueueRecord(
-                    inspector_name="Bob",
-                    device_id=device.id,
-                    position=1,
-                    status=TaskStatus.WAITING,
-                ),
-            ]
-        )
-        self.db.commit()
-
-        ensure_queue_record_schema()
-        self.db.expire_all()
-
-        waiting = queue_crud.get_queue_by_device(self.db, device.id)
-        self.assertEqual([record.position for record in waiting], [1, 2])
-        self.assertIn(
-            "uq_queue_records_waiting_device_position",
-            {index["name"] for index in inspect(engine).get_indexes("queue_records")},
-        )
 
     def test_timeout_shift_is_committed_before_websocket_broadcast(self):
         device = self._create_device()

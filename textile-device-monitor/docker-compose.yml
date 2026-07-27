@@ -5,15 +5,23 @@ services:
     container_name: textile-monitor-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: textile_monitor
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password123
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: "${POSTGRES_DB:?POSTGRES_DB is required}"
+      POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER is required}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - textile-net
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   area-infer:
     build:
@@ -29,11 +37,9 @@ services:
       AREA_INFER_GPU_POLICY: ${AREA_INFER_GPU_POLICY:-warn_continue}
     volumes:
       - type: bind
-        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-models"
+        source: "${AREA_MODEL_HOST_PATH:-./runtime/area-models}"
         target: /opt/area_weights
         read_only: true
-    ports:
-      - "9001:9001"
     networks:
       - textile-net
 
@@ -42,48 +48,166 @@ services:
     container_name: textile-monitor-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://admin:password123@postgres:5432/textile_monitor
-      SECRET_KEY: your-secret-key-change-in-production
-      HEARTBEAT_TIMEOUT: 30
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required}"
+      APP_ENV: "${APP_ENV:-production}"
+      HEARTBEAT_TIMEOUT: 90
       HEARTBEAT_CHECK_INTERVAL: 10
       DATA_RETENTION_DAYS: 30
       STATUS_REPORT_RETENTION_HOURS: 48
-      CORS_ORIGINS: http://localhost,http://localhost:80,http://backend:8000
+      CORS_ORIGINS: "${CORS_ORIGINS:-}"
+      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-textile-monitor.internal}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-https://textile-monitor.internal}"
+      TLS_DIR_HOST_PATH: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required}"
+      TLS_MIN_VALID_DAYS: "${TLS_MIN_VALID_DAYS:-30}"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required}"
+      FORWARDED_ALLOW_IPS: "${FRONTEND_PROXY_IP:-172.30.0.10}"
       AREA_WEIGHTS_DIR: /opt/area_weights
       AREA_INFER_URL: http://area-infer:9001
       AREA_INFER_TIMEOUT_SEC: 60
       AREA_OUTPUT_DIR: /data/area_outputs
       AREA_EXCEL_TEMPLATE_PATH: /opt/area_templates/-面积法-定量试验原始记录-新系统.xls
+      EXECUTION_ENABLED: ${EXECUTION_ENABLED:-true}
+      EXECUTION_SESSION_SECRET: "${EXECUTION_SESSION_SECRET:?EXECUTION_SESSION_SECRET is required}"
+      EXECUTION_CREDENTIAL_KEY: "${EXECUTION_CREDENTIAL_KEY:?EXECUTION_CREDENTIAL_KEY is required}"
+      EXECUTION_COOKIE_SECURE: "true"
+      EXECUTION_BOOTSTRAP_ADMIN_USERNAME: ${EXECUTION_BOOTSTRAP_ADMIN_USERNAME:-}
+      EXECUTION_BOOTSTRAP_ADMIN_PASSWORD: ${EXECUTION_BOOTSTRAP_ADMIN_PASSWORD:-}
+      EXECUTION_SOURCE_ROOT: /data/execution-input
+      EXECUTION_RUNTIME_ROOT: /data/execution-runtime
+      EXECUTION_PUBLISH_ROOT: /data/execution-publish
+      EXECUTION_INDEX_INTERVAL_SECONDS: ${EXECUTION_INDEX_INTERVAL_SECONDS:-300}
+      EXECUTION_WORKER_POLL_SECONDS: ${EXECUTION_WORKER_POLL_SECONDS:-1}
+      EXECUTION_WORKER_LEASE_SECONDS: ${EXECUTION_WORKER_LEASE_SECONDS:-60}
+      EXECUTION_NODE_MAX_ATTEMPTS: ${EXECUTION_NODE_MAX_ATTEMPTS:-5}
+      EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS: ${EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS:-45}
+      EXECUTION_WORKER_SCHEMA_WAIT_SECONDS: ${EXECUTION_WORKER_SCHEMA_WAIT_SECONDS:-180}
+      EXECUTION_OUTBOX_MAX_ATTEMPTS: ${EXECUTION_OUTBOX_MAX_ATTEMPTS:-10}
+      EXECUTION_OUTBOX_RETENTION_DAYS: ${EXECUTION_OUTBOX_RETENTION_DAYS:-7}
+      EXECUTION_SSE_MAX_SECONDS: ${EXECUTION_SSE_MAX_SECONDS:-300}
     volumes:
       - area_root_cifs:/data/share66
       - area_old_cifs:/data/share82
       - area_out_cifs:/data/share66_out
       - type: bind
-        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-models"
+        source: "${AREA_MODEL_HOST_PATH:-./runtime/area-models}"
         target: /opt/area_weights
         read_only: true
       - type: bind
-        source: "F:/textile-device-monitor/textile-device-monitor/runtime/area-templates"
+        source: "${AREA_TEMPLATE_HOST_PATH:-./runtime/area-templates}"
         target: /opt/area_templates
         read_only: true
-    ports:
-      - "8000:8000"
+      - type: bind
+        source: "${EXECUTION_SOURCE_HOST_PATH:-./runtime/execution-input}"
+        target: /data/execution-input
+        read_only: true
+      - type: bind
+        source: "${EXECUTION_RUNTIME_HOST_PATH:-./runtime/execution-runtime}"
+        target: /data/execution-runtime
+      - type: bind
+        source: "${EXECUTION_PUBLISH_HOST_PATH:-./runtime/execution-publish}"
+        target: /data/execution-publish
     depends_on:
-      - postgres
-      - area-infer
+      postgres:
+        condition: service_healthy
+      area-infer:
+        condition: service_started
     networks:
       - textile-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  execution-worker:
+    build: ./backend
+    container_name: textile-execution-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.execution.worker"]
+    environment:
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required}"
+      APP_ENV: "${APP_ENV:-production}"
+      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-textile-monitor.internal}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-https://textile-monitor.internal}"
+      TLS_DIR_HOST_PATH: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required}"
+      TLS_MIN_VALID_DAYS: "${TLS_MIN_VALID_DAYS:-30}"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required}"
+      EXECUTION_ENABLED: ${EXECUTION_ENABLED:-true}
+      EXECUTION_SESSION_SECRET: "${EXECUTION_SESSION_SECRET:?EXECUTION_SESSION_SECRET is required}"
+      EXECUTION_CREDENTIAL_KEY: "${EXECUTION_CREDENTIAL_KEY:?EXECUTION_CREDENTIAL_KEY is required}"
+      EXECUTION_COOKIE_SECURE: "true"
+      EXECUTION_SOURCE_ROOT: /data/execution-input
+      EXECUTION_RUNTIME_ROOT: /data/execution-runtime
+      EXECUTION_PUBLISH_ROOT: /data/execution-publish
+      EXECUTION_INDEX_INTERVAL_SECONDS: ${EXECUTION_INDEX_INTERVAL_SECONDS:-300}
+      EXECUTION_WORKER_POLL_SECONDS: ${EXECUTION_WORKER_POLL_SECONDS:-1}
+      EXECUTION_WORKER_LEASE_SECONDS: ${EXECUTION_WORKER_LEASE_SECONDS:-60}
+      EXECUTION_NODE_MAX_ATTEMPTS: ${EXECUTION_NODE_MAX_ATTEMPTS:-5}
+      EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS: ${EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS:-45}
+      EXECUTION_WORKER_SCHEMA_WAIT_SECONDS: ${EXECUTION_WORKER_SCHEMA_WAIT_SECONDS:-180}
+      EXECUTION_OUTBOX_MAX_ATTEMPTS: ${EXECUTION_OUTBOX_MAX_ATTEMPTS:-10}
+      EXECUTION_OUTBOX_RETENTION_DAYS: ${EXECUTION_OUTBOX_RETENTION_DAYS:-7}
+      EXECUTION_SSE_MAX_SECONDS: ${EXECUTION_SSE_MAX_SECONDS:-300}
+    volumes:
+      - type: bind
+        source: "${EXECUTION_SOURCE_HOST_PATH:-./runtime/execution-input}"
+        target: /data/execution-input
+        read_only: true
+      - type: bind
+        source: "${EXECUTION_RUNTIME_HOST_PATH:-./runtime/execution-runtime}"
+        target: /data/execution-runtime
+      - type: bind
+        source: "${EXECUTION_PUBLISH_HOST_PATH:-./runtime/execution-publish}"
+        target: /data/execution-publish
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - textile-net
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.execution.worker_health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   frontend:
     build: ./frontend
     container_name: textile-monitor-frontend
     restart: unless-stopped
+    environment:
+      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-textile-monitor.internal}"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required}"
+      NGINX_ENVSUBST_FILTER: "^PUBLIC_HOSTNAME$|^HSTS_MAX_AGE$|^NGINX_MANAGEMENT_ALLOW_RULES$"
     ports:
-      - "80:80"
+      - "${FRONTEND_BIND_ADDRESS:?FRONTEND_BIND_ADDRESS is required}:${FRONTEND_HTTPS_PORT:-443}:443"
+    volumes:
+      - type: bind
+        source: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required}"
+        target: /etc/nginx/tls
+        read_only: true
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
-      - textile-net
+      textile-net:
+        ipv4_address: "${FRONTEND_PROXY_IP:-172.30.0.10}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --quiet --spider http://127.0.0.1:8080/healthz",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:
@@ -92,23 +216,26 @@ volumes:
     driver: local
     driver_opts:
       type: cifs
-      o: "username=${SMB_USER_A},password=${SMB_PASS_A},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      o: "username=${SMB_USER_A:?SMB_USER_A is required},password=${SMB_PASS_A:?SMB_PASS_A is required},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
       device: "//192.168.105.66/17检验八部"
 
   area_out_cifs:
     driver: local
     driver_opts:
       type: cifs
-      o: "username=${SMB_USER_B},password=${SMB_PASS_B},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      o: "username=${SMB_USER_B:?SMB_USER_B is required},password=${SMB_PASS_B:?SMB_PASS_B is required},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
       device: "//192.168.105.82/材料检测中心"
 
   area_old_cifs:
     driver: local
     driver_opts:
       type: cifs
-      o: "username=${SMB_USER_A},password=${SMB_PASS_A},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      o: "username=${SMB_USER_A:?SMB_USER_A is required},password=${SMB_PASS_A:?SMB_PASS_A is required},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
       device: "//192.168.105.66/17检验八部"
 
 networks:
   textile-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: "${DOCKER_SUBNET:-172.30.0.0/24}"

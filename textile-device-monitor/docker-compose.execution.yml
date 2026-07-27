@@ -1,0 +1,21 @@
+# 执行系统独立开发/验收覆盖文件。
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.execution.yml \
+#     up -d --build postgres backend execution-worker frontend
+#
+# 该覆盖不会改变完整生产部署；它只在显式传入时把 Area Infer 放入
+# `area` profile，并把后端对它的依赖降为可选，便于执行系统迭代时避免
+# 构建体积很大的推理镜像。
+services:
+  area-infer:
+    profiles:
+      - area
+
+  backend:
+    environment:
+      AREA_ENABLED: "false"
+    depends_on:
+      area-infer:
+        condition: service_started
+        required: false

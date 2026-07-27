@@ -2,16 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-import os
-import tempfile
 import unittest
-
-
-db_fd, db_path = tempfile.mkstemp(prefix="textile-monitor-heartbeat-", suffix=".sqlite")
-os.close(db_fd)
-os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
-os.environ["OCR_ENABLED"] = "false"
-os.environ["AREA_ENABLED"] = "false"
 
 from app.config import settings
 from app.database import SessionLocal, engine
@@ -20,12 +11,6 @@ from app.tasks.device_monitor import check_device_heartbeat
 
 
 class HeartbeatMonitorTests(unittest.TestCase):
-    @classmethod
-    def tearDownClass(cls):
-        engine.dispose()
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
     def setUp(self):
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)

@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+if [ -z "${MANAGEMENT_CIDRS:-}" ]; then
+    echo "MANAGEMENT_CIDRS must not be empty" >&2
+    exit 1
+fi
+
+rules=""
+remaining="${MANAGEMENT_CIDRS}"
+while :; do
+    case "$remaining" in
+        *,*)
+            candidate=${remaining%%,*}
+            remaining=${remaining#*,}
+            ;;
+        *)
+            candidate=$remaining
+            remaining=""
+            ;;
+    esac
+
+    candidate=$(printf "%s" "$candidate" | tr -d "[:space:]")
+    case "$candidate" in
+        ""|*[!0-9A-Fa-f:./]*)
+            echo "Invalid MANAGEMENT_CIDRS entry: $candidate" >&2
+            exit 1
+            ;;
+    esac
+    rules="${rules}allow ${candidate};
+"
+
+    [ -n "$remaining" ] || break
+done
+
+NGINX_MANAGEMENT_ALLOW_RULES=$rules
+export NGINX_MANAGEMENT_ALLOW_RULES

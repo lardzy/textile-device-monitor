@@ -10,13 +10,18 @@ import subprocess
 import threading
 import queue
 from typing import Optional
-from modules.config import Config
+from modules.config import Config, ConfigValidationError
 from modules.logger import Logger
 from modules.api_client import ApiClient
 from modules.device_manager import DeviceManager
 from modules.progress_reader import ProgressReader, OlympusProgressReader
 from modules.metrics_collector import MetricsCollector
 from modules.results_server import ResultsServer
+from modules.transport_security import (
+    CONFIG_SCHEMA_VERSION,
+    TRANSPORT_REQUIRED,
+    TransportSecurityError,
+)
 
 # Windows 控制台控制
 try:
@@ -32,6 +37,13 @@ def _is_windowed_runtime() -> bool:
         getattr(sys, "frozen", False)
         and (sys.stdin is None or sys.stdout is None)
     )
+
+
+def _set_runtime_working_directory() -> None:
+    """Keep packaged config, certificates and logs relative to the EXE."""
+
+    if getattr(sys, "frozen", False):
+        os.chdir(os.path.dirname(os.path.abspath(sys.executable)))
 
 
 def _self_command(mode: str) -> list[str]:
@@ -53,11 +65,49 @@ def _run_config_tool() -> int:
     from modules.config_window import ConfigWindow
 
     config = Config()
+    old_config = config.get_all()
     new_config = ConfigWindow.show_config_dialog(
-        config.get_all(), DeviceManager.PRESET_DEVICES
+        old_config,
+        DeviceManager.PRESET_DEVICES,
+        config_base_directory=config.application_directory,
     )
     if new_config is None:
         return 2
+    candidate = {**old_config, **new_config}
+    transport_changed = config.is_first_run() or any(
+        old_config.get(key) != candidate.get(key)
+        for key in ("server_url", "transport_security", "tls_ca_bundle")
+    )
+    if transport_changed:
+        logger = Logger(
+            log_dir="logs",
+            log_level=old_config.get("log_level", "INFO"),
+        )
+        try:
+            ca_bundle = None
+            if str(candidate.get("server_url", "")).startswith("https://"):
+                ca_bundle = str(config.resolve_tls_ca_bundle(candidate))
+            probe = ApiClient(
+                candidate["server_url"],
+                logger,
+                transport_security=candidate.get(
+                    "transport_security",
+                    TRANSPORT_REQUIRED,
+                ),
+                tls_ca_bundle=ca_bundle,
+            )
+            if not probe.health_check():
+                details = (
+                    probe.last_tls_error_message
+                    or probe.last_request_info.get("error_message")
+                    or "服务器就绪检查失败"
+                )
+                raise RuntimeError(details)
+        except (KeyError, RuntimeError, TransportSecurityError) as exc:
+            message = f"新配置连接测试失败，原配置未被修改：{exc}"
+            logger.error(message)
+            _show_native_error(message)
+            return 1
     return 0 if config.update(new_config) else 1
 
 
@@ -191,7 +241,7 @@ class TextileDeviceClient:
 
         config = self.config.get_all()
 
-        self.api_client = ApiClient(base_url=config["server_url"], logger=self.logger)
+        self.api_client = self._create_api_client(config)
 
         self.device_manager = DeviceManager(
             api_client=self.api_client, logger=self.logger
@@ -250,6 +300,20 @@ class TextileDeviceClient:
 
         self.logger.info("客户端初始化完成")
 
+    def _create_api_client(self, config: dict) -> ApiClient:
+        tls_ca_bundle = None
+        if str(config.get("server_url", "")).startswith("https://"):
+            tls_ca_bundle = str(self.config.resolve_tls_ca_bundle(config))
+        return ApiClient(
+            base_url=config["server_url"],
+            logger=self.logger,
+            transport_security=config.get(
+                "transport_security",
+                TRANSPORT_REQUIRED,
+            ),
+            tls_ca_bundle=tls_ca_bundle,
+        )
+
     def run(self):
         """运行客户端"""
         try:
@@ -280,7 +344,15 @@ class TextileDeviceClient:
 
             if not self._register_device():
                 self.logger.error("设备注册失败，程序退出")
-                self._show_error_and_exit("设备注册失败，请检查网络连接后重试")
+                details = None
+                if self.api_client:
+                    details = (
+                        self.api_client.last_tls_error_message
+                        or self.api_client.last_request_info.get("error_message")
+                    )
+                self._show_error_and_exit(
+                    details or "设备注册失败，请检查网络连接后重试"
+                )
                 return
 
             if self.status_reporter:
@@ -444,9 +516,18 @@ class TextileDeviceClient:
                 interval = config["report_interval"]
 
             new_config = {
+                "config_schema_version": CONFIG_SCHEMA_VERSION,
                 "device_code": device_code,
                 "device_name": device_name,
                 "server_url": server_url,
+                "transport_security": config.get(
+                    "transport_security",
+                    TRANSPORT_REQUIRED,
+                ),
+                "tls_ca_bundle": config.get(
+                    "tls_ca_bundle",
+                    "certs/inspection-root-ca.pem",
+                ),
                 "is_laser_confocal": is_confocal,
                 "log_path": log_path,
                 "working_path": working_path,
@@ -463,6 +544,11 @@ class TextileDeviceClient:
             print(f"设备编码: {new_config['device_code']}")
             print(f"设备名称: {new_config['device_name']}")
             print(f"服务器地址: {new_config['server_url']}")
+            print(
+                "传输安全: "
+                f"{new_config['transport_security']} "
+                f"({new_config['tls_ca_bundle']})"
+            )
             print(f"激光共聚焦: {'是' if new_config['is_laser_confocal'] else '否'}")
             if new_config["is_laser_confocal"]:
                 print(f"日志路径: {new_config['log_path']}")
@@ -476,7 +562,9 @@ class TextileDeviceClient:
                 print("配置已取消")
                 return False
 
-            self.config.update(new_config)
+            if not self.config.update(new_config):
+                print(f"\n配置未保存：{self.config.last_load_error or '配置无效'}")
+                return False
             self.initialize()
             return True
 
@@ -538,36 +626,77 @@ class TextileDeviceClient:
 
     def _reload_config(self):
         """重新加载配置"""
-        old_device_code = self.config.get_device_code()
-        old_server_url = self.config.get_server_url()
-        old_working_path = self.config.get_working_path()
-        old_log_path = self.config.get_log_path()
-        old_is_confocal = self.config.is_laser_confocal()
-        old_port = self.config.get_results_port()
-        old_report_interval = self.config.get_report_interval()
-        old_manual_status = self.config.get_manual_status()
+        old_config = self.config.get_all()
+        try:
+            candidate = self.config.load_candidate()
+        except ConfigValidationError as exc:
+            self.logger.error(f"新配置无效，继续使用旧配置：{exc}")
+            if self.tray_icon:
+                self.tray_icon.show_notification(
+                    "配置未应用",
+                    f"新配置无效，已继续使用旧配置：{exc}",
+                )
+            return
 
-        self.config.load()
+        old_device_code = old_config.get("device_code")
+        old_server_url = old_config.get("server_url")
+        old_working_path = old_config.get("working_path")
+        old_log_path = old_config.get("log_path")
+        old_is_confocal = bool(old_config.get("is_laser_confocal"))
+        old_port = int(old_config.get("results_port", 9100))
+        old_report_interval = int(old_config.get("report_interval", 5))
+        old_manual_status = old_config.get("manual_status")
 
-        new_device_code = self.config.get_device_code()
-        new_server_url = self.config.get_server_url()
-        new_working_path = self.config.get_working_path()
-        new_log_path = self.config.get_log_path()
-        new_is_confocal = self.config.is_laser_confocal()
-        new_port = self.config.get_results_port()
-        new_report_interval = self.config.get_report_interval()
-        new_manual_status = self.config.get_manual_status()
+        new_device_code = candidate.get("device_code")
+        new_server_url = candidate.get("server_url")
+        new_working_path = candidate.get("working_path")
+        new_log_path = candidate.get("log_path")
+        new_is_confocal = bool(candidate.get("is_laser_confocal"))
+        new_port = int(candidate.get("results_port", 9100))
+        new_report_interval = int(candidate.get("report_interval", 5))
+        new_manual_status = candidate.get("manual_status")
 
-        if (
-            old_device_code != new_device_code
+        transport_changed = any(
+            old_config.get(key) != candidate.get(key)
+            for key in (
+                "server_url",
+                "transport_security",
+                "tls_ca_bundle",
+            )
+        )
+        requires_reinitialize = (
+            transport_changed
+            or old_device_code != new_device_code
             or old_server_url != new_server_url
             or old_working_path != new_working_path
             or old_log_path != new_log_path
             or old_is_confocal != new_is_confocal
             or old_port != new_port
             or old_report_interval != new_report_interval
-        ):
+        )
+        probe_client = None
+        if requires_reinitialize:
+            try:
+                probe_client = self._create_api_client(candidate)
+                if transport_changed and not probe_client.health_check():
+                    details = (
+                        probe_client.last_tls_error_message
+                        or probe_client.last_request_info.get("error_message")
+                        or "服务器就绪检查失败"
+                    )
+                    raise RuntimeError(details)
+            except (TransportSecurityError, RuntimeError) as exc:
+                self.logger.error(f"新配置预检失败，继续使用旧运行实例：{exc}")
+                if self.tray_icon:
+                    self.tray_icon.show_notification(
+                        "配置未应用",
+                        f"{exc}；客户端仍使用原配置",
+                    )
+                return
+
+        if requires_reinitialize:
             self.logger.info("配置已更改，需要重新初始化")
+            self.config.apply_candidate(candidate)
             if self.status_reporter:
                 self.status_reporter.stop()
             if self.results_server:
@@ -585,6 +714,7 @@ class TextileDeviceClient:
             if self.tray_icon:
                 self.tray_icon.show_notification("配置已更新", "新配置已自动应用")
         else:
+            self.config.apply_candidate(candidate)
             if not self.config.is_device_registered():
                 self._register_device()
             if old_manual_status != new_manual_status and self.status_reporter:
@@ -659,9 +789,18 @@ class TextileDeviceClient:
                 self.tray_icon.show_notification("连接成功", "服务器连接正常")
         else:
             self.logger.error("服务器连接失败")
+            details = None
+            if self.api_client:
+                details = (
+                    self.api_client.last_tls_error_message
+                    or self.api_client.last_request_info.get("error_message")
+                )
             print("\n✗ 服务器连接失败")
             if self.tray_icon:
-                self.tray_icon.show_notification("连接失败", "无法连接到服务器")
+                self.tray_icon.show_notification(
+                    "连接失败",
+                    details or "无法连接到服务器",
+                )
 
     def _exit(self):
         """退出程序"""
@@ -704,6 +843,7 @@ class TextileDeviceClient:
 
 def main() -> int:
     """主函数"""
+    _set_runtime_working_directory()
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
         if mode == "--config-tool":

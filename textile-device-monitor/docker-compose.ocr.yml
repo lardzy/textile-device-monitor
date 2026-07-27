@@ -8,8 +8,6 @@ services:
       GLM_OCR_UPSTREAM_URL: http://glm-ocr-runtime:5002/glmocr/parse
       OCR_ADAPTER_TIMEOUT_SECONDS: 600
       OCR_ADAPTER_MAX_UPLOAD_MB: 30
-    ports:
-      - "5002:5002"
     depends_on:
       - glm-ocr-runtime
     networks:

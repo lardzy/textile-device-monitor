@@ -1,0 +1,4 @@
+Database migrations for the monitor and execution-system schemas.
+
+Existing deployments must run the schema preflight before stamping the legacy
+baseline. Fresh databases run all revisions from base.

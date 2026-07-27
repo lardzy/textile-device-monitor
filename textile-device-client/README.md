@@ -16,7 +16,13 @@
 
 - Windows 10 或更高版本
 - Python 3.11+（开发环境）
-- 网络连接（访问服务器和共享文件路径）
+- 能访问部门服务器和共享文件路径的局域网连接
+- 首次部署 HTTPS 时具备当前电脑的本机管理员权限
+
+客户端不需要公网，也不依赖公司 DNS。部门管理员脚本会在当前电脑的本机
+`hosts` 中把 `textile-monitor.internal` 映射到服务器当前局域网 IP，并安装
+经过线下 SHA-256 指纹核对的内部根证书；不会改动公司 DNS、DHCP、路由器、
+交换机或公司防火墙。服务器地址以后变化时，只需在本机重跑管理员脚本。
 
 ## 快速开始
 
@@ -43,14 +49,22 @@ python -m pip install -r requirements-build.lock.txt
 
 安装 Inno Setup 6 后，使用统一发布命令完成干净的 PyInstaller 构建、构建清单校验和安装器生成：
 
-```bash
-python scripts/build_windows_release.py
+```powershell
+python scripts/build_windows_release.py `
+  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem"
 ```
+
+新安装包默认写入 `https://textile-monitor.internal`，传输模式为
+`required`，并随包提供 Requests 使用的根 CA bundle。需要显式指定入口时
+可增加 `--default-server-url https://textile-monitor.internal`；正式包
+不得改成 HTTP。
 
 如需指定 Inno Setup 编译器路径：
 
-```bash
-python scripts/build_windows_release.py --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+```powershell
+python scripts/build_windows_release.py `
+  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem" `
+  --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 ```
 
 正式产物包括：
@@ -59,26 +73,36 @@ python scripts/build_windows_release.py --compiler "C:\Program Files (x86)\Inno 
 dist/windows/TextileDeviceClient
 dist/windows/TextileDeviceClient/build-manifest.json
 dist/windows/TextileDeviceClient/textile-device-client.exe.sha256
+dist/windows/TextileDeviceClient/client-build-defaults.json
+dist/windows/TextileDeviceClient/certs/inspection-root-ca.pem
+dist/windows/TextileDeviceClient/admin-tools/
 dist/installer/textile-device-client-setup-<version>.exe
 dist/installer/textile-device-client-setup-<version>.exe.sha256
 ```
 
 安装器会拒绝版本不一致、源码已变化、哈希不匹配、控制台模式或 bootloader 调试模式的 onedir 目录。PyInstaller 子进程使用隔离的 DLL 搜索路径，避免 Conda 或其它 Python 环境中的 DLL 混入产物。找不到 Inno Setup 编译器时命令会返回失败，不会把已有安装包误报为新产物。
+构建清单还会记录配置 Schema、默认 HTTPS Origin、根 CA SHA-256 以及
+Requests、Certifi、Cryptography 和 PyInstaller 版本。升级安装保留现有
+`config.json`、备份和当前 CA；CA 轮换必须走管理员迁移脚本，不能被普通
+安装覆盖。
 
 拥有 Authenticode 代码签名证书时，可签名客户端和安装器：
 
-```bash
-set TDC_SIGN_CERT_THUMBPRINT=<证书 SHA-1 指纹>
-python scripts/build_windows_release.py --sign
+```powershell
+$env:TDC_SIGN_CERT_THUMBPRINT = "<证书 SHA-1 指纹>"
+python scripts/build_windows_release.py `
+  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem" `
+  --sign
 ```
 
 可通过 `SIGNTOOL_EXE` 指定 `signtool.exe`；也可使用 `--signtool`、`--certificate-thumbprint` 和 `--timestamp-url` 参数。
 
 以下命令仅用于分步排查，不是正式发布入口：
 
-```bash
+```powershell
 python scripts/build_windows_installer.py --sync-only
-python scripts/build_windows_onedir.py
+python scripts/build_windows_onedir.py `
+  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem"
 python scripts/build_windows_installer.py
 ```
 
@@ -86,8 +110,10 @@ python scripts/build_windows_installer.py
 
 排查启动问题时，可以临时生成控制台版。该目录会被正式安装器明确拒绝，重新执行统一发布命令后才能生成安装包：
 
-```bash
-python scripts/build_windows_onedir.py --console
+```powershell
+python scripts/build_windows_onedir.py `
+  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem" `
+  --console
 ```
 
 ## 配置说明
@@ -96,11 +122,90 @@ python scripts/build_windows_onedir.py --console
 
 - **设备编码**: 设备的唯一标识（1号-8号或自定义）
 - **设备名称**: 设备的显示名称
-- **服务器地址**: 服务器 API 地址，如 `http://192.168.1.100:8000`
+- **服务器地址**: 只填写纯 Origin，生产固定为
+  `https://textile-monitor.internal`
+- **传输安全**: 新安装为 `required`；旧安装升级时暂时为 `compatible`
+- **内部 CA**: 默认 `certs/inspection-root-ca.pem`
 - **工作路径**: 监测根目录，如 `F:\\tmp\\AiCodingTest\\参考文件\\bak`
 - **上报间隔**: 状态上报间隔（秒），默认 5 秒
 
+服务器地址禁止用户名、密码、`/api` 路径、查询参数和片段。`required`
+模式拒绝 HTTP；HTTPS 请求不会自动降级，也不会读取系统代理环境变量。
+配置文件使用临时文件和原子替换，失败时继续使用旧运行配置并保留
+`config.json.bak`。
+
+已有客户端首次升级时不会立即切断现有 HTTP 上报：缺少
+`config_schema_version` 的旧配置会迁移为 Schema 2 的 `compatible`，
+并保留原服务器地址。管理员完成根证书和本机 `hosts` 部署后，再使用正式
+迁移脚本先切换 HTTPS Origin；连续观察后再加固为 `required`。
+
 客户端结果服务监听 `0.0.0.0:9100`。客户端会根据服务器地址选择实际使用的局域网网卡并上报该网卡 IP；当服务器地址是本机环回地址时，会使用 `host.docker.internal` 供本机 Docker 后端访问。生产环境还需在 Windows 防火墙中允许服务器访问客户端 TCP 9100 端口。
+
+生产配置的核心字段如下：
+
+```json
+{
+  "config_schema_version": 2,
+  "server_url": "https://textile-monitor.internal",
+  "transport_security": "required",
+  "tls_ca_bundle": "certs/inspection-root-ca.pem"
+}
+```
+
+### 迁移已有客户端到内部 HTTPS
+
+先由管理员线下核对内部根证书 SHA-256 指纹。在服务器启用 HTTPS 之前，
+于安装目录 `admin-tools` 中以管理员身份执行 Prepare，仅预置根证书和
+本机 `hosts`，不会访问 443，也不会修改仍在运行的客户端配置：
+
+```powershell
+.\migrate_to_internal_https.ps1 `
+  -Phase Prepare `
+  -ServerIp "192.168.106.50" `
+  -RootCertificate "D:\Deploy\root-ca.cer" `
+  -ExpectedRootSha256 "<线下核对的 64 位 SHA-256>"
+```
+
+服务器 HTTPS 上线并通过部署预检后，再执行 Activate：
+
+```powershell
+.\migrate_to_internal_https.ps1 `
+  -Phase Activate `
+  -ServerIp "192.168.106.50" `
+  -RootCertificate "D:\Deploy\root-ca.cer" `
+  -CaBundle "D:\Deploy\root-ca.pem" `
+  -ExpectedRootSha256 "<线下核对的 64 位 SHA-256>"
+```
+
+Activate 会核验真实 HTTPS、更新客户端 CA 和配置、重启客户端，并等待后端
+观察到该 `device_code` 的新心跳。只有全部验证通过才会把迁移清单标记为
+完成。首次把旧客户端迁到 HTTPS 时，
+`-TransportSecurity` 默认使用 `compatible`；此模式仍会严格校验证书且
+不会自动降级 HTTP。连续观察稳定后再次以
+`-TransportSecurity required` 执行加固。
+
+HTTPS 可信探测和配置激活之前的失败会完整回滚；激活后的重启或上报核验
+失败不会恢复、运行旧 HTTP 配置，而会停止客户端、保留安全 HTTPS 配置并
+写入 `activation_failed` 审计状态，等待管理员排查。整个过程不查询公司
+DNS，也不继承 Windows 或环境变量中的代理。
+
+根 CA 轮换时，先把“旧根 + 新根”的 PEM bundle 分发给终端，并把附加根
+指纹和当前服务器仍使用的根指纹显式传给脚本：
+
+```powershell
+.\migrate_to_internal_https.ps1 `
+  -Phase Activate `
+  -ServerIp "192.168.106.50" `
+  -RootCertificate "D:\Deploy\new-root-ca.cer" `
+  -CaBundle "D:\Deploy\old-and-new-roots.pem" `
+  -ExpectedRootSha256 "<新根 SHA-256>" `
+  -AllowedAdditionalRootSha256 "<旧根 SHA-256>" `
+  -ExpectedServerRootSha256 "<当前服务器根 SHA-256>" `
+  -TransportSecurity required
+```
+
+只有在终端和客户端完成重叠信任后，服务器才能切换到新根签发的证书；最后
+再通过受控批次移除旧根，禁止直接覆盖造成信任中断。
 
 ## 使用说明
 
@@ -160,6 +265,7 @@ textile-device-client/
 │   ├── config.py              # 配置管理
 │   ├── logger.py              # 日志管理
 │   ├── api_client.py          # 服务端 API 客户端
+│   ├── transport_security.py  # Origin、CA 与 TLS 错误诊断
 │   ├── device_manager.py      # 设备注册和管理
 │   ├── progress_reader.py     # 进度计算与目录监测
 │   ├── metrics_collector.py   # 系统指标采集
@@ -171,7 +277,9 @@ textile-device-client/
 │   ├── build_support.py       # 版本同步和打包辅助逻辑
 │   ├── build_windows_onedir.py # PyInstaller onedir 构建入口
 │   ├── build_windows_installer.py # Inno Setup 安装包构建入口
-│   └── build_windows_release.py # 正式发布统一入口
+│   ├── build_windows_release.py # 正式发布统一入口
+│   ├── migrate_to_internal_https.ps1 # 已安装客户端 HTTPS 迁移入口
+│   └── verify_client_https_reporting.ps1 # 迁移后状态上报核验
 ├── packaging/
 │   ├── pyinstaller/
 │   │   └── textile_device_client.spec
@@ -234,19 +342,28 @@ Content-Type: application/json
 
 ### 健康检查
 ```
-GET /health
+GET /health/ready
 ```
+
+健康检查、注册、状态上报和重连均复用同一个 Requests Session 和同一 CA
+bundle，并拒绝重定向，避免 HTTPS 被降级到 HTTP。
 
 ## 故障排查
 
 ### 问题：无法连接服务器
 
-**原因**：服务器地址错误或网络不通
+**原因**：本机 `hosts`、内部 CA、服务器证书或局域网连接异常
 
 **解决**：
-1. 检查服务器地址是否正确
-2. 使用浏览器访问服务器地址确认可访问
-3. 检查防火墙设置
+1. 确认服务器地址严格为 `https://textile-monitor.internal`
+2. 检查本机 `hosts` 是否指向服务器当前 IP；地址变化时重新运行管理员脚本
+3. 核对根证书 SHA-256 和 `certs/inspection-root-ca.pem`
+4. 使用浏览器打开同一地址，确认没有证书警告
+5. 检查服务器和当前电脑的本机防火墙（不涉及公司网络设备）
+
+日志会分别报告“根 CA 不受信任、证书域名不匹配、证书过期、证书尚未
+生效、CA 文件缺失或损坏”以及普通超时。客户端没有 `verify=False` 或自动
+HTTP 回退开关。
 
 ### 问题：工作路径读取失败
 

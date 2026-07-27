@@ -27,22 +27,25 @@ from app.services.device_tracking import EVENT_TASK_COMPLETE
 
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+POSTGRES_TEST_DATABASE_URL = None
 if TEST_DATABASE_URL:
     test_database_url = make_url(TEST_DATABASE_URL)
-    if (
-        test_database_url.get_backend_name() != "postgresql"
-        or not (test_database_url.database or "").endswith("_test")
-    ):
-        raise RuntimeError(
-            "TEST_DATABASE_URL must use PostgreSQL and a database ending in _test"
-        )
+    if test_database_url.get_backend_name() == "postgresql":
+        if not (test_database_url.database or "").endswith("_test"):
+            raise RuntimeError(
+                "PostgreSQL TEST_DATABASE_URL database must end in _test"
+            )
+        POSTGRES_TEST_DATABASE_URL = TEST_DATABASE_URL
 
 
-@unittest.skipUnless(TEST_DATABASE_URL, "PostgreSQL TEST_DATABASE_URL not configured")
+@unittest.skipUnless(
+    POSTGRES_TEST_DATABASE_URL,
+    "PostgreSQL TEST_DATABASE_URL not configured",
+)
 class PostgreSQLStatusReportingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+        cls.engine = create_engine(POSTGRES_TEST_DATABASE_URL, pool_pre_ping=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine)
         Base.metadata.drop_all(bind=cls.engine)
         Base.metadata.create_all(bind=cls.engine)

@@ -8,12 +8,17 @@ import sys
 from pathlib import Path
 
 from build_support import (
+    CLIENT_ADMIN_TOOL_NAMES,
     BUILD_MANIFEST_NAME,
+    CLIENT_BUILD_DEFAULTS_NAME,
+    DEFAULT_SERVER_URL,
     DEFAULT_TIMESTAMP_URL,
     EXECUTABLE_NAME,
+    SHARED_ADMIN_TOOL_NAMES,
     BuildValidationError,
     create_isolated_build_environment,
     ensure_build_environment,
+    prepare_tls_build_assets,
     sign_windows_file,
     write_build_manifest,
     write_installer_version_include,
@@ -31,6 +36,8 @@ def build(
     signtool_path: str | None = None,
     certificate_thumbprint: str | None = None,
     timestamp_url: str = DEFAULT_TIMESTAMP_URL,
+    default_server_url: str = DEFAULT_SERVER_URL,
+    tls_ca_bundle: str | None = None,
 ) -> int:
     root = Path(__file__).resolve().parents[1]
     spec_path = root / "packaging" / "pyinstaller" / "textile_device_client.spec"
@@ -39,10 +46,21 @@ def build(
     generated_path = root / "build" / "generated"
     app_dir = dist_path / "TextileDeviceClient"
     executable = app_dir / EXECUTABLE_NAME
+    shared_windows_scripts = (
+        root.parent / "textile-device-monitor" / "scripts" / "windows"
+    )
 
     if not spec_path.exists():
         print(f"Spec file not found: {spec_path}", file=sys.stderr)
         return 1
+    for shared_name in SHARED_ADMIN_TOOL_NAMES:
+        shared_path = shared_windows_scripts / shared_name
+        if not shared_path.is_file():
+            print(
+                f"Shared HTTPS deployment script not found: {shared_path}",
+                file=sys.stderr,
+            )
+            return 1
 
     try:
         ensure_build_environment(root)
@@ -66,6 +84,21 @@ def build(
     dist_path.mkdir(parents=True, exist_ok=True)
     work_path.mkdir(parents=True, exist_ok=True)
     generated_path.mkdir(parents=True, exist_ok=True)
+    if not tls_ca_bundle:
+        print(
+            "--tls-ca-bundle is required for a production client build.",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        defaults_file, staged_ca_bundle = prepare_tls_build_assets(
+            generated_path,
+            default_server_url=default_server_url,
+            tls_ca_bundle=Path(tls_ca_bundle),
+        )
+    except BuildValidationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     installer_version_file = write_installer_version_include(root)
     pyinstaller_version_file = write_pyinstaller_version_file(
         root,
@@ -108,6 +141,23 @@ def build(
         return 1
 
     try:
+        (app_dir / "certs").mkdir(parents=True, exist_ok=True)
+        (app_dir / "admin-tools").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(defaults_file, app_dir / CLIENT_BUILD_DEFAULTS_NAME)
+        shutil.copy2(
+            staged_ca_bundle,
+            app_dir / "certs" / "inspection-root-ca.pem",
+        )
+        for client_tool_name in CLIENT_ADMIN_TOOL_NAMES:
+            shutil.copy2(
+                root / "scripts" / client_tool_name,
+                app_dir / "admin-tools" / client_tool_name,
+            )
+        for shared_name in SHARED_ADMIN_TOOL_NAMES:
+            shutil.copy2(
+                shared_windows_scripts / shared_name,
+                app_dir / "admin-tools" / shared_name,
+            )
         if sign:
             sign_windows_file(
                 executable,
@@ -181,6 +231,22 @@ def main() -> int:
         default=DEFAULT_TIMESTAMP_URL,
         help="RFC 3161 timestamp server used when --sign is enabled.",
     )
+    parser.add_argument(
+        "--default-server-url",
+        default=DEFAULT_SERVER_URL,
+        help=(
+            "Pure HTTPS origin embedded into new installations "
+            f"(default: {DEFAULT_SERVER_URL})."
+        ),
+    )
+    parser.add_argument(
+        "--tls-ca-bundle",
+        default="",
+        help=(
+            "PEM root CA bundle to package as "
+            "certs/inspection-root-ca.pem (required)."
+        ),
+    )
     args = parser.parse_args()
     return build(
         clean=not args.no_clean,
@@ -190,6 +256,8 @@ def main() -> int:
         signtool_path=args.signtool.strip() or None,
         certificate_thumbprint=args.certificate_thumbprint.strip() or None,
         timestamp_url=args.timestamp_url.strip(),
+        default_server_url=args.default_server_url.strip(),
+        tls_ca_bundle=args.tls_ca_bundle.strip() or None,
     )
 
 

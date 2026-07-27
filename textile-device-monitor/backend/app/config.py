@@ -1,5 +1,10 @@
+import ipaddress
 import os
-from typing import List
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,9 +29,26 @@ except ImportError:
         pass
 
 
+RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+
+
+def is_rfc1918_network(
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> bool:
+    return isinstance(network, ipaddress.IPv4Network) and any(
+        network.subnet_of(allowed) for allowed in RFC1918_NETWORKS
+    )
+
+
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql://admin:password123@postgres:5432/textile_monitor"
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    # Production is deliberately the safe default. Local development must opt
+    # in with APP_ENV=development (see backend/.env.example).
+    APP_ENV: str = "production"
+    DATABASE_URL: str = "sqlite:///./runtime/textile-monitor.db"
+    SECRET_KEY: str = ""
     HEARTBEAT_TIMEOUT: int = 90
     HEARTBEAT_CHECK_INTERVAL: int = 10
     DATA_RETENTION_DAYS: int = 30
@@ -56,9 +78,253 @@ class Settings(BaseSettings):
     AREA_INFER_URL: str = "http://area-infer:9001"
     AREA_INFER_TIMEOUT_SEC: int = 60
     STATS_TIMEZONE: str = "Asia/Shanghai"
-    CORS_ORIGINS: str = "http://localhost,http://localhost:80,http://backend:8000"
+    PUBLIC_HOSTNAME: str = "textile-monitor.internal"
+    PUBLIC_ORIGIN: str = "https://textile-monitor.internal"
+    TLS_DIR_HOST_PATH: str = ""
+    TLS_MIN_VALID_DAYS: int = 30
+    HSTS_MAX_AGE: int = 300
+    MANAGEMENT_CIDRS: str = ""
+    # Browser traffic is same-origin behind Nginx in production, so CORS is
+    # disabled unless an explicit allow-list is configured.
+    CORS_ORIGINS: str = ""
+    EXECUTION_ENABLED: bool = True
+    EXECUTION_SESSION_SECRET: str = ""
+    EXECUTION_SESSION_TTL_HOURS: int = 12
+    EXECUTION_COOKIE_SECURE: bool = True
+    EXECUTION_BOOTSTRAP_ADMIN_USERNAME: str = ""
+    EXECUTION_BOOTSTRAP_ADMIN_PASSWORD: str = ""
+    EXECUTION_CREDENTIAL_KEY: str = ""
+    EXECUTION_SOURCE_ROOT: str = "/data/execution-input"
+    EXECUTION_RUNTIME_ROOT: str = "/data/execution-runtime"
+    EXECUTION_PUBLISH_ROOT: str = "/data/execution-publish"
+    EXECUTION_INDEX_INTERVAL_SECONDS: int = 300
+    EXECUTION_WORKER_POLL_SECONDS: float = 1.0
+    EXECUTION_WORKER_LEASE_SECONDS: int = 60
+    EXECUTION_NODE_MAX_ATTEMPTS: int = 5
+    EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS: int = 45
+    EXECUTION_WORKER_SCHEMA_WAIT_SECONDS: int = 180
+    EXECUTION_OUTBOX_MAX_ATTEMPTS: int = 10
+    EXECUTION_OUTBOX_RETENTION_DAYS: int = 7
+    EXECUTION_SSE_MAX_SECONDS: int = 300
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    def cors_origins(self) -> list[str]:
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.CORS_ORIGINS.split(",")
+            if origin.strip()
+        ]
+
+    def management_cidrs(self) -> list[
+        ipaddress.IPv4Network | ipaddress.IPv6Network
+    ]:
+        networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for raw_value in self.MANAGEMENT_CIDRS.split(","):
+            value = raw_value.strip()
+            if not value:
+                continue
+            try:
+                networks.append(ipaddress.ip_network(value, strict=True))
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"MANAGEMENT_CIDRS contains an invalid network: {value}"
+                ) from exc
+        return networks
+
+    def validate_execution_storage_paths(self) -> None:
+        if not self.EXECUTION_ENABLED:
+            return
+
+        configured_paths = {
+            "EXECUTION_SOURCE_ROOT": self.EXECUTION_SOURCE_ROOT,
+            "EXECUTION_RUNTIME_ROOT": self.EXECUTION_RUNTIME_ROOT,
+            "EXECUTION_PUBLISH_ROOT": self.EXECUTION_PUBLISH_ROOT,
+        }
+        resolved_paths: dict[str, Path] = {}
+        for name, raw_value in configured_paths.items():
+            value = str(raw_value).strip()
+            if not value:
+                raise RuntimeError(f"{name} must not be empty")
+            resolved_paths[name] = Path(value).expanduser().resolve(strict=False)
+
+        items = list(resolved_paths.items())
+        for index, (left_name, left_path) in enumerate(items):
+            for right_name, right_path in items[index + 1 :]:
+                try:
+                    same_existing_directory = (
+                        left_path.exists()
+                        and right_path.exists()
+                        and left_path.samefile(right_path)
+                    )
+                except OSError:
+                    same_existing_directory = False
+                if (
+                    same_existing_directory
+                    or left_path == right_path
+                    or left_path in right_path.parents
+                    or right_path in left_path.parents
+                ):
+                    raise RuntimeError(
+                        "Execution storage roots must be pairwise separate and "
+                        "must not contain one another: "
+                        f"{left_name}={left_path}, {right_name}={right_path}"
+                    )
+
+    def validate_execution_security(self) -> None:
+        self.validate_execution_storage_paths()
+        environment = self.APP_ENV.strip().lower()
+        if environment not in {"production", "prod"}:
+            return
+
+        weak_values = {
+            "",
+            "your-secret-key-change-in-production",
+            "dev-only-change-me",
+            "change-me",
+            "changeme",
+            "password",
+            "password123",
+            "secret",
+            "example",
+        }
+        weak_markers = (
+            "placeholder",
+            "change-me",
+            "changeme",
+            "your-secret",
+            "example-value",
+        )
+
+        def is_weak(value: str, *, minimum_length: int = 1) -> bool:
+            normalized = value.strip().lower()
+            return (
+                len(value.strip()) < minimum_length
+                or normalized in weak_values
+                or any(marker in normalized for marker in weak_markers)
+            )
+
+        try:
+            database_url = make_url(self.DATABASE_URL.strip())
+        except (ArgumentError, TypeError, ValueError) as exc:
+            raise RuntimeError("Production DATABASE_URL is missing or invalid") from exc
+        if database_url.get_backend_name() not in {"postgresql", "postgres"}:
+            raise RuntimeError("Production DATABASE_URL must use PostgreSQL")
+        database_password = str(database_url.password or "").strip()
+        if not database_url.username or not database_password or not database_url.database:
+            raise RuntimeError(
+                "Production DATABASE_URL must include a database, user and password"
+            )
+        if is_weak(database_password):
+            raise RuntimeError(
+                "Production DATABASE_URL uses a missing or example database password"
+            )
+
+        secret_key = self.SECRET_KEY.strip()
+        if is_weak(secret_key, minimum_length=32):
+            raise RuntimeError(
+                "Production SECRET_KEY must contain at least 32 non-example characters"
+            )
+
+        cors_origins = self.cors_origins()
+        if "*" in cors_origins:
+            raise RuntimeError("Production CORS_ORIGINS must not contain a wildcard")
+        insecure_origins = [
+            origin for origin in cors_origins if not origin.startswith("https://")
+        ]
+        if insecure_origins:
+            raise RuntimeError(
+                "Production CORS_ORIGINS may only contain explicit HTTPS origins"
+            )
+
+        public_hostname = self.PUBLIC_HOSTNAME.strip().lower()
+        if public_hostname != "textile-monitor.internal":
+            raise RuntimeError(
+                "Production PUBLIC_HOSTNAME must be textile-monitor.internal"
+            )
+        parsed_origin = urlsplit(self.PUBLIC_ORIGIN.strip())
+        try:
+            origin_port = parsed_origin.port
+        except ValueError as exc:
+            raise RuntimeError(
+                "Production PUBLIC_ORIGIN contains an invalid port"
+            ) from exc
+        if (
+            parsed_origin.scheme != "https"
+            or parsed_origin.hostname != public_hostname
+            or origin_port not in {None, 443}
+            or parsed_origin.username is not None
+            or parsed_origin.password is not None
+            or parsed_origin.path not in {"", "/"}
+            or parsed_origin.query
+            or parsed_origin.fragment
+        ):
+            raise RuntimeError(
+                "Production PUBLIC_ORIGIN must be the HTTPS origin for "
+                "PUBLIC_HOSTNAME"
+            )
+        if not self.TLS_DIR_HOST_PATH.strip():
+            raise RuntimeError("Production TLS_DIR_HOST_PATH must be configured")
+        if not 1 <= self.TLS_MIN_VALID_DAYS <= 365:
+            raise RuntimeError(
+                "Production TLS_MIN_VALID_DAYS must be between 1 and 365"
+            )
+        if not 0 <= self.HSTS_MAX_AGE <= 31536000:
+            raise RuntimeError(
+                "Production HSTS_MAX_AGE must be between 0 and 31536000"
+            )
+        management_networks = self.management_cidrs()
+        if not management_networks:
+            raise RuntimeError("Production MANAGEMENT_CIDRS must not be empty")
+        unsafe_networks = [
+            str(network)
+            for network in management_networks
+            if not is_rfc1918_network(network)
+        ]
+        if unsafe_networks:
+            raise RuntimeError(
+                "Production MANAGEMENT_CIDRS may only contain RFC1918 IPv4 "
+                f"networks: {', '.join(unsafe_networks)}"
+            )
+
+        if not self.EXECUTION_ENABLED:
+            return
+
+        session_secret = self.EXECUTION_SESSION_SECRET.strip()
+        if is_weak(session_secret, minimum_length=32):
+            raise RuntimeError(
+                "Production EXECUTION_SESSION_SECRET must contain at least 32 characters"
+            )
+        credential_key = self.EXECUTION_CREDENTIAL_KEY.strip()
+        if is_weak(credential_key, minimum_length=32):
+            raise RuntimeError(
+                "Production EXECUTION_CREDENTIAL_KEY must contain at least 32 characters"
+            )
+        if len({secret_key, session_secret, credential_key}) != 3:
+            raise RuntimeError(
+                "Production SECRET_KEY and execution secrets must be independent"
+            )
+        if not self.EXECUTION_COOKIE_SECURE:
+            raise RuntimeError("Production EXECUTION_COOKIE_SECURE must be enabled")
+        if self.EXECUTION_INDEX_INTERVAL_SECONDS < 30:
+            raise RuntimeError(
+                "Production EXECUTION_INDEX_INTERVAL_SECONDS must be at least 30"
+            )
+        if not 1 <= self.EXECUTION_NODE_MAX_ATTEMPTS <= 100:
+            raise RuntimeError(
+                "Production EXECUTION_NODE_MAX_ATTEMPTS must be between 1 and 100"
+            )
+        if self.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS < 15:
+            raise RuntimeError(
+                "Production worker heartbeat timeout must be at least 15 seconds"
+            )
+        bootstrap_password = self.EXECUTION_BOOTSTRAP_ADMIN_PASSWORD.strip()
+        if bootstrap_password and (
+            is_weak(bootstrap_password, minimum_length=12)
+        ):
+            raise RuntimeError(
+                "Production bootstrap administrator password is too weak"
+            )
 
 
 settings = Settings()

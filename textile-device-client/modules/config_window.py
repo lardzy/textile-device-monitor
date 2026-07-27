@@ -3,7 +3,7 @@
 """
 
 import sys
-import os
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog,
     QApplication,
@@ -18,15 +18,36 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QCheckBox,
 )
-from PyQt6.QtCore import Qt
-from typing import Optional, Tuple
+from typing import Optional
+
+from modules.config import ConfigValidationError, validate_config
+from modules.transport_security import (
+    CONFIG_SCHEMA_VERSION,
+    TRANSPORT_COMPATIBLE,
+    TRANSPORT_REQUIRED,
+    TransportSecurityError,
+    resolve_ca_bundle,
+    validate_ca_bundle,
+)
 
 
 class ConfigWindow(QDialog):
-    def __init__(self, current_config: dict, preset_devices: list, parent=None):
+    def __init__(
+        self,
+        current_config: dict,
+        preset_devices: list,
+        parent=None,
+        *,
+        config_base_directory: Optional[Path] = None,
+    ):
         super().__init__(parent)
         self.current_config = current_config
         self.preset_devices = preset_devices
+        self.config_base_directory = (
+            Path(config_base_directory)
+            if config_base_directory is not None
+            else Path.cwd()
+        )
         self.config_data = {}
         self._setup_ui()
         self._load_current_config()
@@ -58,7 +79,35 @@ class ConfigWindow(QDialog):
         layout.addWidget(server_url_label)
 
         self.server_url_edit = QLineEdit()
+        self.server_url_edit.setPlaceholderText("https://textile-monitor.internal")
         layout.addWidget(self.server_url_edit)
+
+        transport_label = QLabel("传输安全:")
+        layout.addWidget(transport_label)
+
+        self.transport_security_combo = QComboBox()
+        self.transport_security_combo.addItem("强制 HTTPS（生产推荐）", TRANSPORT_REQUIRED)
+        if self.current_config.get("transport_security") != TRANSPORT_REQUIRED:
+            self.transport_security_combo.addItem(
+                "兼容 HTTP（仅迁移期间）",
+                TRANSPORT_COMPATIBLE,
+            )
+        layout.addWidget(self.transport_security_combo)
+
+        tls_ca_label = QLabel("内部 CA 证书:")
+        layout.addWidget(tls_ca_label)
+
+        tls_ca_layout = QHBoxLayout()
+        self.tls_ca_bundle_edit = QLineEdit()
+        self.tls_ca_bundle_edit.setPlaceholderText(
+            "certs/inspection-root-ca.pem"
+        )
+        tls_ca_layout.addWidget(self.tls_ca_bundle_edit)
+
+        self.tls_ca_browse_button = QPushButton("浏览...")
+        self.tls_ca_browse_button.clicked.connect(self._browse_tls_ca_bundle)
+        tls_ca_layout.addWidget(self.tls_ca_browse_button)
+        layout.addLayout(tls_ca_layout)
 
         self.confocal_checkbox = QCheckBox("激光共聚焦显微镜")
         self.confocal_checkbox.toggled.connect(self._toggle_confocal_fields)
@@ -126,6 +175,16 @@ class ConfigWindow(QDialog):
         if file_path:
             self.log_path_edit.setText(file_path)
 
+    def _browse_tls_ca_bundle(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择内部 CA 证书",
+            "",
+            "Certificate Files (*.pem *.crt *.cer);;All Files (*)",
+        )
+        if file_path:
+            self.tls_ca_bundle_edit.setText(file_path)
+
     def _toggle_confocal_fields(self, checked: bool):
         self.log_path_edit.setEnabled(checked)
         self.log_browse_button.setEnabled(checked)
@@ -142,7 +201,22 @@ class ConfigWindow(QDialog):
 
         self.device_name_edit.setText(self.current_config.get("device_name", ""))
         self.server_url_edit.setText(
-            self.current_config.get("server_url", "http://192.168.1.100:8000")
+            self.current_config.get(
+                "server_url",
+                "https://textile-monitor.internal",
+            )
+        )
+        transport_security = self.current_config.get(
+            "transport_security",
+            TRANSPORT_REQUIRED,
+        )
+        transport_index = self.transport_security_combo.findData(transport_security)
+        self.transport_security_combo.setCurrentIndex(max(0, transport_index))
+        self.tls_ca_bundle_edit.setText(
+            self.current_config.get(
+                "tls_ca_bundle",
+                "certs/inspection-root-ca.pem",
+            )
         )
         self.confocal_checkbox.setChecked(
             bool(self.current_config.get("is_laser_confocal", False))
@@ -168,6 +242,8 @@ class ConfigWindow(QDialog):
         device_code = self.device_code_combo.currentText().strip()
         device_name = self.device_name_edit.text().strip()
         server_url = self.server_url_edit.text().strip()
+        transport_security = self.transport_security_combo.currentData()
+        tls_ca_bundle = self.tls_ca_bundle_edit.text().strip()
         is_confocal = self.confocal_checkbox.isChecked()
         log_path = self.log_path_edit.text().strip()
         working_path = self.working_path_edit.text().strip()
@@ -185,6 +261,26 @@ class ConfigWindow(QDialog):
             QMessageBox.warning(self, "错误", "服务器地址不能为空")
             return
 
+        candidate = {
+            **self.current_config,
+            "config_schema_version": CONFIG_SCHEMA_VERSION,
+            "server_url": server_url,
+            "transport_security": transport_security,
+            "tls_ca_bundle": tls_ca_bundle,
+        }
+        try:
+            validated_candidate = validate_config(candidate)
+            if validated_candidate["server_url"].startswith("https://"):
+                validate_ca_bundle(
+                    resolve_ca_bundle(
+                        tls_ca_bundle,
+                        self.config_base_directory,
+                    )
+                )
+        except (ConfigValidationError, TransportSecurityError) as exc:
+            QMessageBox.warning(self, "HTTPS 配置无效", str(exc))
+            return
+
         if is_confocal:
             if not log_path:
                 QMessageBox.warning(self, "错误", "日志路径不能为空")
@@ -195,9 +291,12 @@ class ConfigWindow(QDialog):
                 return
 
         self.config_data = {
+            "config_schema_version": CONFIG_SCHEMA_VERSION,
             "device_code": device_code,
             "device_name": device_name,
-            "server_url": server_url,
+            "server_url": validated_candidate["server_url"],
+            "transport_security": transport_security,
+            "tls_ca_bundle": tls_ca_bundle,
             "is_laser_confocal": is_confocal,
             "log_path": log_path,
             "working_path": working_path,
@@ -221,7 +320,10 @@ class ConfigWindow(QDialog):
 
     @staticmethod
     def show_config_dialog(
-        current_config: dict, preset_devices: list
+        current_config: dict,
+        preset_devices: list,
+        *,
+        config_base_directory: Optional[Path] = None,
     ) -> Optional[dict]:
         """显示配置对话框
 
@@ -239,7 +341,11 @@ class ConfigWindow(QDialog):
         if not existing_app:
             app = QApplication([sys.argv[0]])
 
-        dialog = ConfigWindow(current_config, preset_devices)
+        dialog = ConfigWindow(
+            current_config,
+            preset_devices,
+            config_base_directory=config_base_directory,
+        )
         result = dialog.exec()
 
         if result == QDialog.DialogCode.Accepted:

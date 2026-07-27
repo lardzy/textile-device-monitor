@@ -1,8 +1,13 @@
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Layout, Menu, Spin } from 'antd';
-import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined, ToolOutlined, ScanOutlined, PieChartOutlined } from '@ant-design/icons';
+import { MonitorOutlined, HistoryOutlined, BarChartOutlined, SettingOutlined, ToolOutlined, ScanOutlined, PieChartOutlined, ApartmentOutlined } from '@ant-design/icons';
 import wsClient from './websocket/client';
 import { lazy, Suspense, useEffect, useState } from 'react';
+import {
+  ExecutionAdminRoute,
+  ExecutionAuthShell,
+  ExecutionProtectedRoute,
+} from './pages/execution/ExecutionAuthContext';
 
 const DeviceMonitor = lazy(() => import('./pages/DeviceMonitor'));
 const HistoryQuery = lazy(() => import('./pages/HistoryQuery'));
@@ -16,11 +21,19 @@ const AreaTaskCenter = lazy(() => import('./pages/area/AreaTaskCenter'));
 const AreaFolders = lazy(() => import('./pages/area/AreaFolders'));
 const AreaSettings = lazy(() => import('./pages/area/AreaSettings'));
 const AreaJobWorkspace = lazy(() => import('./pages/area/AreaJobWorkspace'));
+const ExecutionLogin = lazy(() => import('./pages/execution/ExecutionLogin'));
+const ExecutionCatalog = lazy(() => import('./pages/execution/ExecutionCatalog'));
+const ExecutionRunWorkspace = lazy(() => import('./pages/execution/ExecutionRunWorkspace'));
+const ExecutionTaskInbox = lazy(() => import('./pages/execution/ExecutionTaskInbox'));
+const ExecutionWorkflowAdmin = lazy(() => import('./pages/execution/ExecutionWorkflowAdmin'));
+const ExecutionWorkflowDesigner = lazy(() => import('./pages/execution/ExecutionWorkflowDesigner'));
+const ExecutionSettings = lazy(() => import('./pages/execution/ExecutionSettings'));
 
 const { Header, Content, Sider } = Layout;
 
 const menuItems = [
   { key: 'monitor', icon: <MonitorOutlined />, label: '设备监控', path: '/' },
+  { key: 'execution', icon: <ApartmentOutlined />, label: '执行系统', path: '/execution' },
   { key: 'area', icon: <PieChartOutlined />, label: '面积识别', path: '/tools/area' },
   { key: 'history', icon: <HistoryOutlined />, label: '历史记录', path: '/history' },
   { key: 'statistics', icon: <BarChartOutlined />, label: '数据统计', path: '/statistics' },
@@ -73,6 +86,20 @@ const appRoutes = (
       </Route>
       <Route path="/results/table" element={<ResultsTable />} />
       <Route path="/results/images" element={<ResultsImages />} />
+      <Route path="/execution" element={<ExecutionAuthShell />}>
+        <Route path="login" element={<ExecutionLogin />} />
+        <Route element={<ExecutionProtectedRoute />}>
+          <Route index element={<ExecutionCatalog />} />
+          <Route path="tasks" element={<ExecutionTaskInbox />} />
+          <Route path="tasks/:taskId" element={<ExecutionTaskInbox />} />
+          <Route path="runs/:runId" element={<ExecutionRunWorkspace />} />
+          <Route path="settings" element={<ExecutionSettings />} />
+          <Route element={<ExecutionAdminRoute />}>
+            <Route path="admin" element={<ExecutionWorkflowAdmin />} />
+            <Route path="admin/workflows/:workflowId" element={<ExecutionWorkflowDesigner />} />
+          </Route>
+        </Route>
+      </Route>
     </Routes>
   </Suspense>
 );
@@ -87,6 +114,9 @@ function AppLayout() {
   const currentTitle = selectedMenuItem?.label || '纺织品检测系统';
   const isResults = location.pathname.startsWith('/results');
   const isAreaWorkspace = location.pathname.startsWith('/tools/area/jobs/');
+  const isExecution = location.pathname.startsWith('/execution');
+  const isExecutionWorkspace = location.pathname.startsWith('/execution/runs/')
+    || location.pathname.startsWith('/execution/admin/workflows/');
 
   useEffect(() => {
     const baseUrl = import.meta.env.VITE_WS_URL;
@@ -131,12 +161,16 @@ function AppLayout() {
         />
       </Sider>
       <Layout>
-        <Header style={{ background: '#fff', display: 'flex', alignItems: 'center', padding: '0 24px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-          <h2 style={{ margin: 0 }}>{currentTitle}</h2>
-        </Header>
+        {!isExecution && (
+          <Header style={{ background: '#fff', display: 'flex', alignItems: 'center', padding: '0 24px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+            <h2 style={{ margin: 0 }}>{currentTitle}</h2>
+          </Header>
+        )}
         <Content style={isAreaWorkspace
           ? { margin: 0, padding: 0, background: '#f4f5f7', minWidth: 0, overflow: 'hidden' }
-          : { margin: '24px 16px', padding: 24, background: '#fff', borderRadius: '8px', minWidth: 0 }}>
+          : isExecution
+            ? { margin: 0, padding: 0, background: '#f4f7fb', minWidth: 0, overflow: isExecutionWorkspace ? 'hidden' : 'auto' }
+            : { margin: '24px 16px', padding: 24, background: '#fff', borderRadius: '8px', minWidth: 0 }}>
           {appRoutes}
         </Content>
       </Layout>

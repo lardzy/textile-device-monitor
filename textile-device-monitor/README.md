@@ -10,9 +10,10 @@
 - **历史记录**: 设备状态历史查询，支持多维度筛选和Excel导出
 - **数据统计**: 设备利用率、任务完成量、检测时长等多维度统计分析
 - **设备管理**: 设备信息的增删改查管理
+- **执行系统**: 版本化 DAG、人工任务、文件索引、受控 Excel 副本写入与审计
 
 ### 技术特点
-- 无需登录，局域网内公开访问
+- 设备监控等既有功能保持内网免登录；执行系统使用独立账号
 - WebSocket实时更新设备状态和排队信息
 - 响应式设计，支持PC端访问
 - 数据自动清理（保留30天）
@@ -38,8 +39,17 @@
 
 ### 前置要求
 - Docker 20.10+
-- Docker Compose 2.0+
-- 服务器IP（用于局域网访问）
+- Docker Compose 2.20+（执行系统独立覆盖文件使用可选依赖）
+- 一台已接入公司局域网、具有当前可达 RFC1918 IPv4 地址的部门服务器
+- 服务器和本部门终端的本机管理员权限
+- Python 3.11+、OpenSSL，以及 Windows PowerShell 5.1+
+
+生产 HTTPS **不依赖公司 DNS、DHCP、域策略、路由器、交换机或公司防火墙改动**。固定域名
+`textile-monitor.internal` 由部署脚本写入每台本部门电脑的本机 `hosts`
+文件，并把部门内部根证书安装到该电脑的受信任根证书存储。IT 部门无需为此
+修改公司局域网配置。部署时直接填写服务器当前的局域网 IPv4；若它以后变化，
+只需在本部门电脑重新运行脚本更新本机 `hosts`。已有稳定地址可继续使用，
+但项目不要求申请 DHCP 保留或修改服务器网卡设置。
 
 ### 快速启动
 
@@ -48,15 +58,65 @@
 cd textile-device-monitor
 ```
 
-2. 启动服务
+2. 创建生产配置并填写所有必填项
 ```bash
-docker-compose up -d
+cp .env.example .env
 ```
 
-3. 访问系统
+数据库账号、三个独立随机密钥、管理网段以及 TLS 目录均不得留空。可使用
+`openssl rand -base64 48` 分别生成随机密钥。`.env` 不得提交到 Git。
+TLS 目录必须位于 Git 工作区之外，并包含 `fullchain.pem`、`privkey.pem`
+和 `root-ca.pem`。`FRONTEND_BIND_ADDRESS` 填服务器当前局域网 IPv4，
+只收紧 Docker 的本机端口绑定，不会修改网卡或 DHCP。
+
+3. 按[内部 CA 与本机 hosts 运维手册](docs/internal-ca-operations.md)
+在离线管理员电脑初始化 CA、签发服务器证书，并把不含 CA 私钥的服务器证书
+包部署到 `TLS_DIR_HOST_PATH`。根 CA 私钥不得复制到 Docker 主机。
+同时按手册创建宿主机部署预检虚拟环境并安装
+`scripts/requirements-deployment.txt`。
+
+4. 首次上线进入维护窗口，确认旧 `frontend` 已停止，再使用手册中的
+`Deploy-ServerCertificate.ps1` 校验候选证书、写入活动 TLS 目录并启动服务；
+部署完成后再运行完整
+`validate-deployment.ps1`。续签时，先校验现有部署，再用同一部署脚本原子
+替换证书。不要在活动 TLS 目录尚为空时直接运行完整预检。
+
+5. 在每台本部门电脑以管理员身份运行手册中的终端部署脚本。脚本会备份本机
+`hosts`，写入“服务器当前 IP → `textile-monitor.internal`”映射，核对线下
+记录的根证书 SHA-256 指纹，安装根证书并执行真实 HTTPS 探测。
+
+6. 通过 HTTPS 访问
 ```
-http://服务器IP
+https://textile-monitor.internal
 ```
+
+生产 Compose 仅发布前端 HTTPS 端口；PostgreSQL、后端、Area Infer、OCR 和
+execution-worker 只在 Docker 网络内通信。前端还会按
+`MANAGEMENT_CIDRS` 限制来源地址。该限制只修改本项目 Nginx 配置，不需要
+公司网络管理员参与。没有部门专属子网时，应把获准终端逐台配置为 `/32`
+并先核实 Docker Desktop 下 Nginx 实际看到的来源地址；内部根证书和本机
+`hosts` 只解决信任与名称解析，本身不构成部门访问白名单。配套
+`Manage-InspectionHttpsFirewall.ps1` 只审计和管理部门服务器的本机 443
+规则，发现 Docker/NAT 丢失真实来源地址时会拒绝错误放行。
+
+### 本地前后端开发
+
+本地开发不复用生产 Compose 的 HTTPS 与密钥策略。复制
+`backend/.env.example` 为 `backend/.env`，生成本地随机密钥后，分别运行：
+
+```bash
+cd backend
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+本地模板明确设置 `APP_ENV=development`、HTTP CORS 白名单和非 Secure
+Cookie；这些设置不得复制到生产 `.env`。
 
 ### Linux + NVIDIA GPU（面积识别）部署
 
@@ -70,12 +130,12 @@ docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 
 2. 使用 GPU 覆盖文件启动
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build area-infer backend frontend
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build area-infer backend execution-worker frontend
 ```
 
 3. 查看推理服务是否使用 GPU
 ```bash
-curl http://127.0.0.1:9001/health
+docker compose exec backend python -c "import urllib.request; print(urllib.request.urlopen('http://area-infer:9001/health').read().decode())"
 ```
 返回中 `runtime.effective_device` 为 `cuda:0` 表示已走 GPU。
 
@@ -85,27 +145,57 @@ curl http://127.0.0.1:9001/health
 - 当 GPU 不可用且策略为 `warn_continue` 时，会回退 CPU 并在 `device_warning` 字段给出告警。
 
 ### 服务端口
-- 前端: 80
-- 后端: 8000
-- 数据库: 5432（内部）
+- 前端: 443（生产固定；`FRONTEND_HTTPS_PORT` 仅允许本机测试覆盖）
+- 后端: 8000（仅 Docker 内部）
+- Area Infer: 9001（仅 Docker 内部）
+- PostgreSQL: 5432（仅 Docker 内部）
 
 ### 配置说明
 
-#### 环境变量 (backend/.env)
+生产变量以仓库根目录的 `.env.example` 为准。应用默认按生产环境启动，
+检测到缺失/示例密钥、弱数据库密码、HTTP/通配 CORS、非 Secure 执行系统
+Cookie 时会拒绝启动。生产浏览器访问为同源模式，通常保持
+`CORS_ORIGINS=` 即可。
+
+### 执行系统
+
+- `/execution` 使用独立账号登录；设备监控、设备状态上报及其它既有页面保持
+  原来的内网免登录边界。
+- 后端容器启动时先执行 Alembic。空数据库会从 `0001_legacy_baseline`
+  完整建库；已有数据库只有通过结构预检后才会标记基线并升级。当前迁移头为
+  `0003_execution_contract`。
+- `execution-worker` 通过 PostgreSQL 租约领取节点。请勿只启动
+  `backend` 而遗漏 Worker，否则新运行不会被执行。
+- `/health/live` 仅表示 API 进程存活；`/health/ready` 还会检查数据库、
+  Alembic 版本、Worker 心跳和执行系统 staging/publish 目录。
+- 源资料必须只读映射到 `EXECUTION_SOURCE_HOST_PATH`；中间副本和最终发布分别
+  使用 `EXECUTION_RUNTIME_HOST_PATH`、`EXECUTION_PUBLISH_HOST_PATH`。三者
+  必须彼此独立，不得相同、嵌套或通过符号链接指向同一目录。
+- 受控写入 API 只能沿已发布运行的实际节点路径调用；核对、人工确认和发布
+  上下文必须一致，发布栅栏会在物理文件副作用前持久化。
+- 新旧检务系统节点目前是禁用占位节点；复杂 `.xls/.xlsm` 的高保真写入需要
+  后续 Windows Agent 调用 Microsoft Excel Desktop。
+
+仅开发或验收执行系统时，可显式使用覆盖文件跳过 Area Infer：
+
 ```bash
-DATABASE_URL=postgresql://admin:password123@postgres:5432/textile_monitor
-SECRET_KEY=your-secret-key-change-in-production
-HEARTBEAT_TIMEOUT=30
-DATA_RETENTION_DAYS=30
-STATUS_REPORT_RETENTION_HOURS=48
-CORS_ORIGINS=["http://localhost", "http://localhost:80"]
+docker compose -f docker-compose.yml -f docker-compose.execution.yml \
+  up -d --build postgres backend execution-worker frontend
 ```
+
+该命令会关闭后端 Area 功能并把 `area-infer` 放入未启用的 `area` profile；
+不影响不带覆盖文件的完整生产部署。
+
+首次部署可暂时填写
+`EXECUTION_BOOTSTRAP_ADMIN_USERNAME/EXECUTION_BOOTSTRAP_ADMIN_PASSWORD`
+创建管理员。确认可以登录后，应从 `.env` 删除这两个值并重建后端容器。
 
 ## 设备对接
 
 ### 设备状态上报接口
 
-**接口地址**: `POST http://服务器IP:8000/api/devices/{device_code}/status`
+**接口地址**:
+`POST https://textile-monitor.internal/api/devices/{device_code}/status`
 
 **请求参数**:
 ```json
@@ -132,9 +222,21 @@ CORS_ORIGINS=["http://localhost", "http://localhost:80"]
 ```python
 import requests
 import time
+from pathlib import Path
+import os
 
 DEVICE_CODE = "DL001"  # 设备编码
-SERVER_URL = "http://192.168.1.100:8000"
+SERVER_URL = "https://textile-monitor.internal"
+CA_BUNDLE = (
+    Path(os.environ["LOCALAPPDATA"])
+    / "TextileDeviceClient"
+    / "certs"
+    / "inspection-root-ca.pem"
+)
+
+session = requests.Session()
+session.trust_env = False
+session.verify = str(CA_BUNDLE)
 
 def report_status(status, task_id=None, task_name=None, progress=None, metrics=None):
     """上报设备状态"""
@@ -147,7 +249,7 @@ def report_status(status, task_id=None, task_name=None, progress=None, metrics=N
     }
     
     try:
-        response = requests.post(
+        response = session.post(
             f"{SERVER_URL}/api/devices/{DEVICE_CODE}/status",
             json=data,
             timeout=5
@@ -178,12 +280,6 @@ while True:
     time.sleep(5)
 ```
 
-## API文档
-
-启动服务后访问：
-- Swagger UI: `http://服务器IP:8000/docs`
-- ReDoc: `http://服务器IP:8000/redoc`
-
 ## 使用说明
 
 ### 设备管理
@@ -207,7 +303,7 @@ while True:
 设备完成检测后，继续通过状态上报接口提交完成状态；同一次上报的
 HTTP 重试必须复用同一个 `report_id`：
 ```http
-POST http://服务器IP:8000/api/devices/{device_code}/status
+POST https://textile-monitor.internal/api/devices/{device_code}/status
 
 {
   "status": "idle",
@@ -253,21 +349,22 @@ POST http://服务器IP:8000/api/devices/{device_code}/status
 ### 日志查看
 ```bash
 # 查看所有容器日志
-docker-compose logs -f
+docker compose logs -f
 
 # 查看特定服务日志
-docker-compose logs -f backend
-docker-compose logs -f frontend
-docker-compose logs -f postgres
+docker compose logs -f backend
+docker compose logs -f execution-worker
+docker compose logs -f frontend
+docker compose logs -f postgres
 ```
 
 ### 重启服务
 ```bash
 # 重启所有服务
-docker-compose restart
+docker compose restart
 
 # 重启特定服务
-docker-compose restart backend
+docker compose restart backend execution-worker
 ```
 
 ### 更新代码
@@ -275,8 +372,9 @@ docker-compose restart backend
 # 拉取最新代码
 git pull
 
-# 重新构建并启动
-docker-compose up -d --build
+# 不构建 Area Infer，仅更新本轮涉及的服务
+docker compose -f docker-compose.yml -f docker-compose.execution.yml \
+  up -d --build backend execution-worker frontend
 ```
 
 ### 数据备份
@@ -291,30 +389,37 @@ docker exec -i textile-monitor-db psql -U admin textile_monitor < backup.sql
 ## 故障排查
 
 ### 问题：无法访问系统
-1. 检查容器状态：`docker-compose ps`
-2. 检查端口占用：`netstat -ano | findstr :80`
-3. 查看防火墙设置
-4. 确认服务器IP正确
+1. 检查容器状态：`docker compose ps`
+2. 检查端口占用：`netstat -ano | findstr :443`
+3. 确认本机 `hosts` 中的 `textile-monitor.internal` 指向服务器当前 IP
+4. 核对浏览器证书链和根证书 SHA-256 指纹
+5. 查看服务器本机防火墙和 `MANAGEMENT_CIDRS`
+
+上述排查均发生在部门服务器或当前终端；“服务器本机防火墙”只指这台部门
+服务器的 Windows 本机规则，不要求修改公司 DNS、DHCP、路由器、交换机或
+公司防火墙。
 
 ### 问题：设备状态不更新
 1. 检查设备编码是否正确
-2. 检查设备能否访问服务器IP:8000
-3. 查看后端日志：`docker-compose logs backend`
+2. 检查设备能否访问服务器 HTTPS 地址
+3. 查看后端日志：`docker compose logs backend`
 4. 确认上报频率是否正常
 
 ### 问题：WebSocket连接失败
-1. 检查服务器IP配置
+1. 检查本机 `hosts` 映射和服务器当前 IP；地址变化时重新运行本机脚本
 2. 确认前端配置的WS_URL正确
-3. 查看浏览器控制台错误
+3. 确认证书受信任且页面通过
+   `https://textile-monitor.internal` 打开
+4. 查看浏览器控制台错误
 
 ## 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    局域网PC浏览器                       │
-│                    (React前端:80)                       │
+│       https://textile-monitor.internal（本机 hosts）   │
 └────────────────────┬────────────────────────────────────┘
-                     │ HTTP/WebSocket
+                     │ HTTPS / WSS / SSE :443
 ┌────────────────────▼────────────────────────────────────┐
 │              服务器 (Docker Compose)                   │
 │  ┌─────────────────────────────────────────────────┐   │
@@ -337,7 +442,7 @@ docker exec -i textile-monitor-db psql -U admin textile_monitor < backup.sql
 │  │ - 排队修改日志                                  │   │
 │  └─────────────────────────────────────────────────┘   │
 └────────────────────┬────────────────────────────────────┘
-                     │ HTTP (设备上报接口)
+                     │ HTTPS (设备上报接口)
 ┌────────────────────▼────────────────────────────────────┐
 │              分散设备 (外部程序)                        │
 │              定时调用 /api/devices/{code}/status         │

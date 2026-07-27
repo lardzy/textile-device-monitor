@@ -6,10 +6,9 @@ import unittest
 from unittest.mock import patch
 
 from openpyxl import load_workbook
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app import database as database_module
 from app.api.history import export_history, get_history
 from app.crud import history as history_crud
 from app.models import Base, Device, DeviceStatusHistory
@@ -168,32 +167,6 @@ class HistorySearchTests(unittest.TestCase):
         values = [cell.value for cell in next(worksheet.iter_rows(min_row=2, max_row=2))]
         exported = dict(zip(headers, values))
         self.assertEqual(exported["排队人员"], "'=1+1")
-
-    def test_compatibility_schema_adds_queue_person_column(self):
-        legacy_engine = create_engine("sqlite:///:memory:")
-        try:
-            with legacy_engine.begin() as connection:
-                connection.execute(
-                    text(
-                        "CREATE TABLE device_status_history ("
-                        "id INTEGER PRIMARY KEY, device_id INTEGER NOT NULL, "
-                        "status VARCHAR(20) NOT NULL)"
-                    )
-                )
-
-            with patch.object(database_module, "engine", legacy_engine):
-                database_module.ensure_device_status_history_schema()
-                database_module.ensure_device_status_history_schema()
-
-            columns = {
-                column["name"]
-                for column in inspect(legacy_engine).get_columns(
-                    "device_status_history"
-                )
-            }
-            self.assertIn("inspector_name", columns)
-        finally:
-            legacy_engine.dispose()
 
     def test_end_date_is_exclusive(self):
         boundary = datetime(2026, 7, 2, 0, 0, tzinfo=timezone.utc)

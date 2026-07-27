@@ -35,7 +35,7 @@ from app.api.devices import report_device_status
 from app.api.queue import change_queue_position, join_queue, leave_queue
 from app.crud import devices as device_crud
 from app.crud import queue as queue_crud
-from app.database import Base, SessionLocal, engine, ensure_queue_record_schema
+from app.database import Base, SessionLocal, engine
 from app.models import Device, DeviceStatus, QueueChangeLog
 from app.schemas import PositionChange, QueueCreate, StatusReport
 
@@ -51,7 +51,6 @@ if engine.dialect.name != "postgresql":
 def clean_database():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
-    ensure_queue_record_schema()
     yield
     Base.metadata.drop_all(bind=engine)
 

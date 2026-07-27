@@ -1,17 +1,19 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const backendProxyTarget = process.env.VITE_BACKEND_PROXY_TARGET || 'http://backend:8000';
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://backend:8000',
+        target: backendProxyTarget,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://backend:8000',
+        target: backendProxyTarget.replace(/^http/, 'ws'),
         ws: true,
       },
     },
@@ -19,5 +21,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './tests/setup.js',
+    include: ['src/**/*.test.{js,jsx}'],
+    restoreMocks: false,
   },
 });

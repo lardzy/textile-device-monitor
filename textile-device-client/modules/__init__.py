@@ -1,59 +1,37 @@
+"""Client modules with lazy convenience exports.
+
+Importing ``modules.config`` must not eagerly import Requests, PyQt or the Excel
+runtime. Keeping these exports lazy also makes configuration recovery possible
+when an optional runtime dependency is damaged.
 """
-纺织品检测设备客户端模块
-"""
 
-from .config import Config
-from .logger import Logger
-from .api_client import ApiClient
-from .device_manager import DeviceManager
-from .progress_reader import ProgressReader
-from .metrics_collector import MetricsCollector
+from __future__ import annotations
 
-try:
-    from .status_reporter import StatusReporter
-except:
-    pass
+from importlib import import_module
+from typing import Any
 
-try:
-    from .tray_icon import TrayIcon
-except:
-    pass
 
-try:
-    from .config_window import ConfigWindow
-except:
-    pass
+_EXPORTS = {
+    "Config": ("modules.config", "Config"),
+    "Logger": ("modules.logger", "Logger"),
+    "ApiClient": ("modules.api_client", "ApiClient"),
+    "DeviceManager": ("modules.device_manager", "DeviceManager"),
+    "ProgressReader": ("modules.progress_reader", "ProgressReader"),
+    "MetricsCollector": ("modules.metrics_collector", "MetricsCollector"),
+    "StatusReporter": ("modules.status_reporter", "StatusReporter"),
+    "TrayIcon": ("modules.tray_icon", "TrayIcon"),
+    "ConfigWindow": ("modules.config_window", "ConfigWindow"),
+    "LogWindow": ("modules.log_window", "LogWindow"),
+}
 
-try:
-    from .log_window import LogWindow
-except:
-    pass
+__all__ = list(_EXPORTS)
 
-__all__ = [
-    "Config",
-    "Logger",
-    "ApiClient",
-    "DeviceManager",
-    "ProgressReader",
-    "MetricsCollector",
-]
 
-try:
-    __all__.append("StatusReporter")
-except:
-    pass
-
-try:
-    __all__.append("TrayIcon")
-except:
-    pass
-
-try:
-    __all__.append("ConfigWindow")
-except:
-    pass
-
-try:
-    __all__.append("LogWindow")
-except:
-    pass
+def __getattr__(name: str) -> Any:
+    try:
+        module_name, attribute_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(name) from exc
+    value = getattr(import_module(module_name), attribute_name)
+    globals()[name] = value
+    return value

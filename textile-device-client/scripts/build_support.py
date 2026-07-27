@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 from importlib import metadata
 import json
@@ -8,10 +9,12 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import ssl
 import struct
 import subprocess
 import sys
 from typing import Any
+from urllib.parse import urlsplit
 
 
 APP_DISPLAY_NAME = "Textile Device Client"
@@ -19,13 +22,35 @@ APP_PUBLISHER = "Textile Device Monitor"
 EXECUTABLE_NAME = "textile-device-client.exe"
 BUILD_MANIFEST_NAME = "build-manifest.json"
 BUILD_LOCK_NAME = "requirements-build.lock.txt"
-BUILD_MANIFEST_SCHEMA = 1
+BUILD_MANIFEST_SCHEMA = 2
+CLIENT_BUILD_DEFAULTS_NAME = "client-build-defaults.json"
+PACKAGED_CA_RELATIVE_PATH = Path("certs") / "inspection-root-ca.pem"
+PRODUCTION_HOSTNAME = "textile-monitor.internal"
+DEFAULT_SERVER_URL = "https://textile-monitor.internal"
+CLIENT_ADMIN_TOOL_NAMES = (
+    "migrate_to_internal_https.ps1",
+    "verify_client_https_reporting.ps1",
+)
+SHARED_ADMIN_TOOL_NAMES = (
+    "Install-InspectionTlsTrust.ps1",
+    "Restore-InspectionTlsTrust.ps1",
+    "InspectionTls.Common.ps1",
+)
+ADMIN_TOOL_NAMES = CLIENT_ADMIN_TOOL_NAMES + SHARED_ADMIN_TOOL_NAMES
 SUPPORTED_PYTHON = (3, 12)
 DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com"
 
 _VERSION_PATTERN = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
 _PINNED_REQUIREMENT_PATTERN = re.compile(
     r"^([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)$"
+)
+_PEM_CERTIFICATE_PATTERN = re.compile(
+    rb"-----BEGIN CERTIFICATE-----\s*"
+    rb"[A-Za-z0-9+/=\r\n]+?"
+    rb"\s*-----END CERTIFICATE-----"
+)
+_PEM_PRIVATE_KEY_PATTERN = re.compile(
+    rb"-----BEGIN [^\r\n-]*PRIVATE KEY-----"
 )
 
 BASE_HIDDEN_IMPORTS = (
@@ -52,9 +77,14 @@ _REQUIRED_BUILD_INPUTS = (
     Path(BUILD_LOCK_NAME),
     Path("modules/version.py"),
     Path("resources/icon.ico"),
+    Path("packaging/inno-setup/textile_device_client.iss"),
     Path("packaging/pyinstaller/textile_device_client.spec"),
     Path("scripts/build_support.py"),
+    Path("scripts/build_windows_installer.py"),
     Path("scripts/build_windows_onedir.py"),
+    Path("scripts/build_windows_release.py"),
+    Path("scripts/migrate_to_internal_https.ps1"),
+    Path("scripts/verify_client_https_reporting.ps1"),
 )
 
 _BUILD_INPUT_TREES = (
@@ -66,6 +96,15 @@ _BUILD_INPUT_TREES = (
 
 class BuildValidationError(RuntimeError):
     pass
+
+
+def _distribution_version(name: str) -> str:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        # Real builds call ensure_build_environment() first. This fallback keeps
+        # manifest helpers usable for isolated unit tests and diagnostics.
+        return "not-installed"
 
 
 def read_app_version(project_root: Path) -> str:
@@ -321,6 +360,217 @@ def write_sha256_file(path: Path, output: Path | None = None) -> Path:
     return output_path
 
 
+def validate_packaged_root_ca(path: Path) -> None:
+    """Require one valid, public, self-signed RSA-3072 root CA certificate."""
+
+    try:
+        from cryptography import x509
+        from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+        from cryptography.hazmat.primitives.asymmetric import rsa
+    except ImportError as exc:
+        raise BuildValidationError(
+            "The locked Windows build environment is missing cryptography; "
+            f"install {BUILD_LOCK_NAME} before packaging the client."
+        ) from exc
+
+    try:
+        pem_payload = path.read_bytes()
+    except OSError as exc:
+        raise BuildValidationError(f"Unable to read TLS CA bundle: {path}") from exc
+    if _PEM_PRIVATE_KEY_PATTERN.search(pem_payload):
+        raise BuildValidationError(
+            "TLS CA bundle must contain public certificates only, never a private key"
+        )
+    certificates = list(_PEM_CERTIFICATE_PATTERN.finditer(pem_payload))
+    if len(certificates) != 1:
+        raise BuildValidationError(
+            "Production client TLS CA bundle must contain exactly one root certificate"
+        )
+    remainder = (
+        pem_payload[: certificates[0].start()]
+        + pem_payload[certificates[0].end() :]
+    )
+    if remainder.strip():
+        raise BuildValidationError(
+            "TLS CA bundle contains content outside the root certificate"
+        )
+
+    try:
+        certificate = x509.load_pem_x509_certificate(certificates[0].group(0))
+    except ValueError as exc:
+        raise BuildValidationError(
+            f"TLS CA bundle contains an invalid X.509 certificate: {path}"
+        ) from exc
+    if certificate.subject != certificate.issuer:
+        raise BuildValidationError("Packaged CA certificate must be self-issued")
+    try:
+        certificate.verify_directly_issued_by(certificate)
+    except (InvalidSignature, UnsupportedAlgorithm, TypeError, ValueError) as exc:
+        raise BuildValidationError(
+            "Packaged CA certificate is not cryptographically self-signed"
+        ) from exc
+    try:
+        constraints = certificate.extensions.get_extension_for_class(
+            x509.BasicConstraints
+        )
+    except x509.ExtensionNotFound as exc:
+        raise BuildValidationError(
+            "Packaged CA certificate is missing Basic Constraints"
+        ) from exc
+    if not constraints.critical or not constraints.value.ca:
+        raise BuildValidationError(
+            "Packaged CA certificate must declare critical CA:TRUE"
+        )
+    public_key = certificate.public_key()
+    if not isinstance(public_key, rsa.RSAPublicKey) or public_key.key_size != 3072:
+        raise BuildValidationError(
+            "Packaged root CA must use a 3072-bit RSA public key"
+        )
+
+    now = datetime.now(timezone.utc)
+    if (
+        now < certificate.not_valid_before_utc
+        or now >= certificate.not_valid_after_utc
+    ):
+        raise BuildValidationError(
+            "Packaged root CA is not currently valid"
+        )
+
+
+def normalize_production_server_url(value: str) -> str:
+    """Validate the immutable hostname/port contract of production packages."""
+
+    raw_url = value.strip()
+    if "\\" in raw_url or "?" in raw_url or "#" in raw_url:
+        raise BuildValidationError(
+            "--default-server-url must not contain backslashes, query markers, "
+            "or fragment markers"
+        )
+    try:
+        parsed = urlsplit(raw_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise BuildValidationError(f"Invalid --default-server-url: {exc}") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise BuildValidationError(
+            "--default-server-url must be a pure HTTPS origin without "
+            "credentials, /api, query, or fragment"
+        )
+    if parsed.hostname.lower() != PRODUCTION_HOSTNAME or port not in {None, 443}:
+        raise BuildValidationError(
+            "Production client packages must use exactly "
+            f"https://{PRODUCTION_HOSTNAME} on port 443"
+        )
+    return DEFAULT_SERVER_URL
+
+
+def prepare_tls_build_assets(
+    generated_path: Path,
+    *,
+    default_server_url: str,
+    tls_ca_bundle: Path,
+) -> tuple[Path, Path]:
+    """Validate and stage production TLS defaults for PyInstaller."""
+
+    normalized_url = normalize_production_server_url(default_server_url)
+
+    ca_source = tls_ca_bundle.expanduser().resolve(strict=False)
+    if not ca_source.is_file():
+        raise BuildValidationError(
+            f"TLS CA bundle not found: {ca_source}. Pass --tls-ca-bundle."
+        )
+    try:
+        ssl.create_default_context(cafile=str(ca_source))
+    except (OSError, ssl.SSLError) as exc:
+        raise BuildValidationError(
+            f"TLS CA bundle is invalid: {ca_source}"
+        ) from exc
+    validate_packaged_root_ca(ca_source)
+
+    generated_path.mkdir(parents=True, exist_ok=True)
+    defaults_path = generated_path / CLIENT_BUILD_DEFAULTS_NAME
+    staged_ca_path = generated_path / PACKAGED_CA_RELATIVE_PATH.name
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "config_schema_version": 2,
+                "server_url": normalized_url,
+                "transport_security": "required",
+                "tls_ca_bundle": PACKAGED_CA_RELATIVE_PATH.as_posix(),
+            },
+            ensure_ascii=True,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    shutil.copy2(ca_source, staged_ca_path)
+    return defaults_path, staged_ca_path
+
+
+def read_packaged_tls_metadata(app_dir: Path) -> dict[str, Any]:
+    defaults_path = app_dir / CLIENT_BUILD_DEFAULTS_NAME
+    if not defaults_path.is_file():
+        raise BuildValidationError(
+            f"Packaged client defaults not found: {defaults_path}"
+        )
+    try:
+        defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BuildValidationError(
+            f"Invalid packaged client defaults: {defaults_path}"
+        ) from exc
+    if defaults.get("config_schema_version") != 2:
+        raise BuildValidationError("Packaged client config schema must be 2")
+    if defaults.get("transport_security") != "required":
+        raise BuildValidationError(
+            "Production package must default to required transport security"
+        )
+    server_url = str(defaults.get("server_url") or "")
+    try:
+        normalized_url = normalize_production_server_url(server_url)
+    except BuildValidationError as exc:
+        raise BuildValidationError(
+            f"Packaged default server URL is invalid: {exc}"
+        ) from exc
+    if server_url != normalized_url:
+        raise BuildValidationError(
+            f"Packaged default server URL must be exactly {DEFAULT_SERVER_URL}"
+        )
+    ca_relative = Path(str(defaults.get("tls_ca_bundle") or ""))
+    if ca_relative.is_absolute() or ".." in ca_relative.parts:
+        raise BuildValidationError("Packaged TLS CA path must be a safe relative path")
+    ca_path = app_dir / ca_relative
+    if not ca_path.is_file():
+        raise BuildValidationError(f"Packaged TLS CA bundle not found: {ca_path}")
+    validate_packaged_root_ca(ca_path)
+    return {
+        "defaults": defaults,
+        "ca_path": ca_path,
+        "ca_sha256": sha256_file(ca_path),
+    }
+
+
+def read_packaged_admin_tool_hashes(app_dir: Path) -> dict[str, str]:
+    tools_directory = app_dir / "admin-tools"
+    hashes: dict[str, str] = {}
+    for name in ADMIN_TOOL_NAMES:
+        path = tools_directory / name
+        if not path.is_file():
+            raise BuildValidationError(f"Packaged admin tool not found: {path}")
+        hashes[name] = sha256_file(path)
+    return hashes
+
+
 def create_build_manifest(
     project_root: Path,
     app_dir: Path,
@@ -332,6 +582,8 @@ def create_build_manifest(
     executable = app_dir / EXECUTABLE_NAME
     if not executable.is_file():
         raise BuildValidationError(f"Built executable not found: {executable}")
+    tls_metadata = read_packaged_tls_metadata(app_dir)
+    admin_tool_hashes = read_packaged_admin_tool_hashes(app_dir)
     return {
         "schema": BUILD_MANIFEST_SCHEMA,
         "app_name": APP_DISPLAY_NAME,
@@ -344,7 +596,15 @@ def create_build_manifest(
         "source_sha256": calculate_source_fingerprint(project_root),
         "python_version": platform.python_version(),
         "python_architecture": f"{struct.calcsize('P') * 8}-bit",
-        "pyinstaller_version": metadata.version("PyInstaller"),
+        "pyinstaller_version": _distribution_version("PyInstaller"),
+        "requests_version": _distribution_version("requests"),
+        "certifi_version": _distribution_version("certifi"),
+        "cryptography_version": _distribution_version("cryptography"),
+        "default_server_url": tls_metadata["defaults"]["server_url"],
+        "transport_security": tls_metadata["defaults"]["transport_security"],
+        "tls_ca_bundle": tls_metadata["defaults"]["tls_ca_bundle"],
+        "tls_ca_sha256": tls_metadata["ca_sha256"],
+        "admin_tools_sha256": admin_tool_hashes,
     }
 
 
@@ -391,6 +651,15 @@ def validate_release_build(
     expected_version = read_app_version(project_root)
     expected_source_hash = calculate_source_fingerprint(project_root)
     executable = app_dir / EXECUTABLE_NAME
+    try:
+        tls_metadata = read_packaged_tls_metadata(app_dir)
+        admin_tool_hashes = read_packaged_admin_tool_hashes(app_dir)
+    except BuildValidationError as exc:
+        tls_metadata = None
+        admin_tool_hashes = None
+        errors = [str(exc)]
+    else:
+        errors = []
 
     if manifest.get("schema") != BUILD_MANIFEST_SCHEMA:
         errors.append("unsupported build manifest schema")
@@ -411,6 +680,19 @@ def validate_release_build(
         errors.append(f"executable not found: {executable}")
     elif manifest.get("executable_sha256") != sha256_file(executable):
         errors.append("executable hash does not match the build manifest")
+    if tls_metadata is not None:
+        defaults = tls_metadata["defaults"]
+        if manifest.get("default_server_url") != defaults.get("server_url"):
+            errors.append("default server URL does not match packaged defaults")
+        if manifest.get("transport_security") != "required":
+            errors.append("packaged transport security is not required")
+        if manifest.get("tls_ca_sha256") != tls_metadata["ca_sha256"]:
+            errors.append("packaged TLS CA hash does not match the build manifest")
+    if (
+        admin_tool_hashes is not None
+        and manifest.get("admin_tools_sha256") != admin_tool_hashes
+    ):
+        errors.append("packaged admin tool hashes do not match the build manifest")
 
     if errors:
         details = "\n".join(f"  - {error}" for error in errors)

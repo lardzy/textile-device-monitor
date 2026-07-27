@@ -54,7 +54,10 @@ Type: files; Name: "{app}\build-manifest.json"
 Type: files; Name: "{app}\{#MyAppExeName}.sha256"
 
 [Files]
-Source: "{#MyAppSourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Preserve operator configuration and the currently trusted CA during upgrades.
+; CA rotation is an explicit, audited administrator operation.
+Source: "{#MyAppSourceDir}\*"; DestDir: "{app}"; Excludes: "config.json,config.json.bak,certs\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyAppSourceDir}\certs\*"; DestDir: "{app}\certs"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
 
 [Icons]
 Name: "{userdesktop}\{#MyAppShortcutName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon

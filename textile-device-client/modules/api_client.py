@@ -2,10 +2,20 @@
 服务端 API 客户端模块
 """
 
-import requests
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from pathlib import Path
 import time
+from typing import Any, Dict, List, Optional
+
+import requests
+
+from modules.transport_security import (
+    TRANSPORT_COMPATIBLE,
+    TransportSecurityError,
+    diagnose_ssl_error,
+    normalize_server_origin,
+    validate_ca_bundle,
+)
 
 try:
     from modules.logger import Logger
@@ -35,14 +45,36 @@ class MessageResponse:
 
 
 class ApiClient:
-    def __init__(self, base_url: str, logger: Logger):
-        self.base_url = base_url.rstrip("/")
+    def __init__(
+        self,
+        base_url: str,
+        logger: Logger,
+        *,
+        transport_security: str = TRANSPORT_COMPATIBLE,
+        tls_ca_bundle: Optional[str] = None,
+    ):
+        self.base_url = normalize_server_origin(base_url, transport_security)
+        self.transport_security = transport_security
         self.session = requests.Session()
+        # This is a closed LAN deployment. Environment proxies must never
+        # intercept device status, health or registration traffic.
+        self.session.trust_env = False
         self.session.headers.update({"Content-Type": "application/json"})
+        if self.base_url.startswith("https://"):
+            if not tls_ca_bundle:
+                raise TransportSecurityError(
+                    "tls_ca_bundle_empty",
+                    "HTTPS 配置必须指定内部 CA 证书文件",
+                )
+            ca_path = validate_ca_bundle(Path(tls_ca_bundle))
+            self.session.verify = str(ca_path)
+        else:
+            self.session.verify = True
         self.timeout = 5
         self.max_retries = 3
         self.logger = logger
         self.last_request_info: Dict[str, Any] = {}
+        self.last_tls_error_message: Optional[str] = None
 
     def _record_request_info(
         self,
@@ -54,6 +86,7 @@ class ApiClient:
         success: bool,
         status_code: Optional[int] = None,
         error: Optional[str] = None,
+        error_message: Optional[str] = None,
     ) -> None:
         self.last_request_info = {
             "method": method,
@@ -63,25 +96,35 @@ class ApiClient:
             "success": success,
             "status_code": status_code,
             "error": error,
+            "error_message": error_message,
         }
 
-    def _request(
-        self, method: str, endpoint: str, data: Optional[Dict] = None
+    def _send_with_retries(
+        self,
+        method: str,
+        url: str,
+        *,
+        endpoint: str,
+        data: Optional[Dict] = None,
     ) -> Optional[Any]:
-        """发送 HTTP 请求"""
-        url = f"{self.base_url}/api{endpoint}"
         started_at = time.monotonic()
         attempts = 0
         last_error = None
+        last_error_message = None
+        self.last_tls_error_message = None
 
         for attempt in range(self.max_retries):
             attempts = attempt + 1
             try:
                 response = self.session.request(
-                    method, url, json=data, timeout=self.timeout
+                    method,
+                    url,
+                    json=data,
+                    timeout=self.timeout,
+                    allow_redirects=False,
                 )
 
-                if response.status_code == 200:
+                if 200 <= response.status_code < 300:
                     self._record_request_info(
                         method=method,
                         endpoint=endpoint,
@@ -90,17 +133,26 @@ class ApiClient:
                         success=True,
                         status_code=response.status_code,
                     )
-                    return response.json()
-                elif response.status_code == 201:
+                    return response
+                if 300 <= response.status_code < 400:
+                    last_error = "redirect_refused"
+                    last_error_message = (
+                        "服务器返回了重定向，客户端为防止 HTTPS 降级已拒绝跟随"
+                    )
+                    self.logger.error(
+                        f"{last_error_message}: {response.status_code} {endpoint}"
+                    )
                     self._record_request_info(
                         method=method,
                         endpoint=endpoint,
                         attempts=attempts,
                         elapsed_seconds=time.monotonic() - started_at,
-                        success=True,
+                        success=False,
                         status_code=response.status_code,
+                        error=last_error,
+                        error_message=last_error_message,
                     )
-                    return response.json()
+                    return None
                 elif response.status_code == 404:
                     self.logger.warning(f"资源不存在: {endpoint}")
                     self._record_request_info(
@@ -111,6 +163,7 @@ class ApiClient:
                         success=False,
                         status_code=response.status_code,
                         error="not_found",
+                        error_message="服务器资源不存在",
                     )
                     return None
                 elif response.status_code == 400:
@@ -123,6 +176,7 @@ class ApiClient:
                         success=False,
                         status_code=response.status_code,
                         error=response.text,
+                        error_message="服务器拒绝了请求",
                     )
                     return None
                 else:
@@ -135,21 +189,41 @@ class ApiClient:
                         success=False,
                         status_code=response.status_code,
                         error=response.text,
+                        error_message=f"服务器返回 HTTP {response.status_code}",
                     )
                     return None
 
+            except requests.exceptions.SSLError as exc:
+                last_error, last_error_message = diagnose_ssl_error(exc)
+                self.last_tls_error_message = last_error_message
+                self.logger.error(f"{last_error_message}: {url}")
+                self._record_request_info(
+                    method=method,
+                    endpoint=endpoint,
+                    attempts=attempts,
+                    elapsed_seconds=time.monotonic() - started_at,
+                    success=False,
+                    error=last_error,
+                    error_message=last_error_message,
+                )
+                # Certificate failures are deterministic; retrying cannot heal
+                # them and only delays the operator-facing diagnosis.
+                return None
             except requests.exceptions.Timeout:
                 last_error = "timeout"
+                last_error_message = "连接服务器超时"
                 self.logger.warning(
                     f"请求超时 (尝试 {attempt + 1}/{self.max_retries}): {url}"
                 )
             except requests.exceptions.ConnectionError:
                 last_error = "connection_error"
+                last_error_message = "无法连接到服务器"
                 self.logger.warning(
                     f"连接失败 (尝试 {attempt + 1}/{self.max_retries}): {url}"
                 )
             except Exception as e:
                 last_error = str(e)
+                last_error_message = "客户端请求发生异常"
                 self.logger.error(f"请求异常: {e}")
                 self._record_request_info(
                     method=method,
@@ -158,6 +232,7 @@ class ApiClient:
                     elapsed_seconds=time.monotonic() - started_at,
                     success=False,
                     error=last_error,
+                    error_message=last_error_message,
                 )
                 return None
 
@@ -169,8 +244,39 @@ class ApiClient:
             elapsed_seconds=time.monotonic() - started_at,
             success=False,
             error=last_error,
+            error_message=last_error_message,
         )
         return None
+
+    def _request(
+        self, method: str, endpoint: str, data: Optional[Dict] = None
+    ) -> Optional[Any]:
+        """Send a same-origin API request and decode its JSON response."""
+
+        url = f"{self.base_url}/api{endpoint}"
+        response = self._send_with_retries(
+            method,
+            url,
+            endpoint=endpoint,
+            data=data,
+        )
+        if response is None:
+            return None
+        try:
+            return response.json()
+        except (ValueError, requests.exceptions.JSONDecodeError) as exc:
+            self.logger.error(f"服务器响应不是有效 JSON: {endpoint}: {exc}")
+            self._record_request_info(
+                method=method,
+                endpoint=endpoint,
+                attempts=self.last_request_info.get("attempts", 1),
+                elapsed_seconds=self.last_request_info.get("elapsed_seconds", 0),
+                success=False,
+                status_code=response.status_code,
+                error="invalid_json",
+                error_message="服务器响应格式无效",
+            )
+            return None
 
     def get_all_devices(self) -> List[Device]:
         """获取所有设备列表
@@ -327,13 +433,11 @@ class ApiClient:
             return None
 
     def health_check(self) -> bool:
-        """健康检查
+        """Check backend readiness through the same pinned, proxy-free session."""
 
-        Returns:
-            bool: 服务器是否正常
-        """
-        try:
-            response = requests.get(f"{self.base_url}/health", timeout=3)
-            return response.status_code == 200
-        except:
-            return False
+        response = self._send_with_retries(
+            "GET",
+            f"{self.base_url}/health/ready",
+            endpoint="/health/ready",
+        )
+        return response is not None
