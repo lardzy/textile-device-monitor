@@ -246,6 +246,16 @@ class ExecutionApiContractTests(unittest.TestCase):
             auth=auth,
             db=self.db,
         )
+        workflow_page = list_runs(
+            status=None,
+            status_group=None,
+            inspection_number=None,
+            workflow_id=waiting.workflow_id,
+            offset=0,
+            limit=20,
+            auth=auth,
+            db=self.db,
+        )
 
         self.assertEqual(first_page["total"], 2)
         self.assertEqual(len(first_page["items"]), 1)
@@ -258,6 +268,11 @@ class ExecutionApiContractTests(unittest.TestCase):
         self.assertEqual(
             terminal_page["items"][0]["inspection_number"],
             "EVENT-completed-list",
+        )
+        self.assertEqual(workflow_page["total"], 1)
+        self.assertEqual(
+            workflow_page["items"][0]["workflow_id"],
+            waiting.workflow_id,
         )
         self.assertIn("node_progress", first_page["items"][0])
 

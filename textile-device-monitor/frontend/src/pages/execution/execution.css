@@ -1402,7 +1402,12 @@
 .execution-run-history__filters {
   padding: 16px 24px;
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 180px auto auto;
+  grid-template-columns:
+    minmax(220px, 1fr)
+    minmax(220px, 280px)
+    180px
+    auto
+    auto;
   gap: 10px;
   background: #fff;
   border-right: 1px solid #cfd9e8;

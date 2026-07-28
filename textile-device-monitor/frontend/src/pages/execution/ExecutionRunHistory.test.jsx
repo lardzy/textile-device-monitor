@@ -29,6 +29,21 @@ const activeRun = {
   updated_at: '2026-07-27T11:20:00+08:00',
 };
 
+const workflowRows = [
+  {
+    id: 'wf-area',
+    name: '再生纤-面积法',
+    category: { id: 'regenerated', name: '再生纤' },
+    published_version: 1,
+  },
+  {
+    id: 'wf-count',
+    name: '再生纤-根数法',
+    category: { id: 'regenerated', name: '再生纤' },
+    published_version: 1,
+  },
+];
+
 const renderHistory = () => render(
   <MemoryRouter
     initialEntries={['/execution/runs']}
@@ -52,6 +67,9 @@ describe('ExecutionRunHistory', () => {
         username: 'operator',
         display_name: '检验员',
         role: 'user',
+      })),
+      http.get('/api/execution/v1/workflows', () => HttpResponse.json({
+        items: workflowRows,
       })),
       http.get('/api/execution/v1/runs', ({ request }) => {
         const url = new URL(request.url);
@@ -97,6 +115,9 @@ describe('ExecutionRunHistory', () => {
         display_name: '检验员',
         role: 'user',
       })),
+      http.get('/api/execution/v1/workflows', () => HttpResponse.json({
+        items: workflowRows,
+      })),
       http.get('/api/execution/v1/runs', ({ request }) => {
         const url = new URL(request.url);
         requests.push({
@@ -123,6 +144,47 @@ describe('ExecutionRunHistory', () => {
       expect(requests).toContainEqual({
         group: null,
         number: '260162847',
+      });
+    });
+  });
+
+  it('按流程筛选并与运行范围组合提交给服务端', async () => {
+    const requests = [];
+    server.use(
+      http.get('/api/execution/v1/auth/me', () => HttpResponse.json({
+        id: 'u-1',
+        username: 'operator',
+        display_name: '检验员',
+        role: 'user',
+      })),
+      http.get('/api/execution/v1/workflows', () => HttpResponse.json({
+        items: workflowRows,
+      })),
+      http.get('/api/execution/v1/runs', ({ request }) => {
+        const url = new URL(request.url);
+        requests.push({
+          group: url.searchParams.get('status_group'),
+          workflow: url.searchParams.get('workflow_id'),
+        });
+        return HttpResponse.json({
+          items: [],
+          total: 0,
+          offset: 0,
+          limit: 20,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderHistory();
+    await screen.findByText('当前没有进行中的执行流程');
+
+    await user.click(screen.getByRole('combobox', { name: '执行流程' }));
+    await user.click(await screen.findByText('再生纤 · 再生纤-面积法'));
+
+    await waitFor(() => {
+      expect(requests).toContainEqual({
+        group: 'active',
+        workflow: 'wf-area',
       });
     });
   });

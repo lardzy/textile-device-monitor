@@ -209,7 +209,6 @@ function WorkflowCard({
             {available ? '开始执行' : '暂不可运行'} <ArrowRightOutlined />
           </Button>
         </Tooltip>,
-        <span key="version">v{version || '—'}</span>,
       ]}
     >
       <div className="execution-workflow-card__top">
@@ -228,7 +227,16 @@ function WorkflowCard({
         {workflow.description || '按已发布流程处理检测资料并保留完整执行记录。'}
       </Paragraph>
       <div className="execution-workflow-card__meta">
-        <span><CheckCircleFilled /> 已发布 v{version || '—'}</span>
+        <Tooltip
+          title={version
+            ? `当前发布版本：v${version}`
+            : '当前没有可执行的已发布版本'}
+        >
+          <span>
+            {version ? <CheckCircleFilled /> : <StopOutlined />}
+            {' '}{version ? '已发布' : '尚未发布'}
+          </span>
+        </Tooltip>
         <span><FileSearchOutlined /> {requiredCount} 项必填</span>
       </div>
       {recommendationMeta && (

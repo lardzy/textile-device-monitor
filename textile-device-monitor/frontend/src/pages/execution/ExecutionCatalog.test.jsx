@@ -181,6 +181,11 @@ describe('ExecutionCatalog', () => {
 
     const cardTitle = await screen.findByText('特种毛原始记录处理');
     const card = cardTitle.closest('.execution-workflow-card');
+    expect(card.querySelectorAll('.ant-card-actions > li')).toHaveLength(1);
+    expect(card.querySelector('.execution-workflow-card__meta')).toHaveTextContent('已发布');
+    expect(card.querySelector('.execution-workflow-card__meta')).not.toHaveTextContent('v2');
+    await user.hover(card.querySelector('.execution-workflow-card__meta span'));
+    expect(await screen.findByText('当前发布版本：v2')).toBeInTheDocument();
     await user.click(card.querySelector('button'));
 
     expect(await screen.findByText('执行准备页已打开')).toBeInTheDocument();

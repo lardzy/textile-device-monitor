@@ -26,7 +26,10 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
-import { getExecutionRunsPage } from '../../api/execution';
+import {
+  getExecutionRunsPage,
+  getExecutionWorkflows,
+} from '../../api/execution';
 import ExecutionChrome from './ExecutionChrome';
 import './execution.css';
 
@@ -70,6 +73,10 @@ export default function ExecutionRunHistory() {
   const navigate = useNavigate();
   const [scope, setScope] = useState('active');
   const [status, setStatus] = useState();
+  const [workflowId, setWorkflowId] = useState();
+  const [workflowRows, setWorkflowRows] = useState([]);
+  const [workflowOptionsLoading, setWorkflowOptionsLoading] = useState(true);
+  const [workflowOptionsFailed, setWorkflowOptionsFailed] = useState(false);
   const [numberInput, setNumberInput] = useState('');
   const [inspectionNumber, setInspectionNumber] = useState('');
   const [page, setPage] = useState(1);
@@ -88,6 +95,7 @@ export default function ExecutionRunHistory() {
         offset: (page - 1) * PAGE_SIZE,
         status_group: scope === 'all' ? undefined : scope,
         status: status || undefined,
+        workflow_id: workflowId || undefined,
         inspection_number: inspectionNumber || undefined,
       });
       setRows(result.items);
@@ -98,16 +106,43 @@ export default function ExecutionRunHistory() {
     } finally {
       setLoading(false);
     }
-  }, [inspectionNumber, page, scope, status]);
+  }, [inspectionNumber, page, scope, status, workflowId]);
 
   useEffect(() => {
     loadRuns();
   }, [loadRuns]);
 
+  const loadWorkflowOptions = useCallback(async () => {
+    setWorkflowOptionsLoading(true);
+    try {
+      setWorkflowRows(await getExecutionWorkflows());
+      setWorkflowOptionsFailed(false);
+    } catch {
+      setWorkflowOptionsFailed(true);
+    } finally {
+      setWorkflowOptionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadWorkflowOptions();
+  }, [loadWorkflowOptions]);
+
   const applyNumberSearch = () => {
     setPage(1);
     setInspectionNumber(numberInput.trim());
   };
+
+  const workflowOptions = useMemo(
+    () => workflowRows.map(workflow => ({
+      value: workflow.id || workflow.workflow_id,
+      label: [
+        workflow.category?.name || workflow.category_name,
+        workflow.name || workflow.title || '未命名流程',
+      ].filter(Boolean).join(' · '),
+    })).filter(option => Boolean(option.value)),
+    [workflowRows],
+  );
 
   const columns = useMemo(() => [
     {
@@ -198,7 +233,10 @@ export default function ExecutionRunHistory() {
         actions={(
           <Button
             icon={<ReloadOutlined />}
-            onClick={() => loadRuns({ quiet: true })}
+            onClick={() => {
+              loadRuns({ quiet: true });
+              loadWorkflowOptions();
+            }}
           >
             刷新
           </Button>
@@ -251,6 +289,26 @@ export default function ExecutionRunHistory() {
           />
           <Select
             allowClear
+            showSearch
+            optionFilterProp="label"
+            value={workflowId}
+            loading={workflowOptionsLoading}
+            status={workflowOptionsFailed ? 'warning' : undefined}
+            placeholder={workflowOptionsFailed
+              ? '流程列表加载失败，刷新重试'
+              : '全部流程'}
+            aria-label="执行流程"
+            onChange={(value) => {
+              setWorkflowId(value);
+              setPage(1);
+            }}
+            options={workflowOptions}
+            notFoundContent={workflowOptionsLoading
+              ? '正在加载流程…'
+              : '没有可筛选的流程'}
+          />
+          <Select
+            allowClear
             value={status}
             placeholder="全部状态"
             aria-label="运行状态"
@@ -269,12 +327,13 @@ export default function ExecutionRunHistory() {
           <Button type="primary" icon={<SearchOutlined />} onClick={applyNumberSearch}>
             查询
           </Button>
-          {(inspectionNumber || status) && (
+          {(inspectionNumber || status || workflowId) && (
             <Button
               onClick={() => {
                 setNumberInput('');
                 setInspectionNumber('');
                 setStatus(undefined);
+                setWorkflowId(undefined);
                 setPage(1);
               }}
             >
