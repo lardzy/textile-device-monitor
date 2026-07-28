@@ -1,10 +1,16 @@
-import { FolderOpenOutlined, SettingOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import {
+  FolderOpenOutlined,
+  PlayCircleOutlined,
+  SettingOutlined,
+  UnorderedListOutlined,
+} from '@ant-design/icons';
 import { Button, Segmented, Space } from 'antd';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import './area.css';
 
 const NAV_ITEMS = [
-  { value: '/tools/area', label: '任务中心', icon: <UnorderedListOutlined /> },
+  { value: '/tools/area', label: '开始识别', icon: <PlayCircleOutlined /> },
+  { value: '/tools/area/tasks', label: '任务记录', icon: <UnorderedListOutlined /> },
   { value: '/tools/area/folders', label: '数据目录', icon: <FolderOpenOutlined /> },
 ];
 
@@ -14,7 +20,11 @@ function AreaShell() {
   const isWorkspace = location.pathname.startsWith('/tools/area/jobs/');
   const selected = location.pathname.startsWith('/tools/area/settings')
     ? null
-    : (location.pathname.startsWith('/tools/area/folders') ? '/tools/area/folders' : '/tools/area');
+    : (
+      location.pathname.startsWith('/tools/area/tasks')
+        ? '/tools/area/tasks'
+        : (location.pathname.startsWith('/tools/area/folders') ? '/tools/area/folders' : '/tools/area')
+    );
 
   return (
     <div className={isWorkspace ? 'area-shell area-shell--workspace' : 'area-shell'}>

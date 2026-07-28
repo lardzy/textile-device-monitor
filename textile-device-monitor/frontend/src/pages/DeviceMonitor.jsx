@@ -13,6 +13,7 @@ import { formatRelativeTime, formatDateTime, formatTime } from '../utils/dateHel
 import { addQueueNoticeEntry, getDeviceId, getInspectorName, getOrCreateQueueUserId, getQueueNoticeEntries, getQueueNoticeModes, removeQueueNoticeEntry, saveDeviceId, saveInspectorName, saveQueueNoticeModes } from '../utils/localStorage';
 import { buildCompletionNoticeClaim, buildQueueTurnNoticeClaim, claimNotificationOnce } from '../utils/notificationDedup';
 import { getQueueSnapshotSignature, queueRecordIdEquals, resolveStableQueueDrop } from '../utils/queueDrag';
+import { getDefaultRenameName } from '../utils/folderRename';
 import './analytics.css';
 import './device-monitor.css';
 
@@ -469,13 +470,6 @@ const getFolderNameFromPath = (path) => {
   if (!normalized) return '';
   const idx = normalized.lastIndexOf('/');
   return idx >= 0 ? normalized.slice(idx + 1) : normalized;
-};
-
-const getDefaultRenameName = (folderName) => {
-  const safeName = String(folderName || '').trim();
-  if (!safeName) return '';
-  const [prefix] = safeName.split('_');
-  return prefix || safeName;
 };
 
 const invalidFolderNamePattern = /[\\/:*?"<>|]/;

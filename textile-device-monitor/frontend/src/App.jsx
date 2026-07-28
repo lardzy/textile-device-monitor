@@ -17,6 +17,7 @@ const ResultsTable = lazy(() => import('./pages/ResultsTable'));
 const ResultsImages = lazy(() => import('./pages/ResultsImages'));
 const OcrTool = lazy(() => import('./pages/OcrTool'));
 const AreaShell = lazy(() => import('./pages/area/AreaShell'));
+const AreaStartRecognition = lazy(() => import('./pages/area/AreaStartRecognition'));
 const AreaTaskCenter = lazy(() => import('./pages/area/AreaTaskCenter'));
 const AreaFolders = lazy(() => import('./pages/area/AreaFolders'));
 const AreaSettings = lazy(() => import('./pages/area/AreaSettings'));
@@ -81,7 +82,8 @@ const appRoutes = (
       <Route path="/management" element={<DeviceManagement />} />
       <Route path="/tools/ocr" element={<OcrTool />} />
       <Route path="/tools/area" element={<AreaShell />}>
-        <Route index element={<AreaTaskCenter />} />
+        <Route index element={<AreaStartRecognition />} />
+        <Route path="tasks" element={<AreaTaskCenter />} />
         <Route path="folders" element={<AreaFolders />} />
         <Route path="settings" element={<AreaSettings />} />
         <Route path="jobs/:jobId" element={<AreaJobWorkspace />} />

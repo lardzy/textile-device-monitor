@@ -659,7 +659,7 @@ function AreaJobWorkspace() {
   }
 
   if (!job) {
-    return <Alert type="error" showIcon message="任务不存在" action={<Button onClick={() => navigate('/tools/area')}>返回任务中心</Button>} />;
+    return <Alert type="error" showIcon message="任务不存在" action={<Button onClick={() => navigate('/tools/area/tasks')}>返回任务记录</Button>} />;
   }
 
   return (
@@ -669,8 +669,8 @@ function AreaJobWorkspace() {
           <Button
             type="text"
             icon={<ArrowLeftOutlined />}
-            title="返回任务中心"
-            onClick={() => guardDirty(() => navigate('/tools/area'))}
+            title="返回任务记录"
+            onClick={() => guardDirty(() => navigate('/tools/area/tasks'))}
           />
           <div className="area-workspace-title">
             <Space size={8}>

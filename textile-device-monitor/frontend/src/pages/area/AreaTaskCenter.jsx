@@ -29,7 +29,6 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { areaApi } from '../../api/area';
-import NewAreaJobDrawer from './NewAreaJobDrawer';
 import {
   ACTIVE_JOB_STATUSES,
   formatAreaDateTime,
@@ -60,7 +59,6 @@ function AreaTaskCenter() {
   const [dateRange, setDateRange] = useState(null);
   const [modelOptions, setModelOptions] = useState([]);
   const [systemStatus, setSystemStatus] = useState(null);
-  const [newJobOpen, setNewJobOpen] = useState(false);
   const [highlightedJobId, setHighlightedJobId] = useState('');
 
   const loadJobs = useCallback(async ({ nextPage = page, quiet = false } = {}) => {
@@ -326,8 +324,8 @@ function AreaTaskCenter() {
           />
           <Button icon={<ReloadOutlined />} title="刷新任务" loading={loading} onClick={() => loadJobs()} />
         </Space>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setNewJobOpen(true)}>
-          新建任务
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tools/area')}>
+          开始新识别
         </Button>
       </div>
 
@@ -355,18 +353,6 @@ function AreaTaskCenter() {
         />
       </div>
 
-      <NewAreaJobDrawer
-        open={newJobOpen}
-        modelOptions={modelOptions}
-        onClose={() => setNewJobOpen(false)}
-        onCreated={(job) => {
-          setNewJobOpen(false);
-          setHighlightedJobId(job.job_id);
-          setStatusFilter('all');
-          setPage(1);
-          loadJobs({ nextPage: 1, quiet: true });
-        }}
-      />
     </div>
   );
 }
