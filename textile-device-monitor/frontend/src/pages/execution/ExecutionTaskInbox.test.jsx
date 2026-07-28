@@ -99,7 +99,7 @@ describe('ExecutionTaskInbox', () => {
 
     expect(await screen.findByText('选择原始记录')).toBeInTheDocument();
     await user.click(screen.getByText('选择原始记录'));
-    await user.click(screen.getByRole('button', { name: '领取并处理' }));
+    await user.click(await screen.findByRole('button', { name: '领取并处理' }));
 
     expect(await screen.findByText('26X910095-1.xlsx')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '确认提交' })).toBeInTheDocument();
@@ -131,6 +131,7 @@ describe('ExecutionTaskInbox', () => {
     await user.click(await screen.findByText('选择原始记录'));
     const detail = await screen.findByText('26X910095-1.xlsx');
     await user.click(detail.closest('label'));
+    expect(detail.closest('label').querySelector('input')).toBeChecked();
     await user.type(screen.getByRole('textbox', { name: '处理备注' }), '已核对');
     await user.click(screen.getByRole('button', { name: '确认提交' }));
 
@@ -297,5 +298,162 @@ describe('ExecutionTaskInbox', () => {
     expect(
       await screen.findByText('请先勾选确认已核对变更计划'),
     ).toBeInTheDocument();
+  });
+
+  it('按文件展示读取结果并提交需要的文件与主单', async () => {
+    const submitted = vi.fn();
+    const resultTask = {
+      ...openTask,
+      title: '核对再生纤结果',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    const resultFiles = [
+      {
+        id: 'candidate-1',
+        name: '26X909953-第一次.xls',
+        relative_path: '7月/26X909953-第一次.xls',
+        read_status: 'succeeded',
+        result: {
+          parts: [{
+            name: '面料',
+            components: [
+              { name: '棉', content: 97.6 },
+              { name: '粘纤', content: 2.4 },
+            ],
+          }],
+          remarks: [{ cell: 'B27', text: '结果仅供复核' }],
+          images: [{
+            artifact_id: 'image-artifact-1',
+            filename: '插图1.png',
+          }, {
+            artifact_id: 'image-artifact-2',
+            filename: '插图2.png',
+          }],
+        },
+      },
+      {
+        file_index_entry_id: 'candidate-2',
+        name: '26X909953-复核.xls',
+        relative_path: '7月/26X909953-复核.xls',
+        read_status: 'succeeded',
+        result: {
+          parts: [{
+            name: null,
+            label: '结果1',
+            components: [{ name: '棉', content: 100 }],
+          }],
+          remarks: [],
+          images: [],
+        },
+      },
+      {
+        id: 'candidate-image-warning',
+        name: '26X909953-图片异常.xls',
+        relative_path: '7月/26X909953-图片异常.xls',
+        read_status: 'succeeded',
+        result: {
+          parts: [{
+            name: '袖口',
+            components: [{ name: '棉', content: 100 }],
+          }],
+          remarks: [],
+          images: [],
+          warnings: [{
+            code: 'legacy_image_conversion_failed',
+            message: '旧版工作簿插图转换失败',
+            details: { return_code: 1 },
+          }],
+        },
+      },
+      {
+        id: 'candidate-failed',
+        name: '26X909953-损坏.xls',
+        relative_path: '7月/26X909953-损坏.xls',
+        read_status: 'failed',
+        error: {
+          code: 'result_workbook_read_failed',
+          message: '工作簿结果读取失败',
+        },
+      },
+    ];
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [resultTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(resultTask),
+          node_run: {
+            node_id: 'select-results',
+            input_data: { files: resultFiles },
+          },
+        })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({
+          ...resultTask,
+          status: 'completed',
+          revision: 3,
+        });
+      }),
+      http.get('/api/execution/v1/artifacts/image-artifact-1/preview', () =>
+        new HttpResponse(new Uint8Array(), {
+          headers: { 'Content-Type': 'image/png' },
+        })),
+      http.get('/api/execution/v1/artifacts/image-artifact-2/preview', () =>
+        new HttpResponse(new Uint8Array(), {
+          headers: { 'Content-Type': 'image/png' },
+        })),
+    );
+
+    const user = userEvent.setup();
+    renderInbox();
+    await user.click(await screen.findByText('核对再生纤结果'));
+
+    expect(await screen.findByText('面料')).toBeInTheDocument();
+    expect(screen.getByText('97.6%')).toBeInTheDocument();
+    expect(screen.getByText('粘纤')).toBeInTheDocument();
+    expect(screen.getByText('结果仅供复核')).toBeInTheDocument();
+    expect(screen.getByText('结果1')).toBeInTheDocument();
+    expect(screen.getByText('未读取到表格插图')).toBeInTheDocument();
+    expect(screen.getByText('旧版工作簿插图转换失败')).toBeInTheDocument();
+    expect(screen.getByText('legacy_image_conversion_failed')).toBeInTheDocument();
+    expect(screen.getByText('{"return_code":1}')).toBeInTheDocument();
+    expect(screen.getByText('图片读取异常')).toBeInTheDocument();
+    expect(screen.getByText('工作簿结果读取失败')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('请至少选择一项需要的文件');
+    expect(submitted).not.toHaveBeenCalled();
+    expect(screen.queryByText('人工任务操作失败')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /查看图片（2）/ }));
+    expect(await screen.findByRole('dialog')).toHaveTextContent('插图1.png');
+    expect(screen.getByRole('dialog')).toHaveTextContent('插图2.png');
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+
+    const needed = screen.getAllByRole('checkbox', { name: '需要' });
+    expect(needed[3]).toBeDisabled();
+    await user.click(needed[0]);
+    let primaryChoices = screen.getAllByRole('radio', { name: /设为主单/ });
+    expect(primaryChoices[0]).toBeChecked();
+    await user.click(needed[1]);
+    primaryChoices = screen.getAllByRole('radio', { name: /设为主单/ });
+    expect(primaryChoices[0]).toBeChecked();
+    await user.click(primaryChoices[1]);
+    expect(primaryChoices[1]).toBeChecked();
+    await user.click(needed[1]);
+    primaryChoices = screen.getAllByRole('radio', { name: /设为主单/ });
+    expect(primaryChoices[0]).toBeChecked();
+    await user.click(needed[1]);
+    await user.click(screen.getAllByRole('radio', { name: /设为主单/ })[1]);
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toMatchObject({
+      selected_files: ['candidate-1', 'candidate-2'],
+      primary_file_id: 'candidate-2',
+    });
   });
 });

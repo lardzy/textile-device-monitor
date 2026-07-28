@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import xlwt
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -22,6 +22,7 @@ from app.config import settings
 from app.database import Base
 from app.execution.catalog import (
     _default_definition,
+    _regenerated_method_definition,
     bind_user_role,
     ensure_default_catalog,
     ensure_default_rbac,
@@ -230,16 +231,26 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
             "content_range_empty",
         )
 
-    def test_count_method_accepts_numbered_report_sheet_but_not_summary(self):
+    def test_count_method_requires_report_sheet_one(self):
         rule = REGENERATED_FIBER_RULES[COUNT_NODE]
-        numbered = self._xls(
-            "260011-numbered.xls",
+        report_one = self._xls(
+            "260011-report-one.xls",
             sheet_name="根数法报告1",
             values=[1],
         )
-        profile = _read_profile(numbered, rule)
+        profile = _read_profile(report_one, rule)
         self.assertEqual(profile["status"], "matched")
         self.assertEqual(profile["matched_worksheets"], ["根数法报告1"])
+
+        other_numbered = self._xls(
+            "260011-report-two.xls",
+            sheet_name="根数法报告2",
+            values=[1],
+        )
+        self.assertEqual(
+            _read_profile(other_numbered, rule)["status"],
+            "worksheet_missing",
+        )
 
         summary = self._xls(
             "260011-summary.xls",
@@ -254,7 +265,7 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
     def test_same_file_must_satisfy_all_conditions(self):
         empty = self._xlsx(
             "260002-empty.xlsx",
-            sheet_name="根数法报告",
+            sheet_name="根数法报告1",
             values=[""],
         )
         wrong_sheet = self._xlsx(
@@ -317,7 +328,7 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
     def test_profile_cache_reuses_fingerprint_and_invalidates_on_change(self):
         path = self._xlsx(
             "260004.xlsx",
-            sheet_name="根数法报告",
+            sheet_name="根数法报告1",
             values=[1],
         )
         entry = self._index(path)
@@ -343,7 +354,7 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
 
         self._xlsx(
             "260004.xlsx",
-            sheet_name="根数法报告",
+            sheet_name="根数法报告1",
             values=[""],
         )
         stat = path.stat()
@@ -361,7 +372,7 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
     def test_incomplete_or_overwide_query_never_opens_shared_workbooks(self):
         path = self._xlsx(
             "260008.xlsx",
-            sheet_name="根数法报告",
+            sheet_name="根数法报告1",
             values=[1],
         )
         self._index(path)
@@ -400,14 +411,14 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
     def test_transient_profile_failures_are_retried_not_cached(self):
         path = self._xlsx(
             "260010.xlsx",
-            sheet_name="根数法报告",
+            sheet_name="根数法报告1",
             values=[1],
         )
         entry = self._index(path)
         self.db.commit()
         transient = {
             "rule_version": 1,
-            "worksheet": "根数法报告",
+            "worksheet": "根数法报告1",
             "cell_range": "B14:J14",
             "worksheet_exists": False,
             "content_range_nonempty": False,
@@ -458,7 +469,7 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
     def test_specialized_executor_reports_match_counts_when_empty(self):
         path = self._xlsx(
             "260006.xlsx",
-            sheet_name="根数法报告",
+            sheet_name="根数法报告1",
             values=[""],
         )
         self._index(path)
@@ -493,6 +504,12 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
             sheet_name="截面统计报告1",
             values=[10],
         )
+        workbook = load_workbook(path)
+        worksheet = workbook["截面统计报告1"]
+        worksheet["B27"] = "棉"
+        worksheet["B28"] = 100
+        workbook.save(path)
+        workbook.close()
         entry = self._index(path)
         self.db.commit()
         workflow = (
@@ -514,14 +531,19 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
 
         self._execute_one()  # start
         self._execute_one()  # matcher
+        self._execute_one()  # result reader
         self._execute_one()  # create human task
         task = (
             self.db.query(ExecutionHumanTask)
             .filter_by(run_id=run.id)
             .one()
         )
-        offered = task.node_run.input_data["candidates"]
+        offered = task.node_run.input_data["files"]
         self.assertEqual([item["id"] for item in offered], [entry.id])
+        self.assertEqual(
+            offered[0]["result"]["parts"][0]["components"][0]["name"],
+            "棉",
+        )
         task = claim_human_task(
             self.db,
             task_id=task.id,
@@ -537,14 +559,14 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
             actor=self.user,
         )
         self.db.commit()
-        self._execute_one()  # aggregate
         self._execute_one()  # end
         self.db.refresh(run)
         self.assertEqual(run.status, "completed")
         self.assertEqual(
-            run.output_data["result"]["selection"]["selected_files"][0]["id"],
+            run.output_data["selected_files"][0]["id"],
             entry.id,
         )
+        self.assertEqual(run.output_data["primary_file_id"], entry.id)
 
     def test_recommendations_rank_full_match_and_apply_category_soft_score(self):
         area = self._xlsx(
@@ -814,7 +836,7 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
     def test_regenerated_background_index_never_opens_workbook(self):
         path = self._xlsx(
             "260007.xlsx",
-            sheet_name="根数法报告",
+            sheet_name="根数法报告1",
             values=[1],
         )
         stat = path.stat()
@@ -932,6 +954,52 @@ class RegeneratedFiberCatalogMigrationTests(unittest.TestCase):
             )
             self.assertEqual(len(workflows), 1)
             self.assertEqual(len(workflows[0].versions), 1)
+
+    def test_untouched_method_workflow_is_upgraded_to_result_reader(self):
+        workflow = (
+            self.db.query(ExecutionWorkflow)
+            .filter_by(slug="regenerated-fiber-count-method")
+            .one()
+        )
+        legacy_definition = _regenerated_method_definition(
+            slug=workflow.slug,
+            name=workflow.name,
+            node_type="file.regenerated_fiber_count_method",
+        )
+        version_one = workflow.versions[0]
+        workflow.draft_definition = deepcopy(legacy_definition)
+        workflow.draft_revision = 1
+        workflow.published_version_number = 1
+        version_one.definition = deepcopy(legacy_definition)
+        version_one.checksum = definition_checksum(legacy_definition)
+        version_one.contract_checksum = workflow_contract_checksum(
+            legacy_definition,
+            version_one.capabilities,
+        )
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 2)
+        self.assertEqual(workflow.published_version_number, 2)
+        self.assertEqual(len(workflow.versions), 2)
+        node_types = {
+            node["type"] for node in workflow.draft_definition["nodes"]
+        }
+        self.assertIn(
+            "result.regenerated_fiber_count_method",
+            node_types,
+        )
+        self.assertNotIn("result.aggregate", node_types)
+        select = next(
+            node
+            for node in workflow.draft_definition["nodes"]
+            if node["id"] == "select"
+        )
+        self.assertTrue(select["config"]["require_primary"])
 
     def test_untouched_legacy_default_is_hidden_but_edited_copy_is_preserved(self):
         legacy = self._insert_legacy(edited=False)

@@ -171,36 +171,10 @@ def _regenerated_method_definition(
     slug: str,
     name: str,
     node_type: str,
+    result_node_type: Optional[str] = None,
 ) -> dict[str, Any]:
-    return {
-        "schema_version": "1.0",
-        "metadata": {
-            "slug": slug,
-            "name": name,
-            "category": "regenerated_fiber",
-        },
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "inspection_number": {
-                    "type": "string",
-                    "title": "检验编号",
-                    "minLength": 1,
-                }
-            },
-            "required": ["inspection_number"],
-            "additionalProperties": False,
-        },
-        "global_schema": {"type": "object", "properties": {}},
-        "root_slots": [
-            {
-                "name": "source",
-                "root_id": "regenerated_fiber_records",
-                "access": "read",
-            }
-        ],
-        "credential_slots": [],
-        "nodes": [
+    if result_node_type is None:
+        node_specs = [
             {
                 "id": "start",
                 "type": "core.start",
@@ -256,13 +230,123 @@ def _regenerated_method_definition(
                 "input_mapping": {"result": "$.nodes.result.output"},
                 "ui": {"x": 1040, "y": 180},
             },
-        ],
-        "edges": [
+        ]
+        edges = [
             {"id": "e1", "source": "start", "target": "query"},
             {"id": "e2", "source": "query", "target": "select"},
             {"id": "e3", "source": "select", "target": "result"},
             {"id": "e4", "source": "result", "target": "end"},
+        ]
+    else:
+        node_specs = [
+            {
+                "id": "start",
+                "type": "core.start",
+                "type_version": 1,
+                "name": "开始",
+                "config": {},
+                "input_mapping": {},
+                "ui": {"x": 40, "y": 180},
+            },
+            {
+                "id": "query",
+                "type": node_type,
+                "type_version": 1,
+                "name": "识别匹配工作簿",
+                "config": {
+                    "root_id": "regenerated_fiber_records",
+                    "limit": 6,
+                },
+                "input_mapping": {
+                    "inspection_number": "$.inputs.inspection_number"
+                },
+                "ui": {"x": 270, "y": 180},
+            },
+            {
+                "id": "read-results",
+                "type": result_node_type,
+                "type_version": 1,
+                "name": "读取检测结果",
+                "config": {},
+                "input_mapping": {
+                    "files": "$.nodes.query.output.candidates"
+                },
+                "ui": {"x": 500, "y": 180},
+            },
+            {
+                "id": "select",
+                "type": "human.file_selection",
+                "type_version": 1,
+                "name": "确认需要的结果",
+                "config": {
+                    "title": "请选择需要使用的结果文件",
+                    "description": (
+                        "可选择一个或多个文件，并从已选文件中指定主单。"
+                    ),
+                    "allow_multiple": True,
+                    "allow_primary": True,
+                    "require_primary": True,
+                    "presentation": "result_files",
+                },
+                "input_mapping": {
+                    "files": "$.nodes.read-results.output.files"
+                },
+                "ui": {"x": 730, "y": 180},
+            },
+            {
+                "id": "end",
+                "type": "core.end",
+                "type_version": 1,
+                "name": "结束",
+                "config": {},
+                "input_mapping": {
+                    "selected_files":
+                        "$.nodes.select.output.selected_files",
+                    "primary_file_id":
+                        "$.nodes.select.output.primary_file_id",
+                    "primary_file":
+                        "$.nodes.select.output.primary_file",
+                },
+                "ui": {"x": 960, "y": 180},
+            },
+        ]
+        edges = [
+            {"id": "e1", "source": "start", "target": "query"},
+            {"id": "e2", "source": "query", "target": "read-results"},
+            {"id": "e3", "source": "read-results", "target": "select"},
+            {"id": "e4", "source": "select", "target": "end"},
+        ]
+
+    return {
+        "schema_version": "1.0",
+        "metadata": {
+            "slug": slug,
+            "name": name,
+            "category": "regenerated_fiber",
+        },
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "inspection_number": {
+                    "type": "string",
+                    "title": "检验编号",
+                    "minLength": 1,
+                }
+            },
+            "required": ["inspection_number"],
+            "additionalProperties": False,
+        },
+        "global_schema": {"type": "object", "properties": {}},
+        "root_slots": [
+            {
+                "name": "source",
+                "root_id": "regenerated_fiber_records",
+                "access": "read",
+            }
         ],
+        "credential_slots": [],
+        "nodes": node_specs,
+        "edges": edges,
     }
 
 
@@ -441,11 +525,13 @@ REGENERATED_METHOD_WORKFLOWS = (
         "regenerated-fiber-count-method",
         "再生纤-根数法",
         "file.regenerated_fiber_count_method",
+        "result.regenerated_fiber_count_method",
     ),
     (
         "regenerated-fiber-area-method",
         "再生纤-面积法",
         "file.regenerated_fiber_area_method",
+        "result.regenerated_fiber_area_method",
     ),
 )
 
@@ -536,22 +622,74 @@ def ensure_default_catalog(db: Session) -> None:
         workflow.slug: workflow
         for workflow in db.query(ExecutionWorkflow).all()
     }
-    for slug, name, node_type in REGENERATED_METHOD_WORKFLOWS:
-        if slug in workflows_by_slug:
-            continue
+    for slug, name, node_type, result_node_type in REGENERATED_METHOD_WORKFLOWS:
         definition = _regenerated_method_definition(
             slug=slug,
             name=name,
             node_type=node_type,
+            result_node_type=result_node_type,
         )
         capabilities = {"read": True, "write": False}
+        existing = workflows_by_slug.get(slug)
+        if existing is not None:
+            legacy_definition = _regenerated_method_definition(
+                slug=slug,
+                name=name,
+                node_type=node_type,
+            )
+            version_one = next(
+                (
+                    version
+                    for version in existing.versions
+                    if version.version_number == 1
+                ),
+                None,
+            )
+            untouched_legacy = bool(
+                existing.created_by_id is None
+                and existing.updated_by_id is None
+                and existing.draft_revision == 1
+                and existing.published_version_number == 1
+                and len(existing.versions) == 1
+                and version_one is not None
+                and definition_checksum(existing.draft_definition)
+                == definition_checksum(legacy_definition)
+                and version_one.checksum
+                == definition_checksum(legacy_definition)
+            )
+            if untouched_legacy:
+                existing.description = (
+                    "按检验编号识别工作簿，读取分部位成分、含量、备注和"
+                    "插图，再由用户选择需要的文件并指定主单。"
+                )
+                existing.draft_definition = deepcopy(definition)
+                existing.draft_revision = 2
+                existing.published_version_number = 2
+                existing.capabilities = deepcopy(capabilities)
+                existing.required_input_count = 1
+                db.add(
+                    ExecutionWorkflowVersion(
+                        workflow_id=existing.id,
+                        version_number=2,
+                        schema_version="1.0",
+                        definition=deepcopy(definition),
+                        checksum=definition_checksum(definition),
+                        capabilities=deepcopy(capabilities),
+                        contract_checksum=workflow_contract_checksum(
+                            definition,
+                            capabilities,
+                        ),
+                        release_note="增加结果读取、结果选择和主单标记",
+                    )
+                )
+            continue
         workflow = ExecutionWorkflow(
             slug=slug,
             category_id=categories_by_key["regenerated_fiber"].id,
             name=name,
             description=(
-                "按检验编号查找文件，并校验指定工作表及 B14:J14 "
-                "已保存结果后供人工选择。"
+                "按检验编号识别工作簿，读取分部位成分、含量、备注和"
+                "插图，再由用户选择需要的文件并指定主单。"
             ),
             draft_definition=deepcopy(definition),
             draft_revision=1,
@@ -574,7 +712,7 @@ def ensure_default_catalog(db: Session) -> None:
                     definition,
                     capabilities,
                 ),
-                release_note="再生纤文件识别首版",
+                release_note="再生纤文件识别与结果读取首版",
             )
         )
         workflows_by_slug[slug] = workflow

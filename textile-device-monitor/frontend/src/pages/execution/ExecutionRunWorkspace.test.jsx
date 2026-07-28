@@ -1,11 +1,16 @@
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import { server } from '../../../tests/testServer';
 import { ExecutionAuthProvider } from './ExecutionAuthContext';
 import ExecutionRunWorkspace from './ExecutionRunWorkspace';
+import useExecutionEvents from './useExecutionEvents';
+
+vi.mock('./useExecutionEvents', () => ({
+  default: vi.fn(),
+}));
 
 const completedRun = {
   id: 'run-1',
@@ -83,6 +88,207 @@ describe('ExecutionRunWorkspace', () => {
     expect(screen.getByRole('textbox', { name: '批次名称' })).toHaveValue('第一批');
     expect(screen.getByRole('textbox', { name: '批次名称' })).toBeDisabled();
     expect(screen.getByText('已提交的全局变量')).toBeInTheDocument();
+  });
+
+  it('流程结束后按文件保留结果、备注和主单标识', async () => {
+    server.use(
+      http.get('/api/execution/v1/auth/me', () => HttpResponse.json({
+        user: {
+          id: 'u-1',
+          username: 'operator',
+          display_name: '检验员',
+          role: 'user',
+          permissions: ['workflow.read', 'workflow.run', 'file.read'],
+        },
+      })),
+      http.get('/api/execution/v1/runs/run-1', () => HttpResponse.json({
+        ...completedRun,
+        output_data: {
+          selected_files: [{
+            id: 'candidate-result-1',
+            name: '262039607-面积法.xls',
+            read_status: 'succeeded',
+            result: {
+              parts: [{
+                name: '领口',
+                components: [
+                  { name: '棉', content: 88 },
+                  { name: '莱赛尔', content: 12 },
+                ],
+              }],
+              remarks: ['已与复核结果确认'],
+              images: [],
+            },
+          }],
+          primary_file_id: 'candidate-result-1',
+        },
+      })),
+    );
+
+    render(
+      <MemoryRouter
+        initialEntries={['/execution/runs/run-1']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <ExecutionAuthProvider>
+          <Routes>
+            <Route path="/execution/runs/:runId" element={<ExecutionRunWorkspace />} />
+          </Routes>
+        </ExecutionAuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('262039607-面积法.xls')).toBeInTheDocument();
+    expect(screen.getByText('领口')).toBeInTheDocument();
+    expect(screen.getByText('88%')).toBeInTheDocument();
+    expect(screen.getByText('莱赛尔')).toBeInTheDocument();
+    expect(screen.getByText('已与复核结果确认')).toBeInTheDocument();
+    expect(screen.getByText('主单')).toBeInTheDocument();
+    expect(screen.queryByText(/selected_files/)).not.toBeInTheDocument();
+  });
+
+  it('同 revision 的 SSE 快照刷新保留未保存选择，revision 更新后恢复服务端草稿', async () => {
+    let revision = 2;
+    let draftData = {};
+    let runRequests = 0;
+    const resultFiles = [
+      {
+        id: 'candidate-refresh-1',
+        name: '26X909953-第一次.xls',
+        read_status: 'succeeded',
+        result: {
+          parts: [{
+            name: null,
+            label: '结果1',
+            components: [{ name: '棉', content: 100 }],
+          }],
+          remarks: [],
+          images: [],
+        },
+      },
+      {
+        id: 'candidate-refresh-2',
+        name: '26X909953-复核.xls',
+        read_status: 'succeeded',
+        result: {
+          parts: [{
+            name: null,
+            label: '结果1',
+            components: [{ name: '粘纤', content: 100 }],
+          }],
+          remarks: [],
+          images: [],
+        },
+      },
+    ];
+    const runPayload = () => ({
+      ...completedRun,
+      status: 'waiting_human',
+      output_data: {},
+      nodes: [{
+        id: 'node-run-select-results',
+        node_id: 'select-results',
+        node_type: 'human.file_selection',
+        name: '确认需要的结果',
+        status: 'waiting_human',
+        input_data: { files: resultFiles },
+      }],
+      human_tasks: [{
+        id: 'task-result-refresh',
+        run_id: 'run-1',
+        node_id: 'select-results',
+        title: '确认需要的结果',
+        description: '选择需要的文件并指定主单',
+        status: 'claimed',
+        revision,
+        claimed_by_id: 'u-1',
+        draft_data: draftData,
+        form_schema: {},
+      }],
+      definition: {
+        ...completedRun.definition,
+        nodes: [{
+          id: 'select-results',
+          type: 'human.file_selection',
+          type_version: 1,
+          name: '确认需要的结果',
+          config: {
+            allow_primary: true,
+            require_primary: true,
+            presentation: 'result_files',
+          },
+          input_mapping: {},
+          ui: { x: 0, y: 0 },
+        }],
+      },
+    });
+
+    server.use(
+      http.get('/api/execution/v1/auth/me', () => HttpResponse.json({
+        user: {
+          id: 'u-1',
+          username: 'operator',
+          display_name: '检验员',
+          role: 'user',
+          permissions: ['workflow.read', 'workflow.run', 'human_task.handle', 'file.read'],
+        },
+      })),
+      http.get('/api/execution/v1/runs/run-1', () => {
+        runRequests += 1;
+        return HttpResponse.json(runPayload());
+      }),
+    );
+
+    render(
+      <MemoryRouter
+        initialEntries={['/execution/runs/run-1']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <ExecutionAuthProvider>
+          <Routes>
+            <Route path="/execution/runs/:runId" element={<ExecutionRunWorkspace />} />
+          </Routes>
+        </ExecutionAuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('26X909953-第一次.xls')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole('checkbox', { name: '需要' })[0]);
+    expect(screen.getAllByRole('checkbox', { name: '需要' })[0]).toBeChecked();
+    expect(screen.getAllByRole('radio', { name: /设为主单/ })[0]).toBeChecked();
+
+    const eventOptions = useExecutionEvents.mock.calls.at(-1)[1];
+    act(() => {
+      eventOptions.onEvent({
+        id: '10',
+        type: 'node.updated',
+        data: { sequence: 10 },
+      });
+    });
+    await waitFor(() => expect(runRequests).toBeGreaterThanOrEqual(2));
+    expect(screen.getAllByRole('checkbox', { name: '需要' })[0]).toBeChecked();
+    expect(screen.getAllByRole('radio', { name: /设为主单/ })[0]).toBeChecked();
+
+    revision = 3;
+    draftData = {
+      selected_files: ['candidate-refresh-2'],
+      primary_file_id: 'candidate-refresh-2',
+    };
+    act(() => {
+      eventOptions.onEvent({
+        id: '11',
+        type: 'human_task.draft_saved',
+        data: { sequence: 11 },
+      });
+    });
+    await waitFor(() => expect(runRequests).toBeGreaterThanOrEqual(3));
+    await waitFor(() => {
+      const needed = screen.getAllByRole('checkbox', { name: '需要' });
+      expect(needed[0]).not.toBeChecked();
+      expect(needed[1]).toBeChecked();
+      expect(screen.getAllByRole('radio', { name: /设为主单/ })[1]).toBeChecked();
+    });
   });
 
   it('终态运行可以分页加载更早动态并按序号去重合并', async () => {

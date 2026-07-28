@@ -48,6 +48,10 @@ import {
 import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
 import ExecutionMutationPanel from './ExecutionMutationPanel';
+import ExecutionResultFiles, {
+  extractExecutionResultFiles,
+  extractPrimaryFileId,
+} from './ExecutionResultFiles';
 import HumanTaskCard from './HumanTaskCard';
 import SchemaFields from './SchemaFields';
 import WorkflowCanvas from './WorkflowCanvas';
@@ -364,6 +368,8 @@ export default function ExecutionRunWorkspace() {
   const globalSchema = snapshot.definition.global_schema;
   const variables = run.input_data || run.variables || run.input_values || {};
   const globalVariables = run.global_data || {};
+  const resultFiles = extractExecutionResultFiles(snapshot.outputs);
+  const primaryResultFileId = extractPrimaryFileId(snapshot.outputs);
 
   const actions = (
     <Space>
@@ -420,14 +426,20 @@ export default function ExecutionRunWorkspace() {
       label: '执行结果',
       children: (
         <div className="execution-result-panel">
-          <Descriptions column={1} size="small">
-            {Object.entries(snapshot.outputs || {}).map(([key, value]) => (
-              <Descriptions.Item key={key} label={key}>
-                {typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}
-              </Descriptions.Item>
-            ))}
-          </Descriptions>
-          {!Object.keys(snapshot.outputs || {}).length && (
+          {resultFiles.length ? (
+            <ExecutionResultFiles
+              files={resultFiles}
+              primaryId={primaryResultFileId}
+            />
+          ) : Object.keys(snapshot.outputs || {}).length ? (
+            <Descriptions column={1} size="small">
+              {Object.entries(snapshot.outputs || {}).map(([key, value]) => (
+                <Descriptions.Item key={key} label={key}>
+                  {typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}
+                </Descriptions.Item>
+              ))}
+            </Descriptions>
+          ) : (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="节点完成后将在这里显示输出" />
           )}
         </div>

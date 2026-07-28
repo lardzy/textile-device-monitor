@@ -190,6 +190,13 @@ export const publishExecutionMutation = (runId, mutationId, payload) =>
 export const getExecutionPublishReceipt = receiptId =>
   executionClient.get(`/publish-receipts/${encodeURIComponent(receiptId)}`);
 
+const executionApiBase = () => (
+  import.meta.env.VITE_EXECUTION_API_URL || '/api/execution/v1'
+).replace(/\/+$/, '');
+
+export const executionArtifactPreviewUrl = artifactId =>
+  `${executionApiBase()}/artifacts/${encodeURIComponent(artifactId)}/preview`;
+
 export const getHumanTasks = async (params = {}) =>
   listPayload(
     await executionClient.get('/human-tasks', { params }),
@@ -224,7 +231,7 @@ export const refreshExecutionFiles = rootId =>
   executionClient.post('/files/refresh', { root_id: rootId });
 
 export const executionEventsUrl = runId => {
-  const base = import.meta.env.VITE_EXECUTION_API_URL || '/api/execution/v1';
+  const base = executionApiBase();
   return `${base}/runs/${encodeURIComponent(runId)}/events`;
 };
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Optional
@@ -24,7 +23,7 @@ from app.execution.storage import ArtifactRef, FileGateway, StorageError
 
 REGENERATED_FIBER_ROOT_ID = "regenerated_fiber_records"
 NODE_TYPE_VERSION = 1
-WORKBOOK_PROFILE_VERSION = 2
+WORKBOOK_PROFILE_VERSION = 3
 MAX_WORKBOOK_VALIDATION_MATCHES = 50
 DETERMINISTIC_PROFILE_STATUSES = {
     "matched",
@@ -51,7 +50,6 @@ class RegeneratedFiberRule:
     cell_range: str = "B14:J14"
     root_id: str = REGENERATED_FIBER_ROOT_ID
     version: int = WORKBOOK_PROFILE_VERSION
-    allow_numbered_worksheets: bool = False
 
     @property
     def cache_key(self) -> str:
@@ -63,8 +61,7 @@ REGENERATED_FIBER_RULES = {
         node_type="file.regenerated_fiber_count_method",
         workflow_slug="regenerated-fiber-count-method",
         name="再生纤-根数法",
-        worksheet="根数法报告",
-        allow_numbered_worksheets=True,
+        worksheet="根数法报告1",
     ),
     "file.regenerated_fiber_area_method": RegeneratedFiberRule(
         node_type="file.regenerated_fiber_area_method",
@@ -79,15 +76,7 @@ def _matching_worksheet_names(
     sheet_names: list[str],
     rule: RegeneratedFiberRule,
 ) -> list[str]:
-    matches = [name for name in sheet_names if name == rule.worksheet]
-    if rule.allow_numbered_worksheets:
-        numbered = re.compile(rf"^{re.escape(rule.worksheet)}\d+$")
-        matches.extend(
-            name
-            for name in sheet_names
-            if name not in matches and numbered.fullmatch(name)
-        )
-    return matches
+    return [name for name in sheet_names if name == rule.worksheet]
 
 
 def _escaped_contains(value: str) -> str:
@@ -156,33 +145,34 @@ def _read_profile(path: Path, rule: RegeneratedFiberRule) -> dict[str, Any]:
             finally:
                 workbook.release_resources()
         else:
-            workbook = load_workbook(
-                path,
-                read_only=True,
-                data_only=True,
-                keep_vba=False,
-                keep_links=False,
-            )
-            try:
-                worksheet_names = _matching_worksheet_names(
-                    list(workbook.sheetnames),
-                    rule,
+            with path.open("rb") as stream:
+                workbook = load_workbook(
+                    stream,
+                    read_only=True,
+                    data_only=True,
+                    keep_vba=False,
+                    keep_links=False,
                 )
-                if not worksheet_names:
-                    value["status"] = "worksheet_missing"
-                    return value
-                value["worksheet_exists"] = True
-                value["matched_worksheets"] = worksheet_names
-                values = [
-                    workbook[worksheet_name].cell(
-                        row=14,
-                        column=column,
-                    ).value
-                    for worksheet_name in worksheet_names
-                    for column in range(2, 11)
-                ]
-            finally:
-                workbook.close()
+                try:
+                    worksheet_names = _matching_worksheet_names(
+                        list(workbook.sheetnames),
+                        rule,
+                    )
+                    if not worksheet_names:
+                        value["status"] = "worksheet_missing"
+                        return value
+                    value["worksheet_exists"] = True
+                    value["matched_worksheets"] = worksheet_names
+                    values = [
+                        workbook[worksheet_name].cell(
+                            row=14,
+                            column=column,
+                        ).value
+                        for worksheet_name in worksheet_names
+                        for column in range(2, 11)
+                    ]
+                finally:
+                    workbook.close()
     except Exception as exc:
         # The cache deliberately stores only a bounded technical error. It
         # never records workbook cell content.
@@ -911,4 +901,9 @@ def register_regenerated_fiber_executors() -> None:
             NODE_TYPE_VERSION,
             _regenerated_fiber_executor,
         )
+    from app.execution.regenerated_fiber_results import (
+        register_regenerated_fiber_result_executors,
+    )
+
+    register_regenerated_fiber_result_executors()
     _EXECUTORS_REGISTERED = True

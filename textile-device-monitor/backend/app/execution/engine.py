@@ -28,7 +28,9 @@ from app.execution.models import (
     ExecutionWorkflowVersion,
     utcnow,
 )
+from app.execution.persistence import build_file_gateway
 from app.execution.registry import node_registry
+from app.execution.storage import ArtifactRef, FileGateway, StorageError
 from app.execution.validation import (
     definition_checksum,
     runtime_definition,
@@ -344,7 +346,7 @@ def _candidate_items(value: Any) -> list[dict[str, Any]]:
         return [item for item in value if isinstance(item, dict)]
     if not isinstance(value, dict):
         return []
-    for key in ("candidates", "groups", "items"):
+    for key in ("candidates", "groups", "files", "items"):
         if key in value:
             nested = _candidate_items(value[key])
             if nested:
@@ -361,6 +363,7 @@ def _validate_index_candidate(
     *,
     run: ExecutionRun,
     candidate: dict[str, Any],
+    gateway: FileGateway,
 ) -> None:
     members = candidate.get("files")
     values = members if isinstance(members, list) and members else [candidate]
@@ -403,6 +406,26 @@ def _validate_index_candidate(
                 "候选文件已变化或不属于本流程，请刷新后重新选择",
                 details={"candidate_id": value.get("id")},
             )
+        try:
+            path = gateway.resolve(
+                ArtifactRef(root.root_id, entry.relative_path),
+                expected_type="file",
+            )
+            stat = path.stat()
+        except (StorageError, OSError) as exc:
+            raise ExecutionApiError(
+                409,
+                "file_candidate_stale",
+                "候选文件当前不可读取，请刷新后重新选择",
+                details={"candidate_id": value.get("id")},
+            ) from exc
+        if f"{stat.st_size}:{stat.st_mtime_ns}" != entry.fingerprint:
+            raise ExecutionApiError(
+                409,
+                "file_candidate_stale",
+                "候选文件已在结果读取后发生变化，请刷新后重新选择",
+                details={"candidate_id": value.get("id")},
+            )
 
 
 def _normalize_human_submission(
@@ -430,6 +453,7 @@ def _normalize_human_submission(
     }
     normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
+    gateway = build_file_gateway(db)
     for submitted in selected:
         candidate_id = (
             submitted
@@ -445,12 +469,61 @@ def _normalize_human_submission(
                 "file_candidate_not_offered",
                 "所选文件不在该人工任务的候选列表中",
             )
+        if candidate.get("read_status") == "failed":
+            raise ExecutionApiError(
+                422,
+                "result_file_not_selectable",
+                "结果读取失败的文件不能被选用",
+                details={"candidate_id": str(candidate_id)},
+            )
         if str(candidate_id) in seen:
             continue
-        _validate_index_candidate(db, run=run, candidate=candidate)
+        _validate_index_candidate(
+            db,
+            run=run,
+            candidate=candidate,
+            gateway=gateway,
+        )
         normalized.append(candidate)
         seen.add(str(candidate_id))
-    return {**data, "selected_files": normalized}
+
+    node = _definition_node_map(run).get(node_run.node_id) or {}
+    config = node.get("config") or {}
+    require_primary = bool(config.get("require_primary"))
+    primary_file_id = data.get("primary_file_id")
+    if primary_file_id is not None:
+        primary_file_id = str(primary_file_id)
+    if primary_file_id is None and require_primary and len(normalized) == 1:
+        primary_file_id = str(normalized[0]["id"])
+    if require_primary and not primary_file_id:
+        raise ExecutionApiError(
+            422,
+            "primary_file_required",
+            "选择多个文件时，请指定其中一个文件作为主单",
+        )
+    primary_file = None
+    if primary_file_id:
+        primary_file = next(
+            (
+                candidate
+                for candidate in normalized
+                if str(candidate.get("id")) == primary_file_id
+            ),
+            None,
+        )
+        if primary_file is None:
+            raise ExecutionApiError(
+                422,
+                "primary_file_not_selected",
+                "主单必须是本次已选择的文件之一",
+                details={"primary_file_id": primary_file_id},
+            )
+    return {
+        **data,
+        "selected_files": normalized,
+        "primary_file_id": primary_file_id,
+        "primary_file": primary_file,
+    }
 
 
 def _latest_published_version(

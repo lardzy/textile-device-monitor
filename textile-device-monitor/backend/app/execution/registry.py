@@ -105,6 +105,8 @@ HUMAN_CONFIG_SCHEMA = _object_schema(
         },
         "form_schema": {"type": "object"},
         "allow_multiple": {"type": "boolean"},
+        "allow_primary": {"type": "boolean"},
+        "require_primary": {"type": "boolean"},
     }
 )
 ARTIFACT_REF_SCHEMA = _object_schema(
@@ -222,6 +224,44 @@ def _register_builtins() -> None:
             ),
         ),
         NodeType(
+            "result.regenerated_fiber_count_method",
+            1,
+            "读取再生纤根数法结果",
+            "结果",
+            "逐个读取根数法工作簿中的部位、纤维含量、备注和插图",
+            input_schema=_object_schema(
+                {"files": {"type": "array", "minItems": 1}},
+                required=("files",),
+            ),
+            output_schema=_object_schema(
+                {
+                    "files": {"type": "array"},
+                    "count": {"type": "integer"},
+                    "success_count": {"type": "integer"},
+                    "failed_count": {"type": "integer"},
+                }
+            ),
+        ),
+        NodeType(
+            "result.regenerated_fiber_area_method",
+            1,
+            "读取再生纤面积法结果",
+            "结果",
+            "逐个读取面积法工作簿中的部位、纤维含量、备注和插图",
+            input_schema=_object_schema(
+                {"files": {"type": "array", "minItems": 1}},
+                required=("files",),
+            ),
+            output_schema=_object_schema(
+                {
+                    "files": {"type": "array"},
+                    "count": {"type": "integer"},
+                    "success_count": {"type": "integer"},
+                    "failed_count": {"type": "integer"},
+                }
+            ),
+        ),
+        NodeType(
             "excel.classify",
             1,
             "Excel 类型识别",
@@ -297,10 +337,15 @@ def _register_builtins() -> None:
                 {
                     "candidates": {"type": "array"},
                     "groups": {"type": "array"},
+                    "files": {"type": "array"},
                 }
             ),
             output_schema=_object_schema(
-                {"selected_files": {"type": "array"}},
+                {
+                    "selected_files": {"type": "array"},
+                    "primary_file_id": {"type": ["string", "null"]},
+                    "primary_file": {"type": ["object", "null"]},
+                },
             ),
         ),
         NodeType(
