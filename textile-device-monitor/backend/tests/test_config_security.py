@@ -17,6 +17,7 @@ def production_settings(**overrides) -> Settings:
         "EXECUTION_CREDENTIAL_KEY": "credential-" + ("c" * 48),
         "EXECUTION_COOKIE_SECURE": True,
         "CORS_ORIGINS": "",
+        "WEB_TRANSPORT": "https",
         "PUBLIC_HOSTNAME": "textile-monitor.internal",
         "PUBLIC_ORIGIN": "https://textile-monitor.internal",
         "TLS_DIR_HOST_PATH": "/srv/textile-monitor/tls",
@@ -31,6 +32,19 @@ def production_settings(**overrides) -> Settings:
 
 def test_valid_production_security_configuration() -> None:
     production_settings().validate_execution_security()
+
+
+def test_valid_http_production_security_configuration() -> None:
+    production_settings(
+        WEB_TRANSPORT="http",
+        PUBLIC_HOSTNAME="192.168.106.50",
+        PUBLIC_ORIGIN="http://192.168.106.50:3100",
+        TLS_DIR_HOST_PATH="",
+        HSTS_MAX_AGE=0,
+        MANAGEMENT_CIDRS="",
+        EXECUTION_COOKIE_SECURE=False,
+        CORS_ORIGINS="http://192.168.106.50",
+    ).validate_execution_security()
 
 
 @pytest.mark.parametrize(
@@ -117,6 +131,37 @@ def test_development_can_use_http_and_insecure_cookie() -> None:
     settings.validate_execution_security()
 
 
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"WEB_TRANSPORT": "ftp"}, "WEB_TRANSPORT"),
+        ({"TLS_DIR_HOST_PATH": "/tmp/tls"}, "TLS_DIR_HOST_PATH"),
+        ({"HSTS_MAX_AGE": 300}, "HSTS_MAX_AGE"),
+        ({"EXECUTION_COOKIE_SECURE": True}, "COOKIE_SECURE"),
+        (
+            {"PUBLIC_ORIGIN": "https://192.168.106.50"},
+            "PUBLIC_ORIGIN",
+        ),
+    ],
+)
+def test_http_production_rejects_incompatible_transport_values(
+    override: dict,
+    message: str,
+) -> None:
+    values = {
+        "WEB_TRANSPORT": "http",
+        "PUBLIC_HOSTNAME": "192.168.106.50",
+        "PUBLIC_ORIGIN": "http://192.168.106.50",
+        "TLS_DIR_HOST_PATH": "",
+        "HSTS_MAX_AGE": 0,
+        "MANAGEMENT_CIDRS": "",
+        "EXECUTION_COOKIE_SECURE": False,
+    }
+    values.update(override)
+    with pytest.raises(RuntimeError, match=message):
+        production_settings(**values).validate_execution_security()
+
+
 def test_cors_allow_list_is_trimmed_and_normalized() -> None:
     settings = Settings(
         APP_ENV="development",
@@ -136,10 +181,12 @@ def test_index_interval_safe_default_is_five_minutes() -> None:
     ]
     assert settings.EXECUTION_NODE_MAX_ATTEMPTS == 5
     assert settings.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS == 45
-    assert settings.PUBLIC_HOSTNAME == "textile-monitor.internal"
-    assert settings.PUBLIC_ORIGIN == "https://textile-monitor.internal"
+    assert settings.WEB_TRANSPORT == "http"
+    assert settings.PUBLIC_HOSTNAME == "localhost"
+    assert settings.PUBLIC_ORIGIN == "http://localhost"
     assert settings.TLS_MIN_VALID_DAYS == 30
-    assert settings.HSTS_MAX_AGE == 300
+    assert settings.HSTS_MAX_AGE == 0
+    assert settings.EXECUTION_COOKIE_SECURE is False
 
 
 def test_execution_auto_index_roots_are_trimmed_and_deduplicated() -> None:

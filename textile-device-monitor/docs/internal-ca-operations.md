@@ -2,7 +2,12 @@
 
 ## 适用边界
 
-本项目的生产入口固定为：
+本文档描述的是**可选 HTTPS 模式**。当前开发和生产试运行默认通过
+`http://<服务器局域网IP>` 访问，不需要执行本手册，也不需要公司 IT 修改
+DNS 或其它网络配置。只有在正式上线阶段决定启用
+`docker-compose.https.yml` 时，才使用下面的内部 CA 方案。
+
+可选 HTTPS 入口固定为：
 
 ```text
 https://textile-monitor.internal
@@ -69,7 +74,7 @@ root-ca.cer
 位数、证书与私钥匹配关系以及私钥权限。将该输出目录通过受控介质复制到
 Docker 服务器。
 
-## 3. 配置生产环境
+## 3. 配置可选 HTTPS 环境
 
 在宿主机为部署预检准备独立 Python 环境；离线生产环境应提前下载并核对所需
 wheel，不要在每次启动时访问公网：
@@ -85,6 +90,7 @@ C:\TextileMonitor\deployment-venv\Scripts\python.exe -m pip install `
 ```dotenv
 PUBLIC_HOSTNAME=textile-monitor.internal
 PUBLIC_ORIGIN=https://textile-monitor.internal
+WEB_TRANSPORT=https
 FRONTEND_BIND_ADDRESS=192.168.106.50
 FRONTEND_HTTPS_PORT=443
 TLS_DIR_HOST_PATH=C:/TextileMonitor/tls-active
@@ -140,9 +146,14 @@ docker compose --env-file ".env" stop frontend
   -ServerIp "192.168.106.50" `
   -ExpectedRootSha256 "<线下核对的 64 位 SHA-256>" `
   -ComposeProjectDirectory "C:\TextileMonitor\textile-device-monitor" `
+  -ComposeFile "docker-compose.yml","docker-compose.https.yml" `
   -EnvFile "C:\TextileMonitor\textile-device-monitor\.env" `
   -PythonPath "C:\TextileMonitor\deployment-venv\Scripts\python.exe"
 ```
+
+证书部署脚本默认已加载 `docker-compose.yml` 和
+`docker-compose.https.yml`；上面仍显式列出两者，便于审计实际生效的编排
+文件。需要额外叠加其它覆盖文件时，可继续通过 `-ComposeFile` 传入完整列表。
 
 部署过程会备份现用证书、预检候选文件、原子替换、执行 `nginx -t`、重新加载
 或重建前端，并使用根 CA、固定 SNI 和指定服务器当前 IP 进行不带 `-k`、
@@ -160,6 +171,7 @@ TLS/SNI/HSTS；该精确路径不继承业务页面的来源白名单，避免�
 ```powershell
 .\scripts\validate-deployment.ps1 `
   -EnvFile ".env" `
+  -ComposeFile "docker-compose.yml","docker-compose.https.yml" `
   -PythonPath "C:\TextileMonitor\deployment-venv\Scripts\python.exe" `
   -ProbeAddress "192.168.106.50"
 ```
@@ -169,7 +181,9 @@ TLS/SNI/HSTS；该精确路径不继承业务页面的来源白名单，避免�
 
 ```bash
 DEPLOYMENT_PYTHON=/opt/textile-monitor/deployment-venv/bin/python \
-  ./scripts/validate-deployment.sh --env-file .env
+  ./scripts/validate-deployment.sh --env-file .env \
+  --compose-file docker-compose.yml \
+  --compose-file docker-compose.https.yml
 ```
 
 ## 5. 收紧服务器本机 443 防火墙
@@ -272,8 +286,9 @@ Chrome 和 Edge 可能继承当前电脑的 Windows 代理、PAC 或本地代理
 服务器上线前用客户端迁移脚本的 `-Phase Prepare` 预置根证书和本机
 `hosts`；HTTPS 可用后用 `-Phase Activate -TransportSecurity compatible`
 切换 URL。连续正常上报 24 小时后，再用
-`-Phase Activate -TransportSecurity required` 强制加固。新安装客户端默认
-直接使用 `required`。
+`-Phase Activate -TransportSecurity required` 强制加固。默认构建的 HTTP
+安装包使用 `compatible`；只有显式指定 HTTPS Origin 和 CA 的安装包才默认
+使用 `required`。
 
 正式客户端安装目录中的 `admin-tools` 提供迁移封装。以管理员身份执行时
 必须传入服务器 IP、根证书、Requests 使用的 PEM 和线下根指纹。迁移只有在

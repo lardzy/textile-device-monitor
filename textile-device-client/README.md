@@ -17,12 +17,10 @@
 - Windows 10 或更高版本
 - Python 3.11+（开发环境）
 - 能访问部门服务器和共享文件路径的局域网连接
-- 首次部署 HTTPS 时具备当前电脑的本机管理员权限
 
-客户端不需要公网，也不依赖公司 DNS。部门管理员脚本会在当前电脑的本机
-`hosts` 中把 `textile-monitor.internal` 映射到服务器当前局域网 IP，并安装
-经过线下 SHA-256 指纹核对的内部根证书；不会改动公司 DNS、DHCP、路由器、
-交换机或公司防火墙。服务器地址以后变化时，只需在本机重跑管理员脚本。
+测试和试运行阶段默认使用 HTTP，不需要部署证书、修改公司 DNS 或维护本机
+`hosts`。HTTPS 仍作为可选能力保留；需要启用时，再使用随安装包提供的内部
+CA 和迁移脚本。
 
 ## 快速开始
 
@@ -47,23 +45,34 @@ python main.py
 python -m pip install -r requirements-build.lock.txt
 ```
 
-安装 Inno Setup 6 后，使用统一发布命令完成干净的 PyInstaller 构建、构建清单校验和安装器生成：
+安装 Inno Setup 6 后，使用统一发布命令完成干净的 PyInstaller 构建、构建
+清单校验和安装器生成：
+
+```powershell
+python scripts/build_windows_release.py
+```
+
+该命令默认生成 `http://127.0.0.1`、`compatible` 模式且不携带 CA 的测试
+包。给局域网其它电脑安装前，应把默认地址替换为 Docker 服务器的固定 IP：
 
 ```powershell
 python scripts/build_windows_release.py `
-  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem"
+  --default-server-url "http://192.168.106.50"
 ```
 
-新安装包默认写入 `https://textile-monitor.internal`，传输模式为
-`required`，并随包提供 Requests 使用的根 CA bundle。需要显式指定入口时
-可增加 `--default-server-url https://textile-monitor.internal`；正式包
-不得改成 HTTP。
+需要生成可选 HTTPS 包时，仍会严格要求固定 HTTPS 主机名和有效根 CA：
+
+```powershell
+python scripts/build_windows_release.py `
+  --default-server-url "https://textile-monitor.internal" `
+  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem"
+```
 
 如需指定 Inno Setup 编译器路径：
 
 ```powershell
 python scripts/build_windows_release.py `
-  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem" `
+  --default-server-url "http://192.168.106.50" `
   --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 ```
 
@@ -74,24 +83,25 @@ dist/windows/TextileDeviceClient
 dist/windows/TextileDeviceClient/build-manifest.json
 dist/windows/TextileDeviceClient/textile-device-client.exe.sha256
 dist/windows/TextileDeviceClient/client-build-defaults.json
-dist/windows/TextileDeviceClient/certs/inspection-root-ca.pem
 dist/windows/TextileDeviceClient/admin-tools/
 dist/installer/textile-device-client-setup-<version>.exe
 dist/installer/textile-device-client-setup-<version>.exe.sha256
 ```
 
+只有 HTTPS 包会额外包含
+`dist/windows/TextileDeviceClient/certs/inspection-root-ca.pem`。
+
 安装器会拒绝版本不一致、源码已变化、哈希不匹配、控制台模式或 bootloader 调试模式的 onedir 目录。PyInstaller 子进程使用隔离的 DLL 搜索路径，避免 Conda 或其它 Python 环境中的 DLL 混入产物。找不到 Inno Setup 编译器时命令会返回失败，不会把已有安装包误报为新产物。
-构建清单还会记录配置 Schema、默认 HTTPS Origin、根 CA SHA-256 以及
-Requests、Certifi、Cryptography 和 PyInstaller 版本。升级安装保留现有
-`config.json`、备份和当前 CA；CA 轮换必须走管理员迁移脚本，不能被普通
-安装覆盖。
+构建清单还会记录配置 Schema、默认 Origin、传输模式、可选根 CA SHA-256
+以及 Requests、Certifi、Cryptography 和 PyInstaller 版本。升级安装保留
+现有 `config.json`、备份和当前 CA。
 
 拥有 Authenticode 代码签名证书时，可签名客户端和安装器：
 
 ```powershell
 $env:TDC_SIGN_CERT_THUMBPRINT = "<证书 SHA-1 指纹>"
 python scripts/build_windows_release.py `
-  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem" `
+  --default-server-url "http://192.168.106.50" `
   --sign
 ```
 
@@ -102,7 +112,7 @@ python scripts/build_windows_release.py `
 ```powershell
 python scripts/build_windows_installer.py --sync-only
 python scripts/build_windows_onedir.py `
-  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem"
+  --default-server-url "http://192.168.106.50"
 python scripts/build_windows_installer.py
 ```
 
@@ -112,7 +122,7 @@ python scripts/build_windows_installer.py
 
 ```powershell
 python scripts/build_windows_onedir.py `
-  --tls-ca-bundle "D:\TextileMonitor-PKI\export\root-ca.pem" `
+  --default-server-url "http://192.168.106.50" `
   --console
 ```
 
@@ -122,37 +132,36 @@ python scripts/build_windows_onedir.py `
 
 - **设备编码**: 设备的唯一标识（1号-8号或自定义）
 - **设备名称**: 设备的显示名称
-- **服务器地址**: 只填写纯 Origin，生产固定为
-  `https://textile-monitor.internal`
-- **传输安全**: 新安装为 `required`；旧安装升级时暂时为 `compatible`
-- **内部 CA**: 默认 `certs/inspection-root-ca.pem`
+- **服务器地址**: 只填写纯 Origin；测试默认 `http://127.0.0.1`，局域网
+  客户端填写 Docker 服务器 IP，例如 `http://192.168.106.50`
+- **传输安全**: 默认选择“兼容 HTTP / HTTPS”；也可选择“强制 HTTPS”
+- **内部 CA**: 仅 HTTPS 地址需要填写
 - **工作路径**: 监测根目录，如 `F:\\tmp\\AiCodingTest\\参考文件\\bak`
 - **上报间隔**: 状态上报间隔（秒），默认 5 秒
 
 服务器地址禁止用户名、密码、`/api` 路径、查询参数和片段。`required`
-模式拒绝 HTTP；HTTPS 请求不会自动降级，也不会读取系统代理环境变量。
+模式仍会拒绝 HTTP；选择 HTTPS 地址时，无论传输模式为何都必须提供并校验
+CA。客户端不会读取系统代理环境变量。
 配置文件使用临时文件和原子替换，失败时继续使用旧运行配置并保留
 `config.json.bak`。
 
-已有客户端首次升级时不会立即切断现有 HTTP 上报：缺少
-`config_schema_version` 的旧配置会迁移为 Schema 2 的 `compatible`，
-并保留原服务器地址。管理员完成根证书和本机 `hosts` 部署后，再使用正式
-迁移脚本先切换 HTTPS Origin；连续观察后再加固为 `required`。
+已有客户端首次升级时，缺少 `config_schema_version` 的旧配置会迁移为
+Schema 2 的 `compatible` 并保留原服务器地址，不会中断原有 HTTP 上报。
 
 客户端结果服务监听 `0.0.0.0:9100`。客户端会根据服务器地址选择实际使用的局域网网卡并上报该网卡 IP；当服务器地址是本机环回地址时，会使用 `host.docker.internal` 供本机 Docker 后端访问。生产环境还需在 Windows 防火墙中允许服务器访问客户端 TCP 9100 端口。
 
-生产配置的核心字段如下：
+当前测试和试运行配置的核心字段如下：
 
 ```json
 {
   "config_schema_version": 2,
-  "server_url": "https://textile-monitor.internal",
-  "transport_security": "required",
-  "tls_ca_bundle": "certs/inspection-root-ca.pem"
+  "server_url": "http://192.168.106.50",
+  "transport_security": "compatible",
+  "tls_ca_bundle": ""
 }
 ```
 
-### 迁移已有客户端到内部 HTTPS
+### 可选：迁移已有客户端到内部 HTTPS
 
 先由管理员线下核对内部根证书 SHA-256 指纹。在服务器启用 HTTPS 之前，
 于安装目录 `admin-tools` 中以管理员身份执行 Prepare，仅预置根证书和
@@ -345,25 +354,26 @@ Content-Type: application/json
 GET /health/ready
 ```
 
-健康检查、注册、状态上报和重连均复用同一个 Requests Session 和同一 CA
-bundle，并拒绝重定向，避免 HTTPS 被降级到 HTTP。
+健康检查、注册、状态上报和重连均复用同一个 Requests Session，并拒绝
+重定向。HTTPS 模式下会统一使用配置的 CA bundle。
 
 ## 故障排查
 
 ### 问题：无法连接服务器
 
-**原因**：本机 `hosts`、内部 CA、服务器证书或局域网连接异常
+**原因**：服务器地址、端口、本机防火墙或局域网连接异常
 
 **解决**：
-1. 确认服务器地址严格为 `https://textile-monitor.internal`
-2. 检查本机 `hosts` 是否指向服务器当前 IP；地址变化时重新运行管理员脚本
-3. 核对根证书 SHA-256 和 `certs/inspection-root-ca.pem`
-4. 使用浏览器打开同一地址，确认没有证书警告
-5. 检查服务器和当前电脑的本机防火墙（不涉及公司网络设备）
+1. 确认服务器地址是 Docker 服务器的实际局域网 IP，例如
+   `http://192.168.106.50`
+2. 使用浏览器打开同一地址，确认服务可访问
+3. 检查服务器和当前电脑的本机防火墙（不涉及公司网络设备）
+4. 若主动启用了 HTTPS，再核对本机 `hosts`、根证书 SHA-256 和
+   `certs/inspection-root-ca.pem`
 
-日志会分别报告“根 CA 不受信任、证书域名不匹配、证书过期、证书尚未
-生效、CA 文件缺失或损坏”以及普通超时。客户端没有 `verify=False` 或自动
-HTTP 回退开关。
+HTTPS 模式下，日志会分别报告“根 CA 不受信任、证书域名不匹配、证书
+过期、证书尚未生效、CA 文件缺失或损坏”以及普通超时。客户端没有
+`verify=False` 或自动协议降级逻辑。
 
 ### 问题：工作路径读取失败
 

@@ -15,20 +15,14 @@ from modules.config import Config, ConfigValidationError, validate_config
 
 
 class TLSConfigTests(unittest.TestCase):
-    def test_new_install_defaults_to_required_internal_https(self):
+    def test_new_install_defaults_to_compatible_local_http(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = Config(str(Path(tmpdir) / "config.json"))
 
             self.assertEqual(config.get("config_schema_version"), 2)
-            self.assertEqual(
-                config.get_server_url(),
-                "https://textile-monitor.internal",
-            )
-            self.assertEqual(config.get_transport_security(), "required")
-            self.assertEqual(
-                config.get_tls_ca_bundle(),
-                "certs/inspection-root-ca.pem",
-            )
+            self.assertEqual(config.get_server_url(), "http://127.0.0.1")
+            self.assertEqual(config.get_transport_security(), "compatible")
+            self.assertEqual(config.get_tls_ca_bundle(), "")
 
     def test_v1_config_migrates_to_compatible_and_keeps_http_origin(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -57,11 +51,43 @@ class TLSConfigTests(unittest.TestCase):
             config = Config(str(Path(tmpdir) / "config.json"))
             original = config.get_all()
 
-            saved = config.update({"server_url": "http://server.local"})
+            saved = config.update(
+                {
+                    "server_url": "http://server.local",
+                    "transport_security": "required",
+                }
+            )
 
             self.assertFalse(saved)
             self.assertEqual(config.get_all(), original)
             self.assertIn("HTTPS", config.last_load_error)
+
+    def test_https_still_requires_a_ca_bundle_in_compatible_mode(self):
+        with self.assertRaisesRegex(ConfigValidationError, "CA"):
+            validate_config(
+                {
+                    "config_schema_version": 2,
+                    "server_url": "https://textile-monitor.internal",
+                    "transport_security": "compatible",
+                    "tls_ca_bundle": "",
+                }
+            )
+
+    def test_https_required_mode_remains_available(self):
+        config = validate_config(
+            {
+                "config_schema_version": 2,
+                "server_url": "https://textile-monitor.internal",
+                "transport_security": "required",
+                "tls_ca_bundle": "certs/root.pem",
+            }
+        )
+
+        self.assertEqual(config["transport_security"], "required")
+        self.assertEqual(
+            config["server_url"],
+            "https://textile-monitor.internal",
+        )
 
     def test_explicit_v1_schema_also_migrates_to_compatible(self):
         with tempfile.TemporaryDirectory() as tmpdir:

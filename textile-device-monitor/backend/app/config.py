@@ -78,11 +78,12 @@ class Settings(BaseSettings):
     AREA_INFER_URL: str = "http://area-infer:9001"
     AREA_INFER_TIMEOUT_SEC: int = 60
     STATS_TIMEZONE: str = "Asia/Shanghai"
-    PUBLIC_HOSTNAME: str = "textile-monitor.internal"
-    PUBLIC_ORIGIN: str = "https://textile-monitor.internal"
+    WEB_TRANSPORT: str = "http"
+    PUBLIC_HOSTNAME: str = "localhost"
+    PUBLIC_ORIGIN: str = "http://localhost"
     TLS_DIR_HOST_PATH: str = ""
     TLS_MIN_VALID_DAYS: int = 30
-    HSTS_MAX_AGE: int = 300
+    HSTS_MAX_AGE: int = 0
     MANAGEMENT_CIDRS: str = ""
     # Browser traffic is same-origin behind Nginx in production, so CORS is
     # disabled unless an explicit allow-list is configured.
@@ -90,7 +91,7 @@ class Settings(BaseSettings):
     EXECUTION_ENABLED: bool = True
     EXECUTION_SESSION_SECRET: str = ""
     EXECUTION_SESSION_TTL_HOURS: int = 12
-    EXECUTION_COOKIE_SECURE: bool = True
+    EXECUTION_COOKIE_SECURE: bool = False
     EXECUTION_BOOTSTRAP_ADMIN_USERNAME: str = ""
     EXECUTION_BOOTSTRAP_ADMIN_PASSWORD: str = ""
     EXECUTION_CREDENTIAL_KEY: str = ""
@@ -183,6 +184,9 @@ class Settings(BaseSettings):
 
     def validate_execution_security(self) -> None:
         self.validate_execution_storage_paths()
+        web_transport = self.WEB_TRANSPORT.strip().lower()
+        if web_transport not in {"http", "https"}:
+            raise RuntimeError("WEB_TRANSPORT must be either http or https")
         environment = self.APP_ENV.strip().lower()
         if environment not in {"production", "prod"}:
             return
@@ -239,19 +243,36 @@ class Settings(BaseSettings):
         cors_origins = self.cors_origins()
         if "*" in cors_origins:
             raise RuntimeError("Production CORS_ORIGINS must not contain a wildcard")
-        insecure_origins = [
-            origin for origin in cors_origins if not origin.startswith("https://")
-        ]
-        if insecure_origins:
+        invalid_origins = []
+        for origin in cors_origins:
+            parsed_cors_origin = urlsplit(origin)
+            if (
+                parsed_cors_origin.scheme not in {"http", "https"}
+                or parsed_cors_origin.hostname is None
+                or parsed_cors_origin.path not in {"", "/"}
+                or parsed_cors_origin.query
+                or parsed_cors_origin.fragment
+                or parsed_cors_origin.username is not None
+                or parsed_cors_origin.password is not None
+            ):
+                invalid_origins.append(origin)
+                continue
+            if (
+                web_transport == "https"
+                and parsed_cors_origin.scheme != "https"
+            ):
+                invalid_origins.append(origin)
+        if invalid_origins:
+            if web_transport == "https":
+                raise RuntimeError(
+                    "Production CORS_ORIGINS may only contain explicit "
+                    "HTTPS origins"
+                )
             raise RuntimeError(
-                "Production CORS_ORIGINS may only contain explicit HTTPS origins"
+                "Production CORS_ORIGINS contains an invalid explicit origin"
             )
 
         public_hostname = self.PUBLIC_HOSTNAME.strip().lower()
-        if public_hostname != "textile-monitor.internal":
-            raise RuntimeError(
-                "Production PUBLIC_HOSTNAME must be textile-monitor.internal"
-            )
         parsed_origin = urlsplit(self.PUBLIC_ORIGIN.strip())
         try:
             origin_port = parsed_origin.port
@@ -260,9 +281,10 @@ class Settings(BaseSettings):
                 "Production PUBLIC_ORIGIN contains an invalid port"
             ) from exc
         if (
-            parsed_origin.scheme != "https"
-            or parsed_origin.hostname != public_hostname
-            or origin_port not in {None, 443}
+            parsed_origin.scheme != web_transport
+            or parsed_origin.hostname is None
+            or not public_hostname
+            or parsed_origin.hostname.lower() != public_hostname
             or parsed_origin.username is not None
             or parsed_origin.password is not None
             or parsed_origin.path not in {"", "/"}
@@ -270,21 +292,51 @@ class Settings(BaseSettings):
             or parsed_origin.fragment
         ):
             raise RuntimeError(
-                "Production PUBLIC_ORIGIN must be the HTTPS origin for "
-                "PUBLIC_HOSTNAME"
-            )
-        if not self.TLS_DIR_HOST_PATH.strip():
-            raise RuntimeError("Production TLS_DIR_HOST_PATH must be configured")
-        if not 1 <= self.TLS_MIN_VALID_DAYS <= 365:
-            raise RuntimeError(
-                "Production TLS_MIN_VALID_DAYS must be between 1 and 365"
+                "Production PUBLIC_ORIGIN must be a pure Origin matching "
+                "WEB_TRANSPORT and PUBLIC_HOSTNAME"
             )
         if not 0 <= self.HSTS_MAX_AGE <= 31536000:
             raise RuntimeError(
                 "Production HSTS_MAX_AGE must be between 0 and 31536000"
             )
+        if web_transport == "https":
+            if public_hostname != "textile-monitor.internal":
+                raise RuntimeError(
+                    "Production HTTPS PUBLIC_HOSTNAME must be "
+                    "textile-monitor.internal"
+                )
+            if origin_port not in {None, 443}:
+                raise RuntimeError(
+                    "Production HTTPS PUBLIC_ORIGIN may only use port 443"
+                )
+            if not self.TLS_DIR_HOST_PATH.strip():
+                raise RuntimeError(
+                    "Production HTTPS TLS_DIR_HOST_PATH must be configured"
+                )
+            if not 1 <= self.TLS_MIN_VALID_DAYS <= 365:
+                raise RuntimeError(
+                    "Production TLS_MIN_VALID_DAYS must be between 1 and 365"
+                )
+            if self.EXECUTION_ENABLED and not self.EXECUTION_COOKIE_SECURE:
+                raise RuntimeError(
+                    "Production HTTPS EXECUTION_COOKIE_SECURE must be enabled"
+                )
+        else:
+            if self.TLS_DIR_HOST_PATH.strip():
+                raise RuntimeError(
+                    "Production HTTP TLS_DIR_HOST_PATH must be empty"
+                )
+            if self.HSTS_MAX_AGE != 0:
+                raise RuntimeError(
+                    "Production HTTP HSTS_MAX_AGE must be 0"
+                )
+            if self.EXECUTION_ENABLED and self.EXECUTION_COOKIE_SECURE:
+                raise RuntimeError(
+                    "Production HTTP EXECUTION_COOKIE_SECURE must be disabled"
+                )
+
         management_networks = self.management_cidrs()
-        if not management_networks:
+        if web_transport == "https" and not management_networks:
             raise RuntimeError("Production MANAGEMENT_CIDRS must not be empty")
         unsafe_networks = [
             str(network)
@@ -314,8 +366,6 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "Production SECRET_KEY and execution secrets must be independent"
             )
-        if not self.EXECUTION_COOKIE_SECURE:
-            raise RuntimeError("Production EXECUTION_COOKIE_SECURE must be enabled")
         if self.EXECUTION_INDEX_INTERVAL_SECONDS < 30:
             raise RuntimeError(
                 "Production EXECUTION_INDEX_INTERVAL_SECONDS must be at least 30"

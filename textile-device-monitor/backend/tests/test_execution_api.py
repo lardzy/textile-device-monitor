@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from fastapi import Request, Response
 from sqlalchemy import create_engine
@@ -11,6 +12,7 @@ from app.api.execution import (
     human_task_detail,
     list_runs,
     login,
+    logout,
     router,
     run_detail,
     run_event_history,
@@ -463,6 +465,29 @@ class ExecutionApiContractTests(unittest.TestCase):
         with self.assertRaises(ExecutionApiError) as captured:
             require_csrf(session, "wrong-token")
         self.assertEqual(captured.exception.code, "csrf_invalid")
+
+    def test_logout_deletes_cookie_with_matching_security_attributes(self):
+        session, _, _ = create_session(self.db, self.admin)
+        self.db.commit()
+        response = Response()
+
+        with patch(
+            "app.api.execution.settings.EXECUTION_COOKIE_SECURE",
+            True,
+        ):
+            result = logout(
+                response=response,
+                auth=AuthContext(session=session, user=self.admin),
+                db=self.db,
+            )
+
+        self.assertEqual(result, {"success": True})
+        cookie_header = response.headers["set-cookie"]
+        self.assertIn("execution_session=", cookie_header)
+        self.assertIn("HttpOnly", cookie_header)
+        self.assertIn("Path=/api/execution", cookie_header)
+        self.assertIn("SameSite=strict", cookie_header)
+        self.assertIn("Secure", cookie_header)
 
     def test_explicit_role_permissions_separate_designer_and_operator(self):
         require_permission(self.db, self.admin, "workflow.design")

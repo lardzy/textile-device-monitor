@@ -65,7 +65,12 @@ def build_test_root_ca(common_name: str = "Inspection Test Root CA") -> bytes:
     return certificate.public_bytes(serialization.Encoding.PEM)
 
 
-def create_minimal_project(root: Path, version: str = "9.8.7") -> Path:
+def create_minimal_project(
+    root: Path,
+    version: str = "9.8.7",
+    *,
+    use_https: bool = False,
+) -> Path:
     files = {
         "main.py": "print('client')\n",
         "requirements.txt": "requests>=2.31.0\n",
@@ -89,17 +94,26 @@ def create_minimal_project(root: Path, version: str = "9.8.7") -> Path:
     app_dir = root / "dist" / "windows" / "TextileDeviceClient"
     app_dir.mkdir(parents=True)
     (app_dir / EXECUTABLE_NAME).write_bytes(b"fake executable")
-    (app_dir / "certs").mkdir()
-    (app_dir / "certs" / "inspection-root-ca.pem").write_bytes(
-        build_test_root_ca()
-    )
+    if use_https:
+        (app_dir / "certs").mkdir()
+        (app_dir / "certs" / "inspection-root-ca.pem").write_bytes(
+            build_test_root_ca()
+        )
     (app_dir / "client-build-defaults.json").write_text(
         json.dumps(
             {
                 "config_schema_version": 2,
-                "server_url": "https://textile-monitor.internal",
-                "transport_security": "required",
-                "tls_ca_bundle": "certs/inspection-root-ca.pem",
+                "server_url": (
+                    "https://textile-monitor.internal"
+                    if use_https
+                    else "http://127.0.0.1"
+                ),
+                "transport_security": (
+                    "required" if use_https else "compatible"
+                ),
+                "tls_ca_bundle": (
+                    "certs/inspection-root-ca.pem" if use_https else ""
+                ),
             }
         ),
         encoding="utf-8",
@@ -197,7 +211,23 @@ class BuildSupportTests(unittest.TestCase):
             with self.assertRaises(BuildValidationError):
                 read_build_lock(root)
 
-    def test_tls_build_assets_require_fixed_production_origin(self):
+    def test_http_build_assets_do_not_require_a_ca_bundle(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            defaults_path, ca_path = prepare_tls_build_assets(
+                root / "generated",
+                default_server_url="http://192.168.106.50:8080/",
+                tls_ca_bundle=None,
+            )
+
+            defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
+            self.assertEqual(defaults["server_url"], "http://192.168.106.50:8080")
+            self.assertEqual(defaults["transport_security"], "compatible")
+            self.assertEqual(defaults["tls_ca_bundle"], "")
+            self.assertIsNone(ca_path)
+
+    def test_https_build_assets_require_fixed_production_origin(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             ca_path = root / "root.pem"
@@ -206,7 +236,6 @@ class BuildSupportTests(unittest.TestCase):
             for invalid_origin in (
                 "https://other.internal",
                 "https://textile-monitor.internal:8443",
-                "http://textile-monitor.internal",
                 "https://textile-monitor.internal?",
                 r"https://textile-monitor.internal\api",
             ):
@@ -217,6 +246,15 @@ class BuildSupportTests(unittest.TestCase):
                             default_server_url=invalid_origin,
                             tls_ca_bundle=ca_path,
                         )
+
+    def test_https_build_assets_require_a_ca_bundle(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(BuildValidationError, "required"):
+                prepare_tls_build_assets(
+                    Path(tmpdir) / "generated",
+                    default_server_url="https://textile-monitor.internal",
+                    tls_ca_bundle=None,
+                )
 
     def test_tls_build_assets_require_one_rsa_3072_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -266,14 +304,40 @@ class BuildSupportTests(unittest.TestCase):
             self.assertEqual(manifest["build_mode"], "release")
             self.assertEqual(
                 manifest["default_server_url"],
-                "https://textile-monitor.internal",
+                "http://127.0.0.1",
             )
-            self.assertEqual(manifest["transport_security"], "required")
-            self.assertIn("tls_ca_sha256", manifest)
+            self.assertEqual(manifest["transport_security"], "compatible")
+            self.assertEqual(manifest["tls_ca_bundle"], "")
+            self.assertIsNone(manifest["tls_ca_sha256"])
             self.assertIn("requests_version", manifest)
             self.assertIn("certifi_version", manifest)
             self.assertIn("cryptography_version", manifest)
             self.assertEqual(len(manifest["admin_tools_sha256"]), 5)
+
+    def test_release_manifest_keeps_strict_https_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app_dir = create_minimal_project(root, use_https=True)
+            write_build_manifest(
+                root,
+                app_dir,
+                console=False,
+                bootloader_debug=False,
+                signed=False,
+            )
+
+            manifest = validate_release_build(root, app_dir)
+
+            self.assertEqual(
+                manifest["default_server_url"],
+                "https://textile-monitor.internal",
+            )
+            self.assertEqual(manifest["transport_security"], "required")
+            self.assertEqual(
+                manifest["tls_ca_bundle"],
+                "certs/inspection-root-ca.pem",
+            )
+            self.assertRegex(manifest["tls_ca_sha256"], r"^[0-9a-f]{64}$")
 
     def test_release_manifest_rejects_changed_source(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -325,7 +389,7 @@ class BuildSupportTests(unittest.TestCase):
     def test_release_manifest_rejects_modified_tls_ca(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            app_dir = create_minimal_project(root)
+            app_dir = create_minimal_project(root, use_https=True)
             write_build_manifest(
                 root,
                 app_dir,
@@ -365,6 +429,19 @@ class BuildSupportTests(unittest.TestCase):
 
             with patch.dict(os.environ, {"ISCC_EXE": str(compiler)}, clear=False):
                 self.assertEqual(find_inno_setup_compiler(), str(compiler))
+
+    def test_installer_allows_http_package_without_certs_directory(self):
+        installer = (
+            CLIENT_ROOT
+            / "packaging"
+            / "inno-setup"
+            / "textile_device_client.iss"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "onlyifdoesntexist skipifsourcedoesntexist",
+            installer,
+        )
 
     def test_installer_build_fails_when_compiler_is_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:

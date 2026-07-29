@@ -56,12 +56,13 @@ services:
       DATA_RETENTION_DAYS: 30
       STATUS_REPORT_RETENTION_HOURS: 48
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
-      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-textile-monitor.internal}"
-      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-https://textile-monitor.internal}"
-      TLS_DIR_HOST_PATH: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required}"
+      WEB_TRANSPORT: "${WEB_TRANSPORT:-http}"
+      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-localhost}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost}"
+      TLS_DIR_HOST_PATH: "${TLS_DIR_HOST_PATH:-}"
       TLS_MIN_VALID_DAYS: "${TLS_MIN_VALID_DAYS:-30}"
-      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
-      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required}"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-0}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:-}"
       FORWARDED_ALLOW_IPS: "${FRONTEND_PROXY_IP:-172.30.0.10}"
       AREA_WEIGHTS_DIR: /opt/area_weights
       AREA_INFER_URL: http://area-infer:9001
@@ -71,7 +72,7 @@ services:
       EXECUTION_ENABLED: ${EXECUTION_ENABLED:-true}
       EXECUTION_SESSION_SECRET: "${EXECUTION_SESSION_SECRET:?EXECUTION_SESSION_SECRET is required}"
       EXECUTION_CREDENTIAL_KEY: "${EXECUTION_CREDENTIAL_KEY:?EXECUTION_CREDENTIAL_KEY is required}"
-      EXECUTION_COOKIE_SECURE: "true"
+      EXECUTION_COOKIE_SECURE: "${EXECUTION_COOKIE_SECURE:-false}"
       EXECUTION_BOOTSTRAP_ADMIN_USERNAME: ${EXECUTION_BOOTSTRAP_ADMIN_USERNAME:-}
       EXECUTION_BOOTSTRAP_ADMIN_PASSWORD: ${EXECUTION_BOOTSTRAP_ADMIN_PASSWORD:-}
       EXECUTION_SOURCE_ROOT: "${EXECUTION_SOURCE_ROOT:-/data/execution-source/10特纤/02-检验}"
@@ -132,16 +133,17 @@ services:
       DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
       SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required}"
       APP_ENV: "${APP_ENV:-production}"
-      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-textile-monitor.internal}"
-      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-https://textile-monitor.internal}"
-      TLS_DIR_HOST_PATH: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required}"
+      WEB_TRANSPORT: "${WEB_TRANSPORT:-http}"
+      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-localhost}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost}"
+      TLS_DIR_HOST_PATH: "${TLS_DIR_HOST_PATH:-}"
       TLS_MIN_VALID_DAYS: "${TLS_MIN_VALID_DAYS:-30}"
-      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
-      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required}"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-0}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:-}"
       EXECUTION_ENABLED: ${EXECUTION_ENABLED:-true}
       EXECUTION_SESSION_SECRET: "${EXECUTION_SESSION_SECRET:?EXECUTION_SESSION_SECRET is required}"
       EXECUTION_CREDENTIAL_KEY: "${EXECUTION_CREDENTIAL_KEY:?EXECUTION_CREDENTIAL_KEY is required}"
-      EXECUTION_COOKIE_SECURE: "true"
+      EXECUTION_COOKIE_SECURE: "${EXECUTION_COOKIE_SECURE:-false}"
       EXECUTION_SOURCE_ROOT: "${EXECUTION_SOURCE_ROOT:-/data/execution-source/10特纤/02-检验}"
       EXECUTION_RUNTIME_ROOT: /data/execution-runtime
       EXECUTION_PUBLISH_ROOT: /data/execution-publish
@@ -183,17 +185,13 @@ services:
     container_name: textile-monitor-frontend
     restart: unless-stopped
     environment:
-      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-textile-monitor.internal}"
-      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
-      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required}"
+      WEB_TRANSPORT: "${WEB_TRANSPORT:-http}"
+      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-localhost}"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-0}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:-}"
       NGINX_ENVSUBST_FILTER: "^PUBLIC_HOSTNAME$|^HSTS_MAX_AGE$|^NGINX_MANAGEMENT_ALLOW_RULES$"
     ports:
-      - "${FRONTEND_BIND_ADDRESS:?FRONTEND_BIND_ADDRESS is required}:${FRONTEND_HTTPS_PORT:-443}:443"
-    volumes:
-      - type: bind
-        source: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required}"
-        target: /etc/nginx/tls
-        read_only: true
+      - "${FRONTEND_BIND_ADDRESS:-0.0.0.0}:${FRONTEND_HTTP_PORT:-80}:8080"
     depends_on:
       backend:
         condition: service_healthy
@@ -204,7 +202,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "wget --quiet --spider http://127.0.0.1:8080/healthz",
+          "wget --quiet --spider http://127.0.0.1:8081/healthz",
         ]
       interval: 15s
       timeout: 5s

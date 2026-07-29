@@ -345,6 +345,7 @@ def _compose_config(tmp_path: Path) -> dict:
     tls = tmp_path / "tls"
     common_environment = {
         "APP_ENV": "production",
+        "WEB_TRANSPORT": "https",
         "EXECUTION_COOKIE_SECURE": "true",
         "EXECUTION_INDEX_INTERVAL_SECONDS": "300",
         "PUBLIC_HOSTNAME": HOSTNAME,
@@ -391,13 +392,14 @@ def _compose_config(tmp_path: Path) -> dict:
             },
             "frontend": {
                 "environment": {
+                    "WEB_TRANSPORT": "https",
                     "PUBLIC_HOSTNAME": HOSTNAME,
                     "HSTS_MAX_AGE": "300",
                     "MANAGEMENT_CIDRS": "192.168.106.0/24,10.8.0.0/24",
                 },
                 "ports": [
                     {
-                        "target": 443,
+                        "target": 8080,
                         "published": "443",
                         "host_ip": "192.168.106.50",
                     }
@@ -418,7 +420,7 @@ def _compose_config(tmp_path: Path) -> dict:
                         "CMD-SHELL",
                         (
                             "wget --quiet --spider "
-                            "http://127.0.0.1:8080/healthz"
+                            "http://127.0.0.1:8081/healthz"
                         ),
                     ]
                 },
@@ -443,6 +445,83 @@ def test_valid_compose_security_contract(tmp_path) -> None:
     assert tls_dir == (tmp_path / "tls").resolve()
     assert hostname == HOSTNAME
     assert minimum_days == 30
+
+
+def test_valid_http_compose_contract_without_tls_or_management_cidrs(
+    tmp_path,
+) -> None:
+    config = _compose_config(tmp_path)
+    for service_name in ("backend", "execution-worker"):
+        environment = config["services"][service_name]["environment"]
+        environment.update(
+            {
+                "WEB_TRANSPORT": "http",
+                "EXECUTION_COOKIE_SECURE": "false",
+                "PUBLIC_HOSTNAME": "localhost",
+                "PUBLIC_ORIGIN": "http://localhost:3100",
+                "TLS_DIR_HOST_PATH": "",
+                "HSTS_MAX_AGE": "0",
+                "MANAGEMENT_CIDRS": "",
+            }
+        )
+    frontend = config["services"]["frontend"]
+    frontend["environment"].update(
+        {
+            "WEB_TRANSPORT": "http",
+            "PUBLIC_HOSTNAME": "localhost",
+            "HSTS_MAX_AGE": "0",
+            "MANAGEMENT_CIDRS": "",
+        }
+    )
+    frontend["ports"][0].update(
+        {"published": "3100", "host_ip": "0.0.0.0"}
+    )
+    frontend["volumes"] = []
+
+    tls_dir, hostname, minimum_days = validate_compose_config(
+        config,
+        repo_root=tmp_path / "repo",
+    )
+
+    assert tls_dir is None
+    assert hostname == "localhost"
+    assert minimum_days == 0
+
+
+@pytest.mark.parametrize("bind_address", ["0.0.0.0", "127.0.0.1", "10.8.0.5"])
+def test_http_compose_accepts_convenient_bind_addresses(
+    tmp_path,
+    bind_address: str,
+) -> None:
+    config = _compose_config(tmp_path)
+    for service_name in ("backend", "execution-worker"):
+        environment = config["services"][service_name]["environment"]
+        environment.update(
+            {
+                "WEB_TRANSPORT": "http",
+                "EXECUTION_COOKIE_SECURE": "false",
+                "PUBLIC_HOSTNAME": "localhost",
+                "PUBLIC_ORIGIN": "http://localhost",
+                "TLS_DIR_HOST_PATH": "",
+                "HSTS_MAX_AGE": "0",
+                "MANAGEMENT_CIDRS": "",
+            }
+        )
+    frontend = config["services"]["frontend"]
+    frontend["environment"].update(
+        {
+            "WEB_TRANSPORT": "http",
+            "PUBLIC_HOSTNAME": "localhost",
+            "HSTS_MAX_AGE": "0",
+            "MANAGEMENT_CIDRS": "",
+        }
+    )
+    frontend["ports"][0].update(
+        {"published": "80", "host_ip": bind_address}
+    )
+    frontend["volumes"] = []
+
+    validate_compose_config(config, repo_root=tmp_path / "repo")
 
 
 def test_valid_compose_allows_read_only_named_source_volume(tmp_path) -> None:
@@ -573,28 +652,48 @@ def test_https_probe_requires_literal_address_without_dns(tmp_path) -> None:
         )
 
 
-def test_nginx_template_enforces_tls_host_and_health_contract() -> None:
+def test_nginx_templates_keep_http_default_and_https_option() -> None:
     project_root = Path(__file__).resolve().parents[2]
-    template = (project_root / "frontend" / "nginx.conf").read_text()
+    dockerfile = (project_root / "frontend" / "Dockerfile").read_text()
+    selector = (
+        project_root
+        / "frontend"
+        / "docker-entrypoint.d"
+        / "10-select-transport.envsh"
+    ).read_text()
+    http_template = (project_root / "frontend" / "nginx.conf").read_text()
+    https_template = (
+        project_root / "frontend" / "nginx.https.conf"
+    ).read_text()
 
-    assert "listen 127.0.0.1:8080;" in template
-    assert template.count("location = /healthz") == 1
-    assert template.count("location = /backend-ready") == 1
-    assert "proxy_pass http://backend:8000/health/ready;" in template
-    assert "listen 443 ssl default_server;" in template
-    assert "server_name ${PUBLIC_HOSTNAME};" in template
-    assert "server_name _;" not in template
-    assert "/etc/nginx/tls/fullchain.pem" in template
-    assert "/etc/nginx/tls/privkey.pem" in template
-    assert "${NGINX_MANAGEMENT_ALLOW_RULES}" in template
-    assert 'max-age=${HSTS_MAX_AGE}' in template
-    assert "location = /health/live" in template
-    assert "location = /health/ready" in template
-    live_location = template.split("location = /health/live", 1)[1].split(
+    assert "/etc/nginx/templates" in dockerfile
+    assert "/etc/nginx/templates/default.conf.template" in selector
+    assert "listen 127.0.0.1:8081;" in http_template
+    assert http_template.count("location = /healthz") == 1
+    assert http_template.count("location = /backend-ready") == 1
+    assert "proxy_pass http://backend:8000/health/ready;" in http_template
+    assert "listen 8080 default_server;" in http_template
+    assert "ssl_certificate" not in http_template
+    assert "Strict-Transport-Security" not in http_template
+    assert "proxy_set_header X-Forwarded-Proto $scheme;" in http_template
+
+    assert "listen 8080 ssl default_server;" in https_template
+    assert "server_name ${PUBLIC_HOSTNAME};" in https_template
+    assert "/etc/nginx/tls/fullchain.pem" in https_template
+    assert "/etc/nginx/tls/privkey.pem" in https_template
+    assert "${NGINX_MANAGEMENT_ALLOW_RULES}" in https_template
+    assert 'max-age=${HSTS_MAX_AGE}' in https_template
+    assert "location = /health/live" in https_template
+    assert "location = /health/ready" in https_template
+    live_location = https_template.split("location = /health/live", 1)[
+        1
+    ].split(
         "}",
         1,
     )[0]
-    ready_location = template.split("location = /health/ready", 1)[1].split(
+    ready_location = https_template.split("location = /health/ready", 1)[
+        1
+    ].split(
         "}",
         1,
     )[0]

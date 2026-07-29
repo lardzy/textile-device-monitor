@@ -26,7 +26,7 @@ BUILD_MANIFEST_SCHEMA = 2
 CLIENT_BUILD_DEFAULTS_NAME = "client-build-defaults.json"
 PACKAGED_CA_RELATIVE_PATH = Path("certs") / "inspection-root-ca.pem"
 PRODUCTION_HOSTNAME = "textile-monitor.internal"
-DEFAULT_SERVER_URL = "https://textile-monitor.internal"
+DEFAULT_SERVER_URL = "http://127.0.0.1"
 CLIENT_ADMIN_TOOL_NAMES = (
     "migrate_to_internal_https.ps1",
     "verify_client_https_reporting.ps1",
@@ -438,7 +438,7 @@ def validate_packaged_root_ca(path: Path) -> None:
 
 
 def normalize_production_server_url(value: str) -> str:
-    """Validate the immutable hostname/port contract of production packages."""
+    """Validate the immutable hostname/port contract of optional HTTPS packages."""
 
     raw_url = value.strip()
     if "\\" in raw_url or "?" in raw_url or "#" in raw_url:
@@ -469,42 +469,88 @@ def normalize_production_server_url(value: str) -> str:
             "Production client packages must use exactly "
             f"https://{PRODUCTION_HOSTNAME} on port 443"
         )
-    return DEFAULT_SERVER_URL
+    return f"https://{PRODUCTION_HOSTNAME}"
 
 
-def prepare_tls_build_assets(
+def normalize_build_server_url(value: str) -> str:
+    """Validate a package default as a pure HTTP(S) origin."""
+
+    raw_url = value.strip()
+    if "\\" in raw_url or "?" in raw_url or "#" in raw_url:
+        raise BuildValidationError(
+            "--default-server-url must not contain backslashes, query markers, "
+            "or fragment markers"
+        )
+    try:
+        parsed = urlsplit(raw_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise BuildValidationError(f"Invalid --default-server-url: {exc}") from exc
+    scheme = parsed.scheme.lower()
+    if (
+        scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise BuildValidationError(
+            "--default-server-url must be a pure HTTP or HTTPS origin without "
+            "credentials, /api, query, or fragment"
+        )
+    if scheme == "https":
+        return normalize_production_server_url(raw_url)
+
+    host = parsed.hostname.lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port_suffix = f":{port}" if port is not None and port != 80 else ""
+    return f"http://{host}{port_suffix}"
+
+
+def prepare_transport_build_assets(
     generated_path: Path,
     *,
     default_server_url: str,
-    tls_ca_bundle: Path,
-) -> tuple[Path, Path]:
-    """Validate and stage production TLS defaults for PyInstaller."""
+    tls_ca_bundle: Path | None = None,
+) -> tuple[Path, Path | None]:
+    """Stage HTTP defaults, or strictly validate and stage optional HTTPS assets."""
 
-    normalized_url = normalize_production_server_url(default_server_url)
-
-    ca_source = tls_ca_bundle.expanduser().resolve(strict=False)
-    if not ca_source.is_file():
-        raise BuildValidationError(
-            f"TLS CA bundle not found: {ca_source}. Pass --tls-ca-bundle."
-        )
-    try:
-        ssl.create_default_context(cafile=str(ca_source))
-    except (OSError, ssl.SSLError) as exc:
-        raise BuildValidationError(
-            f"TLS CA bundle is invalid: {ca_source}"
-        ) from exc
-    validate_packaged_root_ca(ca_source)
+    normalized_url = normalize_build_server_url(default_server_url)
+    uses_https = normalized_url.startswith("https://")
+    ca_source: Path | None = None
+    if uses_https:
+        if tls_ca_bundle is None:
+            raise BuildValidationError(
+                "--tls-ca-bundle is required when --default-server-url uses HTTPS"
+            )
+        ca_source = tls_ca_bundle.expanduser().resolve(strict=False)
+        if not ca_source.is_file():
+            raise BuildValidationError(
+                f"TLS CA bundle not found: {ca_source}. Pass --tls-ca-bundle."
+            )
+        try:
+            ssl.create_default_context(cafile=str(ca_source))
+        except (OSError, ssl.SSLError) as exc:
+            raise BuildValidationError(
+                f"TLS CA bundle is invalid: {ca_source}"
+            ) from exc
+        validate_packaged_root_ca(ca_source)
 
     generated_path.mkdir(parents=True, exist_ok=True)
     defaults_path = generated_path / CLIENT_BUILD_DEFAULTS_NAME
-    staged_ca_path = generated_path / PACKAGED_CA_RELATIVE_PATH.name
+    staged_ca_path: Path | None = None
     defaults_path.write_text(
         json.dumps(
             {
                 "config_schema_version": 2,
                 "server_url": normalized_url,
-                "transport_security": "required",
-                "tls_ca_bundle": PACKAGED_CA_RELATIVE_PATH.as_posix(),
+                "transport_security": "required" if uses_https else "compatible",
+                "tls_ca_bundle": (
+                    PACKAGED_CA_RELATIVE_PATH.as_posix() if uses_https else ""
+                ),
             },
             ensure_ascii=True,
             indent=2,
@@ -513,8 +559,25 @@ def prepare_tls_build_assets(
         + "\n",
         encoding="utf-8",
     )
-    shutil.copy2(ca_source, staged_ca_path)
+    if ca_source is not None:
+        staged_ca_path = generated_path / PACKAGED_CA_RELATIVE_PATH.name
+        shutil.copy2(ca_source, staged_ca_path)
     return defaults_path, staged_ca_path
+
+
+def prepare_tls_build_assets(
+    generated_path: Path,
+    *,
+    default_server_url: str,
+    tls_ca_bundle: Path | None = None,
+) -> tuple[Path, Path | None]:
+    """Backward-compatible alias for callers of the original build helper."""
+
+    return prepare_transport_build_assets(
+        generated_path,
+        default_server_url=default_server_url,
+        tls_ca_bundle=tls_ca_bundle,
+    )
 
 
 def read_packaged_tls_metadata(app_dir: Path) -> dict[str, Any]:
@@ -531,32 +594,53 @@ def read_packaged_tls_metadata(app_dir: Path) -> dict[str, Any]:
         ) from exc
     if defaults.get("config_schema_version") != 2:
         raise BuildValidationError("Packaged client config schema must be 2")
-    if defaults.get("transport_security") != "required":
-        raise BuildValidationError(
-            "Production package must default to required transport security"
-        )
     server_url = str(defaults.get("server_url") or "")
     try:
-        normalized_url = normalize_production_server_url(server_url)
+        normalized_url = normalize_build_server_url(server_url)
     except BuildValidationError as exc:
         raise BuildValidationError(
             f"Packaged default server URL is invalid: {exc}"
         ) from exc
     if server_url != normalized_url:
         raise BuildValidationError(
-            f"Packaged default server URL must be exactly {DEFAULT_SERVER_URL}"
+            f"Packaged default server URL is not normalized: {server_url}"
         )
-    ca_relative = Path(str(defaults.get("tls_ca_bundle") or ""))
-    if ca_relative.is_absolute() or ".." in ca_relative.parts:
-        raise BuildValidationError("Packaged TLS CA path must be a safe relative path")
-    ca_path = app_dir / ca_relative
-    if not ca_path.is_file():
-        raise BuildValidationError(f"Packaged TLS CA bundle not found: {ca_path}")
-    validate_packaged_root_ca(ca_path)
+    uses_https = normalized_url.startswith("https://")
+    expected_transport = "required" if uses_https else "compatible"
+    if defaults.get("transport_security") != expected_transport:
+        raise BuildValidationError(
+            f"{normalized_url} package must use {expected_transport} "
+            "transport security"
+        )
+
+    ca_value = str(defaults.get("tls_ca_bundle") or "")
+    ca_path: Path | None = None
+    ca_sha256: str | None = None
+    if uses_https:
+        ca_relative = Path(ca_value)
+        if (
+            not ca_value
+            or ca_relative.is_absolute()
+            or ".." in ca_relative.parts
+        ):
+            raise BuildValidationError(
+                "Packaged TLS CA path must be a safe relative path"
+            )
+        ca_path = app_dir / ca_relative
+        if not ca_path.is_file():
+            raise BuildValidationError(
+                f"Packaged TLS CA bundle not found: {ca_path}"
+            )
+        validate_packaged_root_ca(ca_path)
+        ca_sha256 = sha256_file(ca_path)
+    elif ca_value:
+        raise BuildValidationError(
+            "HTTP package must not declare a TLS CA bundle"
+        )
     return {
         "defaults": defaults,
         "ca_path": ca_path,
-        "ca_sha256": sha256_file(ca_path),
+        "ca_sha256": ca_sha256,
     }
 
 
@@ -684,8 +768,14 @@ def validate_release_build(
         defaults = tls_metadata["defaults"]
         if manifest.get("default_server_url") != defaults.get("server_url"):
             errors.append("default server URL does not match packaged defaults")
-        if manifest.get("transport_security") != "required":
-            errors.append("packaged transport security is not required")
+        if manifest.get("transport_security") != defaults.get(
+            "transport_security"
+        ):
+            errors.append(
+                "packaged transport security does not match packaged defaults"
+            )
+        if manifest.get("tls_ca_bundle") != defaults.get("tls_ca_bundle"):
+            errors.append("packaged TLS CA path does not match packaged defaults")
         if manifest.get("tls_ca_sha256") != tls_metadata["ca_sha256"]:
             errors.append("packaged TLS CA hash does not match the build manifest")
     if (

@@ -13,7 +13,6 @@ from typing import Any, Dict, Optional
 from modules.transport_security import (
     CONFIG_SCHEMA_VERSION,
     TRANSPORT_COMPATIBLE,
-    TRANSPORT_REQUIRED,
     TransportSecurityError,
     normalize_server_origin,
     resolve_ca_bundle,
@@ -21,15 +20,15 @@ from modules.transport_security import (
 
 
 PACKAGED_DEFAULTS_NAME = "client-build-defaults.json"
-DEFAULT_SERVER_URL = "https://textile-monitor.internal"
-DEFAULT_TLS_CA_BUNDLE = "certs/inspection-root-ca.pem"
+DEFAULT_SERVER_URL = "http://127.0.0.1"
+DEFAULT_TLS_CA_BUNDLE = ""
 
 DEFAULT_CONFIG = {
     "config_schema_version": CONFIG_SCHEMA_VERSION,
     "device_code": "1号",
     "device_name": "1号",
     "server_url": DEFAULT_SERVER_URL,
-    "transport_security": TRANSPORT_REQUIRED,
+    "transport_security": TRANSPORT_COMPATIBLE,
     "tls_ca_bundle": DEFAULT_TLS_CA_BUNDLE,
     "working_path": "",
     "is_laser_confocal": False,
@@ -331,7 +330,7 @@ class Config:
         return self.config.get("server_url", DEFAULT_SERVER_URL)
 
     def get_transport_security(self) -> str:
-        return self.config.get("transport_security", TRANSPORT_REQUIRED)
+        return self.config.get("transport_security", TRANSPORT_COMPATIBLE)
 
     def get_tls_ca_bundle(self) -> str:
         return self.config.get("tls_ca_bundle", DEFAULT_TLS_CA_BUNDLE)

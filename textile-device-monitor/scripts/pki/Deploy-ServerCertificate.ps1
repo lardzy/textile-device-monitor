@@ -16,7 +16,10 @@ param(
     [ValidatePattern("^(?:[0-9A-Fa-f]{64}|(?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2})$")]
     [string]$ExpectedRootSha256,
 
-    [string[]]$ComposeFile = @("docker-compose.yml"),
+    [string[]]$ComposeFile = @(
+        "docker-compose.yml",
+        "docker-compose.https.yml"
+    ),
 
     [Parameter(Mandatory = $true)]
     [string]$EnvFile,
@@ -27,7 +30,7 @@ param(
 
     [string]$ExternalLivePath = "/health/live",
 
-    [string]$InternalReadinessUrl = "http://127.0.0.1:8080/backend-ready",
+    [string]$InternalReadinessUrl = "http://127.0.0.1:8081/backend-ready",
 
     [int]$MinimumValidDays = 30,
 
@@ -85,7 +88,7 @@ if ($HttpsPort -lt 1 -or $HttpsPort -gt 65535) {
 if ($ExternalLivePath -cne "/health/live") {
     throw "外部可信探测必须使用精确的 /health/live 存活端点。"
 }
-if ($InternalReadinessUrl -cne "http://127.0.0.1:8080/backend-ready") {
+if ($InternalReadinessUrl -cne "http://127.0.0.1:8081/backend-ready") {
     throw "容器内就绪探测必须固定走 frontend loopback 的 /backend-ready。"
 }
 

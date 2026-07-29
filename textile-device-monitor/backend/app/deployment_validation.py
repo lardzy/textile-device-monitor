@@ -585,7 +585,7 @@ def validate_compose_config(
     config: dict[str, Any],
     *,
     repo_root: Path,
-) -> tuple[Path, str, int]:
+) -> tuple[Path | None, str, int]:
     services = config.get("services") or {}
     required_services = {"postgres", "backend", "execution-worker", "frontend"}
     missing_services = sorted(required_services - set(services))
@@ -602,13 +602,48 @@ def validate_compose_config(
     frontend_ports = published["frontend"]
     if len(frontend_ports) != 1:
         _fail("frontend 必须且只能发布一个端口")
+
+    backend_environment = services["backend"].get("environment") or {}
+    worker_environment = services["execution-worker"].get("environment") or {}
+    frontend_environment = services["frontend"].get("environment") or {}
+    transports = {
+        service_name: str(environment.get("WEB_TRANSPORT", ""))
+        .strip()
+        .lower()
+        for service_name, environment in (
+            ("backend", backend_environment),
+            ("execution-worker", worker_environment),
+            ("frontend", frontend_environment),
+        )
+    }
+    invalid_transports = {
+        name: value
+        for name, value in transports.items()
+        if value not in {"http", "https"}
+    }
+    if invalid_transports:
+        _fail(
+            "WEB_TRANSPORT 只允许 http 或 https: "
+            f"{invalid_transports}"
+        )
+    if len(set(transports.values())) != 1:
+        _fail("backend、execution-worker 与 frontend 的 WEB_TRANSPORT 必须一致")
+    web_transport = transports["backend"]
+
     frontend_port = frontend_ports[0]
+    published_port = _integer(
+        frontend_port.get("published", 0),
+        label="frontend published port",
+        minimum=1,
+        maximum=65535,
+    )
     if (
         _integer(frontend_port.get("target", 0), label="frontend target port")
-        != 443
-        or str(frontend_port.get("published", "")) != "443"
+        != 8080
     ):
-        _fail("frontend 必须将宿主机 443 发布到容器 HTTPS 443")
+        _fail("frontend 必须将宿主机端口发布到容器 8080")
+    if web_transport == "https" and published_port != 443:
+        _fail("HTTPS frontend 必须发布宿主机 443")
     bind_value = str(frontend_port.get("host_ip", "")).strip()
     try:
         bind_address = ipaddress.ip_address(bind_value)
@@ -616,25 +651,45 @@ def validate_compose_config(
         raise DeploymentValidationError(
             "frontend 必须绑定服务器当前的局域网 IPv4，不能省略 host_ip"
         ) from exc
-    if (
-        not _is_rfc1918_address(bind_address)
-    ):
+    if web_transport == "https" and not _is_rfc1918_address(bind_address):
         _fail(
-            "frontend host_ip 必须是服务器当前的 RFC1918 局域网 IPv4，"
+            "HTTPS frontend host_ip 必须是服务器当前的 RFC1918 局域网 IPv4，"
             "不得使用 0.0.0.0、回环、链路本地或组播地址"
         )
+    if (
+        web_transport == "http"
+        and bind_address not in {
+            ipaddress.ip_address("0.0.0.0"),
+            ipaddress.ip_address("127.0.0.1"),
+        }
+        and not _is_rfc1918_address(bind_address)
+    ):
+        _fail(
+            "HTTP frontend host_ip 只允许 0.0.0.0、127.0.0.1 "
+            "或 RFC1918 局域网 IPv4"
+        )
 
-    backend_environment = services["backend"].get("environment") or {}
-    worker_environment = services["execution-worker"].get("environment") or {}
-    frontend_environment = services["frontend"].get("environment") or {}
+    expected_secure_cookie = web_transport == "https"
     for service_name, environment in (
         ("backend", backend_environment),
         ("execution-worker", worker_environment),
     ):
         if str(environment.get("APP_ENV", "")).lower() != "production":
             _fail(f"{service_name} APP_ENV 必须为 production")
-        if str(environment.get("EXECUTION_COOKIE_SECURE", "")).lower() != "true":
-            _fail(f"{service_name} 必须启用 Secure Cookie")
+        secure_cookie_value = str(
+            environment.get("EXECUTION_COOKIE_SECURE", "")
+        ).strip().lower()
+        if secure_cookie_value not in {"true", "false"}:
+            _fail(
+                f"{service_name} EXECUTION_COOKIE_SECURE 必须为 true 或 false"
+            )
+        secure_cookie = secure_cookie_value == "true"
+        if secure_cookie != expected_secure_cookie:
+            expected_value = "true" if expected_secure_cookie else "false"
+            _fail(
+                f"{service_name} EXECUTION_COOKIE_SECURE 必须为 "
+                f"{expected_value}"
+            )
         if _integer(
             environment.get("EXECUTION_INDEX_INTERVAL_SECONDS", 0),
             label=f"{service_name} EXECUTION_INDEX_INTERVAL_SECONDS",
@@ -644,8 +699,6 @@ def validate_compose_config(
     public_hostname = str(
         backend_environment.get("PUBLIC_HOSTNAME", "")
     ).strip().lower()
-    if public_hostname != EXPECTED_PUBLIC_HOSTNAME:
-        _fail(f"PUBLIC_HOSTNAME 必须为 {EXPECTED_PUBLIC_HOSTNAME}")
     public_origin = str(backend_environment.get("PUBLIC_ORIGIN", "")).strip()
     parsed_origin = urlsplit(public_origin)
     try:
@@ -655,15 +708,24 @@ def validate_compose_config(
             "PUBLIC_ORIGIN 包含非法端口"
         ) from exc
     if (
-        parsed_origin.scheme != "https"
-        or parsed_origin.hostname != public_hostname
-        or origin_port not in {None, 443}
+        parsed_origin.scheme != web_transport
+        or parsed_origin.hostname is None
+        or not public_hostname
+        or parsed_origin.hostname.lower() != public_hostname
         or parsed_origin.path not in {"", "/"}
         or parsed_origin.query
         or parsed_origin.fragment
         or parsed_origin.username is not None
+        or parsed_origin.password is not None
     ):
-        _fail("PUBLIC_ORIGIN 必须是固定主机名的纯 HTTPS Origin")
+        _fail("PUBLIC_ORIGIN 必须匹配 WEB_TRANSPORT 和 PUBLIC_HOSTNAME")
+    if web_transport == "https":
+        if public_hostname != EXPECTED_PUBLIC_HOSTNAME:
+            _fail(f"HTTPS PUBLIC_HOSTNAME 必须为 {EXPECTED_PUBLIC_HOSTNAME}")
+        if origin_port not in {None, 443}:
+            _fail("HTTPS PUBLIC_ORIGIN 只允许使用 443 端口")
+    elif (origin_port or 80) != published_port:
+        _fail("HTTP PUBLIC_ORIGIN 端口必须与 frontend 发布端口一致")
     if frontend_environment.get("PUBLIC_HOSTNAME") != public_hostname:
         _fail("backend 与 frontend 的 PUBLIC_HOSTNAME 必须一致")
     hsts_max_age = _integer(
@@ -678,11 +740,16 @@ def validate_compose_config(
             label="HSTS_MAX_AGE",
         ) != hsts_max_age:
             _fail("backend、worker 与 frontend 的 HSTS_MAX_AGE 必须一致")
+    if web_transport == "http" and hsts_max_age != 0:
+        _fail("HTTP 模式的 HSTS_MAX_AGE 必须为 0")
 
     management_value = str(
         frontend_environment.get("MANAGEMENT_CIDRS", "")
     )
-    validate_management_cidrs(management_value)
+    if management_value.strip():
+        validate_management_cidrs(management_value)
+    elif web_transport == "https":
+        _fail("HTTPS 模式的 MANAGEMENT_CIDRS 不得为空")
     for environment in (backend_environment, worker_environment):
         if str(environment.get("MANAGEMENT_CIDRS", "")) != management_value:
             _fail("所有服务的 MANAGEMENT_CIDRS 必须一致")
@@ -693,26 +760,39 @@ def validate_compose_config(
         if str(mount.get("target", "")).rstrip("/") == "/etc/nginx/tls"
         or str(mount.get("target", "")).startswith("/etc/nginx/tls/")
     ]
-    if (
-        len(frontend_mounts) != 1
-        or frontend_mounts[0].get("type") != "bind"
-        or not frontend_mounts[0].get("read_only", False)
-    ):
-        _fail("frontend 必须将唯一 TLS 目录只读挂载到 /etc/nginx/tls")
-    tls_dir = Path(frontend_mounts[0]["source"]).expanduser().resolve(
-        strict=False
-    )
-    configured_tls_dir = Path(
-        str(backend_environment.get("TLS_DIR_HOST_PATH", ""))
-    ).expanduser().resolve(strict=False)
-    if tls_dir != configured_tls_dir:
-        _fail("TLS_DIR_HOST_PATH 与 frontend TLS 挂载源不一致")
-    minimum_valid_days = _integer(
-        backend_environment.get("TLS_MIN_VALID_DAYS", 0),
-        label="TLS_MIN_VALID_DAYS",
-        minimum=1,
-        maximum=365,
-    )
+    tls_dir: Path | None = None
+    minimum_valid_days = 0
+    configured_tls_value = str(
+        backend_environment.get("TLS_DIR_HOST_PATH", "")
+    ).strip()
+    if web_transport == "https":
+        if not configured_tls_value:
+            _fail("HTTPS 模式的 TLS_DIR_HOST_PATH 不得为空")
+        if (
+            len(frontend_mounts) != 1
+            or frontend_mounts[0].get("type") != "bind"
+            or not frontend_mounts[0].get("read_only", False)
+        ):
+            _fail("frontend 必须将唯一 TLS 目录只读挂载到 /etc/nginx/tls")
+        tls_dir = Path(frontend_mounts[0]["source"]).expanduser().resolve(
+            strict=False
+        )
+        configured_tls_dir = Path(configured_tls_value).expanduser().resolve(
+            strict=False
+        )
+        if tls_dir != configured_tls_dir:
+            _fail("TLS_DIR_HOST_PATH 与 frontend TLS 挂载源不一致")
+        minimum_valid_days = _integer(
+            backend_environment.get("TLS_MIN_VALID_DAYS", 0),
+            label="TLS_MIN_VALID_DAYS",
+            minimum=1,
+            maximum=365,
+        )
+    else:
+        if frontend_mounts:
+            _fail("HTTP 模式不得挂载 TLS 目录")
+        if configured_tls_value:
+            _fail("HTTP 模式的 TLS_DIR_HOST_PATH 必须为空")
 
     networks = config.get("networks") or {}
     textile_network = networks.get("textile-net") or {}
@@ -758,7 +838,7 @@ def validate_compose_config(
         str(value) for value in healthcheck.get("test", [])
     )
     if (
-        "http://127.0.0.1:8080/healthz" not in health_command
+        "http://127.0.0.1:8081/healthz" not in health_command
         or INSECURE_WGET_FLAG in health_command
         or " -k" in health_command
     ):
@@ -877,9 +957,51 @@ def probe_https_endpoint(
         )
 
 
+def probe_http_endpoint(
+    *,
+    address: str,
+    port: int,
+    hostname: str,
+    timeout_seconds: float = 10.0,
+) -> None:
+    try:
+        ipaddress.ip_address(address)
+    except ValueError as exc:
+        raise DeploymentValidationError(
+            "--probe-address 必须是服务器的 IP，不执行 DNS 查询"
+        ) from exc
+    request = (
+        "GET /health/live HTTP/1.1\r\n"
+        f"Host: {hostname}\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode("ascii")
+    response = bytearray()
+    try:
+        with socket.create_connection(
+            (address, port),
+            timeout=timeout_seconds,
+        ) as plain_socket:
+            plain_socket.sendall(request)
+            while b"\r\n\r\n" not in response:
+                chunk = plain_socket.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+                if len(response) > 65536:
+                    _fail("HTTP 探测响应头过大")
+    except OSError as exc:
+        raise DeploymentValidationError(
+            "真实 HTTP 探测失败；服务连接无效"
+        ) from exc
+    header_block = bytes(response).split(b"\r\n\r\n", 1)[0]
+    header_lines = header_block.decode("iso-8859-1").split("\r\n")
+    if not header_lines or " 200 " not in header_lines[0]:
+        _fail("HTTP /health/live 未返回 200")
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="验证生产 Compose、内部 TLS 证书链和私钥权限。",
+        description="验证生产 Compose；HTTPS 模式同时验证内部 TLS。",
     )
     parser.add_argument(
         "--env-file",
@@ -896,15 +1018,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--probe-address",
         help=(
-            "部署后使用根 CA、固定 SNI 和该局域网 IP 探测 HTTPS；"
-            "不填写时仅执行部署前检查"
+            "部署后使用该服务器 IP 探测当前 WEB_TRANSPORT；"
+            "HTTPS 模式会使用根 CA 和固定 SNI；不填写时仅执行部署前检查"
         ),
     )
     parser.add_argument(
         "--probe-port",
         type=int,
-        default=443,
-        help="部署后 HTTPS 探测端口，默认 443",
+        help="部署后探测端口；默认按 HTTP/HTTPS 选择 80/443",
     )
     return parser
 
@@ -937,31 +1058,51 @@ def main(argv: list[str] | None = None) -> int:
             config,
             repo_root=repo_root,
         )
-        validate_tls_material(
-            tls_dir,
-            expected_hostname=hostname,
-            minimum_valid_days=minimum_valid_days,
-            repo_root=repo_root,
-        )
-        if args.probe_address:
-            frontend_environment = config["services"]["frontend"]["environment"]
-            probe_https_endpoint(
-                address=args.probe_address,
-                port=args.probe_port,
-                hostname=hostname,
-                root_ca_path=tls_dir / "root-ca.pem",
-                expected_hsts_max_age=int(
-                    frontend_environment["HSTS_MAX_AGE"]
-                ),
+        web_transport = str(
+            config["services"]["backend"]["environment"]["WEB_TRANSPORT"]
+        ).strip().lower()
+        if tls_dir is not None:
+            validate_tls_material(
+                tls_dir,
+                expected_hostname=hostname,
+                minimum_valid_days=minimum_valid_days,
+                repo_root=repo_root,
             )
+        if args.probe_address:
+            if web_transport == "https":
+                assert tls_dir is not None
+                frontend_environment = config["services"]["frontend"][
+                    "environment"
+                ]
+                probe_https_endpoint(
+                    address=args.probe_address,
+                    port=args.probe_port or 443,
+                    hostname=hostname,
+                    root_ca_path=tls_dir / "root-ca.pem",
+                    expected_hsts_max_age=int(
+                        frontend_environment["HSTS_MAX_AGE"]
+                    ),
+                )
+            else:
+                probe_http_endpoint(
+                    address=args.probe_address,
+                    port=args.probe_port or 80,
+                    hostname=hostname,
+                )
     except DeploymentValidationError as exc:
         print(f"部署配置预检失败：{exc}", file=sys.stderr)
         return 1
 
-    print(
-        "部署配置预检通过：仅 HTTPS 443 暴露，内部主机名、管理网段、"
-        "固定代理、执行目录、证书链和私钥权限均有效。"
-    )
+    if web_transport == "https":
+        print(
+            "部署配置预检通过：HTTPS 443、内部主机名、管理网段、"
+            "固定代理、执行目录、证书链和私钥权限均有效。"
+        )
+    else:
+        print(
+            "部署配置预检通过：HTTP 入口、固定代理和执行目录均有效；"
+            "TLS 未启用。"
+        )
     return 0
 
 

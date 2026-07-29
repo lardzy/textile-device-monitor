@@ -2,8 +2,13 @@
 set -eu
 
 if [ -z "${MANAGEMENT_CIDRS:-}" ]; then
-    echo "MANAGEMENT_CIDRS must not be empty" >&2
-    exit 1
+    if [ "${WEB_TRANSPORT:-http}" = "https" ]; then
+        echo "MANAGEMENT_CIDRS must not be empty in HTTPS mode" >&2
+        exit 1
+    fi
+    NGINX_MANAGEMENT_ALLOW_RULES="allow all;"
+    export NGINX_MANAGEMENT_ALLOW_RULES
+    return 0
 fi
 
 rules=""

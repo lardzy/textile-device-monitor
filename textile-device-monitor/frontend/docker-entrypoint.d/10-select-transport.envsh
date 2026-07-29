@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+case "${WEB_TRANSPORT:-http}" in
+    http)
+        template=/etc/nginx/templates-available/http.conf.template
+        ;;
+    https)
+        template=/etc/nginx/templates-available/https.conf.template
+        ;;
+    *)
+        echo "WEB_TRANSPORT must be http or https" >&2
+        exit 1
+        ;;
+esac
+
+cp "$template" /etc/nginx/templates/default.conf.template

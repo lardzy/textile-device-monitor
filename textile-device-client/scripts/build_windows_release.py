@@ -48,14 +48,17 @@ def main() -> int:
         "--default-server-url",
         default=DEFAULT_SERVER_URL,
         help=(
-            "Pure HTTPS origin embedded into new installations "
+            "Pure HTTP or HTTPS origin embedded into new installations "
             f"(default: {DEFAULT_SERVER_URL})."
         ),
     )
     parser.add_argument(
         "--tls-ca-bundle",
-        required=True,
-        help="PEM root CA bundle packaged with the Windows client.",
+        default="",
+        help=(
+            "PEM root CA bundle packaged with the Windows client; required "
+            "only when --default-server-url uses HTTPS."
+        ),
     )
     args = parser.parse_args()
 
@@ -85,7 +88,7 @@ def main() -> int:
         console=False,
         bootloader_debug=False,
         default_server_url=args.default_server_url.strip(),
-        tls_ca_bundle=args.tls_ca_bundle.strip(),
+        tls_ca_bundle=args.tls_ca_bundle.strip() or None,
         **signing_options,
     )
     if onedir_result != 0:

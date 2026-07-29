@@ -18,7 +18,7 @@ from build_support import (
     BuildValidationError,
     create_isolated_build_environment,
     ensure_build_environment,
-    prepare_tls_build_assets,
+    prepare_transport_build_assets,
     sign_windows_file,
     write_build_manifest,
     write_installer_version_include,
@@ -84,17 +84,11 @@ def build(
     dist_path.mkdir(parents=True, exist_ok=True)
     work_path.mkdir(parents=True, exist_ok=True)
     generated_path.mkdir(parents=True, exist_ok=True)
-    if not tls_ca_bundle:
-        print(
-            "--tls-ca-bundle is required for a production client build.",
-            file=sys.stderr,
-        )
-        return 1
     try:
-        defaults_file, staged_ca_bundle = prepare_tls_build_assets(
+        defaults_file, staged_ca_bundle = prepare_transport_build_assets(
             generated_path,
             default_server_url=default_server_url,
-            tls_ca_bundle=Path(tls_ca_bundle),
+            tls_ca_bundle=Path(tls_ca_bundle) if tls_ca_bundle else None,
         )
     except BuildValidationError as exc:
         print(str(exc), file=sys.stderr)
@@ -141,13 +135,19 @@ def build(
         return 1
 
     try:
-        (app_dir / "certs").mkdir(parents=True, exist_ok=True)
         (app_dir / "admin-tools").mkdir(parents=True, exist_ok=True)
         shutil.copy2(defaults_file, app_dir / CLIENT_BUILD_DEFAULTS_NAME)
-        shutil.copy2(
-            staged_ca_bundle,
-            app_dir / "certs" / "inspection-root-ca.pem",
-        )
+        packaged_ca_path = app_dir / "certs" / "inspection-root-ca.pem"
+        if staged_ca_bundle is not None:
+            packaged_ca_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                staged_ca_bundle,
+                packaged_ca_path,
+            )
+        else:
+            # A --no-clean HTTP rebuild must not accidentally inherit the CA
+            # declaration or asset from a previous HTTPS package.
+            packaged_ca_path.unlink(missing_ok=True)
         for client_tool_name in CLIENT_ADMIN_TOOL_NAMES:
             shutil.copy2(
                 root / "scripts" / client_tool_name,
@@ -235,7 +235,7 @@ def main() -> int:
         "--default-server-url",
         default=DEFAULT_SERVER_URL,
         help=(
-            "Pure HTTPS origin embedded into new installations "
+            "Pure HTTP or HTTPS origin embedded into new installations "
             f"(default: {DEFAULT_SERVER_URL})."
         ),
     )
@@ -244,7 +244,7 @@ def main() -> int:
         default="",
         help=(
             "PEM root CA bundle to package as "
-            "certs/inspection-root-ca.pem (required)."
+            "certs/inspection-root-ca.pem (required only for HTTPS packages)."
         ),
     )
     args = parser.parse_args()

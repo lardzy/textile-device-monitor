@@ -1,0 +1,44 @@
+# Optional HTTPS overlay. The default docker-compose.yml intentionally serves
+# plain HTTP for development and department trial runs.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#
+# PKI generation and deployment scripts remain under scripts/pki and
+# scripts/windows.
+services:
+  backend:
+    environment:
+      WEB_TRANSPORT: "https"
+      PUBLIC_HOSTNAME: "textile-monitor.internal"
+      PUBLIC_ORIGIN: "https://textile-monitor.internal"
+      TLS_DIR_HOST_PATH: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required for HTTPS}"
+      TLS_MIN_VALID_DAYS: "${TLS_MIN_VALID_DAYS:-30}"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required for HTTPS}"
+      EXECUTION_COOKIE_SECURE: "true"
+
+  execution-worker:
+    environment:
+      WEB_TRANSPORT: "https"
+      PUBLIC_HOSTNAME: "textile-monitor.internal"
+      PUBLIC_ORIGIN: "https://textile-monitor.internal"
+      TLS_DIR_HOST_PATH: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required for HTTPS}"
+      TLS_MIN_VALID_DAYS: "${TLS_MIN_VALID_DAYS:-30}"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required for HTTPS}"
+      EXECUTION_COOKIE_SECURE: "true"
+
+  frontend:
+    environment:
+      WEB_TRANSPORT: "https"
+      PUBLIC_HOSTNAME: "textile-monitor.internal"
+      HSTS_MAX_AGE: "${HSTS_MAX_AGE:-300}"
+      MANAGEMENT_CIDRS: "${MANAGEMENT_CIDRS:?MANAGEMENT_CIDRS is required for HTTPS}"
+    ports: !override
+      - "${FRONTEND_BIND_ADDRESS:?FRONTEND_BIND_ADDRESS is required for HTTPS}:${FRONTEND_HTTPS_PORT:-443}:8080"
+    volumes:
+      - type: bind
+        source: "${TLS_DIR_HOST_PATH:?TLS_DIR_HOST_PATH is required for HTTPS}"
+        target: /etc/nginx/tls
+        read_only: true

@@ -19,7 +19,7 @@ from modules.metrics_collector import MetricsCollector
 from modules.results_server import ResultsServer
 from modules.transport_security import (
     CONFIG_SCHEMA_VERSION,
-    TRANSPORT_REQUIRED,
+    TRANSPORT_COMPATIBLE,
     TransportSecurityError,
 )
 
@@ -92,7 +92,7 @@ def _run_config_tool() -> int:
                 logger,
                 transport_security=candidate.get(
                     "transport_security",
-                    TRANSPORT_REQUIRED,
+                    TRANSPORT_COMPATIBLE,
                 ),
                 tls_ca_bundle=ca_bundle,
             )
@@ -309,7 +309,7 @@ class TextileDeviceClient:
             logger=self.logger,
             transport_security=config.get(
                 "transport_security",
-                TRANSPORT_REQUIRED,
+                TRANSPORT_COMPATIBLE,
             ),
             tls_ca_bundle=tls_ca_bundle,
         )
@@ -522,11 +522,11 @@ class TextileDeviceClient:
                 "server_url": server_url,
                 "transport_security": config.get(
                     "transport_security",
-                    TRANSPORT_REQUIRED,
+                    TRANSPORT_COMPATIBLE,
                 ),
                 "tls_ca_bundle": config.get(
                     "tls_ca_bundle",
-                    "certs/inspection-root-ca.pem",
+                    "",
                 ),
                 "is_laser_confocal": is_confocal,
                 "log_path": log_path,

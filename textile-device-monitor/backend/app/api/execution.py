@@ -1192,7 +1192,14 @@ def logout(
         actor_user_id=auth.user.id,
     )
     db.commit()
-    response.delete_cookie(SESSION_COOKIE, path="/api/execution")
+    secure = bool(getattr(settings, "EXECUTION_COOKIE_SECURE", False))
+    response.delete_cookie(
+        SESSION_COOKIE,
+        path="/api/execution",
+        httponly=True,
+        secure=secure,
+        samesite="strict",
+    )
     return {"success": True}
 
 

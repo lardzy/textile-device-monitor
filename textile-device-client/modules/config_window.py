@@ -20,7 +20,12 @@ from PyQt6.QtWidgets import (
 )
 from typing import Optional
 
-from modules.config import ConfigValidationError, validate_config
+from modules.config import (
+    DEFAULT_SERVER_URL,
+    DEFAULT_TLS_CA_BUNDLE,
+    ConfigValidationError,
+    validate_config,
+)
 from modules.transport_security import (
     CONFIG_SCHEMA_VERSION,
     TRANSPORT_COMPATIBLE,
@@ -79,19 +84,25 @@ class ConfigWindow(QDialog):
         layout.addWidget(server_url_label)
 
         self.server_url_edit = QLineEdit()
-        self.server_url_edit.setPlaceholderText("https://textile-monitor.internal")
+        self.server_url_edit.setPlaceholderText(DEFAULT_SERVER_URL)
+        self.server_url_edit.textChanged.connect(self._update_transport_controls)
         layout.addWidget(self.server_url_edit)
 
         transport_label = QLabel("传输安全:")
         layout.addWidget(transport_label)
 
         self.transport_security_combo = QComboBox()
-        self.transport_security_combo.addItem("强制 HTTPS（生产推荐）", TRANSPORT_REQUIRED)
-        if self.current_config.get("transport_security") != TRANSPORT_REQUIRED:
-            self.transport_security_combo.addItem(
-                "兼容 HTTP（仅迁移期间）",
-                TRANSPORT_COMPATIBLE,
-            )
+        self.transport_security_combo.addItem(
+            "兼容 HTTP / HTTPS（测试、试运行）",
+            TRANSPORT_COMPATIBLE,
+        )
+        self.transport_security_combo.addItem(
+            "强制 HTTPS（可选）",
+            TRANSPORT_REQUIRED,
+        )
+        self.transport_security_combo.currentIndexChanged.connect(
+            self._update_transport_controls
+        )
         layout.addWidget(self.transport_security_combo)
 
         tls_ca_label = QLabel("内部 CA 证书:")
@@ -99,9 +110,7 @@ class ConfigWindow(QDialog):
 
         tls_ca_layout = QHBoxLayout()
         self.tls_ca_bundle_edit = QLineEdit()
-        self.tls_ca_bundle_edit.setPlaceholderText(
-            "certs/inspection-root-ca.pem"
-        )
+        self.tls_ca_bundle_edit.setPlaceholderText("仅 HTTPS 需要填写")
         tls_ca_layout.addWidget(self.tls_ca_bundle_edit)
 
         self.tls_ca_browse_button = QPushButton("浏览...")
@@ -203,19 +212,19 @@ class ConfigWindow(QDialog):
         self.server_url_edit.setText(
             self.current_config.get(
                 "server_url",
-                "https://textile-monitor.internal",
+                DEFAULT_SERVER_URL,
             )
         )
         transport_security = self.current_config.get(
             "transport_security",
-            TRANSPORT_REQUIRED,
+            TRANSPORT_COMPATIBLE,
         )
         transport_index = self.transport_security_combo.findData(transport_security)
         self.transport_security_combo.setCurrentIndex(max(0, transport_index))
         self.tls_ca_bundle_edit.setText(
             self.current_config.get(
                 "tls_ca_bundle",
-                "certs/inspection-root-ca.pem",
+                DEFAULT_TLS_CA_BUNDLE,
             )
         )
         self.confocal_checkbox.setChecked(
@@ -229,6 +238,16 @@ class ConfigWindow(QDialog):
         self.working_path_edit.setText(self.current_config.get("working_path", ""))
         self.interval_spin.setValue(self.current_config.get("report_interval", 5))
         self._toggle_confocal_fields(self.confocal_checkbox.isChecked())
+        self._update_transport_controls()
+
+    def _update_transport_controls(self, *_args):
+        """Only require a CA bundle when the configured origin uses HTTPS."""
+
+        uses_https = self.server_url_edit.text().strip().lower().startswith(
+            "https://"
+        )
+        self.tls_ca_bundle_edit.setEnabled(uses_https)
+        self.tls_ca_browse_button.setEnabled(uses_https)
 
     def _on_device_code_changed(self, text: str):
         """设备编码改变事件"""
@@ -278,7 +297,7 @@ class ConfigWindow(QDialog):
                     )
                 )
         except (ConfigValidationError, TransportSecurityError) as exc:
-            QMessageBox.warning(self, "HTTPS 配置无效", str(exc))
+            QMessageBox.warning(self, "服务器配置无效", str(exc))
             return
 
         if is_confocal:

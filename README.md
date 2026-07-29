@@ -183,7 +183,9 @@
 
 - 容器化：Docker / Docker Compose
 - 终端侧：Windows 桌面客户端
-- 访问模式：默认面向局域网，无内建登录体系
+- 访问模式：开发和试运行默认通过服务器局域网 IP 使用 HTTP；HTTPS 作为
+  可选覆盖保留
+- 权限边界：设备监控等既有页面保持内网免登录，执行系统使用独立账号
 
 ## 运行入口
 
@@ -195,6 +197,10 @@
 cd textile-device-monitor
 docker compose up -d --build
 ```
+
+默认 Web 入口为 `http://<服务器局域网IP>`，不需要公司 DNS、终端
+`hosts` 或内部证书。正式启用内部 CA 时再叠加
+`textile-device-monitor/docker-compose.https.yml`。
 
 默认会启动：
 

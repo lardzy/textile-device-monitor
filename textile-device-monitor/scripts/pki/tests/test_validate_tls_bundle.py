@@ -325,9 +325,10 @@ class OperationalScriptStaticTests(unittest.TestCase):
         self.assertIn('[string]$ExternalLivePath = "/health/live"', deploy)
         self.assertIn(
             '[string]$InternalReadinessUrl = '
-            '"http://127.0.0.1:8080/backend-ready"',
+            '"http://127.0.0.1:8081/backend-ready"',
             deploy,
         )
+        self.assertIn('"docker-compose.https.yml"', deploy)
         self.assertIn('"wget",', deploy)
         self.assertIn('"-qO-",', deploy)
         self.assertIn("Invoke-ContainerReadinessProbe", deploy)
