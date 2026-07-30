@@ -229,6 +229,7 @@ class ExecutionCredential(Base):
     account_name = Column(String(200))
     encrypted_secret = Column(Text, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
+    revision = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = Column(
         DateTime(timezone=True),
@@ -407,6 +408,11 @@ class ExecutionRun(Base):
         back_populates="run",
         cascade="all, delete-orphan",
     )
+    external_operations = relationship(
+        "ExecutionExternalOperation",
+        back_populates="run",
+        cascade="all, delete-orphan",
+    )
 
 
 class ExecutionNodeRun(Base):
@@ -464,6 +470,12 @@ class ExecutionNodeRun(Base):
     )
     human_task = relationship(
         "ExecutionHumanTask",
+        back_populates="node_run",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    external_operation = relationship(
+        "ExecutionExternalOperation",
         back_populates="node_run",
         uselist=False,
         cascade="all, delete-orphan",
@@ -883,6 +895,120 @@ class ExecutionFileMutation(Base):
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
+    )
+
+
+class ExecutionExternalOperation(Base):
+    """Durable fence for an external-system side effect.
+
+    Creating or approving this row never performs the remote operation.  A
+    future, separately authenticated connector must claim the fence and record
+    a receipt before the waiting node can be completed.
+    """
+
+    __tablename__ = "execution_external_operations"
+    __table_args__ = (
+        UniqueConstraint(
+            "operation_key",
+            name="uq_execution_external_operations_key",
+        ),
+        UniqueConstraint(
+            "node_run_id",
+            name="uq_execution_external_operations_node_run",
+        ),
+        Index(
+            "ix_execution_external_operations_claim",
+            "status",
+            "created_at",
+            "lease_expires_at",
+        ),
+        Index(
+            "ix_execution_external_operations_run_created",
+            "run_id",
+            "created_at",
+        ),
+        Index(
+            "ix_execution_external_operations_account_scope",
+            "account_scope_key",
+        ),
+        Index(
+            "uq_execution_external_operations_active_remote_key",
+            "remote_business_key",
+            unique=True,
+            postgresql_where=text(
+                "status IN "
+                "('prepared', 'approved', 'in_progress', "
+                "'reconciliation_required')"
+            ),
+            sqlite_where=text(
+                "status IN "
+                "('prepared', 'approved', 'in_progress', "
+                "'reconciliation_required')"
+            ),
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    operation_key = Column(String(64), nullable=False)
+    run_id = Column(
+        String(36),
+        ForeignKey("execution_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    node_run_id = Column(
+        String(36),
+        ForeignKey("execution_node_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    connector_key = Column(String(100), nullable=False, index=True)
+    credential_id = Column(
+        String(36),
+        ForeignKey("execution_credentials.id", ondelete="SET NULL"),
+        index=True,
+    )
+    credential_revision = Column(Integer, nullable=False)
+    account_scope_key = Column(String(64), nullable=False)
+    remote_business_key = Column(String(64), nullable=False)
+    status = Column(String(30), nullable=False, default="prepared", index=True)
+    payload_checksum = Column(String(64), nullable=False)
+    request_summary = Column(JSON_VARIANT, nullable=False, default=dict)
+    preflight_expires_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    approved_by_id = Column(
+        String(36),
+        ForeignKey("execution_users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    approved_at = Column(DateTime(timezone=True))
+    approval_expires_at = Column(DateTime(timezone=True))
+    approval_note = Column(Text)
+    fence_token = Column(String(36))
+    lease_owner = Column(String(100))
+    lease_expires_at = Column(DateTime(timezone=True), index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    remote_record_id = Column(String(200))
+    receipt = Column(JSON_VARIANT, nullable=False, default=dict)
+    verification = Column(JSON_VARIANT, nullable=False, default=dict)
+    error_code = Column(String(100))
+    error_message = Column(Text)
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+    run = relationship("ExecutionRun", back_populates="external_operations")
+    node_run = relationship(
+        "ExecutionNodeRun",
+        back_populates="external_operation",
     )
 
 

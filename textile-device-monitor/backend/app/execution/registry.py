@@ -489,6 +489,75 @@ def _register_builtins() -> None:
             publishable=False,
         ),
         NodeType(
+            "external.legacy_regenerated_fiber_count_upload",
+            1,
+            "旧系统上传-再生纤-根数法",
+            "连接器",
+            "生成旧检务系统上传预检单并等待最终人工批准",
+            execution_kind="external_side_effect",
+            required_config=("credential_slot", "selection_node_id"),
+            config_schema=_object_schema(
+                {
+                    "credential_slot": {
+                        "type": "string",
+                        "pattern": r"^[A-Za-z][A-Za-z0-9_.-]{0,99}$",
+                    },
+                    "selection_node_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                    },
+                },
+                required=("credential_slot", "selection_node_id"),
+            ),
+            input_schema=_object_schema(
+                {
+                    "selected_files": {
+                        "type": "array",
+                        "minItems": 1,
+                    },
+                    "primary_file_id": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "primary_file": {"type": ["object", "null"]},
+                },
+                required=("selected_files", "primary_file_id"),
+            ),
+            output_schema=_object_schema(
+                {
+                    "operation_id": {"type": "string"},
+                    "operation_key": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "payload_checksum": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "status": {
+                        "enum": ["prepared", "approved"],
+                    },
+                    "requires_final_approval": {
+                        "type": "boolean",
+                        "const": True,
+                    },
+                    "remote_write_performed": {
+                        "type": "boolean",
+                        "const": False,
+                    },
+                },
+                required=(
+                    "operation_id",
+                    "operation_key",
+                    "payload_checksum",
+                    "status",
+                    "requires_final_approval",
+                    "remote_write_performed",
+                ),
+            ),
+        ),
+        NodeType(
             "external.new_inspection",
             1,
             "新检务系统",

@@ -25,6 +25,7 @@ from app.execution.models import (
 from app.execution.regenerated_fiber_results import (
     _result_executor,
     read_regenerated_fiber_result,
+    summarize_result_inspectors,
 )
 
 
@@ -50,6 +51,7 @@ class RegeneratedFiberResultReaderTests(unittest.TestCase):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "根数法报告1"
+        sheet["I8"] = "张检验员"
         sheet["B24"] = "正面"
         sheet["G24"] = "反面"
         sheet["B25"] = "棉"
@@ -77,6 +79,10 @@ class RegeneratedFiberResultReaderTests(unittest.TestCase):
         )
 
         self.assertTrue(result["has_parts"])
+        self.assertEqual(
+            result["inspector"],
+            {"cell": "I8", "name": "张检验员"},
+        )
         self.assertEqual(
             [(part["name"], part["total"]) for part in result["parts"]],
             [("正面", 97.6), ("反面", 0.0)],
@@ -201,6 +207,7 @@ class RegeneratedFiberResultReaderTests(unittest.TestCase):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "截面统计报告1"
+        sheet["I8"] = "李检验员"
         sheet["B27"] = "棉"
         sheet["C27"] = "粘纤"
         sheet["B28"] = 0.976
@@ -216,6 +223,10 @@ class RegeneratedFiberResultReaderTests(unittest.TestCase):
         )
 
         self.assertFalse(result["has_parts"])
+        self.assertEqual(
+            result["inspector"],
+            {"cell": "I8", "name": "李检验员"},
+        )
         self.assertEqual(len(result["parts"]), 1)
         self.assertEqual(result["parts"][0]["label"], "结果")
         self.assertEqual(result["parts"][0]["total"], 100.0)
@@ -231,6 +242,7 @@ class RegeneratedFiberResultReaderTests(unittest.TestCase):
         path = self.base / "legacy.xls"
         workbook = xlwt.Workbook()
         sheet = workbook.add_sheet("根数法报告1")
+        sheet.write(7, 8, "王检验员")
         sheet.write(23, 1, "部位")
         sheet.write(24, 1, "棉")
         sheet.write(24, 2, 0)
@@ -250,6 +262,10 @@ class RegeneratedFiberResultReaderTests(unittest.TestCase):
 
         self.assertEqual(images, [])
         self.assertEqual(
+            result["inspector"],
+            {"cell": "I8", "name": "王检验员"},
+        )
+        self.assertEqual(
             result["parts"][0]["components"],
             [
                 {
@@ -265,6 +281,82 @@ class RegeneratedFiberResultReaderTests(unittest.TestCase):
         self.assertEqual(
             result["remarks"],
             [{"cell": "B27", "text": "旧版备注"}],
+        )
+
+    def test_ooxml_workbook_renamed_to_xls_uses_actual_container_format(self):
+        original = self.base / "renamed-source.xlsx"
+        path = self.base / "renamed.xls"
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "根数法报告1"
+        sheet["I8"] = "赵检验员"
+        sheet["B25"] = "棉"
+        sheet["B26"] = 100
+        workbook.save(original)
+        workbook.close()
+        original.replace(path)
+
+        result, images = read_regenerated_fiber_result(
+            path,
+            node_type=COUNT_RESULT_NODE,
+        )
+
+        self.assertEqual(images, [])
+        self.assertEqual(
+            result["inspector"],
+            {"cell": "I8", "name": "赵检验员"},
+        )
+        self.assertEqual(result["parts"][0]["total"], 100.0)
+
+    def test_inspector_summary_exposes_multi_file_conflict(self):
+        summary = summarize_result_inspectors(
+            [
+                {
+                    "id": "first",
+                    "read_status": "succeeded",
+                    "result": {
+                        "inspector": {"cell": "I8", "name": "张三"}
+                    },
+                },
+                {
+                    "id": "second",
+                    "read_status": "succeeded",
+                    "result": {
+                        "inspector": {"cell": "I8", "name": " 李四 "}
+                    },
+                },
+                {
+                    "id": "third",
+                    "read_status": "succeeded",
+                    "result": {
+                        "inspector": {"cell": "I8", "name": "张三"}
+                    },
+                },
+                {
+                    "id": "blank",
+                    "read_status": "succeeded",
+                    "result": {"inspector": {"cell": "I8", "name": " "}},
+                },
+                {
+                    "id": "failed",
+                    "read_status": "failed",
+                    "error": {"code": "read_failed"},
+                },
+            ]
+        )
+
+        self.assertTrue(summary["conflict"])
+        self.assertIsNone(summary["name"])
+        self.assertEqual(summary["names"], ["张三", "李四"])
+        self.assertEqual(summary["missing_count"], 1)
+        self.assertEqual(
+            summary["files"],
+            [
+                {"file_id": "first", "name": "张三"},
+                {"file_id": "second", "name": "李四"},
+                {"file_id": "third", "name": "张三"},
+                {"file_id": "blank", "name": None},
+            ],
         )
 
 

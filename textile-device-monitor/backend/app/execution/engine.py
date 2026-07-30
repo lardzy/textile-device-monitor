@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -12,8 +12,13 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
+from app.execution.external_operations import (
+    LEGACY_REGENERATED_COUNT_NODE,
+    prepare_legacy_regenerated_count_operation,
+)
 from app.execution.models import (
     ExecutionEdgeRun,
+    ExecutionExternalOperation,
     ExecutionFileMutation,
     ExecutionFileIndexEntry,
     ExecutionHumanTask,
@@ -47,6 +52,7 @@ RUN_RESULT_ACCEPTING_STATUSES = {
     "queued",
     "running",
     "waiting_human",
+    "waiting_external",
     "paused",
     # A physical publish that was already claimed is an uninterruptible
     # critical section. Cancellation waits for its durable receipt or failure.
@@ -55,6 +61,22 @@ RUN_RESULT_ACCEPTING_STATUSES = {
     # section. Keep accepting only that publish result until it is reconciled.
     "failure_pending",
 }
+
+
+def _deadline_reached(deadline: datetime | None, now: datetime) -> bool:
+    if deadline is None:
+        return False
+    normalized_deadline = (
+        deadline.replace(tzinfo=timezone.utc)
+        if deadline.tzinfo is None
+        else deadline.astimezone(timezone.utc)
+    )
+    normalized_now = (
+        now.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None
+        else now.astimezone(timezone.utc)
+    )
+    return normalized_deadline <= normalized_now
 
 
 @dataclass
@@ -786,6 +808,200 @@ def create_run(
     return run, False
 
 
+def expire_stale_external_operations(
+    db: Session,
+    *,
+    now=None,
+    limit: int = 20,
+) -> int:
+    """Close expired preflight fences without performing a remote side effect.
+
+    Candidate discovery is intentionally lock-free.  Each transition then
+    follows the engine's normal run -> node -> operation lock order so it
+    cannot deadlock with pause/cancel while releasing the remote business key.
+    """
+
+    current_time = now or utcnow()
+    candidates = (
+        db.query(
+            ExecutionExternalOperation.id,
+            ExecutionExternalOperation.run_id,
+            ExecutionExternalOperation.node_run_id,
+        )
+        .filter(
+            or_(
+                and_(
+                    ExecutionExternalOperation.status == "prepared",
+                    ExecutionExternalOperation.preflight_expires_at
+                    <= current_time,
+                ),
+                and_(
+                    ExecutionExternalOperation.status == "approved",
+                    ExecutionExternalOperation.approval_expires_at.is_not(None),
+                    ExecutionExternalOperation.approval_expires_at
+                    <= current_time,
+                ),
+            )
+        )
+        .order_by(
+            ExecutionExternalOperation.created_at.asc(),
+            ExecutionExternalOperation.id.asc(),
+        )
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    expired_count = 0
+    for candidate in candidates:
+        run = (
+            db.query(ExecutionRun)
+            .filter(ExecutionRun.id == candidate.run_id)
+            .populate_existing()
+            .with_for_update(skip_locked=True)
+            .one_or_none()
+        )
+        if run is None:
+            continue
+        node_run = (
+            db.query(ExecutionNodeRun)
+            .filter(
+                ExecutionNodeRun.id == candidate.node_run_id,
+                ExecutionNodeRun.run_id == run.id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        operation = (
+            db.query(ExecutionExternalOperation)
+            .filter(
+                ExecutionExternalOperation.id == candidate.id,
+                ExecutionExternalOperation.run_id == run.id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if operation is None:
+            continue
+
+        if (
+            operation.status == "prepared"
+            and _deadline_reached(
+                operation.preflight_expires_at,
+                current_time,
+            )
+        ):
+            error_code = "external_operation_preflight_expired"
+            error_message = "外部操作预检单已过期，流程已停止，请重新运行"
+        elif (
+            operation.status == "approved"
+            and _deadline_reached(
+                operation.approval_expires_at,
+                current_time,
+            )
+        ):
+            error_code = "external_operation_approval_expired"
+            error_message = "外部操作批准已过期，流程已停止，请重新运行并再次确认"
+        else:
+            continue
+
+        operation.status = "expired"
+        operation.error_code = error_code
+        operation.error_message = error_message
+        operation.completed_at = current_time
+        operation.fence_token = None
+        operation.lease_owner = None
+        operation.lease_expires_at = None
+
+        node_failed = (
+            node_run is not None and node_run.status == "waiting_external"
+        )
+        if node_failed:
+            node_run.status = "failed"
+            node_run.error_code = error_code
+            node_run.error_message = error_message
+            node_run.finished_at = current_time
+            attempts = (
+                db.query(ExecutionNodeAttempt)
+                .filter(
+                    ExecutionNodeAttempt.node_run_id == node_run.id,
+                    ExecutionNodeAttempt.status == "waiting_external",
+                )
+                .with_for_update()
+                .all()
+            )
+            for attempt in attempts:
+                attempt.status = "failed"
+                attempt.error_code = error_code
+                attempt.error_message = error_message
+                attempt.finished_at = current_time
+
+            if run.status not in RUN_TERMINAL_STATUSES:
+                run.error_code = error_code
+                run.error_message = error_message
+                active_publish_nodes = _cancel_failure_siblings(
+                    db,
+                    run=run,
+                    failed_node_id=node_run.id,
+                )
+                append_run_event(
+                    db,
+                    run_id=run.id,
+                    event_type="node.failed",
+                    payload={
+                        "node_id": node_run.node_id,
+                        "code": error_code,
+                        "message": error_message,
+                    },
+                )
+                append_run_event(
+                    db,
+                    run_id=run.id,
+                    event_type=(
+                        "run.failure_pending"
+                        if active_publish_nodes
+                        else (
+                            "run.failure_deferred"
+                            if run.status == "paused"
+                            else "run.failed"
+                        )
+                    ),
+                    payload={
+                        "code": error_code,
+                        "message": error_message,
+                        "uninterruptible_node_ids": [
+                            node.node_id for node in active_publish_nodes
+                        ],
+                    },
+                )
+
+        append_run_event(
+            db,
+            run_id=run.id,
+            event_type="external_operation.expired",
+            payload={
+                "operation_id": operation.id,
+                "node_id": node_run.node_id if node_run is not None else None,
+                "status": operation.status,
+                "code": error_code,
+                "remote_write_performed": False,
+            },
+        )
+        append_audit_log(
+            db,
+            action="external_operation.expire",
+            resource_type="execution_external_operation",
+            resource_id=operation.id,
+            details={
+                "run_id": run.id,
+                "code": error_code,
+                "remote_write_performed": False,
+            },
+        )
+        expired_count += 1
+    return expired_count
+
+
 def claim_next_node(
     db: Session,
     *,
@@ -793,6 +1009,10 @@ def claim_next_node(
     lease_seconds: Optional[int] = None,
 ) -> Optional[ExecutionNodeRun]:
     now = utcnow()
+    if expire_stale_external_operations(db, now=now):
+        # Commit maintenance before acquiring an unrelated run lock.  The
+        # worker loop will immediately scan for ordinary work again.
+        return None
     # API 驱动的物理发布没有 Worker 心跳线程，租约至少保留五分钟，
     # 避免较大的工作簿复制期间被过期回收并产生第二个发布者。
     lease_duration = max(
@@ -807,7 +1027,12 @@ def claim_next_node(
         1,
         int(getattr(settings, "EXECUTION_NODE_MAX_ATTEMPTS", 5)),
     )
-    normal_run_statuses = ["queued", "running", "waiting_human"]
+    normal_run_statuses = [
+        "queued",
+        "running",
+        "waiting_human",
+        "waiting_external",
+    ]
     settling_run_statuses = ["cancel_pending", "failure_pending"]
     exhausted = (
         db.query(ExecutionNodeRun.id)
@@ -1110,7 +1335,12 @@ def claim_publish_node_for_api(
             node_status=node_run.status,
             stage="publish",
         )
-    if run.status not in {"queued", "running", "waiting_human"}:
+    if run.status not in {
+        "queued",
+        "running",
+        "waiting_human",
+        "waiting_external",
+    }:
         raise conflict(
             "mutation_run_not_active",
             "当前流程运行状态不允许开始发布",
@@ -1356,6 +1586,8 @@ def _refresh_run_status(db: Session, run: ExecutionRun) -> None:
         run.finished_at = now
     elif "waiting_human" in statuses:
         run.status = "waiting_human"
+    elif "waiting_external" in statuses:
+        run.status = "waiting_external"
     elif any(status in {"ready", "running", "pending"} for status in statuses):
         run.status = "running" if run.started_at else "queued"
     elif statuses and all(status in {"succeeded", "skipped"} for status in statuses):
@@ -1376,6 +1608,52 @@ def _refresh_run_status(db: Session, run: ExecutionRun) -> None:
             run.error_code = "workflow_end_not_reached"
             run.error_message = "流程所有分支均已结束，但没有到达结束节点"
         run.finished_at = now
+
+
+def _cancel_prepared_external_operations(
+    db: Session,
+    *,
+    run_id: str,
+    node_run_ids: list[str],
+    actor_user_id: Optional[str],
+    reason: str,
+) -> None:
+    if not node_run_ids:
+        return
+    operations = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.run_id == run_id,
+            ExecutionExternalOperation.node_run_id.in_(node_run_ids),
+            ExecutionExternalOperation.status.in_(["prepared", "approved"]),
+        )
+        .order_by(ExecutionExternalOperation.id.asc())
+        .with_for_update()
+        .all()
+    )
+    now = utcnow()
+    for operation in operations:
+        operation.status = "cancelled"
+        operation.error_code = reason
+        operation.error_message = (
+            "流程已取消，预检单不再允许执行"
+            if reason == "run_cancelled"
+            else "同一流程已有节点失败，预检单不再允许执行"
+        )
+        operation.completed_at = now
+        append_run_event(
+            db,
+            run_id=run_id,
+            event_type="external_operation.cancelled",
+            actor_type="user" if actor_user_id else "system",
+            actor_id=actor_user_id,
+            payload={
+                "operation_id": operation.id,
+                "status": operation.status,
+                "reason": reason,
+                "remote_write_performed": False,
+            },
+        )
 
 
 def _cancel_failure_siblings(
@@ -1448,7 +1726,9 @@ def _cancel_failure_siblings(
             db.query(ExecutionNodeAttempt)
             .filter(
                 ExecutionNodeAttempt.node_run_id.in_(cancelled_node_ids),
-                ExecutionNodeAttempt.status.in_(["running", "waiting_human"]),
+                ExecutionNodeAttempt.status.in_(
+                    ["running", "waiting_human", "waiting_external"]
+                ),
             )
             .with_for_update()
             .all()
@@ -1458,6 +1738,13 @@ def _cancel_failure_siblings(
             attempt.error_code = "run_failed"
             attempt.error_message = "同一流程的其它节点已失败"
             attempt.finished_at = now
+        _cancel_prepared_external_operations(
+            db,
+            run_id=run.id,
+            node_run_ids=cancelled_node_ids,
+            actor_user_id=actor_user_id,
+            reason="run_failed",
+        )
 
     for node in nodes:
         if node.id in active_publish_ids:
@@ -1592,6 +1879,76 @@ def _finish_attempt(
     attempt.error_code = error_code
     attempt.error_message = error_message
     attempt.finished_at = utcnow()
+
+
+def _prepare_external_operation_wait(
+    db: Session,
+    context: NodeExecutionContext,
+) -> ExecutionExternalOperation:
+    """Fence an external request and release the ordinary Worker lease.
+
+    This transition intentionally stops before any connector call.  The
+    operation remains durable across Worker/server restarts and requires a
+    separate, explicit approval API call.
+    """
+
+    run, node_run = _lock_run_and_node(db, context.node_run.id)
+    _ensure_run_accepts_result(run)
+    if (
+        node_run.status != "running"
+        or node_run.lease_token != context.lease_token
+    ):
+        raise conflict(
+            "node_lease_lost",
+            "节点租约已失效，不能生成外部操作预检单",
+            node_id=node_run.node_id,
+        )
+    context.run = run
+    context.node_run = node_run
+    operation, reused = prepare_legacy_regenerated_count_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        node=context.node,
+        input_data=context.input_data,
+    )
+    output = {
+        "operation_id": operation.id,
+        "operation_key": operation.operation_key,
+        "payload_checksum": operation.payload_checksum,
+        "status": operation.status,
+        "requires_final_approval": True,
+        "remote_write_performed": False,
+    }
+    node_run.status = "waiting_external"
+    node_run.input_data = context.input_data
+    node_run.output_data = output
+    node_run.lease_owner = None
+    node_run.lease_token = None
+    node_run.lease_expires_at = None
+    _finish_attempt(
+        db,
+        node_run,
+        lease_token=context.lease_token,
+        status="waiting_external",
+        output_data=output,
+    )
+    if run.status != "paused":
+        run.status = "waiting_external"
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type=(
+            "external_operation.reused"
+            if reused
+            else "external_operation.prepared"
+        ),
+        payload={
+            **output,
+            "node_id": node_run.node_id,
+        },
+    )
+    return operation
 
 
 def complete_node(
@@ -1931,6 +2288,9 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
         if node_run.node_type in HUMAN_NODE_TYPES:
             _create_human_task(db, context)
             return
+        if node_run.node_type == LEGACY_REGENERATED_COUNT_NODE:
+            _prepare_external_operation_wait(db, context)
+            return
         executor = node_registry.executor(
             node_run.node_type,
             node_run.node_type_version,
@@ -2224,7 +2584,12 @@ def set_run_control_status(
 ) -> ExecutionRun:
     run = _lock_run(db, run_id)
     if action == "pause":
-        if run.status not in {"queued", "running", "waiting_human"}:
+        if run.status not in {
+            "queued",
+            "running",
+            "waiting_human",
+            "waiting_external",
+        }:
             raise conflict("run_not_pausable", "当前运行不能暂停", status=run.status)
         run.status = "paused"
     elif action == "resume":
@@ -2286,7 +2651,9 @@ def set_run_control_status(
                 db.query(ExecutionNodeAttempt)
                 .filter(
                     ExecutionNodeAttempt.node_run_id.in_(cancelled_node_ids),
-                    ExecutionNodeAttempt.status.in_(["running", "waiting_human"]),
+                    ExecutionNodeAttempt.status.in_(
+                        ["running", "waiting_human", "waiting_external"]
+                    ),
                 )
                 .with_for_update()
                 .all()
@@ -2296,6 +2663,13 @@ def set_run_control_status(
                 attempt.error_code = "run_cancelled"
                 attempt.error_message = "流程运行已取消"
                 attempt.finished_at = now
+            _cancel_prepared_external_operations(
+                db,
+                run_id=run.id,
+                node_run_ids=cancelled_node_ids,
+                actor_user_id=actor.id,
+                reason="run_cancelled",
+            )
         for node in nodes:
             if node.id in active_publish_ids:
                 continue

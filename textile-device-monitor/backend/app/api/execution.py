@@ -55,6 +55,11 @@ from app.execution.engine import (
 )
 from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
+from app.execution.external_operations import (
+    approve_prepared_external_operation,
+    lock_legacy_remote_business_scope,
+    public_external_operation,
+)
 from app.execution.models import (
     ExecutionArtifact,
     ExecutionArtifactRelation,
@@ -62,6 +67,7 @@ from app.execution.models import (
     ExecutionCategory,
     ExecutionCredential,
     ExecutionEvent,
+    ExecutionExternalOperation,
     ExecutionFileMutation,
     ExecutionHumanTask,
     ExecutionIndexJob,
@@ -98,6 +104,7 @@ from app.execution.registry import node_registry
 from app.execution.regenerated_fiber import catalog_recommendations
 from app.execution.schemas import (
     CredentialUpsert,
+    ExternalOperationApprovalRequest,
     FileRefreshRequest,
     HumanTaskClaimRequest,
     HumanTaskDraftRequest,
@@ -235,6 +242,98 @@ def _run_for_auth(
         # Do not reveal another user's run IDs.
         raise not_found("流程运行", run_id)
     return run
+
+
+def _external_operation_for_auth(
+    db: Session,
+    *,
+    operation_id: str,
+    auth: AuthContext,
+) -> tuple[ExecutionExternalOperation, ExecutionRun]:
+    statement = db.query(ExecutionExternalOperation).filter(
+        ExecutionExternalOperation.id == operation_id
+    )
+    operation = statement.one_or_none()
+    if operation is None:
+        raise not_found("外部操作预检单", operation_id)
+    run = _run_for_auth(db, run_id=operation.run_id, auth=auth)
+    return operation, run
+
+
+def _external_operation_for_approval(
+    db: Session,
+    *,
+    operation_id: str,
+    auth: AuthContext,
+) -> tuple[
+    ExecutionExternalOperation,
+    ExecutionRun,
+    ExecutionNodeRun,
+]:
+    """Lock an approval target in the engine-wide run -> node -> op order."""
+
+    locator = (
+        db.query(
+            ExecutionExternalOperation.run_id,
+            ExecutionExternalOperation.node_run_id,
+        )
+        .filter(ExecutionExternalOperation.id == operation_id)
+        .one_or_none()
+    )
+    if locator is None:
+        raise not_found("外部操作预检单", operation_id)
+
+    run = (
+        db.query(ExecutionRun)
+        .filter(ExecutionRun.id == locator.run_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if run is None or (
+        run.created_by_id != auth.user.id and auth.user.role != "admin"
+    ):
+        # audit.read may grant read access to another user's run, but it must
+        # never grant authority to approve that user's external side effect.
+        raise not_found("外部操作预检单", operation_id)
+
+    node_run = (
+        db.query(ExecutionNodeRun)
+        .filter(
+            ExecutionNodeRun.id == locator.node_run_id,
+            ExecutionNodeRun.run_id == run.id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if node_run is None:
+        raise not_found("外部操作预检单", operation_id)
+
+    remote_business_key = lock_legacy_remote_business_scope(
+        db,
+        sample_number=run.inspection_number,
+    )
+    operation = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id == operation_id,
+            ExecutionExternalOperation.run_id == run.id,
+            ExecutionExternalOperation.node_run_id == node_run.id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if operation is None:
+        raise not_found("外部操作预检单", operation_id)
+    if operation.remote_business_key != remote_business_key:
+        raise conflict(
+            "external_operation_run_changed",
+            "预检单与当前流程运行不一致，请刷新后重试",
+            operation_id=operation.id,
+        )
+    return operation, run, node_run
 
 
 def _ensure_workflow_visible(
@@ -783,7 +882,12 @@ def _require_mutation_run_state(
     mutation_id: str,
     completed_statuses: set[str],
 ) -> None:
-    if run.status in {"queued", "running", "waiting_human"}:
+    if run.status in {
+        "queued",
+        "running",
+        "waiting_human",
+        "waiting_external",
+    }:
         return
     if run.status == "completed":
         mutation_status = (
@@ -1419,6 +1523,7 @@ def upsert_credential(
             ExecutionCredential.user_id == auth.user.id,
             ExecutionCredential.system_key == system_key,
         )
+        .with_for_update()
         .one_or_none()
     )
     if record is None:
@@ -1426,11 +1531,13 @@ def upsert_credential(
             user_id=auth.user.id,
             system_key=system_key,
             encrypted_secret=encrypt_credential(payload.secret),
+            revision=1,
         )
         db.add(record)
     else:
         record.encrypted_secret = encrypt_credential(payload.secret)
         record.is_active = True
+        record.revision += 1
     record.account_name = payload.account_name
     db.flush()
     append_audit_log(
@@ -1874,6 +1981,7 @@ def list_runs(
                     "queued",
                     "running",
                     "waiting_human",
+                    "waiting_external",
                     "paused",
                     "cancel_pending",
                     "failure_pending",
@@ -2030,6 +2138,79 @@ def run_event_history(
             "before_id": events[0].id if events else None,
             "after_id": events[-1].id if events else None,
         },
+    }
+
+
+@router.get("/runs/{run_id}/external-operations")
+def list_run_external_operations(
+    run_id: str,
+    auth: AuthContext = Depends(permission("workflow.run")),
+    db: Session = Depends(get_db),
+):
+    run = _run_for_auth(db, run_id=run_id, auth=auth)
+    return {
+        "items": [
+            public_external_operation(operation)
+            for operation in (
+                db.query(ExecutionExternalOperation)
+                .filter(ExecutionExternalOperation.run_id == run.id)
+                .order_by(
+                    ExecutionExternalOperation.created_at.asc(),
+                    ExecutionExternalOperation.id.asc(),
+                )
+                .all()
+            )
+        ]
+    }
+
+
+@router.get("/external-operations/{operation_id}")
+def external_operation_detail(
+    operation_id: str,
+    auth: AuthContext = Depends(permission("workflow.run")),
+    db: Session = Depends(get_db),
+):
+    operation, _run = _external_operation_for_auth(
+        db,
+        operation_id=operation_id,
+        auth=auth,
+    )
+    return public_external_operation(operation)
+
+
+@router.post("/external-operations/{operation_id}/approve")
+def approve_external_operation(
+    operation_id: str,
+    payload: ExternalOperationApprovalRequest,
+    auth: AuthContext = Depends(permission("workflow.run", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    operation, run, node_run = _external_operation_for_approval(
+        db,
+        operation_id=operation_id,
+        auth=auth,
+    )
+    if node_run.status != "waiting_external":
+        raise conflict(
+            "external_operation_node_not_waiting",
+            "外部操作对应节点已不再等待连接器处理",
+            operation_id=operation.id,
+            node_status=node_run.status,
+        )
+    operation, duplicate = approve_prepared_external_operation(
+        db,
+        operation=operation,
+        run=run,
+        actor=auth.user,
+        payload_checksum=payload.payload_checksum,
+        confirmed_sample_number=payload.confirmed_sample_number,
+        note=payload.note,
+    )
+    db.commit()
+    return {
+        "duplicate": duplicate,
+        "operation": public_external_operation(operation),
+        "remote_write_performed": False,
     }
 
 

@@ -137,6 +137,27 @@ export const getExecutionRun = runId =>
 export const getExecutionRunEventHistory = (runId, params = {}) =>
   executionClient.get(`/runs/${runId}/event-history`, { params });
 
+export const getExecutionRunExternalOperations = async runId =>
+  listPayload(
+    await executionClient.get(`/runs/${runId}/external-operations`),
+    ['items', 'external_operations'],
+  );
+
+export const approveExecutionExternalOperation = (
+  operationId,
+  payloadChecksum,
+  confirmedSampleNumber,
+  note,
+) => executionClient.post(
+  `/external-operations/${encodeURIComponent(operationId)}/approve`,
+  {
+    approved: true,
+    payload_checksum: payloadChecksum,
+    confirmed_sample_number: confirmedSampleNumber,
+    ...(note?.trim() ? { note: note.trim() } : {}),
+  },
+);
+
 export const pauseExecutionRun = runId =>
   executionClient.post(`/runs/${runId}/pause`);
 

@@ -19,11 +19,16 @@ from app.execution.models import (
 )
 from app.execution.registry import node_registry
 from app.execution.storage import ArtifactRef, FileGateway, StorageError
+from app.execution.workbook_format import (
+    SUPPORTED_WORKBOOK_SUFFIXES,
+    WorkbookFormat,
+    detect_workbook_format,
+)
 
 
 REGENERATED_FIBER_ROOT_ID = "regenerated_fiber_records"
 NODE_TYPE_VERSION = 1
-WORKBOOK_PROFILE_VERSION = 3
+WORKBOOK_PROFILE_VERSION = 4
 MAX_WORKBOOK_VALIDATION_MATCHES = 50
 DETERMINISTIC_PROFILE_STATUSES = {
     "matched",
@@ -31,16 +36,6 @@ DETERMINISTIC_PROFILE_STATUSES = {
     "content_range_empty",
     "unsupported_format",
 }
-SUPPORTED_WORKBOOK_SUFFIXES = {
-    ".xls",
-    ".xlsx",
-    ".xlsm",
-    ".xlt",
-    ".xltx",
-    ".xltm",
-}
-
-
 @dataclass(frozen=True)
 class RegeneratedFiberRule:
     node_type: str
@@ -112,7 +107,14 @@ def _read_profile(path: Path, rule: RegeneratedFiberRule) -> dict[str, Any]:
         return value
 
     try:
-        if suffix in {".xls", ".xlt"}:
+        workbook_format = detect_workbook_format(path)
+        value["workbook_format"] = (
+            workbook_format.value if workbook_format is not None else None
+        )
+        if workbook_format is None:
+            value["status"] = "unsupported_format"
+            return value
+        if workbook_format is WorkbookFormat.OLE:
             try:
                 import xlrd
             except ImportError:

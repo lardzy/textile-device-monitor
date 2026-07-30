@@ -384,7 +384,12 @@ export default function ExecutionMutationPanel({
   const canWrite = hasPermission('file.write');
   const canPublish = hasPermission('file.publish');
   // 与后端文件变更门禁保持一致；暂停中的运行不能绕过执行器推进写入阶段。
-  const runActive = ['queued', 'running', 'waiting_human'].includes(run?.status);
+  const runActive = [
+    'queued',
+    'running',
+    'waiting_human',
+    'waiting_external',
+  ].includes(run?.status);
 
   return (
     <div className="execution-mutation-panel">

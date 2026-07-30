@@ -56,6 +56,9 @@ from app.execution.engine import (
     set_run_control_status,
 )
 from app.execution.errors import ExecutionApiError
+from app.execution.external_operations import (
+    lock_legacy_remote_business_scope,
+)
 from app.execution.models import (
     ExecutionArtifact,
     ExecutionArtifactRelation,
@@ -98,6 +101,71 @@ if engine.dialect.name != "postgresql":
 
 def _unique(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
+
+
+def test_external_business_scope_uses_one_transaction_lock_per_sample():
+    """A second preflight/approval must wait before taking file/op locks."""
+
+    sample_number = _unique("pg-external-sample")
+    holder = SessionLocal()
+    application_name = _unique("external-business-lock")[:63]
+    contender_started = threading.Event()
+    try:
+        expected_key = lock_legacy_remote_business_scope(
+            holder,
+            sample_number=sample_number,
+        )
+
+        def contend_for_same_sample():
+            db = SessionLocal()
+            try:
+                db.execute(
+                    text(
+                        "SELECT set_config("
+                        "'application_name', :application_name, true)"
+                    ),
+                    {"application_name": application_name},
+                )
+                contender_started.set()
+                result = lock_legacy_remote_business_scope(
+                    db,
+                    sample_number=sample_number,
+                )
+                db.commit()
+                return result
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(contend_for_same_sample)
+            assert contender_started.wait(timeout=10)
+            waiting_on_lock = False
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                wait_event_type = holder.execute(
+                    text(
+                        "SELECT wait_event_type "
+                        "FROM pg_stat_activity "
+                        "WHERE application_name = :application_name "
+                        "AND pid <> pg_backend_pid()"
+                    ),
+                    {"application_name": application_name},
+                ).scalar()
+                if wait_event_type == "Lock":
+                    waiting_on_lock = True
+                    break
+                time.sleep(0.05)
+            assert waiting_on_lock, (
+                "second transaction did not wait on the sample advisory lock"
+            )
+            holder.commit()
+            assert future.result(timeout=10) == expected_key
+    finally:
+        holder.rollback()
+        holder.close()
 
 
 @pytest.fixture

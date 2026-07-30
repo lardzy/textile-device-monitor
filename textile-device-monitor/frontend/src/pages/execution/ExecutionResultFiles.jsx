@@ -84,6 +84,16 @@ const filePathOf = file => (
   || ''
 );
 
+const inspectorNameOf = (file) => {
+  const inspector = resultOf(file)?.inspector;
+  const value = inspector && typeof inspector === 'object'
+    ? inspector.name
+    : inspector;
+  return value === null || value === undefined
+    ? ''
+    : String(value).trim();
+};
+
 const imageNameOf = (image, index) => (
   image?.name
   || image?.filename
@@ -307,6 +317,7 @@ export default function ExecutionResultFiles({
             ? result.remarks.map(remarkTextOf).filter(Boolean)
             : [];
           const images = imageItemsOf(file);
+          const inspectorName = inspectorNameOf(file);
           const warnings = Array.isArray(result.warnings)
             ? result.warnings.filter(Boolean)
             : [];
@@ -338,6 +349,7 @@ export default function ExecutionResultFiles({
                 </div>
                 <Space size={4} wrap>
                   {isPrimary && <Tag color="gold" icon={<StarFilled />}>主单</Tag>}
+                  {inspectorName && <Tag>检验员：{inspectorName}</Tag>}
                   {file.read_status && (
                     <Tag color={readFailed ? 'error' : 'success'}>
                       {readFailed ? '读取失败' : '读取完成'}

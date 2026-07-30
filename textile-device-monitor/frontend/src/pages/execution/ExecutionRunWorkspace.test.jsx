@@ -147,6 +147,130 @@ describe('ExecutionRunWorkspace', () => {
     expect(screen.queryByText(/selected_files/)).not.toBeInTheDocument();
   });
 
+  it('展示旧系统上传预检清单并用完整编号确认本地批准', async () => {
+    let operationStatus = 'prepared';
+    let approvalBody = null;
+    const operation = () => ({
+      id: 'external-operation-1',
+      run_id: 'run-1',
+      node_run_id: 'node-run-upload',
+      status: operationStatus,
+      payload_checksum: 'a'.repeat(64),
+      request_summary: {
+        target_sample_number: '260187115-1',
+        inspector: '辜惠珊',
+        business_fields: {
+          fiber_category: '棉再生纤',
+          inspection_method: '定量',
+          inspection_item: '棉再生纤定量-根数法',
+          inspection_copies: 1,
+        },
+        files: [{
+          id: 'source-file-1',
+          filename: '260187115-根数法.xls',
+          relative_path: '7月/260187115-根数法.xls',
+          size_bytes: 235520,
+          content_sha256: 'b'.repeat(64),
+          is_primary: true,
+        }],
+      },
+      approval: {
+        approved_at: operationStatus === 'approved'
+          ? '2026-07-29T08:00:00Z'
+          : null,
+      },
+    });
+    server.use(
+      http.get('/api/execution/v1/auth/me', () => HttpResponse.json({
+        user: {
+          id: 'u-1',
+          username: 'operator',
+          display_name: '检验员',
+          role: 'user',
+          permissions: ['workflow.read', 'workflow.run'],
+        },
+      })),
+      http.get('/api/execution/v1/auth/csrf', () =>
+        HttpResponse.json({ csrf_token: 'csrf-external' })),
+      http.get('/api/execution/v1/runs/run-1', () => HttpResponse.json({
+        ...completedRun,
+        status: 'waiting_external',
+        nodes: [{
+          id: 'node-run-upload',
+          node_id: 'upload',
+          node_type: 'external.legacy_regenerated_fiber_count_upload',
+          name: '旧系统上传-再生纤-根数法',
+          status: 'waiting_external',
+        }],
+        definition: {
+          ...completedRun.definition,
+          nodes: [{
+            id: 'upload',
+            type: 'external.legacy_regenerated_fiber_count_upload',
+            type_version: 1,
+            name: '旧系统上传-再生纤-根数法',
+            config: {},
+            input_mapping: {},
+            ui: { x: 0, y: 0 },
+          }],
+        },
+      })),
+      http.get('/api/execution/v1/runs/run-1/external-operations', () =>
+        HttpResponse.json({ items: [operation()] })),
+      http.post(
+        '/api/execution/v1/external-operations/external-operation-1/approve',
+        async ({ request }) => {
+          approvalBody = await request.json();
+          operationStatus = 'approved';
+          return HttpResponse.json({
+            duplicate: false,
+            operation: operation(),
+            remote_write_performed: false,
+          });
+        },
+      ),
+    );
+
+    render(
+      <MemoryRouter
+        initialEntries={['/execution/runs/run-1']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <ExecutionAuthProvider>
+          <Routes>
+            <Route path="/execution/runs/:runId" element={<ExecutionRunWorkspace />} />
+          </Routes>
+        </ExecutionAuthProvider>
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '旧系统上传' }));
+    expect(await screen.findByText('260187115-1')).toBeInTheDocument();
+    expect(screen.getByText('辜惠珊')).toBeInTheDocument();
+    expect(screen.getByText('260187115-根数法.xls')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '核对并批准预检单' }));
+    await user.type(
+      screen.getByRole('textbox', { name: '确认样品编号' }),
+      '260187115-1',
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: '审核备注' }),
+      '只批准本地预检',
+    );
+    await user.click(
+      screen.getByRole('button', { name: '批准预检单（当前不上传）' }),
+    );
+
+    await waitFor(() => expect(approvalBody).toEqual({
+      approved: true,
+      payload_checksum: 'a'.repeat(64),
+      confirmed_sample_number: '260187115-1',
+      note: '只批准本地预检',
+    }));
+    expect(await screen.findByText('已批准，等待连接器')).toBeInTheDocument();
+  });
+
   it('同 revision 的 SSE 快照刷新保留未保存选择，revision 更新后恢复服务端草稿', async () => {
     let revision = 2;
     let draftData = {};

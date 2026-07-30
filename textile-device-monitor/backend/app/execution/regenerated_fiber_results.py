@@ -29,18 +29,15 @@ from app.execution.models import (
 from app.execution.persistence import build_file_gateway, storage_root_by_key
 from app.execution.registry import node_registry
 from app.execution.storage import ArtifactRef, FileGateway, StorageError
+from app.execution.workbook_format import (
+    SUPPORTED_WORKBOOK_SUFFIXES,
+    WorkbookFormat,
+    detect_workbook_format,
+)
 
 
 RESULT_NODE_TYPE_VERSION = 1
 IMAGE_ARTIFACT_ROOT_ID = "execution_staging"
-SUPPORTED_RESULT_SUFFIXES = {
-    ".xls",
-    ".xlsx",
-    ".xlsm",
-    ".xlt",
-    ".xltx",
-    ".xltm",
-}
 _PERCENT_NUMBER_FORMAT = re.compile(r"(?<!\\)%")
 
 
@@ -59,6 +56,7 @@ class RegeneratedFiberResultRule:
     node_type: str
     method: str
     worksheet: str
+    inspector_cell: str
     blocks: tuple[ResultBlock, ...]
     remark_rows: tuple[int, ...]
 
@@ -86,6 +84,7 @@ RESULT_RULES = {
         node_type="result.regenerated_fiber_count_method",
         method="count",
         worksheet="根数法报告1",
+        inspector_cell="I8",
         blocks=(
             ResultBlock("left", "B24", 25, 26, 2, 6),
             ResultBlock("right", "G24", 25, 26, 7, 11),
@@ -96,6 +95,7 @@ RESULT_RULES = {
         node_type="result.regenerated_fiber_area_method",
         method="area",
         worksheet="截面统计报告1",
+        inspector_cell="I8",
         blocks=(
             ResultBlock("left", "B26", 27, 28, 2, 6),
             ResultBlock("right", "G26", 27, 28, 7, 11),
@@ -530,9 +530,14 @@ def _build_result(
         for row in rule.remark_rows
         if (value := _text_value(read_cell(f"B{row}").value)) is not None
     ]
+    inspector_name = _component_name(read_cell(rule.inspector_cell).value)
     return {
         "method": rule.method,
         "worksheet": rule.worksheet,
+        "inspector": {
+            "cell": rule.inspector_cell,
+            "name": inspector_name,
+        },
         "has_parts": has_parts,
         "parts": parts,
         "remarks": remarks,
@@ -728,7 +733,7 @@ def read_regenerated_fiber_result(
             "未知的再生纤结果读取规则",
         )
     suffix = path.suffix.casefold()
-    if suffix not in SUPPORTED_RESULT_SUFFIXES:
+    if suffix not in SUPPORTED_WORKBOOK_SUFFIXES:
         raise ExecutionApiError(
             415,
             "result_workbook_format_unsupported",
@@ -736,7 +741,15 @@ def read_regenerated_fiber_result(
             details={"extension": suffix},
         )
     try:
-        if suffix in {".xls", ".xlt"}:
+        workbook_format = detect_workbook_format(path)
+        if workbook_format is None:
+            raise ExecutionApiError(
+                415,
+                "result_workbook_format_unsupported",
+                "无法识别工作簿的实际文件格式",
+                details={"extension": suffix},
+            )
+        if workbook_format is WorkbookFormat.OLE:
             result, images, image_warnings = _read_legacy_workbook(path, rule)
         else:
             result, images, image_warnings = _read_modern_workbook(path, rule)
@@ -752,6 +765,49 @@ def read_regenerated_fiber_result(
     result["warnings"].extend(image_warnings)
     result["image_count"] = len(images)
     return result, images
+
+
+def summarize_result_inspectors(
+    files: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize inspector names without silently resolving a conflict."""
+
+    file_inspectors: list[dict[str, Optional[str]]] = []
+    names: list[str] = []
+    normalized_names: set[str] = set()
+    missing_count = 0
+    for item in files:
+        if item.get("read_status") == "failed":
+            continue
+        result = item.get("result")
+        inspector = (
+            result.get("inspector")
+            if isinstance(result, dict)
+            else None
+        )
+        raw_name = (
+            inspector.get("name")
+            if isinstance(inspector, dict)
+            else None
+        )
+        name = _text_value(raw_name)
+        file_id = str(item.get("id") or "")
+        file_inspectors.append({"file_id": file_id, "name": name})
+        if name is None:
+            missing_count += 1
+            continue
+        normalized = name.casefold()
+        if normalized not in normalized_names:
+            normalized_names.add(normalized)
+            names.append(name)
+    conflict = len(names) > 1
+    return {
+        "name": names[0] if len(names) == 1 else None,
+        "names": names,
+        "conflict": conflict,
+        "missing_count": missing_count,
+        "files": file_inspectors,
+    }
 
 
 def _atomic_image_write(path: Path, data: bytes) -> bool:
@@ -1134,6 +1190,7 @@ def _result_executor(context) -> dict[str, Any]:
         "count": len(output_files),
         "success_count": success_count,
         "failed_count": len(output_files) - success_count,
+        "inspector_summary": summarize_result_inspectors(output_files),
     }
 
 

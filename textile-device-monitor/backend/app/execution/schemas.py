@@ -139,6 +139,15 @@ class NodeRetryRequest(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=1000)
 
 
+class ExternalOperationApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approved: Literal[True]
+    payload_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    confirmed_sample_number: str = Field(min_length=1, max_length=200)
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
 class FileRefreshRequest(BaseModel):
     root_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,99}$")
     # 首版索引边界固定为数据根及一级子目录。共享盘的更深层遍历必须由

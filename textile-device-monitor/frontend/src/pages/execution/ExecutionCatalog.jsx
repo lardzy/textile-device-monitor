@@ -86,6 +86,7 @@ const availabilityOf = (workflow) => {
 const runStatusMeta = {
   running: { color: 'processing', text: '最近运行中' },
   waiting_human: { color: 'warning', text: '等待人工处理' },
+  waiting_external: { color: 'warning', text: '等待旧系统处理' },
   completed: { color: 'success', text: '最近已完成' },
   succeeded: { color: 'success', text: '最近已完成' },
   failed: { color: 'error', text: '最近失败' },

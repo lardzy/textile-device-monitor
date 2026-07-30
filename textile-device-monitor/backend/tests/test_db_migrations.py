@@ -58,7 +58,8 @@ def test_empty_database_upgrades_to_execution_head(tmp_path):
         assert "devices" in tables
         assert "execution_workflows" in tables
         assert "execution_publish_receipts" in tables
-        assert len({name for name in tables if name.startswith("execution_")}) == 27
+        assert "execution_external_operations" in tables
+        assert len({name for name in tables if name.startswith("execution_")}) == 28
     finally:
         engine.dispose()
 
@@ -86,7 +87,7 @@ def test_existing_baseline_is_preflighted_stamped_and_upgraded(tmp_path):
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0003_execution_contract"
+        assert revision == "0004_external_operations"
     finally:
         engine.dispose()
 

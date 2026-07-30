@@ -20,6 +20,7 @@ const STATUS_META = {
   queued: { label: '已排队', icon: <ClockCircleFilled /> },
   running: { label: '执行中', icon: <LoadingOutlined spin /> },
   waiting_human: { label: '等待人工处理', icon: <PauseCircleFilled /> },
+  waiting_external: { label: '等待旧系统处理', icon: <PauseCircleFilled /> },
   paused: { label: '已暂停', icon: <PauseCircleFilled /> },
   succeeded: { label: '已完成', icon: <CheckCircleFilled /> },
   completed: { label: '已完成', icon: <CheckCircleFilled /> },

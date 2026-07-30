@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     EXECUTION_OUTBOX_MAX_ATTEMPTS: int = 10
     EXECUTION_OUTBOX_RETENTION_DAYS: int = 7
     EXECUTION_SSE_MAX_SECONDS: int = 300
+    EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES: int = 30
+    EXECUTION_EXTERNAL_APPROVAL_TTL_MINUTES: int = 15
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -377,6 +379,16 @@ class Settings(BaseSettings):
         if self.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS < 15:
             raise RuntimeError(
                 "Production worker heartbeat timeout must be at least 15 seconds"
+            )
+        if not 1 <= self.EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES <= 1440:
+            raise RuntimeError(
+                "Production external preflight TTL must be between 1 and "
+                "1440 minutes"
+            )
+        if not 1 <= self.EXECUTION_EXTERNAL_APPROVAL_TTL_MINUTES <= 1440:
+            raise RuntimeError(
+                "Production external approval TTL must be between 1 and "
+                "1440 minutes"
             )
         bootstrap_password = self.EXECUTION_BOOTSTRAP_ADMIN_PASSWORD.strip()
         if bootstrap_password and (

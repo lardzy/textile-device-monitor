@@ -47,6 +47,7 @@ import {
 } from '../../utils/executionWorkflow';
 import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
+import ExecutionExternalOperationPanel from './ExecutionExternalOperationPanel';
 import ExecutionMutationPanel from './ExecutionMutationPanel';
 import ExecutionResultFiles, {
   extractExecutionResultFiles,
@@ -66,6 +67,7 @@ const RUN_STATUS = {
   queued: { label: '已排队', color: 'processing' },
   running: { label: '执行中', color: 'processing' },
   waiting_human: { label: '等待人工处理', color: 'warning' },
+  waiting_external: { label: '等待旧系统处理', color: 'warning' },
   paused: { label: '已暂停', color: 'warning' },
   cancel_pending: { label: '发布收尾后取消', color: 'warning' },
   failure_pending: { label: '发布核对后失败', color: 'error' },
@@ -370,6 +372,10 @@ export default function ExecutionRunWorkspace() {
   const globalVariables = run.global_data || {};
   const resultFiles = extractExecutionResultFiles(snapshot.outputs);
   const primaryResultFileId = extractPrimaryFileId(snapshot.outputs);
+  const hasExternalOperations = (snapshot.definition.nodes || []).some(node => (
+    (node.data?.nodeType || node.node_type || node.type)
+      === 'external.legacy_regenerated_fiber_count_upload'
+  ));
 
   const actions = (
     <Space>
@@ -483,6 +489,18 @@ export default function ExecutionRunWorkspace() {
         />
       ),
     },
+    ...(hasExternalOperations ? [{
+      key: 'external-operations',
+      label: '旧系统上传',
+      children: (
+        <ExecutionExternalOperationPanel
+          runId={runId}
+          refreshKey={run.updated_at}
+          canApprove={canRunWorkflow}
+          onChanged={() => loadSnapshot({ quiet: true })}
+        />
+      ),
+    }] : []),
     {
       key: 'events',
       label: `时间线 ${snapshot.events.length || ''}`,

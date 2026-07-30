@@ -42,6 +42,7 @@ const statusMeta = {
   queued: { label: '已排队', color: 'processing', icon: <ClockCircleOutlined /> },
   running: { label: '执行中', color: 'processing', icon: <LoadingOutlined spin /> },
   waiting_human: { label: '等待人工处理', color: 'warning', icon: <ClockCircleOutlined /> },
+  waiting_external: { label: '等待旧系统处理', color: 'warning', icon: <ClockCircleOutlined /> },
   paused: { label: '已暂停', color: 'warning', icon: <ClockCircleOutlined /> },
   cancel_pending: { label: '正在安全取消', color: 'warning', icon: <ClockCircleOutlined /> },
   failure_pending: { label: '失败收尾中', color: 'error', icon: <WarningOutlined /> },
@@ -56,6 +57,9 @@ const terminalStatuses = new Set(['completed', 'succeeded', 'failed', 'cancelled
 const actionLabel = (status) => {
   if (status === 'waiting_human') {
     return '继续处理';
+  }
+  if (status === 'waiting_external') {
+    return '查看上传清单';
   }
   if (terminalStatuses.has(status)) {
     return '查看结果';

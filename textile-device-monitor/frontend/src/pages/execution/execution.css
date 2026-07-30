@@ -620,6 +620,7 @@
 
 .execution-flow-node__status.is-running { color: #315efb; }
 .execution-flow-node__status.is-waiting_human,
+.execution-flow-node__status.is-waiting_external,
 .execution-flow-node__status.is-paused { color: #bd741b; }
 .execution-flow-node__status.is-completed,
 .execution-flow-node__status.is-succeeded { color: #21875a; }

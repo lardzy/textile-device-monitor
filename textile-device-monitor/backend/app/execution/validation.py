@@ -693,6 +693,7 @@ def validate_definition(
         )
         credential_slots = []
     credential_names: set[str] = set()
+    credential_system_by_name: dict[str, str] = {}
     for index, slot in enumerate(credential_slots):
         path = f"$.credential_slots[{index}]"
         if not isinstance(slot, dict):
@@ -724,6 +725,8 @@ def validate_definition(
             )
         else:
             credential_names.add(name)
+            if isinstance(system_key, str):
+                credential_system_by_name[name] = system_key
         if system_key not in {"legacy_inspection", "new_inspection"}:
             issues.append(
                 ValidationIssue(
@@ -1004,6 +1007,99 @@ def validate_definition(
                     "branch_default_required",
                     "条件分支必须且只能有一条 default 出边",
                     f"$.nodes[{source_id}]",
+                )
+            )
+
+    external_upload_nodes = [
+        (node_id, node)
+        for node_id, node in node_by_id.items()
+        if node.get("type")
+        == "external.legacy_regenerated_fiber_count_upload"
+    ]
+    for external_id, external_node in external_upload_nodes:
+        config = external_node.get("config") or {}
+        credential_slot = config.get("credential_slot")
+        if (
+            not isinstance(credential_slot, str)
+            or credential_system_by_name.get(credential_slot)
+            != "legacy_inspection"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_credential_slot_invalid",
+                    "旧系统上传节点必须引用 legacy_inspection 凭据槽位",
+                    f"$.nodes[{external_id}].config.credential_slot",
+                )
+            )
+
+        selection_id = config.get("selection_node_id")
+        selection_node = node_by_id.get(selection_id)
+        if (
+            selection_node is None
+            or selection_node.get("type") != "human.file_selection"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_selection_node_invalid",
+                    "旧系统上传节点必须引用人工文件选择节点",
+                    f"$.nodes[{external_id}].config.selection_node_id",
+                )
+            )
+            continue
+        mapping = external_node.get("input_mapping") or {}
+        expected_selected = (
+            f"$.nodes.{selection_id}.output.selected_files"
+        )
+        expected_primary = (
+            f"$.nodes.{selection_id}.output.primary_file_id"
+        )
+        if mapping.get("selected_files") != expected_selected:
+            issues.append(
+                ValidationIssue(
+                    "legacy_selected_files_mapping_invalid",
+                    "旧系统上传只能使用人工选择节点签发的文件列表",
+                    f"$.nodes[{external_id}].input_mapping.selected_files",
+                )
+            )
+        if mapping.get("primary_file_id") != expected_primary:
+            issues.append(
+                ValidationIssue(
+                    "legacy_primary_file_mapping_invalid",
+                    "旧系统上传只能使用人工选择节点确认的主单",
+                    f"$.nodes[{external_id}].input_mapping.primary_file_id",
+                )
+            )
+
+        selection_files_mapping = (
+            selection_node.get("input_mapping") or {}
+        ).get("files")
+        if (
+            not isinstance(selection_files_mapping, str)
+            or not selection_files_mapping.startswith("$.nodes.")
+            or not selection_files_mapping.endswith(".output.files")
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_result_files_mapping_invalid",
+                    "人工选择节点必须接收根数法结果读取节点的文件",
+                    f"$.nodes[{selection_id}].input_mapping.files",
+                )
+            )
+            continue
+        source_id = selection_files_mapping[
+            len("$.nodes.") : -len(".output.files")
+        ]
+        source_node = node_by_id.get(source_id)
+        if (
+            source_node is None
+            or source_node.get("type")
+            != "result.regenerated_fiber_count_method"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_result_node_invalid",
+                    "旧系统根数法上传必须来自再生纤根数法结果读取节点",
+                    f"$.nodes[{selection_id}].input_mapping.files",
                 )
             )
 

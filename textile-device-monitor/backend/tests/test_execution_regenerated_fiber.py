@@ -262,6 +262,49 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
             "worksheet_missing",
         )
 
+    def test_profile_reader_uses_container_magic_when_extension_is_misleading(
+        self,
+    ):
+        rule = REGENERATED_FIBER_RULES[COUNT_NODE]
+        ooxml_source = self._xlsx(
+            "260012-source.xlsx",
+            sheet_name=rule.worksheet,
+            values=[1],
+        )
+        ooxml_as_xls = self.root_path / "260012-renamed.xls"
+        ooxml_source.replace(ooxml_as_xls)
+
+        ooxml_profile = _read_profile(ooxml_as_xls, rule)
+
+        self.assertEqual(ooxml_profile["status"], "matched")
+        self.assertEqual(ooxml_profile["workbook_format"], "ooxml")
+        self.assertEqual(ooxml_profile["rule_version"], 4)
+
+        ole_source = self._xls(
+            "260012-source.xls",
+            sheet_name=rule.worksheet,
+            values=[1],
+        )
+        ole_as_xlsx = self.root_path / "260012-renamed.xlsx"
+        ole_source.replace(ole_as_xlsx)
+
+        ole_profile = _read_profile(ole_as_xlsx, rule)
+
+        self.assertEqual(ole_profile["status"], "matched")
+        self.assertEqual(ole_profile["workbook_format"], "ole")
+
+    def test_zip_header_without_ooxml_workbook_members_is_rejected(self):
+        path = self.root_path / "260012-not-a-workbook.xlsx"
+        path.write_bytes(b"PK\x03\x04not-a-valid-ooxml-package")
+
+        profile = _read_profile(
+            path,
+            REGENERATED_FIBER_RULES[COUNT_NODE],
+        )
+
+        self.assertEqual(profile["status"], "unsupported_format")
+        self.assertIsNone(profile["workbook_format"])
+
     def test_same_file_must_satisfy_all_conditions(self):
         empty = self._xlsx(
             "260002-empty.xlsx",
