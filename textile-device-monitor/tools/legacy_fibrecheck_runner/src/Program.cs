@@ -86,6 +86,14 @@ namespace LegacyFibreCheckRunner
                         i++; break;
                     case "--out":
                         options.OutputPath = value; i++; break;
+                    case "--dry-run-upload":
+                        options.DryRunUpload = true; break;
+                    case "--target-sample-number":
+                        options.TargetSampleNumber = value; i++; break;
+                    case "--source-file-name":
+                        options.SourceFileName = value; i++; break;
+                    case "--source-inspection-number":
+                        options.SourceInspectionNumber = value; i++; break;
                     case "--password-stdin":
                         passwordFromStdin = true; break;
                     default:
@@ -97,6 +105,12 @@ namespace LegacyFibreCheckRunner
             if (string.IsNullOrWhiteSpace(options.FibreCheckDir) || string.IsNullOrWhiteSpace(options.Account))
             {
                 error = "--fibrecheck-dir 与 --account 为必填项";
+                return false;
+            }
+
+            if (options.DryRunUpload && string.IsNullOrWhiteSpace(options.TargetSampleNumber))
+            {
+                error = "--dry-run-upload 模式必须提供 --target-sample-number";
                 return false;
             }
 

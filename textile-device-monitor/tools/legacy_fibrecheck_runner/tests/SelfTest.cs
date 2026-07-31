@@ -19,6 +19,9 @@ namespace LegacyFibreCheckRunner.Tests
             TestPasswordMismatch();
             TestPermissionDenied();
             TestInspectorAmbiguous();
+            TestDryRunHappyPath();
+            TestDryRunConflict();
+            TestDryRunInvalidNumber();
 
             if (_failures > 0)
             {
@@ -63,7 +66,7 @@ namespace LegacyFibreCheckRunner.Tests
             public readonly List<string> Executed = new List<string>();
             public bool RolledBack;
             private readonly List<KeyValuePair<string, Func<DataTable>>> _tables = new List<KeyValuePair<string, Func<DataTable>>>();
-            private readonly List<KeyValuePair<string, Func<object>>> _scalars = new List<KeyValuePair<string, Func<object>>>();
+            private readonly List<KeyValuePair<string, Func<IList<DbParam>, object>>> _scalars = new List<KeyValuePair<string, Func<IList<DbParam>, object>>>();
 
             public void OnTable(string fragment, Func<DataTable> table)
             {
@@ -73,8 +76,13 @@ namespace LegacyFibreCheckRunner.Tests
 
             public void OnScalar(string fragment, Func<object> value)
             {
+                OnScalarP(fragment, _ => value());
+            }
+
+            public void OnScalarP(string fragment, Func<IList<DbParam>, object> value)
+            {
                 _scalars.RemoveAll(p => p.Key == fragment);
-                _scalars.Add(new KeyValuePair<string, Func<object>>(fragment, value));
+                _scalars.Add(new KeyValuePair<string, Func<IList<DbParam>, object>>(fragment, value));
             }
 
             public void OpenReadOnly() { Executed.Add(OdpNetDb.ReadOnlyTransactionSql); }
@@ -94,7 +102,7 @@ namespace LegacyFibreCheckRunner.Tests
                 Executed.Add(sql);
                 foreach (var pair in _scalars)
                 {
-                    if (sql.Contains(pair.Key)) { return pair.Value(); }
+                    if (sql.Contains(pair.Key)) { return pair.Value(parameters); }
                 }
                 return null;
             }
@@ -241,6 +249,70 @@ namespace LegacyFibreCheckRunner.Tests
             Check(exit == ExitCodes.InspectorMappingFailed, "检验员歧义退出码");
             var mappings = (List<object>)document["inspector_mappings"];
             Check(Equals(((SortedDictionary<string, object>)mappings[0])["status"], "ambiguous"), "检验员歧义状态");
+        }
+
+        private static RunnerOptions DryRunOptions()
+        {
+            var options = HappyOptions();
+            options.DryRunUpload = true;
+            options.TargetSampleNumber = "260187115-1";
+            options.SourceFileName = "260187115-辜-根数法-定量试验原始记录-新系统.xls";
+            options.SourceInspectionNumber = "260187115";
+            return options;
+        }
+
+        private static void ExtendForDryRun(FakeDb fake, int exactCount, int containsCount)
+        {
+            fake.OnScalarP("KeyValues", p => p[0].Value.ToString() == "FileServer" ? (object)"\\\\server\\share\\" : 1);
+            fake.OnScalar("FileDirectory", () => "OriginalData");
+            fake.OnScalar("SYSDATE", () => new DateTime(2026, 7, 30));
+            fake.OnScalar("sw.\"SampleNo\" = :sampleno", () => exactCount);
+            fake.OnScalar(":contains", () => containsCount);
+            fake.OnScalar(":prefix", () => 1);
+        }
+
+        private static void TestDryRunHappyPath()
+        {
+            var fake = BuildHappyFake(Redact.EncryptByMd5("Abc12345"));
+            ExtendForDryRun(fake, 0, 0);
+            SortedDictionary<string, object> document;
+            int exit = LegacyLoginFlow.Run(DryRunOptions(), conn => fake, out document);
+            Check(exit == ExitCodes.Ok, "dry-run 退出码");
+            var absence = (SortedDictionary<string, object>)document["remote_absence"];
+            Check(Equals(absence["exact_count"], 0) && Equals(absence["contains_count"], 0), "dry-run 远端缺失");
+            var manifest = (SortedDictionary<string, object>)document["manifest"];
+            var insert = (SortedDictionary<string, object>)((SortedDictionary<string, object>)manifest["would_insert_record"])["fields"];
+            Check(Equals(insert["SampleNo"], "260187115-1"), "dry-run 目标编号");
+            Check(Equals(insert["CheckUserItem1"], "棉再生纤定量-根数法"), "dry-run 固定业务字段");
+            Check(insert["CheckUser1"].ToString().StartsWith("sha256:"), "dry-run 检验员散列");
+            var copy = (SortedDictionary<string, object>)manifest["would_copy_file"];
+            Check(copy["file_server"].ToString().Contains("server"), "dry-run 文件服务器解析");
+            string json = MiniJson.Write(document);
+            Check(!json.Contains("STAFF-9") && !json.Contains("STAFF-1"), "dry-run 内部 ID 不泄漏");
+            Check(fake.Executed.All(sql => sql == OdpNetDb.ReadOnlyTransactionSql
+                || sql.TrimStart().StartsWith("Select", StringComparison.OrdinalIgnoreCase)
+                || sql.TrimStart().StartsWith("SELECT")), "dry-run 仅 SELECT");
+        }
+
+        private static void TestDryRunConflict()
+        {
+            var fake = BuildHappyFake(Redact.EncryptByMd5("Abc12345"));
+            ExtendForDryRun(fake, 1, 0);
+            SortedDictionary<string, object> document;
+            int exit = LegacyLoginFlow.Run(DryRunOptions(), conn => fake, out document);
+            Check(exit == ExitCodes.DryRunConflict, "dry-run 冲突退出码");
+        }
+
+        private static void TestDryRunInvalidNumber()
+        {
+            var fake = BuildHappyFake(Redact.EncryptByMd5("Abc12345"));
+            ExtendForDryRun(fake, 0, 0);
+            var options = DryRunOptions();
+            options.TargetSampleNumber = "bad' OR 1=1";
+            SortedDictionary<string, object> document;
+            int exit = LegacyLoginFlow.Run(options, conn => fake, out document);
+            Check(exit == ExitCodes.InvalidSampleNumber, "dry-run 非法编号退出码");
+            Check(!fake.Executed.Any(sql => sql.Contains("bad' OR 1=1")), "非法编号不进入 SQL");
         }
     }
 }

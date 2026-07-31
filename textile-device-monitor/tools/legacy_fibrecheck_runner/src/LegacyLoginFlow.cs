@@ -15,6 +15,8 @@ namespace LegacyFibreCheckRunner
         public const int PermissionDenied = 14;
         public const int InspectorMappingFailed = 15;
         public const int RegionNotSupported = 16;
+        public const int DryRunConflict = 17;
+        public const int InvalidSampleNumber = 18;
     }
 
     internal sealed class RunnerOptions
@@ -27,6 +29,12 @@ namespace LegacyFibreCheckRunner
         public string OutputPath = "-";
         /// <summary>测试注入用；为空时从旧程序 SystemData 反射读取 DbConnString。</summary>
         public Func<string> ConnectionStringResolver;
+
+        /// <summary>dry-run 上传核验模式：仍零写入，只生成最终变更清单。</summary>
+        public bool DryRunUpload;
+        public string TargetSampleNumber;
+        public string SourceFileName;
+        public string SourceInspectionNumber;
     }
 
     /// <summary>
@@ -86,6 +94,26 @@ namespace LegacyFibreCheckRunner
         private const string InspectorSql =
             "Select \"ID\", \"ChineseName\", \"IsDeleted\" From \"User\" " +
             "Where \"IsDeleted\"!=1 and \"ChineseName\" = :chinesename";
+
+        private const string SysDateSql = "SELECT SYSDATE FROM DUAL";
+
+        private const string KeyValueSql =
+            "select \"InfoValue\" from \"KeyValues\" where \"InfoKey\" = :infokey";
+
+        private const string FileDirectorySql =
+            "SELECT \"InfoValue\" FROM \"FileDirectory\" WHERE \"InfoKey\" = :infokey";
+
+        private const string ExactSampleCountSql =
+            "SELECT COUNT(*) FROM \"SpecialWoolManage\" sw WHERE sw.\"SampleNo\" = :sampleno";
+
+        private const string ContainsSampleCountSql =
+            "SELECT COUNT(*) FROM \"SpecialWoolManage\" sw WHERE sw.\"SampleNo\" LIKE :contains ESCAPE '\\'";
+
+        private const string PrefixSampleCountSql =
+            "SELECT COUNT(*) FROM \"SpecialWoolManage\" sw WHERE sw.\"SampleNo\" LIKE :prefix ESCAPE '\\'";
+
+        private static readonly System.Text.RegularExpressions.Regex SampleNoPattern =
+            new System.Text.RegularExpressions.Regex(@"^[0-9A-Z]{9,20}(?:-[0-9A-Z]{1,8})?$");
 
         private sealed class StaffContext
         {
@@ -268,13 +296,20 @@ namespace LegacyFibreCheckRunner
                     }
 
                     // 6) 检验员中文名 -> User ID 唯一映射
+                    Dictionary<string, string> inspectorIds = new Dictionary<string, string>();
                     if (options.InspectorNames.Count > 0)
                     {
-                        bool allMapped = MapInspectors(db, options.InspectorNames, document);
+                        bool allMapped = MapInspectors(db, options.InspectorNames, document, inspectorIds);
                         if (!allMapped)
                         {
                             return ExitCodes.InspectorMappingFailed;
                         }
+                    }
+
+                    // 7) dry-run 上传核验（仍零写入，只生成最终变更清单）
+                    if (options.DryRunUpload)
+                    {
+                        return RunDryRunUpload(db, options, staff, inspectorIds, document, notes);
                     }
                 }
                 return ExitCodes.Ok;
@@ -376,7 +411,7 @@ namespace LegacyFibreCheckRunner
             return granted ? ExitCodes.Ok : ExitCodes.PermissionDenied;
         }
 
-        private static bool MapInspectors(ILegacyDb db, List<string> names, SortedDictionary<string, object> document)
+        private static bool MapInspectors(ILegacyDb db, List<string> names, SortedDictionary<string, object> document, Dictionary<string, string> resolvedIds)
         {
             var mappings = new List<object>();
             bool allUnique = true;
@@ -389,7 +424,9 @@ namespace LegacyFibreCheckRunner
                     if (table.Rows.Count == 1)
                     {
                         status = "unique";
-                        idHash = Redact.HashId(Convert.ToString(table.Rows[0]["ID"]));
+                        string rawId = Convert.ToString(table.Rows[0]["ID"]);
+                        idHash = Redact.HashId(rawId);
+                        resolvedIds[name] = rawId;
                     }
                     else
                     {
@@ -406,6 +443,126 @@ namespace LegacyFibreCheckRunner
             }
             document["inspector_mappings"] = mappings;
             return allUnique;
+        }
+
+        internal static bool IsValidSampleNo(string value)
+        {
+            return !string.IsNullOrWhiteSpace(value) && SampleNoPattern.IsMatch(value);
+        }
+
+        /// <summary>
+        /// dry-run：核验目标编号远端缺失、解析文件服务器配置，生成"将复制什么、
+        /// 将创建什么"的最终清单。全程只读；目标已存在时返回 DryRunConflict。
+        /// </summary>
+        private static int RunDryRunUpload(
+            ILegacyDb db,
+            RunnerOptions options,
+            StaffContext staff,
+            Dictionary<string, string> inspectorIds,
+            SortedDictionary<string, object> document,
+            List<object> notes)
+        {
+            string target = options.TargetSampleNumber;
+            if (!IsValidSampleNo(target))
+            {
+                notes.Add("target_sample_number: 编号格式不合法（须为 9-20 位大写字母/数字，可加 -后缀）");
+                return ExitCodes.InvalidSampleNumber;
+            }
+            if (string.IsNullOrWhiteSpace(options.SourceFileName))
+            {
+                notes.Add("source_file_name: dry-run 模式必须提供待上传文件名");
+                return ExitCodes.UsageError;
+            }
+
+            // 远端缺失核验：精确匹配 + 与旧客户端 GetByReportNo 相同的 Contains 语义
+            int exact = Convert.ToInt32(db.Scalar(ExactSampleCountSql, new List<DbParam> { new DbParam("sampleno", target) }) ?? 0);
+            int contains = Convert.ToInt32(db.Scalar(ContainsSampleCountSql, new List<DbParam> { new DbParam("contains", "%" + target + "%") }) ?? 0);
+            string familyPrefix = target.Substring(0, Math.Min(9, target.Length));
+            int family = Convert.ToInt32(db.Scalar(PrefixSampleCountSql, new List<DbParam> { new DbParam("prefix", familyPrefix + "%") }) ?? 0);
+
+            document["remote_absence"] = new SortedDictionary<string, object>
+            {
+                { "target_sample_number", target },
+                { "exact_count", exact },
+                { "contains_count", contains },
+                { "family_prefix", familyPrefix },
+                { "family_count", family },
+            };
+            if (exact != 0 || contains != 0)
+            {
+                notes.Add("remote_absence: 目标编号在远端已存在（精确 " + exact + " / 包含 " + contains + "），禁止重复创建");
+                return ExitCodes.DryRunConflict;
+            }
+
+            // 源记录上下文（可选）
+            if (!string.IsNullOrWhiteSpace(options.SourceInspectionNumber))
+            {
+                if (!IsValidSampleNo(options.SourceInspectionNumber))
+                {
+                    notes.Add("source_inspection_number: 编号格式不合法");
+                    return ExitCodes.InvalidSampleNumber;
+                }
+                int sourceCount = Convert.ToInt32(db.Scalar(ExactSampleCountSql, new List<DbParam> { new DbParam("sampleno", options.SourceInspectionNumber) }) ?? 0);
+                document["source_record"] = new SortedDictionary<string, object>
+                {
+                    { "source_inspection_number", options.SourceInspectionNumber },
+                    { "exact_count", sourceCount },
+                };
+            }
+
+            // 文件服务器配置：目标目录 = FileServer + OriginalData + Files\年\月\日\SpecialWool
+            object fileServer = db.Scalar(KeyValueSql, new List<DbParam> { new DbParam("infokey", "FileServer") });
+            object originalData = db.Scalar(FileDirectorySql, new List<DbParam> { new DbParam("infokey", "OriginalData") });
+            object sysDate = db.Scalar(SysDateSql, new List<DbParam>());
+            DateTime serverDate = sysDate is DateTime ? (DateTime)sysDate : DateTime.MinValue;
+            string fileServerText = fileServer == null || fileServer == DBNull.Value ? string.Empty : fileServer.ToString();
+            string originalDataText = originalData == null || originalData == DBNull.Value ? string.Empty : originalData.ToString();
+            if (string.IsNullOrWhiteSpace(fileServerText) || string.IsNullOrWhiteSpace(originalDataText))
+            {
+                notes.Add("file_server_config: 无法解析 FileServer/OriginalData 配置");
+                return ExitCodes.InfrastructureError;
+            }
+
+            string inspectorId = inspectorIds.Count > 0 ? new List<string>(inspectorIds.Values)[0] : null;
+            var manifest = new SortedDictionary<string, object>
+            {
+                { "would_insert_record", new SortedDictionary<string, object>
+                    {
+                        { "table", "SpecialWoolManage" },
+                        { "entity_state", "Detached->AddObject" },
+                        { "fields", new SortedDictionary<string, object>
+                            {
+                                { "ID", "<保存时生成 36 位带连字符 GUID>" },
+                                { "SampleNo", target },
+                                { "FibreSort", "棉再生纤" },
+                                { "CheckWay", "定量" },
+                                { "CheckUser1", inspectorId == null ? "<未提供检验员>" : Redact.HashId(inspectorId) + " (由 I8 中文名唯一映射)" },
+                                { "CheckUserItem1", "棉再生纤定量-根数法" },
+                                { "CheckUserNumber1", 1 },
+                                { "ReviewUserNumber1", 1 },
+                                { "FilePath", options.SourceFileName },
+                                { "FileType", "定量试验" },
+                                { "CreateUser", Redact.HashId(staff.Id) + " (登录账号人员)" },
+                                { "CreateTime", "<保存时 SELECT SYSDATE FROM DUAL>" },
+                            }
+                        },
+                    }
+                },
+                { "would_copy_file", new SortedDictionary<string, object>
+                    {
+                        { "file_name", options.SourceFileName },
+                        { "file_server", fileServerText },
+                        { "target_dir_pattern", fileServerText + originalDataText + "\\Files\\<年>\\<月>\\<日>\\SpecialWool\\（日期取保存时服务器日期）" },
+                        { "predicted_target_dir_today", fileServerText + originalDataText + "\\Files\\" + serverDate.Year + "\\" + serverDate.Month + "\\" + serverDate.Day + "\\SpecialWool\\" },
+                        { "target_file", "<target_dir>\\" + options.SourceFileName },
+                        { "overwrite_behavior", "File.Copy(overwrite: true)：同名文件将被覆盖（旧客户端既有行为）" },
+                    }
+                },
+            };
+            document["manifest"] = manifest;
+            document["server_date"] = serverDate == DateTime.MinValue ? null : serverDate.ToString("yyyy-MM-dd");
+            notes.Add("dry_run: 未执行任何写入；清单需经用户确认后才可进入真实写入阶段");
+            return ExitCodes.Ok;
         }
 
         /// <summary>与 GetParentDepartmentListSQL 一致：0004-0005-0006 -> [0004, 0004-0005]。</summary>

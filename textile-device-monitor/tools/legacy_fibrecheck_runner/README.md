@@ -52,6 +52,29 @@ $env:FIBRECHECK_RUNNER_PASSWORD = '...'
 - `--inspector-names` 以逗号分隔，逐一要求中文姓名在 `User` 表中唯一解析。
 - `--out -` 输出到标准输出。
 
+## dry-run 上传核验模式
+
+在只读登录核验之后，追加“将复制什么、将创建什么”的最终清单，仍零写入：
+
+```powershell
+.\out\FibreCheckRunner.exe `
+  --fibrecheck-dir "C:\path\to\FibreCheck" `
+  --account lisy `
+  --inspector-names "辜惠珊" `
+  --dry-run-upload `
+  --source-inspection-number 260187115 `
+  --target-sample-number 260187115-1 `
+  --source-file-name "260187115-辜-根数法-定量试验原始记录（原号905-924）20190122-新系统.xls" `
+  --out ".\dry-run.json"
+```
+
+- 目标编号按与探针相同的严格规则校验（9–20 位大写字母/数字，可加 `-` 后缀）。
+- 远端缺失核验包含精确匹配和与旧客户端 `GetByReportNo` 相同的 Contains 语义，
+  任一命中即返回退出码 17。
+- 清单含 `SpecialWoolManage` 拟定字段（固定业务字段、检验员 ID 散列、登录人
+  散列）和文件复制计划（FileServer 配置、目标目录规则、覆盖行为说明）。
+- 输出 JSON 含文件服务器内网路径，属受控证据，只应保存在受控目录，不入 Git。
+
 ## 退出码
 
 | 码 | 含义 |
@@ -66,6 +89,8 @@ $env:FIBRECHECK_RUNNER_PASSWORD = '...'
 | 14 | 目标功能未授权 |
 | 15 | 检验员映射失败（缺失或歧义） |
 | 16 | 非番禺账号（未支持区域） |
+| 17 | dry-run 冲突：目标编号远端已存在 |
+| 18 | 样品编号格式不合法 |
 
 ## 复现的登录链（与旧客户端逐步对应）
 
