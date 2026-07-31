@@ -661,6 +661,7 @@ def create_run(
     idempotency_key: str,
     mode: str = "live",
     draft_definition: Optional[dict[str, Any]] = None,
+    target_sample_number: Optional[str] = None,
 ) -> tuple[ExecutionRun, bool]:
     if (
         (not workflow.is_enabled or workflow.availability_code is not None)
@@ -704,6 +705,18 @@ def create_run(
             "input_data 中的检验编号与本次运行编号不一致",
         )
     normalized_inputs["inspection_number"] = inspection_number
+    target_sample_number = (target_sample_number or "").strip() or None
+    supplied_target = normalized_inputs.get("target_sample_number")
+    if isinstance(supplied_target, str):
+        supplied_target = supplied_target.strip() or None
+    if supplied_target not in (None, target_sample_number):
+        raise ExecutionApiError(
+            422,
+            "target_sample_number_mismatch",
+            "input_data 中的目标样品编号与本次运行指定不一致",
+        )
+    if target_sample_number is not None:
+        normalized_inputs["target_sample_number"] = target_sample_number
     normalized_globals = dict(global_data)
     _raise_payload_validation(
         schema=definition.get("input_schema") or {},

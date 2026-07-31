@@ -209,6 +209,14 @@ export default function ExecutionExternalOperationPanel({
                     label: '样品编号',
                     children: summary.target_sample_number || '—',
                   },
+                  ...(summary.source_inspection_number
+                    && summary.source_inspection_number !== summary.target_sample_number
+                    ? [{
+                        key: 'source',
+                        label: '源检验编号',
+                        children: summary.source_inspection_number,
+                      }]
+                    : []),
                   {
                     key: 'inspector',
                     label: '检验员',

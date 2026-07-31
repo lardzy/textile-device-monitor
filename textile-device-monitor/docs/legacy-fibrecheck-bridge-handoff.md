@@ -262,15 +262,11 @@ Runner 的 `--dry-run-upload` 模式已实现并实测：
 ### 阶段 D：首次受控真实写入
 
 只有在用户再次查看最终清单并明确确认后才能开放。首次候选目标可以是
-`260187115-1`，但需要先解决“源文件查询编号”和“远端目标样品编号”目前共用
-`run.inspection_number` 的问题。正式实现应拆成：
-
-```text
-source_inspection_number
-target_sample_number
-```
-
-否则不能可靠表达“读取 260187115 的原始记录，但上传为 260187115-1”。
+`260187115-1`。`run.inspection_number` 单一编号已按
+`source_inspection_number` / `target_sample_number` 拆分（2026-07-31）：
+运行创建接受可选 `target_sample_number`（缺省回退检验编号），预检与批准
+的业务围栏统一绑定目标编号，可以可靠表达“读取 260187115 的原始记录，
+但上传为 260187115-1”。
 
 真实写入按阶段记录：
 

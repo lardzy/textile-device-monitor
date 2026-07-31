@@ -59,6 +59,7 @@ from app.execution.external_operations import (
     approve_prepared_external_operation,
     lock_legacy_remote_business_scope,
     public_external_operation,
+    resolve_legacy_target_sample_number,
 )
 from app.execution.models import (
     ExecutionArtifact,
@@ -312,7 +313,7 @@ def _external_operation_for_approval(
 
     remote_business_key = lock_legacy_remote_business_scope(
         db,
-        sample_number=run.inspection_number,
+        sample_number=resolve_legacy_target_sample_number(run),
     )
     operation = (
         db.query(ExecutionExternalOperation)
@@ -1927,6 +1928,7 @@ def test_workflow(
             idempotency_key=payload.idempotency_key,
             mode="test",
             draft_definition=workflow.draft_definition,
+            target_sample_number=payload.target_sample_number,
         )
         db.commit()
     except IntegrityError:
@@ -2035,6 +2037,7 @@ def start_run(
             input_data=payload.input_data,
             global_data=payload.global_data,
             idempotency_key=payload.idempotency_key,
+            target_sample_number=payload.target_sample_number,
         )
         db.commit()
     except IntegrityError:

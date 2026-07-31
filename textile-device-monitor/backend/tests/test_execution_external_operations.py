@@ -33,6 +33,7 @@ from app.execution.engine import (
 from app.execution.errors import ExecutionApiError
 from app.execution.external_operations import (
     LEGACY_REGENERATED_COUNT_NODE,
+    _remote_business_key,
 )
 from app.execution.models import (
     ExecutionCategory,
@@ -62,6 +63,10 @@ def external_definition() -> dict:
             "type": "object",
             "properties": {
                 "inspection_number": {"type": "string"},
+                "target_sample_number": {
+                    "type": "string",
+                    "title": "目标样品编号",
+                },
                 "files": {"type": "array", "minItems": 1},
             },
             "required": ["inspection_number", "files"],
@@ -275,6 +280,7 @@ class ExecutionExternalOperationTests(unittest.TestCase):
         primary_file_id: str,
         idempotency_key: str | None = None,
         before_external=None,
+        target_sample_number: str | None = None,
     ):
         run, _duplicate = create_run(
             self.db,
@@ -287,6 +293,7 @@ class ExecutionExternalOperationTests(unittest.TestCase):
                 idempotency_key
                 or f"external-{len(candidates)}-{primary_file_id}"
             ),
+            target_sample_number=target_sample_number,
         )
         self.db.commit()
         self._execute_one("start")
@@ -628,6 +635,131 @@ class ExecutionExternalOperationTests(unittest.TestCase):
         self.db.rollback()
         self.db.refresh(operation)
         self.assertEqual(operation.status, "prepared")
+
+    def test_prepare_falls_back_to_inspection_number_without_target(self):
+        _path, entry, candidate = self._workbook()
+        self._prepare_run(
+            candidates=[candidate],
+            selected_ids=[entry.id],
+            primary_file_id=entry.id,
+        )
+        operation = self.db.query(ExecutionExternalOperation).one()
+        summary = operation.request_summary
+        self.assertEqual(summary["source_inspection_number"], "260187115")
+        self.assertEqual(summary["target_sample_number"], "260187115")
+        self.assertEqual(
+            operation.remote_business_key,
+            _remote_business_key("260187115"),
+        )
+        auth = AuthContext(session=None, user=self.user)
+        public = external_operation_detail(operation.id, auth=auth, db=self.db)
+        self.assertEqual(
+            public["request_summary"]["source_inspection_number"],
+            "260187115",
+        )
+
+    def test_prepare_splits_source_and_target_sample_number(self):
+        _path, entry, candidate = self._workbook()
+        self._prepare_run(
+            candidates=[candidate],
+            selected_ids=[entry.id],
+            primary_file_id=entry.id,
+            target_sample_number="260187115-1",
+        )
+        operation = self.db.query(ExecutionExternalOperation).one()
+        summary = operation.request_summary
+        self.assertEqual(summary["source_inspection_number"], "260187115")
+        self.assertEqual(summary["target_sample_number"], "260187115-1")
+        self.assertEqual(
+            operation.remote_business_key,
+            _remote_business_key("260187115-1"),
+        )
+        self.assertNotEqual(
+            operation.remote_business_key,
+            _remote_business_key("260187115"),
+        )
+
+        auth = AuthContext(session=None, user=self.user)
+        with self.assertRaises(ExecutionApiError) as wrong_source:
+            approve_external_operation(
+                operation.id,
+                ExternalOperationApprovalRequest(
+                    approved=True,
+                    payload_checksum=operation.payload_checksum,
+                    confirmed_sample_number="260187115",
+                ),
+                auth=auth,
+                db=self.db,
+            )
+        self.assertEqual(
+            wrong_source.exception.code,
+            "external_operation_sample_confirmation_mismatch",
+        )
+        self.db.rollback()
+
+        result = approve_external_operation(
+            operation.id,
+            ExternalOperationApprovalRequest(
+                approved=True,
+                payload_checksum=operation.payload_checksum,
+                confirmed_sample_number="260187115-1",
+            ),
+            auth=auth,
+            db=self.db,
+        )
+        self.assertEqual(result["operation"]["status"], "approved")
+        public = external_operation_detail(operation.id, auth=auth, db=self.db)
+        self.assertEqual(
+            public["request_summary"]["source_inspection_number"],
+            "260187115",
+        )
+        self.assertEqual(
+            public["request_summary"]["target_sample_number"],
+            "260187115-1",
+        )
+
+    def test_create_run_rejects_target_sample_number_mismatch(self):
+        with self.assertRaises(ExecutionApiError) as ctx:
+            create_run(
+                self.db,
+                workflow=self.workflow,
+                actor=self.user,
+                inspection_number="260187115",
+                input_data={"target_sample_number": "260187115-2"},
+                global_data={},
+                idempotency_key="target-mismatch",
+                target_sample_number="260187115-1",
+            )
+        self.assertEqual(ctx.exception.code, "target_sample_number_mismatch")
+
+    def test_create_run_mirrors_target_sample_number_into_input(self):
+        run, duplicate = create_run(
+            self.db,
+            workflow=self.workflow,
+            actor=self.user,
+            inspection_number="260187115",
+            input_data={"files": [{}]},
+            global_data={},
+            idempotency_key="target-mirror",
+            target_sample_number="260187115-1",
+        )
+        self.assertFalse(duplicate)
+        self.assertEqual(
+            (run.input_data or {}).get("target_sample_number"),
+            "260187115-1",
+        )
+        same, same_duplicate = create_run(
+            self.db,
+            workflow=self.workflow,
+            actor=self.user,
+            inspection_number="260187115",
+            input_data={"files": [{}], "target_sample_number": "260187115-1"},
+            global_data={},
+            idempotency_key="target-mirror",
+            target_sample_number="260187115-1",
+        )
+        self.assertTrue(same_duplicate)
+        self.assertEqual(same.id, run.id)
 
     def test_approval_rejects_credential_revision_drift(self):
         _path, entry, candidate = self._workbook()

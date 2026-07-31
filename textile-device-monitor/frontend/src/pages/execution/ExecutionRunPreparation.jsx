@@ -152,13 +152,18 @@ export default function ExecutionRunPreparation() {
       message.warning('请填写检验编号后再开始执行');
       return;
     }
+    const targetNumber = values.input_data?.target_sample_number?.trim();
     const inputData = {
       ...(values.input_data || {}),
       inspection_number: normalizedNumber,
     };
+    if (targetNumber) {
+      inputData.target_sample_number = targetNumber;
+    }
     const request = prepareExecutionRunRequest({
       workflow_id: workflow.id,
       inspection_number: normalizedNumber,
+      ...(targetNumber ? { target_sample_number: targetNumber } : {}),
       input_data: inputData,
       global_data: values.global_data || {},
     });

@@ -95,14 +95,24 @@ class WorkflowImportRequest(BaseModel):
 
 class WorkflowTestRequest(BaseModel):
     inspection_number: str = Field(min_length=1, max_length=200)
+    target_sample_number: Optional[str] = Field(default=None, max_length=200)
     input_data: dict[str, Any] = Field(default_factory=dict)
     global_data: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str = Field(min_length=8, max_length=100)
+
+    @field_validator("target_sample_number")
+    @classmethod
+    def normalize_target_sample_number(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class RunCreate(BaseModel):
     workflow_id: str
     inspection_number: str = Field(min_length=1, max_length=200)
+    target_sample_number: Optional[str] = Field(default=None, max_length=200)
     input_data: dict[str, Any] = Field(default_factory=dict)
     global_data: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str = Field(min_length=8, max_length=100)
@@ -114,6 +124,14 @@ class RunCreate(BaseModel):
         if not normalized:
             raise ValueError("检验编号不能为空")
         return normalized
+
+    @field_validator("target_sample_number")
+    @classmethod
+    def normalize_target_sample_number(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class HumanTaskClaimRequest(BaseModel):

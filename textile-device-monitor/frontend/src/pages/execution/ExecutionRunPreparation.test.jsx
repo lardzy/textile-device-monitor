@@ -28,6 +28,7 @@ const workflow = {
     type: 'object',
     properties: {
       inspection_number: { type: 'string', title: '检验编号' },
+      target_sample_number: { type: 'string', title: '目标样品编号' },
       sample_count: { type: 'integer', title: '样品数量', minimum: 1 },
     },
     required: ['inspection_number', 'sample_count'],
@@ -192,5 +193,31 @@ describe('ExecutionRunPreparation', () => {
     expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
+  });
+
+  it('填写目标样品编号时随运行创建一并提交', async () => {
+    installHandlers(async ({ request }) => {
+      const body = await request.json();
+      expect(body.inspection_number).toBe('260187115');
+      expect(body.target_sample_number).toBe('260187115-1');
+      expect(body.input_data.inspection_number).toBe('260187115');
+      expect(body.input_data.target_sample_number).toBe('260187115-1');
+      return HttpResponse.json({ run: { id: 'run-target' } });
+    });
+    const user = userEvent.setup();
+    renderPreparation();
+
+    await user.type(
+      await screen.findByRole('textbox', { name: '检验编号' }),
+      '260187115',
+    );
+    await user.type(screen.getByRole('spinbutton', { name: '样品数量' }), '1');
+    await user.type(
+      screen.getByRole('textbox', { name: '目标样品编号' }),
+      '260187115-1',
+    );
+    await user.click(screen.getByRole('button', { name: /确认并开始执行/ }));
+
+    expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
   });
 });

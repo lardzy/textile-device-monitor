@@ -106,6 +106,18 @@ def _remote_business_key(sample_number: str) -> str:
     )
 
 
+def resolve_legacy_target_sample_number(run: "ExecutionRun") -> str:
+    """目标样品编号：运行输入 `target_sample_number`，缺省回退源检验编号。
+
+    预检创建与批准路径都必须经这里解析，保证业务围栏绑定的是同一个编号。
+    """
+
+    return (
+        str((run.input_data or {}).get("target_sample_number") or "").strip()
+        or run.inspection_number.strip()
+    )
+
+
 def lock_legacy_remote_business_scope(
     db: Session,
     *,
@@ -649,9 +661,11 @@ def prepare_legacy_regenerated_count_operation(
         )
     credential = _credential_for_node(db, run=run, node=node)
     account_scope_key = _account_scope_key(credential.account_name or "")
+    source_number = run.inspection_number.strip()
+    target_number = resolve_legacy_target_sample_number(run)
     remote_business_key = lock_legacy_remote_business_scope(
         db,
-        sample_number=run.inspection_number,
+        sample_number=target_number,
     )
     files, inspector_name = _selected_file_rows(
         db,
@@ -662,7 +676,8 @@ def prepare_legacy_regenerated_count_operation(
     request_summary = {
         "schema_version": 1,
         "operation_type": "legacy_regenerated_fiber_count_upload",
-        "target_sample_number": run.inspection_number.strip(),
+        "source_inspection_number": source_number,
+        "target_sample_number": target_number,
         "business_fields": {
             "fiber_category": "棉再生纤",
             "inspection_method": "定量",
@@ -929,6 +944,10 @@ def public_external_operation(
     public_summary = {
         "schema_version": summary.get("schema_version"),
         "operation_type": summary.get("operation_type"),
+        "source_inspection_number": (
+            summary.get("source_inspection_number")
+            or summary.get("target_sample_number")
+        ),
         "target_sample_number": summary.get("target_sample_number"),
         "business_fields": {
             key: business_fields.get(key)

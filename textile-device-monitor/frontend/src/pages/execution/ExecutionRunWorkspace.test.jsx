@@ -158,6 +158,7 @@ describe('ExecutionRunWorkspace', () => {
       payload_checksum: 'a'.repeat(64),
       request_summary: {
         target_sample_number: '260187115-1',
+        source_inspection_number: '260187115',
         inspector: '辜惠珊',
         business_fields: {
           fiber_category: '棉再生纤',
@@ -247,6 +248,8 @@ describe('ExecutionRunWorkspace', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('tab', { name: '旧系统上传' }));
     expect(await screen.findByText('260187115-1')).toBeInTheDocument();
+    expect(screen.getByText('源检验编号')).toBeInTheDocument();
+    expect(screen.getByText('260187115')).toBeInTheDocument();
     expect(screen.getByText('辜惠珊')).toBeInTheDocument();
     expect(screen.getByText('260187115-根数法.xls')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '核对并批准预检单' }));
