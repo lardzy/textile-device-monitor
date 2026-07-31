@@ -51,6 +51,31 @@ py -3 -m venv .venv
   --output ".\260187115-reconciliation.json"
 ```
 
+如主配置中的数据库地址在当前网络不可达，而同一数据库存在备用网络地址（例如服务器的另一块网卡），可以仅覆盖 DATA SOURCE 的主机部分，凭据仍只读取主配置：
+
+```powershell
+.\.venv\Scripts\python.exe probe.py `
+  --fibrecheck-dir "C:\FibreCheck" `
+  --data-source "192.168.105.106/orcl" `
+  --sample-no 260187115 `
+  --output ".\260187115-reconciliation.json"
+```
+
+覆盖仅接受 `host[:port]/service` 形式；输出 JSON 中端点仍以散列表示，并带有 `data_source_overridden` 标记。
+
+如主配置 `FibreCheckEntities` 的数据库账号在当前环境不可用（例如账号过期或只绑定特定地址），可以改用 FibreCheck 目录内其它配置条目的凭据，格式为 `配置文件名:条目名`：
+
+```powershell
+.\.venv\Scripts\python.exe probe.py `
+  --fibrecheck-dir "C:\FibreCheck" `
+  --credential-profile "WebService.dll.config:PanYuJianWu" `
+  --data-source "192.168.105.106/orcl" `
+  --sample-no 260187115 `
+  --output ".\260187115-reconciliation.json"
+```
+
+凭据始终只从配置文件中读取，不通过命令行传递，也不会写入输出 JSON。
+
 `--fibrecheck-dir` 中必须存在主配置文件 `Toone.FibreCheck.Entites.dll.config`。工具只读取其中名为 `FibreCheckEntities` 的 Oracle 配置，不会自动尝试 HD 或其它区域配置。配置中的数据库账号仅在进程内用于连接，不会写入 JSON。
 
 ## 查询范围

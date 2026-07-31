@@ -9,7 +9,7 @@ import re
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -19,6 +19,9 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 CONFIG_FILENAME = "Toone.FibreCheck.Entites.dll.config"
 PROFILE_NAME = "FibreCheckEntities"
 SAMPLE_NO_PATTERN = re.compile(r"^[0-9A-Z]{9,20}(?:-[0-9A-Z]{1,8})?$")
+DATA_SOURCE_OVERRIDE_PATTERN = re.compile(
+    r"^[A-Za-z0-9._-]+(?::[0-9]{1,5})?/[A-Za-z0-9._$#-]+$",
+)
 ORACLE_ERROR_PATTERN = re.compile(r"\b(?:ORA|DPY|DPI)-\d{3,5}\b", re.IGNORECASE)
 WRITE_KEYWORD_PATTERN = re.compile(
     r"\b(?:INSERT|UPDATE|DELETE|MERGE|ALTER|CREATE|DROP|TRUNCATE|GRANT|REVOKE|"
@@ -30,9 +33,10 @@ PATH_COLUMN_NAMES = {
     "FILENAME",
     "ORIGINALDATAFILENAME",
     "TEMPLATEFILENAME",
+    "REPORTNAME",
 }
 ID_COLUMN_PATTERN = re.compile(
-    r"(?:^ID$|ID$|^CREATEUSER$|^REVIEWUSER\d*$|^AUDITUSER$|^CHECKUSER\d*$|^PROOFUSER$|^LASTUPDATEUSER$)",
+    r"(?:^ID$|ID$|USER\d*$)",
     re.IGNORECASE,
 )
 LOGIN_COLUMN_NAMES = {"LOGINNAME"}
@@ -302,6 +306,13 @@ def normalize_data_source(data_source: str) -> str:
     return data_source.strip().rstrip("/")
 
 
+def validate_data_source_override(value: str) -> str:
+    candidate = normalize_data_source(value)
+    if not DATA_SOURCE_OVERRIDE_PATTERN.fullmatch(candidate):
+        raise ProbeError("--data-source 仅支持 host[:port]/service 形式的 Easy Connect 地址。")
+    return candidate
+
+
 def load_primary_profile(fibrecheck_dir: Path) -> OracleProfile:
     config_dir = fibrecheck_dir.expanduser()
     config_path = config_dir / CONFIG_FILENAME
@@ -341,6 +352,58 @@ def load_primary_profile(fibrecheck_dir: Path) -> OracleProfile:
         name=PROFILE_NAME,
         source_file=config_path.name,
         provider=provider,
+        data_source=data_source,
+        user=user,
+        password=password,
+    )
+
+
+def load_credential_profile(fibrecheck_dir: Path, spec: str) -> OracleProfile:
+    if ":" not in spec:
+        raise ProbeError("--credential-profile 需要 配置文件名:条目名 形式。")
+    filename, entry_name = (part.strip() for part in spec.split(":", 1))
+    if not filename or not entry_name:
+        raise ProbeError("--credential-profile 需要 配置文件名:条目名 形式。")
+    if Path(filename).name != filename:
+        raise ProbeError("--credential-profile 的配置文件必须直接位于 FibreCheck 目录内。")
+    config_path = fibrecheck_dir.expanduser() / filename
+    if not config_path.is_file():
+        raise ProbeError(f"找不到凭据配置文件 {filename}。")
+    if config_path.is_symlink():
+        raise ProbeError("凭据配置文件不能是符号链接。")
+    if config_path.stat().st_size > 2 * 1024 * 1024:
+        raise ProbeError("凭据配置文件异常过大。")
+
+    try:
+        root = ET.parse(config_path).getroot()
+    except (ET.ParseError, OSError) as exc:
+        raise ProbeError("凭据配置文件无法安全解析。") from exc
+
+    raw: str | None = None
+    for item in root.findall(".//connectionStrings/add"):
+        if item.attrib.get("name") == entry_name:
+            outer = split_semicolon_kv(html.unescape(item.attrib.get("connectionString", "")))
+            raw = outer.get("provider connection string") or item.attrib.get("connectionString", "")
+            break
+    if raw is None:
+        for item in root.findall(".//appSettings/add"):
+            if item.attrib.get("key") == entry_name:
+                raw = item.attrib.get("value", "")
+                break
+    if raw is None:
+        raise ProbeError(f"{filename} 中不存在凭据条目 {entry_name}。")
+
+    values = split_semicolon_kv(html.unescape(raw))
+    data_source = normalize_data_source(values.get("data source", ""))
+    user = values.get("user id") or values.get("user") or ""
+    password = values.get("password") or values.get("pwd") or ""
+    if not data_source or not user or not password:
+        raise ProbeError("凭据配置条目缺少必要字段。")
+
+    return OracleProfile(
+        name=f"{filename}:{entry_name}",
+        source_file=filename,
+        provider="oracle",
         data_source=data_source,
         user=user,
         password=password,
@@ -632,6 +695,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--oracle-client-dir",
         help="可选的 Oracle Instant Client 目录，用于 Thick 模式",
     )
+    parser.add_argument(
+        "--data-source",
+        help="可选：覆盖主配置中的 DATA SOURCE，仅支持 host[:port]/service 形式，"
+        "用于同一数据库在当前网络可达的备用地址；凭据仍只读取主配置",
+    )
+    parser.add_argument(
+        "--credential-profile",
+        help="可选：改用 FibreCheck 目录内其它配置条目的凭据，格式 配置文件名:条目名；"
+        "不提供时仍使用主配置 FibreCheckEntities",
+    )
     return parser
 
 
@@ -643,12 +716,27 @@ def run_cli(
     args = build_parser().parse_args(argv)
     try:
         sample_no = validate_sample_no(args.sample_no)
-        profile = load_primary_profile(Path(args.fibrecheck_dir))
+        if args.credential_profile:
+            profile = load_credential_profile(
+                Path(args.fibrecheck_dir),
+                args.credential_profile,
+            )
+        else:
+            profile = load_primary_profile(Path(args.fibrecheck_dir))
+        data_source_overridden = False
+        if args.data_source:
+            profile = replace(
+                profile,
+                data_source=validate_data_source_override(args.data_source),
+            )
+            data_source_overridden = True
         document = build_base_document(
             sample_no=sample_no,
             mode="manifest" if args.manifest else "probe",
             profile=profile,
         )
+        if data_source_overridden and document["profile"] is not None:
+            document["profile"]["data_source_overridden"] = True
         if args.manifest:
             document["connection_attempted"] = False
         else:

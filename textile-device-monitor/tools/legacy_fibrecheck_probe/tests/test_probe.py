@@ -46,6 +46,8 @@ class FakeCursor:
             ("SampleNo",),
             ("FilePath",),
             ("LoginName",),
+            ("TaskAssignUser",),
+            ("ReportName",),
         ]
         self._rows = [
             (
@@ -53,6 +55,8 @@ class FakeCursor:
                 "260187115",
                 r"\\server\share\record.xls",
                 "lisy",
+                "BA3DD04BC2BB44A2AC9C58AE5F28664B",
+                r"\\server\outpdf$\report.pdf",
             )
         ]
 
@@ -179,7 +183,10 @@ class ProbeTests(unittest.TestCase):
         self.assertNotIn("11111111-1111-1111-1111-111111111111", serialized)
         self.assertNotIn(r"\\server\share", serialized)
         self.assertNotIn('"lisy"', serialized)
+        self.assertNotIn("BA3DD04BC2BB44A2AC9C58AE5F28664B", serialized)
+        self.assertNotIn(r"\\server\outpdf$", serialized)
         self.assertEqual(row["FilePath"]["items"][0]["basename"], "record.xls")
+        self.assertEqual(row["ReportName"]["items"][0]["basename"], "report.pdf")
         self.assertEqual(row["LoginName"], "l**y")
 
     def test_manifest_mode_never_calls_connector(self) -> None:
@@ -252,6 +259,128 @@ class ProbeTests(unittest.TestCase):
             self.assertNotIn("APPUSER", rendered)
             self.assertNotIn("db.internal", rendered)
             self.assertNotIn(r"\\server\share", rendered)
+
+    def test_data_source_override_is_validated_and_applied(self) -> None:
+        self.assertEqual(
+            probe.validate_data_source_override("192.0.2.10/orcl/"),
+            "192.0.2.10/orcl",
+        )
+        for invalid in (
+            "",
+            "db.internal",
+            "db.internal/orcl;drop",
+            "(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)))",
+            "db.internal/orcl' OR '1'='1",
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(probe.ProbeError):
+                    probe.validate_data_source_override(invalid)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_dir = self.make_fibrecheck_dir(root)
+            output = root / "probe.json"
+            seen: dict[str, str] = {}
+
+            def fake_connector(
+                profile: probe.OracleProfile,
+                client_dir: Path | None,
+            ) -> FakeConnection:
+                seen["data_source"] = profile.data_source
+                return FakeConnection()
+
+            exit_code = probe.run_cli(
+                [
+                    "--fibrecheck-dir",
+                    str(install_dir),
+                    "--sample-no",
+                    "260187115",
+                    "--data-source",
+                    "192.0.2.10/orcl",
+                    "--output",
+                    str(output),
+                ],
+                connector=fake_connector,
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(seen["data_source"], "192.0.2.10/orcl")
+            document = json.loads(output.read_text(encoding="utf-8"))
+            self.assertTrue(document["profile"]["data_source_overridden"])
+            rendered = output.read_text(encoding="utf-8")
+            self.assertNotIn("db.internal", rendered)
+            self.assertNotIn("192.0.2.10", rendered)
+            self.assertNotIn("super-secret", rendered)
+
+    def test_credential_profile_loads_alternate_entry(self) -> None:
+        web_config = """<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <appSettings>
+    <add key="PanYuJianWu" value="DATA SOURCE=192.0.2.20/orcl;USER ID=WEBUSER;PASSWORD=web-secret"/>
+  </appSettings>
+</configuration>
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_dir = self.make_fibrecheck_dir(root)
+            (install_dir / "WebService.dll.config").write_text(
+                web_config,
+                encoding="utf-8",
+            )
+            output = root / "probe.json"
+            seen: dict[str, str] = {}
+
+            def fake_connector(
+                profile: probe.OracleProfile,
+                client_dir: Path | None,
+            ) -> FakeConnection:
+                seen["user"] = profile.user
+                seen["data_source"] = profile.data_source
+                return FakeConnection()
+
+            exit_code = probe.run_cli(
+                [
+                    "--fibrecheck-dir",
+                    str(install_dir),
+                    "--sample-no",
+                    "260187115",
+                    "--credential-profile",
+                    "WebService.dll.config:PanYuJianWu",
+                    "--output",
+                    str(output),
+                ],
+                connector=fake_connector,
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(seen["user"], "WEBUSER")
+            self.assertEqual(seen["data_source"], "192.0.2.20/orcl")
+            rendered = output.read_text(encoding="utf-8")
+            self.assertNotIn("web-secret", rendered)
+            self.assertNotIn("WEBUSER", rendered)
+
+            for bad_spec in (
+                "WebService.dll.config",
+                ":PanYuJianWu",
+                "../secret.config:PanYuJianWu",
+                "WebService.dll.config:Missing",
+            ):
+                with self.subTest(bad_spec=bad_spec):
+                    bad_output = root / "bad.json"
+                    exit_code = probe.run_cli(
+                        [
+                            "--fibrecheck-dir",
+                            str(install_dir),
+                            "--sample-no",
+                            "260187115",
+                            "--credential-profile",
+                            bad_spec,
+                            "--output",
+                            str(bad_output),
+                        ],
+                        connector=fake_connector,
+                    )
+                    self.assertEqual(exit_code, 2)
+                    rendered = bad_output.read_text(encoding="utf-8")
+                    self.assertNotIn("web-secret", rendered)
 
 
 if __name__ == "__main__":

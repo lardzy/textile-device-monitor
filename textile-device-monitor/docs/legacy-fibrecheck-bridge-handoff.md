@@ -2,7 +2,8 @@
 
 > 最后更新：2026-07-30
 > 适用环境：Parallels Desktop 中的 Windows 11，以及后续部门内常驻 Windows 主机
-> 当前状态：静态逆向、只读探针和服务端预检围栏已完成；任何旧系统远端写入仍未开放
+> 当前状态：静态逆向、只读探针、服务端预检围栏和阶段 A 无界面只读登录 Runner
+> 已完成并实测通过；任何旧系统远端写入仍未开放
 
 ## 1. 首先必须知道的结论
 
@@ -145,6 +146,17 @@ CheckUser1 = 由工作簿 I8 中文姓名唯一映射得到的旧系统 User ID
 `SELECT`，连接后的第一条 SQL 是 `SET TRANSACTION READ ONLY`，结束固定
 `rollback()`，不会复制文件。
 
+2026-07-30 环境核验补充（重要）：
+
+- 目标库为 Oracle 11g（11.2.0.1.0），python-oracledb Thin 模式不支持，
+  必须使用 Thick 模式：x64 Python + Oracle Instant Client（19.31 已验证，
+  ARM64 Windows 经 x64 模拟运行正常）。
+- 主配置地址不可达时，可使用同一数据库在当前网络可达的备用地址，探针参数
+  `--data-source "host[:port]/service"`。
+- 主配置 `FibreCheckEntities` 账号在当前环境被拒（ORA-01017）；可改用
+  FibreCheck 目录内其它凭据条目，探针参数
+  `--credential-profile "配置文件名:条目名"`，凭据仍只从配置文件读取。
+
 ```powershell
 cd C:\path\to\textile-device-monitor\tools\legacy_fibrecheck_probe
 py -3 -m venv .venv
@@ -187,16 +199,28 @@ py -3 -m venv .venv
 
 ## 6. Bridge 与 Runner 的下一步实现顺序
 
-### 阶段 A：无界面只读登录 Runner
+### 阶段 A：无界面只读登录 Runner —— 已完成（2026-07-30）
 
-- 新建独立 x86 .NET Framework 控制台程序；
-- 首版从完整 FibreCheck 目录运行，不裁剪 DLL；
-- 只完成配置加载、账号校验、组织上下文、权限检查和人员查询；
-- 输出脱敏 JSON，进程退出码表达稳定错误码；
-- 不调用保存方法，不复制文件。
+实现位于 `tools/legacy_fibrecheck_runner/`（x86 .NET Framework 控制台，
+csc.exe 直接编译）：
 
-门禁：两个不同账号依次和并行启动时，人员上下文不得串号；每个进程结束后无
-残留 WPF 窗口或后台线程。
+- 从完整 FibreCheck 目录运行，不裁剪 DLL；连接串反射读取旧程序 `SystemData`；
+- 复现登录链只读部分：配置加载、账号校验、组织上下文、权限检查和人员查询；
+- 首条 `SET TRANSACTION READ ONLY`、仅参数化 SELECT、结束 ROLLBACK；
+- 输出脱敏 JSON，进程退出码表达稳定错误码（0/2/3/10–16）；
+- 不调用保存方法，不复制文件，不启动 WPF/后台服务/登录缓存。
+
+实测门禁结果：
+
+- FakeDb 自测 7 组场景通过；
+- `lisy` 真实只读登录 exit=0：口令匹配、番禺、组织上下文、
+  “特纤管理—检验”页面授权通过、控制级权限为空、`辜惠珊` 唯一映射且与
+  `260187115` 主记录 `CheckUser1` 散列一致；
+- 正确口令/错误口令/不存在账号三实例并行返回 0/12/10，互不干扰，
+  进程退出后无残留窗口或线程；
+- 双真实账号隔离仍需第二个旧系统账号，待补验；
+- 用户已确认实验室仅使用番禺，花都路径不实现；Runner 对花都账号以
+  退出码 16 拒绝。
 
 ### 阶段 B：集中式 Bridge 外壳
 
@@ -262,7 +286,9 @@ target_sample_number
   回执或只读对账后才能成为终态；
 - 远端成功业务键的永久幂等记录，不能因本地运行结束而允许重复创建；
 - 旧账号密码的 Windows 端受控解密/传递方式；
-- 番禺/花都区域路由及权限 ID 的真实验证；
+- ~~番禺区域路由及权限 ID 的真实验证~~（2026-07-30 已完成：`lisy` 对
+  “特纤管理—检验”`SpecialWoolSearchUI` 功能级授权通过，控制级权限为空；
+  用户确认不使用花都）；
 - 文件复制、DAL 保存和报告更新各阶段的只读核对；
 - 失败注入：断网、Oracle 超时、同名文件、部分保存、Runner 崩溃；
 - 首次真实写入前由用户对最终变更清单进行单独确认。
@@ -292,16 +318,17 @@ target_sample_number
 
 ```text
 tools/legacy_fibrecheck_probe/README.md
+tools/legacy_fibrecheck_runner/README.md
 .tmp/execution-system-brainstorm/07_首版实现与验收记录.md
 .tmp/execution-system-brainstorm/06_待决策问题与决策日志.md
 ```
 
-然后明确下达：
+2026-07-30 之前的环境核验、`260187115` 只读对账和阶段 A Runner 已经完成，
+证据位于 `.tmp/fibrecheck-reconciliation/`。当前指令保持：
 
 ```text
-当前只进行 Windows 环境核验和只读对账。
 不得复制到 FibreCheck 业务目录，不得调用 SaveSpecialWoolManage，
-不得执行 Oracle 写 SQL。先输出环境、登录链、权限和 260187115 对账证据。
+不得执行 Oracle 写 SQL。下一阶段是 Bridge 外壳与只读 claim/dry-run。
 ```
 
 只有在只读结果返回当前主任务、用户审阅最终清单并再次授权后，才进入首次写入
