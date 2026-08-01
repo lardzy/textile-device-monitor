@@ -938,12 +938,12 @@ class ExecutionExternalOperation(Base):
             postgresql_where=text(
                 "status IN "
                 "('prepared', 'approved', 'in_progress', "
-                "'reconciliation_required')"
+                "'cancel_pending', 'reconciliation_required')"
             ),
             sqlite_where=text(
                 "status IN "
                 "('prepared', 'approved', 'in_progress', "
-                "'reconciliation_required')"
+                "'cancel_pending', 'reconciliation_required')"
             ),
         ),
     )
@@ -1009,6 +1009,62 @@ class ExecutionExternalOperation(Base):
     node_run = relationship(
         "ExecutionNodeRun",
         back_populates="external_operation",
+    )
+    attempts = relationship(
+        "ExecutionExternalAttempt",
+        back_populates="operation",
+        cascade="all, delete-orphan",
+        order_by="ExecutionExternalAttempt.attempt_no",
+    )
+
+
+class ExecutionExternalAttempt(Base):
+    """One Bridge claim against an approved external-operation fence.
+
+    The attempt records client-side progress checkpoints so a lost lease can
+    be reconciled: a failure before ``file_copy_started`` never touched the
+    legacy system, anything later may have left a remote side effect behind.
+    """
+
+    __tablename__ = "execution_external_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "operation_id",
+            "attempt_no",
+            name="uq_execution_external_attempts_no",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    operation_id = Column(
+        String(36),
+        ForeignKey("execution_external_operations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    attempt_no = Column(Integer, nullable=False)
+    bridge_id = Column(String(100), nullable=False)
+    status = Column(String(30), nullable=False, default="claimed", index=True)
+    current_stage = Column(String(50))
+    lease_expires_at = Column(DateTime(timezone=True), index=True)
+    checkpoints = Column(JSON_VARIANT, nullable=False, default=list)
+    stdout_summary = Column(Text, nullable=False, default="")
+    exit_code = Column(Integer)
+    error_code = Column(String(100))
+    error_message = Column(Text)
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+    operation = relationship(
+        "ExecutionExternalOperation",
+        back_populates="attempts",
     )
 
 

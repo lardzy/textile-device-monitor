@@ -16,7 +16,12 @@ from app.execution.models import ExecutionWorkerHeartbeat, utcnow
 
 def default_worker_id() -> str:
     configured = os.getenv("EXECUTION_WORKER_ID", "").strip()
-    return configured or os.uname().nodename
+    if configured:
+        return configured
+    if hasattr(os, "uname"):
+        return os.uname().nodename
+    # Windows 没有 os.uname；COMPUTERNAME 是原生主机名来源
+    return os.environ.get("COMPUTERNAME", "").strip() or "worker-local"
 
 
 def normalize_utc(value: datetime) -> datetime:

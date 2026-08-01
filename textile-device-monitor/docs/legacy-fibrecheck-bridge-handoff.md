@@ -1,10 +1,9 @@
 # FibreCheck 集中式 Windows Bridge 交接手册
 
-> 最后更新：2026-07-31
+> 最后更新：2026-08-01
 > 适用环境：Parallels Desktop 中的 Windows 11，以及后续部门内常驻 Windows 主机
-> 当前状态：静态逆向、只读探针、服务端预检围栏、阶段 A 无界面只读登录 Runner
-> （双真实账号隔离闭环）与 Runner 级 dry-run 最终清单已完成并实测通过；
-> 任何旧系统远端写入仍未开放
+> 当前状态：`260187115-1` 首次受控真实写入已完成并通过写后核验；
+> 下一阶段为第二次端到端验证、对账解决路径与并发门禁
 
 ## 1. 首先必须知道的结论
 
@@ -223,23 +222,17 @@ csc.exe 直接编译）：
 - 用户已确认实验室仅使用番禺，花都路径不实现；Runner 对花都账号以
   退出码 16 拒绝。
 
-### 阶段 B：集中式 Bridge 外壳
+### 阶段 B：集中式 Bridge 外壳 —— 已完成（2026-08-01）
 
-- Bridge 作为无界面 Windows 服务或受控常驻进程；
-- 主动向执行系统领取任务，不要求服务器反向访问 Windows；
-- 每个任务启动独立 Runner，并传入一次性任务清单；
-- 全局容量初始为 1；
-- 保存 attempt、租约、阶段检查点、标准输出摘要和进程退出信息。
-
-还需新增持久资源锁：
-
-1. 旧系统账号；
-2. 完整目标样品编号；
-3. 样品号前 9 位家族；
-4. 目标文件路径；
-5. Bridge 全局容量。
-
-所有路径按固定顺序加锁，避免两个任务互相等待。
+- 后端迁移 `0005_external_attempts`：`execution_external_attempts` 表
+  （attempt/租约/阶段检查点/stdout 摘要/退出信息），
+  `(operation_id, attempt_no)` 唯一；
+- Bridge 端点（`X-Execution-Bridge-Key` 令牌，未配置 503 / 不匹配 401）：
+  `claim`、`heartbeat`、`stage`、`complete`、`fail`；
+- 领取前复核：批准 TTL、凭据 revision、账号绑定、源文件指纹/SHA-256/I8；
+- `in_progress` 参与取消状态机（cancel_pending + heartbeat 回 abort_requested）；
+- 租约过期清扫：按阶段回 approved 或转 reconciliation_required；
+- 17 项 Bridge 测试 + 36 项外部操作回归全过。
 
 ### 阶段 C：只读前后对账和 dry-run —— Runner 侧已完成（2026-07-31）
 
@@ -253,52 +246,51 @@ Runner 的 `--dry-run-upload` 模式已实现并实测：
 - `260187115-1` 实测 exit=0：目标远端精确/包含计数均为 0、源记录存在、
   清单字段与真实 `260187115` 记录逐项一致。
 
-集中式 Bridge 外壳仍未实现，以下步骤待完成：
+### 阶段 D：首次受控真实写入 —— 已完成（2026-08-01）
 
-- Bridge 领取 `approved` 操作；
-- 重新验证批准时效、凭据 revision、账号绑定、源 fingerprint/SHA-256/I8；
-- 不产生远端副作用，回传 dry-run 回执。
+`260187115-1` 已由集中式 Bridge + Runner 真实写入并核验通过：
 
-### 阶段 D：首次受控真实写入
+- DB 记录字段逐项正确（棉再生纤/定量/棉再生纤定量-根数法×1、
+  CheckUser1=辜惠珊、CreateUser=李舒洋、CreateTime=2026-08-01 11:22:18）；
+- 物理文件与共享盘源文件 SHA-256 完全一致；
+- 报告数据未触发更新（与旧客户端空明细行为一致）。
 
-只有在用户再次查看最终清单并明确确认后才能开放。首次候选目标可以是
-`260187115-1`。`run.inspection_number` 单一编号已按
-`source_inspection_number` / `target_sample_number` 拆分（2026-07-31）：
-运行创建接受可选 `target_sample_number`（缺省回退检验编号），预检与批准
-的业务围栏统一绑定目标编号，可以可靠表达“读取 260187115 的原始记录，
-但上传为 260187115-1”。
+关键实现事实：
 
-真实写入按阶段记录：
+- 写入经官方 `SpecialWoolDAL.SaveSpecialWoolManage`（空明细列表 → 单行
+  INSERT 语义），CreateUser/CreateTime/ID 由 DAL 按旧客户端语义写入；
+- **EF 工作区加载的隐性前提**：进程配置必须含
+  `<oracle.dataaccess.client><settings><add name="bool" value="edmmapping number(1,0)"/></settings></oracle.dataaccess.client>`，
+  否则 ODP.NET 11.2.0.2 把 number(1,0) 映射为 Int16，全模型 MSL 校验报
+  MappingException 2019（旧客户端 `FibreCheck.exe.config` 自带该开关）；
+- 32 位运行时件来自 `\\192.168.105.66\software\2-业务系统\ODAC`
+  （11.2.0.2.50 xcopy 包），本机复制到 `.tmp/odac32/`；
+- 演练后端为原生 uvicorn + worker + SQLite（便携 PostgreSQL 因外网速度
+  不足未下载；生产仍以 Docker/PostgreSQL 为准）；
+- 已知缺陷：Bridge 控制器以 UTF-8 解析 Runner stdout，中文 Windows 控制台
+  默认 GBK，曾把一次成功写入误判为失败（已人工对账置 completed 并写审计；
+  Runner 输出编码已修复；无重复写入）。
 
-1. `authenticated`
-2. `permission_verified`
-3. `remote_absence_verified`
-4. `file_copy_started`
-5. `file_copy_verified`
-6. `main_record_save_started`
-7. `main_record_verified`
-8. `report_update_started`
-9. `report_update_verified`
-10. `completed`
+阶段 D 的取消/失败阶段语义（`file_copy_started` 起失联 →
+`reconciliation_required`，绝不自动重试）在 Runner 与 Bridge 双层均已实现；
+本首次写入未触发。
 
-从 `file_copy_started` 起发生超时、进程崩溃或失联，状态必须进入
-`reconciliation_required`，不得自动再次提交。
+## 7. 后续阶段仍缺少的能力
 
-## 7. 开放写入前仍缺少的硬门禁
-
-- Bridge 机器身份认证、claim/heartbeat/complete/reconcile API；
-- 外部 attempt 表和持久资源锁表；
-- 领取事务内再次校验批准 TTL、凭据 revision、账号及全部源文件哈希；
-- `in_progress` 操作参与取消状态机：取消只能进入 `cancel_pending`，待 Runner
-  回执或只读对账后才能成为终态；
-- 远端成功业务键的永久幂等记录，不能因本地运行结束而允许重复创建；
-- 旧账号密码的 Windows 端受控解密/传递方式；
-- ~~番禺区域路由及权限 ID 的真实验证~~（2026-07-30 已完成：`lisy` 对
-  “特纤管理—检验”`SpecialWoolSearchUI` 功能级授权通过，控制级权限为空；
-  用户确认不使用花都）；
-- 文件复制、DAL 保存和报告更新各阶段的只读核对；
-- 失败注入：断网、Oracle 超时、同名文件、部分保存、Runner 崩溃；
-- 首次真实写入前由用户对最终变更清单进行单独确认。
+- ~~Bridge 机器身份认证、claim/heartbeat/complete/reconcile API~~（2026-08-01 已实现）；
+- ~~外部 attempt 表~~（2026-08-01 已实现）；
+- ~~领取事务内再次校验批准 TTL、凭据 revision、账号及全部源文件哈希~~（已实现）；
+- ~~`in_progress` 操作参与取消状态机~~（已实现 cancel_pending + abort 回报）；
+- `reconciliation_required` 的人工解决端点（对账后解除围栏/收尾节点）；
+- 远端成功业务键的永久幂等记录（当前以操作/attempt 终态 + 唯一索引承担，
+  跨运行重复创建仍靠业务围栏与人工确认）；
+- 旧账号密码的 Windows 端受控解密/传递方式（首版为 Bridge 本地受控
+  secrets 文件，凭据不出执行系统服务端）；
+- 文件复制、DAL 保存各阶段失败注入演练（断网、Oracle 超时、同名文件、
+  部分保存、Runner 崩溃）；
+- 多 Bridge / 多并发容量（当前全局固定为 1）；
+- UTF-8 编码修复后的第二次端到端验证；
+- PostgreSQL 环境下的 Bridge 并发门禁（演练环境为 SQLite）。
 
 任何一项缺失时，都只能运行只读登录、对账和 dry-run。
 
@@ -326,17 +318,18 @@ Runner 的 `--dry-run-upload` 模式已实现并实测：
 ```text
 tools/legacy_fibrecheck_probe/README.md
 tools/legacy_fibrecheck_runner/README.md
+tools/legacy_fibrecheck_writer/README.md
 .tmp/execution-system-brainstorm/07_首版实现与验收记录.md
 .tmp/execution-system-brainstorm/06_待决策问题与决策日志.md
 ```
 
-2026-07-30 之前的环境核验、`260187115` 只读对账和阶段 A Runner 已经完成，
-证据位于 `.tmp/fibrecheck-reconciliation/`。当前指令保持：
+`260187115-1` 首次受控真实写入已于 2026-08-01 完成并通过写后核验
+（证据在 `.tmp/fibrecheck-reconciliation/`）。后续任何新的写入操作，
+继续沿用既有边界：Runner 由 Bridge 以“一任务一进程”调用；批准、复核与
+检查点逻辑在服务端；Runner 端口令只从本地受控环境注入；
+`file_copy_started` 后的任何异常一律 `reconciliation_required`，不得自动
+重试、不得静默重复提交。
 
-```text
-不得复制到 FibreCheck 业务目录，不得调用 SaveSpecialWoolManage，
-不得执行 Oracle 写 SQL。下一阶段是 Bridge 外壳与只读 claim/dry-run。
-```
-
-只有在只读结果返回当前主任务、用户审阅最终清单并再次授权后，才进入首次写入
-阶段。
+当前直接后续事项：UTF-8 修复后的第二次端到端验证、`reconciliation_required`
+人工解决端点、PostgreSQL 环境 Bridge 并发门禁、上传节点接入默认流程的
+配置化开关。

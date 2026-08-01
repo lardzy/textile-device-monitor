@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import mimetypes
@@ -57,8 +58,15 @@ from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
     approve_prepared_external_operation,
+    bridge_external_operation,
+    claim_approved_external_operation,
+    complete_external_attempt,
+    fail_external_attempt,
+    heartbeat_external_attempt,
     lock_legacy_remote_business_scope,
+    public_external_attempt,
     public_external_operation,
+    record_external_attempt_stage,
     resolve_legacy_target_sample_number,
 )
 from app.execution.models import (
@@ -105,6 +113,11 @@ from app.execution.registry import node_registry
 from app.execution.regenerated_fiber import catalog_recommendations
 from app.execution.schemas import (
     CredentialUpsert,
+    ExternalBridgeClaimRequest,
+    ExternalBridgeCompleteRequest,
+    ExternalBridgeFailRequest,
+    ExternalBridgeHeartbeatRequest,
+    ExternalBridgeStageRequest,
     ExternalOperationApprovalRequest,
     FileRefreshRequest,
     HumanTaskClaimRequest,
@@ -2215,6 +2228,159 @@ def approve_external_operation(
         "operation": public_external_operation(operation),
         "remote_write_performed": False,
     }
+
+
+def _require_bridge_key(provided_key: Optional[str]) -> None:
+    configured = settings.EXECUTION_BRIDGE_TOKEN.strip()
+    if not configured:
+        raise ExecutionApiError(
+            503,
+            "execution_bridge_not_configured",
+            "服务端未配置执行系统 Bridge 接入令牌",
+        )
+    if not provided_key or not hmac.compare_digest(
+        provided_key.encode("utf-8"),
+        configured.encode("utf-8"),
+    ):
+        raise ExecutionApiError(
+            401,
+            "execution_bridge_unauthorized",
+            "Bridge 接入令牌无效",
+        )
+
+
+@router.post("/external-bridge/claim")
+def claim_external_bridge_operation(
+    payload: ExternalBridgeClaimRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(
+        default=None,
+        alias="X-Execution-Bridge-Key",
+    ),
+):
+    _require_bridge_key(x_execution_bridge_key)
+    result = claim_approved_external_operation(
+        db,
+        bridge_id=payload.bridge_id,
+    )
+    if result is None:
+        return {"claimed": False}
+    operation, attempt, credential = result
+    response = {
+        "claimed": True,
+        "attempt": public_external_attempt(attempt),
+        "operation": bridge_external_operation(
+            operation,
+            credential=credential,
+        ),
+    }
+    db.commit()
+    return response
+
+
+@router.post("/external-bridge/attempts/{attempt_id}/heartbeat")
+def heartbeat_external_bridge_attempt(
+    attempt_id: str,
+    payload: ExternalBridgeHeartbeatRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(
+        default=None,
+        alias="X-Execution-Bridge-Key",
+    ),
+):
+    _require_bridge_key(x_execution_bridge_key)
+    attempt, _operation, abort_requested = heartbeat_external_attempt(
+        db,
+        attempt_id=attempt_id,
+        bridge_id=payload.bridge_id,
+        stage=payload.stage,
+        stdout_append=payload.stdout_append,
+    )
+    response = {
+        "attempt": public_external_attempt(attempt),
+        "abort_requested": abort_requested,
+    }
+    db.commit()
+    return response
+
+
+@router.post("/external-bridge/attempts/{attempt_id}/stage")
+def record_external_bridge_attempt_stage(
+    attempt_id: str,
+    payload: ExternalBridgeStageRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(
+        default=None,
+        alias="X-Execution-Bridge-Key",
+    ),
+):
+    _require_bridge_key(x_execution_bridge_key)
+    attempt, operation = record_external_attempt_stage(
+        db,
+        attempt_id=attempt_id,
+        bridge_id=payload.bridge_id,
+        stage=payload.stage,
+        detail=payload.detail,
+    )
+    response = {
+        "attempt": public_external_attempt(attempt),
+        "abort_requested": operation.status == "cancel_pending",
+    }
+    db.commit()
+    return response
+
+
+@router.post("/external-bridge/attempts/{attempt_id}/complete")
+def complete_external_bridge_attempt(
+    attempt_id: str,
+    payload: ExternalBridgeCompleteRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(
+        default=None,
+        alias="X-Execution-Bridge-Key",
+    ),
+):
+    _require_bridge_key(x_execution_bridge_key)
+    operation, attempt = complete_external_attempt(
+        db,
+        attempt_id=attempt_id,
+        bridge_id=payload.bridge_id,
+        receipt=payload.receipt,
+        stdout_summary=payload.stdout_summary,
+    )
+    response = {
+        "attempt": public_external_attempt(attempt),
+        "operation": public_external_operation(operation),
+    }
+    db.commit()
+    return response
+
+
+@router.post("/external-bridge/attempts/{attempt_id}/fail")
+def fail_external_bridge_attempt(
+    attempt_id: str,
+    payload: ExternalBridgeFailRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(
+        default=None,
+        alias="X-Execution-Bridge-Key",
+    ),
+):
+    _require_bridge_key(x_execution_bridge_key)
+    operation, attempt = fail_external_attempt(
+        db,
+        attempt_id=attempt_id,
+        bridge_id=payload.bridge_id,
+        stage=payload.stage,
+        error_code=payload.error_code,
+        message=payload.message,
+    )
+    response = {
+        "attempt": public_external_attempt(attempt),
+        "operation": public_external_operation(operation),
+    }
+    db.commit()
+    return response
 
 
 @router.get("/runs/{run_id}/mutations")

@@ -166,6 +166,65 @@ class ExternalOperationApprovalRequest(BaseModel):
     note: Optional[str] = Field(default=None, max_length=1000)
 
 
+class ExternalBridgeClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$",
+        min_length=1,
+        max_length=100,
+    )
+
+
+class ExternalBridgeHeartbeatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$",
+        min_length=1,
+        max_length=100,
+    )
+    stage: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    stdout_append: Optional[str] = Field(default=None, max_length=10000)
+
+
+class ExternalBridgeStageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$",
+        min_length=1,
+        max_length=100,
+    )
+    stage: str = Field(min_length=1, max_length=50)
+    detail: Optional[str] = Field(default=None, max_length=2000)
+
+
+class ExternalBridgeCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$",
+        min_length=1,
+        max_length=100,
+    )
+    receipt: dict[str, Any]
+    stdout_summary: Optional[str] = Field(default=None, max_length=20000)
+
+
+class ExternalBridgeFailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$",
+        min_length=1,
+        max_length=100,
+    )
+    stage: str = Field(min_length=1, max_length=50)
+    error_code: Optional[str] = Field(default=None, max_length=100)
+    message: Optional[str] = Field(default=None, max_length=2000)
+
+
 class FileRefreshRequest(BaseModel):
     root_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,99}$")
     # 首版索引边界固定为数据根及一级子目录。共享盘的更深层遍历必须由

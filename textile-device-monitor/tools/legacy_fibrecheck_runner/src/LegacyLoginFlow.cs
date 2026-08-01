@@ -95,18 +95,18 @@ namespace LegacyFibreCheckRunner
             "Select \"ID\", \"ChineseName\", \"IsDeleted\" From \"User\" " +
             "Where \"IsDeleted\"!=1 and \"ChineseName\" = :chinesename";
 
-        private const string SysDateSql = "SELECT SYSDATE FROM DUAL";
+        internal const string SysDateSql = "SELECT SYSDATE FROM DUAL";
 
-        private const string KeyValueSql =
+        internal const string KeyValueSql =
             "select \"InfoValue\" from \"KeyValues\" where \"InfoKey\" = :infokey";
 
-        private const string FileDirectorySql =
+        internal const string FileDirectorySql =
             "SELECT \"InfoValue\" FROM \"FileDirectory\" WHERE \"InfoKey\" = :infokey";
 
-        private const string ExactSampleCountSql =
+        internal const string ExactSampleCountSql =
             "SELECT COUNT(*) FROM \"SpecialWoolManage\" sw WHERE sw.\"SampleNo\" = :sampleno";
 
-        private const string ContainsSampleCountSql =
+        internal const string ContainsSampleCountSql =
             "SELECT COUNT(*) FROM \"SpecialWoolManage\" sw WHERE sw.\"SampleNo\" LIKE :contains ESCAPE '\\'";
 
         private const string PrefixSampleCountSql =
@@ -115,7 +115,7 @@ namespace LegacyFibreCheckRunner
         private static readonly System.Text.RegularExpressions.Regex SampleNoPattern =
             new System.Text.RegularExpressions.Regex(@"^[0-9A-Z]{9,20}(?:-[0-9A-Z]{1,8})?$");
 
-        private sealed class StaffContext
+        internal sealed class StaffContext
         {
             public string Id;
             public string LoginName;
@@ -143,6 +143,14 @@ namespace LegacyFibreCheckRunner
         /// <summary>运行只读登录核验，返回退出码并输出 JSON 文档。dbFactory 按连接串建库，供测试替换。</summary>
         public static int Run(RunnerOptions options, Func<string, ILegacyDb> dbFactory, out SortedDictionary<string, object> document)
         {
+            StaffContext staff;
+            return RunCore(options, dbFactory, out document, out staff);
+        }
+
+        /// <summary>同 Run，但额外返回登录得到的原始人员上下文（供写入器注入 CurrentLoginedStaff）。</summary>
+        public static int RunCore(RunnerOptions options, Func<string, ILegacyDb> dbFactory, out SortedDictionary<string, object> document, out StaffContext staffContext)
+        {
+            staffContext = null;
             document = new SortedDictionary<string, object>
             {
                 { "schema_version", 1 },
@@ -286,6 +294,7 @@ namespace LegacyFibreCheckRunner
                         { "parent_department_ids", staff.ParentDepartmentIds.ConvertAll(Redact.HashId) },
                         { "operator_chain_size", staff.OperatorChain().Count },
                     };
+                    staffContext = staff;
 
                     // 5) 旧权限表显式只读授权检查
                     bool isFAdmin = string.Equals(options.Account, "fadmin", StringComparison.OrdinalIgnoreCase);
@@ -448,6 +457,19 @@ namespace LegacyFibreCheckRunner
         internal static bool IsValidSampleNo(string value)
         {
             return !string.IsNullOrWhiteSpace(value) && SampleNoPattern.IsMatch(value);
+        }
+
+        /// <summary>检验员中文名 -> User ID 唯一解析；返回 (id, status)，status ∈ unique/missing/ambiguous。</summary>
+        internal static KeyValuePair<string, string> ResolveInspector(ILegacyDb db, string chineseName)
+        {
+            using (var table = db.Query(InspectorSql, new List<DbParam> { new DbParam("chinesename", chineseName) }))
+            {
+                if (table.Rows.Count == 1)
+                {
+                    return new KeyValuePair<string, string>(Convert.ToString(table.Rows[0]["ID"]), "unique");
+                }
+                return new KeyValuePair<string, string>(null, table.Rows.Count == 0 ? "missing" : "ambiguous");
+            }
         }
 
         /// <summary>

@@ -15,9 +15,11 @@ from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
     LEGACY_REGENERATED_COUNT_NODE,
     prepare_legacy_regenerated_count_operation,
+    settle_external_attempt_failure,
 )
 from app.execution.models import (
     ExecutionEdgeRun,
+    ExecutionExternalAttempt,
     ExecutionExternalOperation,
     ExecutionFileMutation,
     ExecutionFileIndexEntry,
@@ -1015,6 +1017,123 @@ def expire_stale_external_operations(
     return expired_count
 
 
+def expire_stale_external_attempts(
+    db: Session,
+    *,
+    now=None,
+    limit: int = 20,
+) -> int:
+    """Fail Bridge attempts whose lease expired and settle their operation.
+
+    Candidate discovery is intentionally lock-free, mirroring
+    expire_stale_external_operations.  Each transition then follows the
+    normal run -> node -> operation -> attempt lock order.  The stage-aware
+    settlement matches the Bridge fail endpoint: before file_copy_started
+    the operation becomes claimable again (or finishes a pending
+    cancellation), afterwards it requires manual reconciliation.
+    """
+
+    current_time = now or utcnow()
+    candidates = (
+        db.query(
+            ExecutionExternalAttempt.id,
+            ExecutionExternalAttempt.operation_id,
+        )
+        .filter(
+            ExecutionExternalAttempt.status.in_(["claimed", "in_progress"]),
+            ExecutionExternalAttempt.lease_expires_at.is_not(None),
+            ExecutionExternalAttempt.lease_expires_at <= current_time,
+        )
+        .order_by(
+            ExecutionExternalAttempt.created_at.asc(),
+            ExecutionExternalAttempt.id.asc(),
+        )
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    expired_count = 0
+    for candidate in candidates:
+        locator = (
+            db.query(
+                ExecutionExternalOperation.run_id,
+                ExecutionExternalOperation.node_run_id,
+            )
+            .filter(
+                ExecutionExternalOperation.id == candidate.operation_id,
+            )
+            .one_or_none()
+        )
+        if locator is None:
+            continue
+        run = (
+            db.query(ExecutionRun)
+            .filter(ExecutionRun.id == locator.run_id)
+            .populate_existing()
+            .with_for_update(skip_locked=True)
+            .one_or_none()
+        )
+        if run is None:
+            continue
+        node_run = (
+            db.query(ExecutionNodeRun)
+            .filter(
+                ExecutionNodeRun.id == locator.node_run_id,
+                ExecutionNodeRun.run_id == run.id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        operation = (
+            db.query(ExecutionExternalOperation)
+            .filter(
+                ExecutionExternalOperation.id == candidate.operation_id,
+                ExecutionExternalOperation.run_id == run.id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        attempt = (
+            db.query(ExecutionExternalAttempt)
+            .filter(
+                ExecutionExternalAttempt.id == candidate.id,
+                ExecutionExternalAttempt.operation_id
+                == candidate.operation_id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if (
+            operation is None
+            or attempt is None
+            or attempt.status not in {"claimed", "in_progress"}
+            or not _deadline_reached(
+                attempt.lease_expires_at,
+                current_time,
+            )
+        ):
+            continue
+
+        attempt.status = "failed"
+        attempt.error_code = "lease_expired"
+        attempt.error_message = "Bridge 租约已过期，执行进度中断"
+        attempt.finished_at = current_time
+        settle_external_attempt_failure(
+            db,
+            node_run=node_run,
+            operation=operation,
+            attempt=attempt,
+            stage=attempt.current_stage,
+            error_code="lease_expired",
+            error_message="Bridge 租约已过期，执行进度中断",
+            now=current_time,
+        )
+        expired_count += 1
+    return expired_count
+
+
 def claim_next_node(
     db: Session,
     *,
@@ -1025,6 +1144,9 @@ def claim_next_node(
     if expire_stale_external_operations(db, now=now):
         # Commit maintenance before acquiring an unrelated run lock.  The
         # worker loop will immediately scan for ordinary work again.
+        return None
+    if expire_stale_external_attempts(db, now=now):
+        # Bridge lease maintenance follows the same commit-first pattern.
         return None
     # API 驱动的物理发布没有 Worker 心跳线程，租约至少保留五分钟，
     # 避免较大的工作簿复制期间被过期回收并产生第二个发布者。
@@ -1836,6 +1958,22 @@ def _finish_settling_publish(
         run.output_data = data
         return True
 
+    remaining_external = (
+        db.query(ExecutionExternalOperation.id)
+        .filter(
+            ExecutionExternalOperation.run_id == run.id,
+            ExecutionExternalOperation.status.in_(
+                ["in_progress", "cancel_pending"]
+            ),
+        )
+        .first()
+    )
+    if remaining_external is not None:
+        # 已被 Bridge 领取的外部操作同样不可中断：运行保持待定状态，
+        # 直到该尝试回报终态后按阶段收尾。
+        run.output_data = data
+        return True
+
     now = utcnow()
     if pending_status == "cancel_pending":
         run.status = "cancelled"
@@ -1962,6 +2100,176 @@ def _prepare_external_operation_wait(
         },
     )
     return operation
+
+
+def _settle_cancel_pending_run(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    side_effect_completed: bool = False,
+) -> None:
+    """Terminalize a cancelling run once nothing uninterruptible remains."""
+
+    if run.status != "cancel_pending":
+        return
+    # autoflush 可能关闭（测试会话），先把操作/节点的终态落库再统计剩余
+    # 不可中断节点，避免过期读取让运行永远停在 cancel_pending。
+    db.flush()
+    remaining_publish = (
+        db.query(ExecutionNodeRun.id)
+        .filter(
+            ExecutionNodeRun.run_id == run.id,
+            ExecutionNodeRun.node_type == "artifact.publish",
+            ExecutionNodeRun.status == "running",
+        )
+        .first()
+    )
+    if remaining_publish is not None:
+        return
+    remaining_external = (
+        db.query(ExecutionExternalOperation.id)
+        .filter(
+            ExecutionExternalOperation.run_id == run.id,
+            ExecutionExternalOperation.status.in_(
+                ["in_progress", "cancel_pending"]
+            ),
+        )
+        .first()
+    )
+    if remaining_external is not None:
+        return
+    now = utcnow()
+    if side_effect_completed:
+        data = dict(run.output_data or {})
+        data["cancelled_after_side_effect"] = True
+        run.output_data = data
+    run.status = "cancelled"
+    run.finished_at = now
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type="run.cancelled",
+        payload={
+            "status": run.status,
+            "side_effect_completed": side_effect_completed,
+        },
+    )
+
+
+def complete_external_node(
+    db: Session,
+    *,
+    node_run_id: str,
+    output_data: Optional[dict[str, Any]] = None,
+) -> ExecutionNodeRun:
+    """Complete a waiting_external node after the Bridge recorded a receipt.
+
+    The remote write already happened by the time this runs, so the receipt
+    is always recorded; only the DAG propagation is skipped when the run is
+    being torn down by a cancellation.
+    """
+
+    run, node_run = _lock_run_and_node(db, node_run_id)
+    if node_run.status != "waiting_external":
+        raise conflict(
+            "external_operation_node_not_waiting",
+            "外部操作对应节点已不再等待连接器处理",
+            node_id=node_run.node_id,
+        )
+    now = utcnow()
+    node_run.status = "succeeded"
+    node_run.output_data = output_data or {}
+    node_run.error_code = None
+    node_run.error_message = None
+    node_run.finished_at = now
+    attempts = (
+        db.query(ExecutionNodeAttempt)
+        .filter(
+            ExecutionNodeAttempt.node_run_id == node_run.id,
+            ExecutionNodeAttempt.status == "waiting_external",
+        )
+        .with_for_update()
+        .all()
+    )
+    for attempt in attempts:
+        attempt.status = "succeeded"
+        attempt.output_data = node_run.output_data
+        attempt.finished_at = now
+    if run.status == "cancel_pending":
+        append_run_event(
+            db,
+            run_id=run.id,
+            event_type="node.succeeded",
+            payload={
+                "node_id": node_run.node_id,
+                "output": node_run.output_data,
+                "completed_while_settling": run.status,
+            },
+        )
+        _settle_cancel_pending_run(
+            db,
+            run=run,
+            side_effect_completed=True,
+        )
+        return node_run
+    db.flush()
+    _resolve_outgoing_edges(db, node_run)
+    _activate_resolved_nodes(db, run)
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type="node.succeeded",
+        payload={"node_id": node_run.node_id, "output": node_run.output_data},
+    )
+    previous_status = run.status
+    _refresh_run_status(db, run)
+    if run.status != previous_status:
+        append_run_event(
+            db,
+            run_id=run.id,
+            event_type=f"run.{run.status}",
+            payload={"status": run.status},
+        )
+    return node_run
+
+
+def cancel_external_waiting_node(
+    db: Session,
+    *,
+    node_run_id: str,
+    error_code: str,
+    error_message: str,
+) -> ExecutionNodeRun:
+    """Cancel a waiting_external node whose attempt ended before any write."""
+
+    run, node_run = _lock_run_and_node(db, node_run_id)
+    if node_run.status != "waiting_external":
+        raise conflict(
+            "external_operation_node_not_waiting",
+            "外部操作对应节点已不再等待连接器处理",
+            node_id=node_run.node_id,
+        )
+    now = utcnow()
+    node_run.status = "cancelled"
+    node_run.error_code = error_code
+    node_run.error_message = error_message
+    node_run.finished_at = now
+    attempts = (
+        db.query(ExecutionNodeAttempt)
+        .filter(
+            ExecutionNodeAttempt.node_run_id == node_run.id,
+            ExecutionNodeAttempt.status == "waiting_external",
+        )
+        .with_for_update()
+        .all()
+    )
+    for attempt in attempts:
+        attempt.status = "cancelled"
+        attempt.error_code = error_code
+        attempt.error_message = error_message
+        attempt.finished_at = now
+    _settle_cancel_pending_run(db, run=run)
+    return node_run
 
 
 def complete_node(
@@ -2656,8 +2964,40 @@ def set_run_control_status(
             if node.status == "running" and node.node_type == "artifact.publish"
         ]
         active_publish_ids = {node.id for node in active_publish_nodes}
+        # 已被 Bridge 领取的外部操作可能正在写入旧系统，同样不可中断：
+        # 操作先转 cancel_pending，节点保持等待，由 Bridge 回报终态后再
+        # 按阶段决定运行如何收尾。
+        inflight_operations = (
+            db.query(ExecutionExternalOperation)
+            .filter(
+                ExecutionExternalOperation.run_id == run.id,
+                ExecutionExternalOperation.status == "in_progress",
+            )
+            .order_by(ExecutionExternalOperation.id.asc())
+            .with_for_update()
+            .all()
+        )
+        inflight_node_run_ids = {
+            operation.node_run_id for operation in inflight_operations
+        }
+        for operation in inflight_operations:
+            operation.status = "cancel_pending"
+            append_run_event(
+                db,
+                run_id=run.id,
+                event_type="external_operation.cancel_pending",
+                actor_type="user",
+                actor_id=actor.id,
+                payload={
+                    "operation_id": operation.id,
+                    "status": operation.status,
+                    "reason": "run_cancelled",
+                    "remote_write_performed": False,
+                },
+            )
+        uninterruptible_ids = active_publish_ids | inflight_node_run_ids
         cancelled_node_ids = [
-            node.id for node in nodes if node.id not in active_publish_ids
+            node.id for node in nodes if node.id not in uninterruptible_ids
         ]
         if cancelled_node_ids:
             attempts = (
@@ -2684,14 +3024,14 @@ def set_run_control_status(
                 reason="run_cancelled",
             )
         for node in nodes:
-            if node.id in active_publish_ids:
+            if node.id in uninterruptible_ids:
                 continue
             node.status = "cancelled"
             node.finished_at = now
             node.lease_owner = None
             node.lease_token = None
             node.lease_expires_at = None
-        if active_publish_nodes:
+        if active_publish_nodes or inflight_operations:
             run.status = "cancel_pending"
             run.finished_at = None
         else:
@@ -2708,7 +3048,11 @@ def set_run_control_status(
         payload={
             "status": run.status,
             "uninterruptible_node_ids": (
-                [node.node_id for node in active_publish_nodes]
+                [
+                    node.node_id
+                    for node in nodes
+                    if node.id in uninterruptible_ids
+                ]
                 if action == "cancel"
                 else []
             ),

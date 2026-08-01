@@ -21,6 +21,7 @@ __pycache__/
 /textile-device-monitor/backend/*.db
 /textile-device-monitor/backend/runtime/
 /textile-device-monitor/tools/legacy_fibrecheck_runner/out/
+/textile-device-monitor/tools/legacy_fibrecheck_writer/out/
 
 # 生产 TLS/离线 CA 运行材料（脚本输出必须在仓库外；再防止手工复制误提交）
 **/tls-active/

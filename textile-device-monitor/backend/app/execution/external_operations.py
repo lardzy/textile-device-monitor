@@ -15,10 +15,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.execution.errors import ExecutionApiError, conflict
+from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.models import (
     ExecutionCredential,
+    ExecutionExternalAttempt,
     ExecutionExternalOperation,
     ExecutionFileIndexEntry,
     ExecutionNodeRun,
@@ -48,7 +49,23 @@ ACTIVE_REMOTE_OPERATION_STATUSES = (
     "prepared",
     "approved",
     "in_progress",
+    "cancel_pending",
     "reconciliation_required",
+)
+BRIDGE_LEASE_SECONDS = 120
+BRIDGE_STDOUT_LIMIT = 4000
+# 到达 file_copy_started 即视为可能已经接触旧系统：之前的阶段失败可以安全
+# 重领，之后（含）的失败必须转入人工对账，不能自动重试或放行同一样品。
+EXTERNAL_REMOTE_WRITE_STAGE = "file_copy_started"
+EXTERNAL_ATTEMPT_STAGES = (
+    "authenticated",
+    "permission_verified",
+    "remote_absence_verified",
+    "file_copy_started",
+    "file_copy_verified",
+    "main_record_save_started",
+    "main_record_verified",
+    "completed",
 )
 
 
@@ -997,3 +1014,659 @@ def public_external_operation(
         "created_at": operation.created_at.isoformat(),
         "updated_at": operation.updated_at.isoformat(),
     }
+
+
+def _stage_index(stage: str) -> int:
+    return EXTERNAL_ATTEMPT_STAGES.index(stage)
+
+
+def _stage_before_remote_write(stage: str | None) -> bool:
+    if stage is None or stage not in EXTERNAL_ATTEMPT_STAGES:
+        return True
+    return _stage_index(stage) < _stage_index(EXTERNAL_REMOTE_WRITE_STAGE)
+
+
+def _furthest_stage(*stages: str | None) -> str | None:
+    known = [stage for stage in stages if stage in EXTERNAL_ATTEMPT_STAGES]
+    if not known:
+        return None
+    return max(known, key=_stage_index)
+
+
+def _validate_attempt_stage(stage: str) -> str:
+    normalized = stage.strip()
+    if normalized not in EXTERNAL_ATTEMPT_STAGES:
+        raise ExecutionApiError(
+            422,
+            "external_attempt_stage_invalid",
+            "外部操作执行阶段不合法",
+            details={"stage": stage},
+        )
+    return normalized
+
+
+def _append_checkpoint(
+    attempt: ExecutionExternalAttempt,
+    *,
+    stage: str,
+    at: datetime,
+    detail: str | None = None,
+) -> None:
+    checkpoints = [
+        dict(item)
+        for item in (attempt.checkpoints or [])
+        if isinstance(item, dict)
+    ]
+    entry: dict[str, Any] = {
+        "stage": stage,
+        "at": _aware_utc(at).isoformat(),
+    }
+    if detail:
+        entry["detail"] = detail
+    checkpoints.append(entry)
+    attempt.checkpoints = checkpoints
+    attempt.current_stage = stage
+
+
+def _append_stdout(existing: str | None, appended: str | None) -> str:
+    if not appended:
+        return existing or ""
+    combined = (existing or "") + appended
+    if len(combined) > BRIDGE_STDOUT_LIMIT:
+        return combined[-BRIDGE_STDOUT_LIMIT:]
+    return combined
+
+
+def public_external_attempt(
+    attempt: ExecutionExternalAttempt,
+) -> dict[str, Any]:
+    return {
+        "id": attempt.id,
+        "operation_id": attempt.operation_id,
+        "attempt_no": attempt.attempt_no,
+        "bridge_id": attempt.bridge_id,
+        "status": attempt.status,
+        "current_stage": attempt.current_stage,
+        "lease_expires_at": _isoformat(attempt.lease_expires_at),
+        "checkpoints": [
+            dict(item)
+            for item in (attempt.checkpoints or [])
+            if isinstance(item, dict)
+        ],
+        "stdout_summary": attempt.stdout_summary or "",
+        "exit_code": attempt.exit_code,
+        "error": (
+            {
+                "code": attempt.error_code,
+                "message": attempt.error_message,
+            }
+            if attempt.error_code
+            else None
+        ),
+        "started_at": _isoformat(attempt.started_at),
+        "finished_at": _isoformat(attempt.finished_at),
+        "created_at": attempt.created_at.isoformat(),
+        "updated_at": attempt.updated_at.isoformat(),
+    }
+
+
+def bridge_external_operation(
+    operation: ExecutionExternalOperation,
+    *,
+    credential: ExecutionCredential | None,
+) -> dict[str, Any]:
+    """Public view plus the Bridge-only credential account name.
+
+    The Bridge channel never receives the credential id, revision or the
+    encrypted secret; the account name is the only credential field a client
+    needs to perform the legacy login.
+    """
+
+    view = public_external_operation(operation)
+    view["credential"] = {
+        "account_name": (
+            credential.account_name if credential is not None else None
+        ),
+    }
+    return view
+
+
+def claim_approved_external_operation(
+    db: Session,
+    *,
+    bridge_id: str,
+    now: datetime | None = None,
+) -> (
+    tuple[
+        ExecutionExternalOperation,
+        ExecutionExternalAttempt,
+        ExecutionCredential,
+    ]
+    | None
+):
+    """Claim the oldest approved operation for a Bridge client.
+
+    Returns None when nothing is claimable; expired approvals are skipped and
+    left to the regular expiry maintenance.  The selected operation passes
+    the same approval-TTL, credential-revision and source-content
+    re-verification as the approval itself before any state flips.
+    """
+
+    current_time = now or utcnow()
+    candidates = (
+        db.query(ExecutionExternalOperation.id)
+        .filter(
+            ExecutionExternalOperation.status == "approved",
+            ExecutionExternalOperation.approval_expires_at.is_not(None),
+            ExecutionExternalOperation.approval_expires_at > current_time,
+        )
+        .order_by(
+            ExecutionExternalOperation.created_at.asc(),
+            ExecutionExternalOperation.id.asc(),
+        )
+        .limit(5)
+        .all()
+    )
+    for (operation_id,) in candidates:
+        locator = (
+            db.query(
+                ExecutionExternalOperation.run_id,
+                ExecutionExternalOperation.node_run_id,
+            )
+            .filter(ExecutionExternalOperation.id == operation_id)
+            .one_or_none()
+        )
+        if locator is None:
+            continue
+        run = (
+            db.query(ExecutionRun)
+            .filter(ExecutionRun.id == locator.run_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if run is None:
+            continue
+        node_run = (
+            db.query(ExecutionNodeRun)
+            .filter(
+                ExecutionNodeRun.id == locator.node_run_id,
+                ExecutionNodeRun.run_id == run.id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        operation = (
+            db.query(ExecutionExternalOperation)
+            .filter(
+                ExecutionExternalOperation.id == operation_id,
+                ExecutionExternalOperation.run_id == run.id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if operation is None or operation.status != "approved":
+            continue
+        if node_run is None or node_run.status != "waiting_external":
+            raise conflict(
+                "external_operation_node_not_waiting",
+                "外部操作对应节点已不再等待连接器处理",
+                operation_id=operation.id,
+            )
+        _ensure_approval_not_expired(operation, now=current_time)
+        credential = _bound_credential_for_approval(
+            db,
+            operation=operation,
+            run=run,
+        )
+        _reverify_operation_sources(db, operation=operation)
+
+        lease_expires_at = current_time + timedelta(
+            seconds=BRIDGE_LEASE_SECONDS
+        )
+        attempt_no = int(operation.attempt_count or 0) + 1
+        operation.status = "in_progress"
+        operation.attempt_count = attempt_no
+        operation.lease_owner = bridge_id
+        operation.lease_expires_at = lease_expires_at
+        if operation.started_at is None:
+            operation.started_at = current_time
+        attempt = ExecutionExternalAttempt(
+            operation_id=operation.id,
+            attempt_no=attempt_no,
+            bridge_id=bridge_id,
+            status="in_progress",
+            lease_expires_at=lease_expires_at,
+            started_at=current_time,
+        )
+        db.add(attempt)
+        db.flush()
+        output = dict(node_run.output_data or {})
+        output["status"] = "in_progress"
+        output["attempt_id"] = attempt.id
+        output["attempt_no"] = attempt_no
+        node_run.output_data = output
+        append_run_event(
+            db,
+            run_id=operation.run_id,
+            event_type="external_operation.claimed",
+            actor_type="bridge",
+            actor_id=bridge_id,
+            payload={
+                "operation_id": operation.id,
+                "node_id": node_run.node_id,
+                "attempt_id": attempt.id,
+                "attempt_no": attempt_no,
+                "bridge_id": bridge_id,
+                "status": operation.status,
+                "lease_expires_at": lease_expires_at.isoformat(),
+                "remote_write_performed": False,
+            },
+        )
+        append_audit_log(
+            db,
+            action="external_operation.claim",
+            resource_type="execution_external_operation",
+            resource_id=operation.id,
+            details={
+                "run_id": operation.run_id,
+                "attempt_id": attempt.id,
+                "attempt_no": attempt_no,
+                "bridge_id": bridge_id,
+                "remote_write_performed": False,
+            },
+        )
+        return operation, attempt, credential
+    return None
+
+
+def _attempt_for_bridge(
+    db: Session,
+    *,
+    attempt_id: str,
+    bridge_id: str,
+) -> tuple[
+    ExecutionRun,
+    ExecutionNodeRun,
+    ExecutionExternalOperation,
+    ExecutionExternalAttempt,
+]:
+    """Lock an attempt in the engine-wide run -> node -> operation order."""
+
+    locator = (
+        db.query(
+            ExecutionExternalOperation.id,
+            ExecutionExternalOperation.run_id,
+            ExecutionExternalOperation.node_run_id,
+        )
+        .join(
+            ExecutionExternalAttempt,
+            ExecutionExternalAttempt.operation_id
+            == ExecutionExternalOperation.id,
+        )
+        .filter(ExecutionExternalAttempt.id == attempt_id)
+        .one_or_none()
+    )
+    if locator is None:
+        raise not_found("外部操作执行尝试", attempt_id)
+    run = (
+        db.query(ExecutionRun)
+        .filter(ExecutionRun.id == locator.run_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if run is None:
+        raise not_found("外部操作执行尝试", attempt_id)
+    node_run = (
+        db.query(ExecutionNodeRun)
+        .filter(
+            ExecutionNodeRun.id == locator.node_run_id,
+            ExecutionNodeRun.run_id == run.id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    operation = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id == locator.id,
+            ExecutionExternalOperation.run_id == run.id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    attempt = (
+        db.query(ExecutionExternalAttempt)
+        .filter(
+            ExecutionExternalAttempt.id == attempt_id,
+            ExecutionExternalAttempt.operation_id == locator.id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if node_run is None or operation is None or attempt is None:
+        raise not_found("外部操作执行尝试", attempt_id)
+    if attempt.bridge_id != bridge_id:
+        # 不透露其它 Bridge 的尝试是否存在。
+        raise not_found("外部操作执行尝试", attempt_id)
+    return run, node_run, operation, attempt
+
+
+def _ensure_attempt_active(
+    operation: ExecutionExternalOperation,
+    attempt: ExecutionExternalAttempt,
+    *,
+    now: datetime,
+) -> None:
+    if attempt.status not in {"claimed", "in_progress"}:
+        raise conflict(
+            "external_attempt_not_active",
+            "该外部操作执行尝试已结束，不能继续上报",
+            attempt_id=attempt.id,
+            status=attempt.status,
+        )
+    if operation.status not in {"in_progress", "cancel_pending"}:
+        raise conflict(
+            "external_operation_not_in_progress",
+            "外部操作当前状态不允许继续执行",
+            operation_id=operation.id,
+            status=operation.status,
+        )
+    if attempt.lease_expires_at is None or _aware_utc(
+        attempt.lease_expires_at
+    ) <= _aware_utc(now):
+        raise conflict(
+            "external_attempt_lease_expired",
+            "Bridge 租约已过期，该尝试将由系统回收，请重新领取",
+            attempt_id=attempt.id,
+        )
+
+
+def heartbeat_external_attempt(
+    db: Session,
+    *,
+    attempt_id: str,
+    bridge_id: str,
+    stage: str | None = None,
+    stdout_append: str | None = None,
+    now: datetime | None = None,
+) -> tuple[ExecutionExternalAttempt, ExecutionExternalOperation, bool]:
+    current_time = now or utcnow()
+    _run, _node_run, operation, attempt = _attempt_for_bridge(
+        db,
+        attempt_id=attempt_id,
+        bridge_id=bridge_id,
+    )
+    _ensure_attempt_active(operation, attempt, now=current_time)
+    lease_expires_at = current_time + timedelta(seconds=BRIDGE_LEASE_SECONDS)
+    attempt.lease_expires_at = lease_expires_at
+    operation.lease_expires_at = lease_expires_at
+    if stage is not None:
+        _append_checkpoint(
+            attempt,
+            stage=_validate_attempt_stage(stage),
+            at=current_time,
+        )
+    attempt.stdout_summary = _append_stdout(
+        attempt.stdout_summary,
+        stdout_append,
+    )
+    return attempt, operation, operation.status == "cancel_pending"
+
+
+def record_external_attempt_stage(
+    db: Session,
+    *,
+    attempt_id: str,
+    bridge_id: str,
+    stage: str,
+    detail: str | None = None,
+    now: datetime | None = None,
+) -> tuple[ExecutionExternalAttempt, ExecutionExternalOperation]:
+    current_time = now or utcnow()
+    _run, _node_run, operation, attempt = _attempt_for_bridge(
+        db,
+        attempt_id=attempt_id,
+        bridge_id=bridge_id,
+    )
+    _ensure_attempt_active(operation, attempt, now=current_time)
+    _append_checkpoint(
+        attempt,
+        stage=_validate_attempt_stage(stage),
+        at=current_time,
+        detail=detail,
+    )
+    lease_expires_at = current_time + timedelta(seconds=BRIDGE_LEASE_SECONDS)
+    attempt.lease_expires_at = lease_expires_at
+    operation.lease_expires_at = lease_expires_at
+    return attempt, operation
+
+
+def complete_external_attempt(
+    db: Session,
+    *,
+    attempt_id: str,
+    bridge_id: str,
+    receipt: dict[str, Any],
+    stdout_summary: str | None = None,
+    now: datetime | None = None,
+) -> tuple[ExecutionExternalOperation, ExecutionExternalAttempt]:
+    from app.execution.engine import complete_external_node
+
+    current_time = now or utcnow()
+    _run, node_run, operation, attempt = _attempt_for_bridge(
+        db,
+        attempt_id=attempt_id,
+        bridge_id=bridge_id,
+    )
+    _ensure_attempt_active(operation, attempt, now=current_time)
+    if not isinstance(receipt, dict) or not receipt:
+        raise ExecutionApiError(
+            422,
+            "external_receipt_invalid",
+            "旧系统上传回执不能为空",
+        )
+    record_verified = (
+        attempt.current_stage in EXTERNAL_ATTEMPT_STAGES
+        and _stage_index(attempt.current_stage)
+        >= _stage_index("main_record_verified")
+    )
+    if not record_verified and receipt.get("stage") != "completed":
+        raise conflict(
+            "external_attempt_not_verified",
+            "主单记录尚未核验完成，不能结束本次外部操作",
+            attempt_id=attempt.id,
+            current_stage=attempt.current_stage,
+        )
+
+    attempt.status = "completed"
+    attempt.exit_code = 0
+    attempt.finished_at = current_time
+    attempt.lease_expires_at = None
+    if stdout_summary is not None:
+        attempt.stdout_summary = stdout_summary[-BRIDGE_STDOUT_LIMIT:]
+    operation.status = "completed"
+    operation.receipt = receipt
+    operation.error_code = None
+    operation.error_message = None
+    operation.lease_owner = None
+    operation.lease_expires_at = None
+    operation.completed_at = current_time
+
+    output = dict(node_run.output_data or {})
+    output["status"] = "completed"
+    output["receipt"] = receipt
+    output["attempt_id"] = attempt.id
+    output["attempt_no"] = attempt.attempt_no
+    complete_external_node(
+        db,
+        node_run_id=node_run.id,
+        output_data=output,
+    )
+    append_run_event(
+        db,
+        run_id=operation.run_id,
+        event_type="external_operation.completed",
+        actor_type="bridge",
+        actor_id=bridge_id,
+        payload={
+            "operation_id": operation.id,
+            "node_id": node_run.node_id,
+            "attempt_id": attempt.id,
+            "attempt_no": attempt.attempt_no,
+            "status": operation.status,
+            "remote_write_performed": True,
+        },
+    )
+    append_audit_log(
+        db,
+        action="external_operation.complete",
+        resource_type="execution_external_operation",
+        resource_id=operation.id,
+        details={
+            "run_id": operation.run_id,
+            "attempt_id": attempt.id,
+            "attempt_no": attempt.attempt_no,
+            "bridge_id": bridge_id,
+            "remote_write_performed": True,
+        },
+    )
+    return operation, attempt
+
+
+def settle_external_attempt_failure(
+    db: Session,
+    *,
+    node_run: ExecutionNodeRun | None,
+    operation: ExecutionExternalOperation,
+    attempt: ExecutionExternalAttempt,
+    stage: str | None,
+    error_code: str | None,
+    error_message: str | None,
+    now: datetime,
+    actor_type: str = "system",
+    actor_id: str | None = None,
+) -> None:
+    """Settle an operation whose attempt failed at the given stage.
+
+    A failure before file_copy_started provably never touched the legacy
+    system: the operation becomes claimable again, or finishes a pending
+    cancellation.  Anything later may have left a remote side effect, so the
+    operation keeps its business fence until manual reconciliation.
+    """
+
+    operation.lease_owner = None
+    operation.lease_expires_at = None
+    reclaimed = _stage_before_remote_write(stage)
+    if reclaimed and operation.status == "cancel_pending":
+        from app.execution.engine import cancel_external_waiting_node
+
+        operation.status = "cancelled"
+        operation.error_code = "run_cancelled"
+        operation.error_message = "流程已取消，外部操作未写入旧系统"
+        operation.completed_at = now
+        if node_run is not None and node_run.status == "waiting_external":
+            cancel_external_waiting_node(
+                db,
+                node_run_id=node_run.id,
+                error_code="run_cancelled",
+                error_message="流程运行已取消",
+            )
+    elif reclaimed:
+        # 批准 TTL 不延长；过期后由 expire_stale_external_operations 收尾。
+        operation.status = "approved"
+    else:
+        operation.status = "reconciliation_required"
+        operation.error_code = error_code
+        operation.error_message = (
+            error_message or "外部操作执行失败，可能已写入旧系统，需要人工对账"
+        )
+    append_run_event(
+        db,
+        run_id=operation.run_id,
+        event_type="external_operation.attempt_failed",
+        actor_type=actor_type,
+        actor_id=actor_id,
+        payload={
+            "operation_id": operation.id,
+            "attempt_id": attempt.id,
+            "attempt_no": attempt.attempt_no,
+            "stage": stage,
+            "code": error_code,
+            "message": error_message,
+            "status": operation.status,
+            "reconciliation_required": (
+                operation.status == "reconciliation_required"
+            ),
+            "remote_write_performed": False,
+        },
+    )
+    append_audit_log(
+        db,
+        action="external_operation.fail_attempt",
+        resource_type="execution_external_operation",
+        resource_id=operation.id,
+        details={
+            "run_id": operation.run_id,
+            "attempt_id": attempt.id,
+            "attempt_no": attempt.attempt_no,
+            "bridge_id": attempt.bridge_id,
+            "stage": stage,
+            "code": error_code,
+            "status": operation.status,
+            "remote_write_performed": False,
+        },
+    )
+
+
+def fail_external_attempt(
+    db: Session,
+    *,
+    attempt_id: str,
+    bridge_id: str,
+    stage: str,
+    error_code: str | None = None,
+    message: str | None = None,
+    now: datetime | None = None,
+) -> tuple[ExecutionExternalOperation, ExecutionExternalAttempt]:
+    current_time = now or utcnow()
+    _run, node_run, operation, attempt = _attempt_for_bridge(
+        db,
+        attempt_id=attempt_id,
+        bridge_id=bridge_id,
+    )
+    _ensure_attempt_active(operation, attempt, now=current_time)
+    reported_stage = _validate_attempt_stage(stage)
+    # 失败定位以上报过的最远阶段为准，避免失败上报把操作倒退回可重领区间。
+    effective_stage = _furthest_stage(attempt.current_stage, reported_stage)
+    _append_checkpoint(
+        attempt,
+        stage=reported_stage,
+        at=current_time,
+        detail=message or error_code,
+    )
+    attempt.current_stage = effective_stage
+    attempt.status = "failed"
+    attempt.error_code = error_code
+    attempt.error_message = message
+    attempt.finished_at = current_time
+    attempt.lease_expires_at = None
+    settle_external_attempt_failure(
+        db,
+        node_run=node_run,
+        operation=operation,
+        attempt=attempt,
+        stage=effective_stage,
+        error_code=error_code,
+        error_message=message,
+        now=current_time,
+        actor_type="bridge",
+        actor_id=bridge_id,
+    )
+    return operation, attempt
