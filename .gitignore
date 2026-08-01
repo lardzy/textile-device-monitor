@@ -4,7 +4,9 @@
 /textile-device-client/logs/
 /.venv/
 /reference-document/
-.tmp/
+.tmp/*
+!.tmp/execution-system-brainstorm/
+!.tmp/execution-system-brainstorm/*.md
 __pycache__/
 *.py[cod]
 .DS_Store
