@@ -61,11 +61,14 @@ from app.execution.external_operations import (
     bridge_external_operation,
     claim_approved_external_operation,
     complete_external_attempt,
+    ensure_bridge_credential_account,
     fail_external_attempt,
     heartbeat_external_attempt,
     lock_legacy_remote_business_scope,
     public_external_attempt,
     public_external_operation,
+    public_external_reconciliation_context,
+    reconcile_external_operation,
     record_external_attempt_stage,
     resolve_legacy_target_sample_number,
 )
@@ -119,6 +122,7 @@ from app.execution.schemas import (
     ExternalBridgeHeartbeatRequest,
     ExternalBridgeStageRequest,
     ExternalOperationApprovalRequest,
+    ExternalOperationReconciliationRequest,
     FileRefreshRequest,
     HumanTaskClaimRequest,
     HumanTaskDraftRequest,
@@ -1963,6 +1967,7 @@ def test_workflow(
             mode="test",
             definition=run.definition_snapshot,
             capabilities=run.capabilities_snapshot,
+            target_sample_number=payload.target_sample_number,
         )
         duplicate = True
     return {"duplicate": duplicate, "run": _run_dict(run)}
@@ -2072,6 +2077,7 @@ def start_run(
             mode="live",
             definition=run.definition_snapshot,
             capabilities=run.capabilities_snapshot,
+            target_sample_number=payload.target_sample_number,
         )
         duplicate = True
     return {"duplicate": duplicate, "run": _run_dict(run)}
@@ -2230,7 +2236,64 @@ def approve_external_operation(
     }
 
 
+@router.get("/external-operations/{operation_id}/reconciliation")
+def external_operation_reconciliation_context(
+    operation_id: str,
+    auth: AuthContext = Depends(
+        permission("external_operation.reconcile")
+    ),
+    db: Session = Depends(get_db),
+):
+    if auth.user.role != "admin":
+        raise ExecutionApiError(
+            403,
+            "external_reconciliation_admin_required",
+            "只有管理员可以查看旧系统人工对账上下文",
+        )
+    operation, _run = _external_operation_for_auth(
+        db,
+        operation_id=operation_id,
+        auth=auth,
+    )
+    return public_external_reconciliation_context(operation)
+
+
+@router.post("/external-operations/{operation_id}/reconcile")
+def reconcile_external_operation_result(
+    operation_id: str,
+    payload: ExternalOperationReconciliationRequest,
+    auth: AuthContext = Depends(
+        permission("external_operation.reconcile", csrf=True)
+    ),
+    db: Session = Depends(get_db),
+):
+    operation, duplicate = reconcile_external_operation(
+        db,
+        operation_id=operation_id,
+        actor=auth.user,
+        action=payload.action,
+        attempt_id=payload.attempt_id,
+        payload_checksum=payload.payload_checksum,
+        confirmed_sample_number=payload.confirmed_sample_number,
+        note=payload.note,
+        evidence=payload.evidence.model_dump(mode="json"),
+    )
+    db.commit()
+    view = public_external_operation(operation)
+    return {
+        "duplicate": duplicate,
+        "operation": view,
+        "remote_write_performed": view["remote_write_performed"],
+    }
+
+
 def _require_bridge_key(provided_key: Optional[str]) -> None:
+    if not settings.EXECUTION_BRIDGE_ENABLED:
+        raise ExecutionApiError(
+            503,
+            "execution_bridge_disabled",
+            "执行系统 Bridge 总开关未启用",
+        )
     configured = settings.EXECUTION_BRIDGE_TOKEN.strip()
     if not configured:
         raise ExecutionApiError(
@@ -2262,10 +2325,15 @@ def claim_external_bridge_operation(
     result = claim_approved_external_operation(
         db,
         bridge_id=payload.bridge_id,
+        account_name=payload.account_name,
     )
     if result is None:
         return {"claimed": False}
     operation, attempt, credential = result
+    ensure_bridge_credential_account(
+        credential,
+        account_name=payload.account_name,
+    )
     response = {
         "claimed": True,
         "attempt": public_external_attempt(attempt),

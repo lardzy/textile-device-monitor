@@ -1,9 +1,9 @@
 # FibreCheck 集中式 Windows Bridge 交接手册
 
 > 最后更新：2026-08-01
-> 适用环境：Parallels Desktop 中的 Windows 11，以及后续部门内常驻 Windows 主机
-> 当前状态：`260187115-1` 首次受控真实写入已完成并通过写后核验；
-> 下一阶段为第二次端到端验证、对账解决路径与并发门禁
+> 适用环境：Windows 11 ARM64（x64/x86 模拟层）及后续部门内常驻 Windows 主机
+> 当前状态：`260187115-1` 首次受控真实写入已完成并通过写后核验；代码复查后
+> 已暂停第二次真实写入，先完成副作用许可、取消、账号隔离与并发安全门禁
 
 ## 1. 首先必须知道的结论
 
@@ -38,24 +38,27 @@ external.legacy_regenerated_fiber_count_upload@1
 显示名称：旧系统上传-再生纤-根数法
 ```
 
-当前节点只执行本地预检：
+当前节点先执行持久化预检：
 
 1. 使用人工选择节点输出的服务端文件 ID；
 2. 重新解析实际文件格式，兼容后缀名与真实格式不一致的 OLE/OOXML 工作簿；
 3. 重新读取 `根数法报告1!I8`；
-4. 多文件必须属于同一检验员；
+4. 每次外部上传必须且只能选择一份原始记录；
 5. 记录源文件 fingerprint、SHA-256、检验员、固定业务字段和目标样品编号；
 6. 绑定运行创建人的旧系统凭据 ID、凭据 revision 和账号作用域；
 7. 创建持久化外部操作及跨运行样品业务围栏；
 8. 等待用户再次输入完整样品编号并确认；
-9. 批准仅把本地状态从 `prepared` 改为 `approved`。
+9. 批准把本地状态从 `prepared` 改为 `approved`；已启用的 Bridge 随后可以领取；
+10. Bridge 通过 `claim/heartbeat/stage/complete/fail` 持久化 attempt、租约、阶段和回执。
 
 同一样品的预检和批准还会先取得 PostgreSQL transaction advisory lock，再进入
 文件索引和外部操作行锁，避免重复运行与批准并发时形成反向锁等待。
 
-当前代码没有 Bridge 领取接口、没有远端提交接口、没有完成回执接口，也不会调用
-FibreCheck DLL、复制到旧系统目录或执行 Oracle 写入。默认发布的再生纤根数法
-流程也尚未自动串入这个外部节点，避免 Bridge 不存在时把普通测试流程卡死。
+Bridge 与 Writer 链路已经能够调用 FibreCheck 官方 DAL、复制原始记录并保存主单。
+因此批准不再是无副作用动作：若 `EXECUTION_BRIDGE_ENABLED=true`、令牌已配置且
+Windows Bridge 正在运行，批准后的任务可以立即进入真实写入。安全复查完成前
+必须保持独立总开关为 `false`；已有令牌可以原样保留。
+默认发布的再生纤根数法流程仍未自动串入这个外部节点，避免普通流程被连接器阻塞。
 
 关键实现位置：
 
@@ -63,8 +66,11 @@ FibreCheck DLL、复制到旧系统目录或执行 Oracle 写入。默认发布�
 - `backend/app/execution/engine.py`
 - `backend/app/execution/models.py`
 - `backend/alembic/versions/0004_execution_external_operations.py`
+- `backend/alembic/versions/0005_execution_external_attempts.py`
 - `frontend/src/pages/execution/ExecutionExternalOperationPanel.jsx`
 - `tools/legacy_fibrecheck_probe/`
+- `tools/legacy_fibrecheck_bridge/`
+- `tools/legacy_fibrecheck_writer/`
 
 预检默认有效 30 分钟，批准默认有效 15 分钟。过期记录由 execution-worker
 自动转为 `expired`，对应等待节点和运行结束为失败，释放同一样品业务围栏。
@@ -90,6 +96,11 @@ Git 仓库不包含旧程序和凭据。进入 Windows 11 后需单独准备：
 
 这些目录或文件被 Git 忽略。若 Windows 使用独立克隆，必须通过受控方式另行复制，
 不要把 DLL、配置中的连接串、账号密码或对账输出提交到 Git。
+
+Windows 迁移后必须重新核验 secrets 文件 ACL，不能把 macOS 的 `0600` 描述直接
+视为仍然成立。本次复查发现 `backend/.env` 与 `inspection-systems.env` 都继承了
+两个无法解析且具有 Modify 权限的主体；真实写入前应由管理员确认主体、移除不需要
+的继承权限，并评估轮换其中的凭据。本轮未擅自改写 ACL 或密钥。
 
 ## 4. 已定位的旧系统调用链
 
@@ -227,7 +238,8 @@ csc.exe 直接编译）：
 - 后端迁移 `0005_external_attempts`：`execution_external_attempts` 表
   （attempt/租约/阶段检查点/stdout 摘要/退出信息），
   `(operation_id, attempt_no)` 唯一；
-- Bridge 端点（`X-Execution-Bridge-Key` 令牌，未配置 503 / 不匹配 401）：
+- Bridge 端点（独立总开关 + `X-Execution-Bridge-Key` 令牌；关闭/未配置 503，
+  令牌不匹配 401）：
   `claim`、`heartbeat`、`stage`、`complete`、`fail`；
 - 领取前复核：批准 TTL、凭据 revision、账号绑定、源文件指纹/SHA-256/I8；
 - `in_progress` 参与取消状态机（cancel_pending + heartbeat 回 abort_requested）；
@@ -271,9 +283,11 @@ Runner 的 `--dry-run-upload` 模式已实现并实测：
   默认 GBK，曾把一次成功写入误判为失败（已人工对账置 completed 并写审计；
   Runner 输出编码已修复；无重复写入）。
 
-阶段 D 的取消/失败阶段语义（`file_copy_started` 起失联 →
-`reconciliation_required`，绝不自动重试）在 Runner 与 Bridge 双层均已实现；
-本首次写入未触发。
+首次写入后的代码复查发现，原阶段 D 协议尚不能严格保证上述语义：Writer 在输出
+`file_copy_started` 后立即写文件，未等待 Bridge 把边界持久化；阶段响应丢失、
+取消竞态或多 Bridge 同时领取时仍存在重复/错误写入风险。当前工作树已增加
+`file_copy_ready` → 服务端持久化 `file_copy_started` → stdin 一次性许可的
+fail-closed 握手，并补阶段单调化、账号匹配和全局容量门禁；验证完成前继续冻结写入。
 
 ## 7. 后续阶段仍缺少的能力
 
@@ -281,18 +295,22 @@ Runner 的 `--dry-run-upload` 模式已实现并实测：
 - ~~外部 attempt 表~~（2026-08-01 已实现）；
 - ~~领取事务内再次校验批准 TTL、凭据 revision、账号及全部源文件哈希~~（已实现）；
 - ~~`in_progress` 操作参与取消状态机~~（已实现 cancel_pending + abort 回报）；
-- `reconciliation_required` 的人工解决端点（对账后解除围栏/收尾节点）；
+- ~~`reconciliation_required` 的管理员人工解决端点~~（2026-08-01 已实现；只
+  接受完整写入或完全未写入，部分结果继续锁定）；
+- Bridge/探针生成并签名、绑定 operation/attempt/payload/账号/目标路径的只读
+  observation（当前对账材料仅为 `admin_attestation_v1` 人工声明）；
 - 远端成功业务键的永久幂等记录（当前以操作/attempt 终态 + 唯一索引承担，
   跨运行重复创建仍靠业务围栏与人工确认）；
 - 旧账号密码的 Windows 端受控解密/传递方式（首版为 Bridge 本地受控
   secrets 文件，凭据不出执行系统服务端）；
 - 文件复制、DAL 保存各阶段失败注入演练（断网、Oracle 超时、同名文件、
   部分保存、Runner 崩溃）；
-- 多 Bridge / 多并发容量（当前全局固定为 1）；
+- PostgreSQL 下两个 Bridge 并发领取的真实竞争验证（服务端容量目标为全局 1）；
 - UTF-8 编码修复后的第二次端到端验证；
-- PostgreSQL 环境下的 Bridge 并发门禁（演练环境为 SQLite）。
+- Bridge 完成/失败响应中断时的本地持久回执与运维恢复流程。
 
-任何一项缺失时，都只能运行只读登录、对账和 dry-run。
+上述安全门禁缺失或未验证时，只能运行只读登录、对账、dry-run 和无副作用的
+自动化测试；`EXECUTION_BRIDGE_ENABLED` 必须保持为 `false`。
 
 ## 8. 已知真实样本事实
 
@@ -324,12 +342,11 @@ tools/legacy_fibrecheck_writer/README.md
 ```
 
 `260187115-1` 首次受控真实写入已于 2026-08-01 完成并通过写后核验
-（证据在 `.tmp/fibrecheck-reconciliation/`）。后续任何新的写入操作，
-继续沿用既有边界：Runner 由 Bridge 以“一任务一进程”调用；批准、复核与
-检查点逻辑在服务端；Runner 端口令只从本地受控环境注入；
-`file_copy_started` 后的任何异常一律 `reconciliation_required`，不得自动
-重试、不得静默重复提交。
+（证据在 `.tmp/fibrecheck-reconciliation/`）。它证明 DAL 路径可行，不代表
+生产闭环已经安全。进入新环境后先确认 Bridge 总开关为 `false`，再验证许可握手、边界前取消、
+边界后失联转对账、账号不匹配拒绝、PostgreSQL 全局并发 1 和故障注入。
 
-当前直接后续事项：UTF-8 修复后的第二次端到端验证、`reconciliation_required`
-人工解决端点、PostgreSQL 环境 Bridge 并发门禁、上传节点接入默认流程的
-配置化开关。
+人工解决端点和 PostgreSQL 容量门禁已经完成。后续顺序为：故障注入、只读
+observation 绑定与 Windows 凭据 ACL 收口；门禁通过后再进行第二次端到端验证，
+最后用配置开关把上传节点接入默认流程。任何成功未知都不得自动重试、不得释放
+业务围栏、不得静默重复提交。

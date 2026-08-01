@@ -158,6 +158,19 @@ export const approveExecutionExternalOperation = (
   },
 );
 
+export const getExecutionExternalOperationReconciliation = operationId =>
+  executionClient.get(
+    '/external-operations/'
+      + encodeURIComponent(operationId)
+      + '/reconciliation',
+  );
+
+export const reconcileExecutionExternalOperation = (operationId, payload) =>
+  executionClient.post(
+    '/external-operations/' + encodeURIComponent(operationId) + '/reconcile',
+    payload,
+  );
+
 export const pauseExecutionRun = runId =>
   executionClient.post(`/runs/${runId}/pause`);
 

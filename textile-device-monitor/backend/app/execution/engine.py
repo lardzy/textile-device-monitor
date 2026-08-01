@@ -50,6 +50,11 @@ from app.execution.validation import (
 RUN_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 NODE_TERMINAL_STATUSES = {"succeeded", "failed", "skipped", "cancelled"}
 HUMAN_NODE_TYPES = {"input.form", "human.file_selection", "human.input", "human.confirm"}
+UNSETTLED_EXTERNAL_OPERATION_STATUSES = {
+    "in_progress",
+    "cancel_pending",
+    "reconciliation_required",
+}
 RUN_RESULT_ACCEPTING_STATUSES = {
     "queued",
     "running",
@@ -628,9 +633,23 @@ def assert_idempotent_run_matches(
     mode: str,
     definition: dict[str, Any],
     capabilities: Optional[dict[str, Any]] = None,
+    target_sample_number: Optional[str] = None,
 ) -> None:
+    inspection_number = inspection_number.strip()
     normalized_inputs = dict(input_data)
     normalized_inputs["inspection_number"] = inspection_number
+    normalized_target = (target_sample_number or "").strip() or None
+    supplied_target = normalized_inputs.get("target_sample_number")
+    if isinstance(supplied_target, str):
+        supplied_target = supplied_target.strip() or None
+    if supplied_target not in (None, normalized_target):
+        raise ExecutionApiError(
+            422,
+            "target_sample_number_mismatch",
+            "input_data 中的目标样品编号与本次运行指定不一致",
+        )
+    if normalized_target is not None:
+        normalized_inputs["target_sample_number"] = normalized_target
     runtime_capabilities = deepcopy(
         capabilities
         if capabilities is not None
@@ -1125,6 +1144,7 @@ def expire_stale_external_attempts(
             node_run=node_run,
             operation=operation,
             attempt=attempt,
+            settling_run_status=run.status,
             stage=attempt.current_stage,
             error_code="lease_expired",
             error_message="Bridge 租约已过期，执行进度中断",
@@ -1798,12 +1818,11 @@ def _cancel_failure_siblings(
     failed_node_id: str,
     actor_user_id: Optional[str] = None,
 ) -> list[ExecutionNodeRun]:
-    """Stop every reversible sibling while preserving an in-flight publish.
+    """Stop reversible siblings while preserving every uncertain side effect.
 
-    `artifact.publish` is the only first-version node allowed to cross the
-    staging boundary. Once claimed it is an uninterruptible critical section:
-    the run cannot become terminal until that node records a receipt or an
-    explicit publish failure.
+    A claimed publish or external operation is an uninterruptible critical
+    section. The run cannot become terminal until each one records a result;
+    post-boundary external failures additionally require admin attestation.
     """
 
     now = utcnow()
@@ -1853,8 +1872,48 @@ def _cancel_failure_siblings(
         if node.status == "running" and node.node_type == "artifact.publish"
     ]
     active_publish_ids = {node.id for node in active_publish_nodes}
+    unsettled_external_operations = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.run_id == run.id,
+            ExecutionExternalOperation.status.in_(
+                UNSETTLED_EXTERNAL_OPERATION_STATUSES
+            ),
+        )
+        .order_by(ExecutionExternalOperation.id.asc())
+        .with_for_update()
+        .all()
+    )
+    unsettled_external_node_ids = {
+        operation.node_run_id
+        for operation in unsettled_external_operations
+    }
+    for operation in unsettled_external_operations:
+        if operation.status != "in_progress":
+            continue
+        # The sibling failure is a cancellation request for the Bridge. A
+        # pre-boundary attempt must stop safely; a post-boundary result remains
+        # fenced and transitions to reconciliation_required on failure.
+        operation.status = "cancel_pending"
+        append_run_event(
+            db,
+            run_id=run.id,
+            event_type="external_operation.cancel_pending",
+            actor_type="user" if actor_user_id else "system",
+            actor_id=actor_user_id,
+            payload={
+                "operation_id": operation.id,
+                "status": operation.status,
+                "reason": "run_failed",
+                "remote_write_performed": None,
+            },
+        )
+    uninterruptible_ids = active_publish_ids | unsettled_external_node_ids
+    uninterruptible_nodes = [
+        node for node in nodes if node.id in uninterruptible_ids
+    ]
     cancelled_node_ids = [
-        node.id for node in nodes if node.id not in active_publish_ids
+        node.id for node in nodes if node.id not in uninterruptible_ids
     ]
     if cancelled_node_ids:
         attempts = (
@@ -1882,7 +1941,7 @@ def _cancel_failure_siblings(
         )
 
     for node in nodes:
-        if node.id in active_publish_ids:
+        if node.id in uninterruptible_ids:
             continue
         node.status = "cancelled"
         node.finished_at = now
@@ -1890,7 +1949,7 @@ def _cancel_failure_siblings(
         node.lease_token = None
         node.lease_expires_at = None
 
-    if active_publish_nodes:
+    if uninterruptible_nodes:
         run.status = "failure_pending"
         run.finished_at = None
     elif was_paused:
@@ -1899,7 +1958,7 @@ def _cancel_failure_siblings(
     else:
         run.status = "failed"
         run.finished_at = now
-    return active_publish_nodes
+    return uninterruptible_nodes
 
 
 def _finish_settling_publish(
@@ -1963,7 +2022,7 @@ def _finish_settling_publish(
         .filter(
             ExecutionExternalOperation.run_id == run.id,
             ExecutionExternalOperation.status.in_(
-                ["in_progress", "cancel_pending"]
+                UNSETTLED_EXTERNAL_OPERATION_STATUSES
             ),
         )
         .first()
@@ -1975,13 +2034,20 @@ def _finish_settling_publish(
         return True
 
     now = utcnow()
+    any_side_effect = bool(receipts) or bool(
+        data.get("external_side_effect_receipts")
+    )
     if pending_status == "cancel_pending":
         run.status = "cancelled"
-        data["cancelled_after_side_effect"] = bool(receipts)
+        data["cancelled_after_side_effect"] = any_side_effect
         event_type = "run.cancelled"
     else:
         run.status = "failed"
         data["failed_after_publish_started"] = True
+        data["failed_after_external_side_effect"] = bool(
+            data.get("external_side_effect_receipts")
+        )
+        data["failed_after_side_effect"] = any_side_effect
         event_type = "run.failed"
     run.output_data = data
     run.finished_at = now
@@ -1991,9 +2057,105 @@ def _finish_settling_publish(
         event_type=event_type,
         payload={
             "status": run.status,
-            "side_effect_completed": bool(receipts),
+            "side_effect_completed": any_side_effect,
             "publish_receipt_count": len(receipts),
             "publish_error_count": len(errors),
+            "code": run.error_code,
+            "message": run.error_message,
+        },
+    )
+    return True
+
+
+def _finish_settling_external(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    side_effect_completed: bool,
+    output_data: Optional[dict[str, Any]] = None,
+    error_code: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> bool:
+    """Record an external result and settle cancel/failure once all writes stop."""
+
+    pending_status = run.status
+    if pending_status not in {"cancel_pending", "failure_pending"}:
+        return False
+
+    data = dict(run.output_data or {})
+    receipts = list(data.get("external_side_effect_receipts") or [])
+    resolutions = list(data.get("external_side_effect_resolutions") or [])
+    if side_effect_completed:
+        receipts.append(
+            {
+                "node_id": node_run.node_id,
+                "receipt": output_data or {},
+            }
+        )
+    else:
+        resolutions.append(
+            {
+                "node_id": node_run.node_id,
+                "code": error_code,
+                "message": error_message,
+                "remote_write_performed": False,
+            }
+        )
+    data["external_side_effect_receipts"] = receipts
+    data["external_side_effect_resolutions"] = resolutions
+
+    # Tests may disable autoflush. Make the terminal operation/node visible to
+    # the remaining-uninterruptible checks before deciding the run is settled.
+    db.flush()
+    remaining_publish = (
+        db.query(ExecutionNodeRun.id)
+        .filter(
+            ExecutionNodeRun.run_id == run.id,
+            ExecutionNodeRun.node_type == "artifact.publish",
+            ExecutionNodeRun.status == "running",
+        )
+        .first()
+    )
+    remaining_external = (
+        db.query(ExecutionExternalOperation.id)
+        .filter(
+            ExecutionExternalOperation.run_id == run.id,
+            ExecutionExternalOperation.status.in_(
+                UNSETTLED_EXTERNAL_OPERATION_STATUSES
+            ),
+        )
+        .first()
+    )
+    if remaining_publish is not None or remaining_external is not None:
+        run.output_data = data
+        return True
+
+    now = utcnow()
+    any_side_effect = bool(data.get("publish_receipts")) or bool(receipts)
+    if pending_status == "cancel_pending":
+        run.status = "cancelled"
+        data["cancelled_after_side_effect"] = any_side_effect
+        event_type = "run.cancelled"
+    else:
+        run.status = "failed"
+        data["failed_after_publish_started"] = bool(
+            data.get("publish_receipts") or data.get("publish_errors")
+        )
+        data["failed_after_external_side_effect"] = bool(receipts)
+        data["failed_after_side_effect"] = any_side_effect
+        event_type = "run.failed"
+    run.output_data = data
+    run.finished_at = now
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type=event_type,
+        payload={
+            "status": run.status,
+            "side_effect_completed": any_side_effect,
+            "external_receipt_count": len(receipts),
+            "external_resolution_count": len(resolutions),
             "code": run.error_code,
             "message": run.error_message,
         },
@@ -2131,7 +2293,7 @@ def _settle_cancel_pending_run(
         .filter(
             ExecutionExternalOperation.run_id == run.id,
             ExecutionExternalOperation.status.in_(
-                ["in_progress", "cancel_pending"]
+                UNSETTLED_EXTERNAL_OPERATION_STATUSES
             ),
         )
         .first()
@@ -2195,7 +2357,7 @@ def complete_external_node(
         attempt.status = "succeeded"
         attempt.output_data = node_run.output_data
         attempt.finished_at = now
-    if run.status == "cancel_pending":
+    if run.status in {"cancel_pending", "failure_pending"}:
         append_run_event(
             db,
             run_id=run.id,
@@ -2206,10 +2368,12 @@ def complete_external_node(
                 "completed_while_settling": run.status,
             },
         )
-        _settle_cancel_pending_run(
+        _finish_settling_external(
             db,
             run=run,
+            node_run=node_run,
             side_effect_completed=True,
+            output_data=node_run.output_data,
         )
         return node_run
     db.flush()
@@ -2268,7 +2432,121 @@ def cancel_external_waiting_node(
         attempt.error_code = error_code
         attempt.error_message = error_message
         attempt.finished_at = now
-    _settle_cancel_pending_run(db, run=run)
+    _finish_settling_external(
+        db,
+        run=run,
+        node_run=node_run,
+        side_effect_completed=False,
+        error_code=error_code,
+        error_message=error_message,
+    )
+    return node_run
+
+
+def fail_external_waiting_node(
+    db: Session,
+    *,
+    node_run_id: str,
+    error_code: str,
+    error_message: str,
+    actor_user_id: Optional[str] = None,
+) -> ExecutionNodeRun:
+    """Fail a waiting external node after proving no remote side effect.
+
+    This is deliberately separate from fail_node: the ordinary Worker lease
+    ended when the durable external-operation fence was prepared.
+    """
+
+    run, node_run = _lock_run_and_node(db, node_run_id)
+    if node_run.status != "waiting_external":
+        raise conflict(
+            "external_operation_node_not_waiting",
+            "外部操作对应节点已不再等待连接器处理",
+            node_id=node_run.node_id,
+        )
+    if run.status in RUN_TERMINAL_STATUSES or run.status == "cancel_pending":
+        raise conflict(
+            "external_reconciliation_run_not_active",
+            "当前流程状态不能按未写入结果失败收尾",
+            run_status=run.status,
+        )
+
+    now = utcnow()
+    node_run.status = "failed"
+    node_run.error_code = error_code
+    node_run.error_message = error_message
+    node_run.finished_at = now
+    node_run.lease_owner = None
+    node_run.lease_token = None
+    node_run.lease_expires_at = None
+    attempts = (
+        db.query(ExecutionNodeAttempt)
+        .filter(
+            ExecutionNodeAttempt.node_run_id == node_run.id,
+            ExecutionNodeAttempt.status == "waiting_external",
+        )
+        .with_for_update()
+        .all()
+    )
+    for attempt in attempts:
+        attempt.status = "failed"
+        attempt.error_code = error_code
+        attempt.error_message = error_message
+        attempt.finished_at = now
+
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type="node.failed",
+        actor_type="user" if actor_user_id else "system",
+        actor_id=actor_user_id,
+        payload={
+            "node_id": node_run.node_id,
+            "code": error_code,
+            "message": error_message,
+        },
+    )
+    if run.status == "failure_pending":
+        # Preserve the original sibling failure as the run's terminal cause.
+        _finish_settling_external(
+            db,
+            run=run,
+            node_run=node_run,
+            side_effect_completed=False,
+            error_code=error_code,
+            error_message=error_message,
+        )
+    else:
+        run.error_code = error_code
+        run.error_message = error_message
+        uninterruptible_nodes = _cancel_failure_siblings(
+            db,
+            run=run,
+            failed_node_id=node_run.id,
+            actor_user_id=actor_user_id,
+        )
+        append_run_event(
+            db,
+            run_id=run.id,
+            event_type=(
+                "run.failure_pending"
+                if uninterruptible_nodes
+                else (
+                    "run.failure_deferred"
+                    if run.status == "paused"
+                    else "run.failed"
+                )
+            ),
+            actor_type="user" if actor_user_id else "system",
+            actor_id=actor_user_id,
+            payload={
+                "code": error_code,
+                "message": error_message,
+                "uninterruptible_node_ids": [
+                    node.node_id for node in uninterruptible_nodes
+                ],
+            },
+        )
     return node_run
 
 
@@ -2967,35 +3245,51 @@ def set_run_control_status(
         # 已被 Bridge 领取的外部操作可能正在写入旧系统，同样不可中断：
         # 操作先转 cancel_pending，节点保持等待，由 Bridge 回报终态后再
         # 按阶段决定运行如何收尾。
-        inflight_operations = (
+        unsettled_external_operations = (
             db.query(ExecutionExternalOperation)
             .filter(
                 ExecutionExternalOperation.run_id == run.id,
-                ExecutionExternalOperation.status == "in_progress",
+                ExecutionExternalOperation.status.in_(
+                    UNSETTLED_EXTERNAL_OPERATION_STATUSES
+                ),
             )
             .order_by(ExecutionExternalOperation.id.asc())
             .with_for_update()
             .all()
         )
-        inflight_node_run_ids = {
-            operation.node_run_id for operation in inflight_operations
+        unsettled_external_node_ids = {
+            operation.node_run_id
+            for operation in unsettled_external_operations
         }
-        for operation in inflight_operations:
-            operation.status = "cancel_pending"
+        for operation in unsettled_external_operations:
+            previous_operation_status = operation.status
+            if operation.status == "in_progress":
+                operation.status = "cancel_pending"
             append_run_event(
                 db,
                 run_id=run.id,
-                event_type="external_operation.cancel_pending",
+                event_type=(
+                    "external_operation.cancel_pending"
+                    if previous_operation_status == "in_progress"
+                    else "external_operation.cancel_requested"
+                ),
                 actor_type="user",
                 actor_id=actor.id,
                 payload={
                     "operation_id": operation.id,
                     "status": operation.status,
                     "reason": "run_cancelled",
-                    "remote_write_performed": False,
+                    "reconciliation_required": (
+                        operation.status == "reconciliation_required"
+                    ),
+                    # Every state preserved here may already have crossed the
+                    # remote boundary; cancellation cannot prove absence.
+                    "remote_write_performed": None,
                 },
             )
-        uninterruptible_ids = active_publish_ids | inflight_node_run_ids
+        uninterruptible_ids = (
+            active_publish_ids | unsettled_external_node_ids
+        )
         cancelled_node_ids = [
             node.id for node in nodes if node.id not in uninterruptible_ids
         ]
@@ -3031,7 +3325,7 @@ def set_run_control_status(
             node.lease_owner = None
             node.lease_token = None
             node.lease_expires_at = None
-        if active_publish_nodes or inflight_operations:
+        if active_publish_nodes or unsettled_external_operations:
             run.status = "cancel_pending"
             run.finished_at = None
         else:

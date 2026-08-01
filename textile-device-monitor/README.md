@@ -219,11 +219,15 @@ docker compose exec backend python -c "import urllib.request; print(urllib.reque
   原来的内网免登录边界。
 - 后端容器启动时先执行 Alembic。空数据库会从 `0001_legacy_baseline`
   完整建库；已有数据库只有通过结构预检后才会标记基线并升级。当前迁移头为
-  `0003_execution_contract`。
+  `0005_execution_external_attempts`。
 - `execution-worker` 通过 PostgreSQL 租约领取节点。请勿只启动
   `backend` 而遗漏 Worker，否则新运行不会被执行。
 - `/health/live` 仅表示 API 进程存活；`/health/ready` 还会检查数据库、
   Alembic 版本、Worker 心跳和执行系统 staging/publish 目录。
+- `EXECUTION_BRIDGE_ENABLED=false` 或 `EXECUTION_BRIDGE_TOKEN` 为空时，所有
+  外部 Bridge 端点返回 503；两者同时启用后，用户批准的旧系统预检单可能被
+  Windows Bridge 立即领取并产生真实副作用。安全门禁完成前保持总开关为
+  `false`，启用时使用受保护的 HTTPS/内网链路。
 - 源资料通过 `area_out_cifs` 只读映射到 `EXECUTION_SOURCE_ROOT`；中间副本
   和最终发布分别使用 `EXECUTION_RUNTIME_HOST_PATH`、
   `EXECUTION_PUBLISH_HOST_PATH`。三者必须彼此独立，不得相同、嵌套或通过

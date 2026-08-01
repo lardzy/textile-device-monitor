@@ -320,6 +320,43 @@ class ExecutionApiContractTests(unittest.TestCase):
             )
             self.assertTrue(guards[0].execution_csrf_required)
 
+    def test_reconciliation_routes_use_dedicated_admin_permission(self):
+        expected = {
+            (
+                "/execution/v1/external-operations/"
+                "{operation_id}/reconciliation"
+            ): ("GET", False),
+            (
+                "/execution/v1/external-operations/"
+                "{operation_id}/reconcile"
+            ): ("POST", True),
+        }
+        routes = {
+            route.path: route
+            for route in router.routes
+            if route.path in expected
+        }
+        self.assertEqual(set(routes), set(expected))
+        for path, (method, csrf_required) in expected.items():
+            self.assertIn(method, routes[path].methods)
+            guards = [
+                dependency.call
+                for dependency in routes[path].dependant.dependencies
+                if hasattr(
+                    dependency.call,
+                    "execution_permission_key",
+                )
+            ]
+            self.assertEqual(len(guards), 1)
+            self.assertEqual(
+                guards[0].execution_permission_key,
+                "external_operation.reconcile",
+            )
+            self.assertEqual(
+                guards[0].execution_csrf_required,
+                csrf_required,
+            )
+
     def test_run_event_history_pages_stably_and_checks_visibility(self):
         run = self._create_owned_run(self.user, suffix="owner")
         custom_event_ids = []

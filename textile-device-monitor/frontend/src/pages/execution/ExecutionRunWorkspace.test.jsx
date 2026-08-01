@@ -252,6 +252,7 @@ describe('ExecutionRunWorkspace', () => {
     expect(screen.getByText('260187115')).toBeInTheDocument();
     expect(screen.getByText('辜惠珊')).toBeInTheDocument();
     expect(screen.getByText('260187115-根数法.xls')).toBeInTheDocument();
+    expect(screen.getByText('批准可能触发真实的旧系统写入')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '核对并批准预检单' }));
     await user.type(
       screen.getByRole('textbox', { name: '确认样品编号' }),
@@ -262,7 +263,7 @@ describe('ExecutionRunWorkspace', () => {
       '只批准本地预检',
     );
     await user.click(
-      screen.getByRole('button', { name: '批准预检单（当前不上传）' }),
+      screen.getByRole('button', { name: '批准并进入连接器队列' }),
     );
 
     await waitFor(() => expect(approvalBody).toEqual({

@@ -54,6 +54,15 @@ ACTIVE_REMOTE_OPERATION_STATUSES = (
 )
 BRIDGE_LEASE_SECONDS = 120
 BRIDGE_STDOUT_LIMIT = 4000
+BRIDGE_GLOBAL_WRITE_CAPACITY = 1
+BRIDGE_ACTIVE_WRITE_STATUSES = ("in_progress", "cancel_pending")
+# Stable, process-independent key for the PostgreSQL transaction advisory lock
+# that serializes the global Bridge capacity check and claim transition.
+BRIDGE_GLOBAL_CLAIM_LOCK_KEY = int.from_bytes(
+    hashlib.sha256(b"external-bridge-global-claim-capacity:v1").digest()[:8],
+    byteorder="big",
+    signed=True,
+)
 # 到达 file_copy_started 即视为可能已经接触旧系统：之前的阶段失败可以安全
 # 重领，之后（含）的失败必须转入人工对账，不能自动重试或放行同一样品。
 EXTERNAL_REMOTE_WRITE_STAGE = "file_copy_started"
@@ -61,6 +70,7 @@ EXTERNAL_ATTEMPT_STAGES = (
     "authenticated",
     "permission_verified",
     "remote_absence_verified",
+    "file_copy_ready",
     "file_copy_started",
     "file_copy_verified",
     "main_record_save_started",
@@ -159,6 +169,16 @@ def lock_legacy_remote_business_scope(
             {"lock_key": lock_key},
         )
     return remote_business_key
+
+
+def lock_external_bridge_claim_capacity(db: Session) -> None:
+    """Serialize the global Bridge capacity check and claim on PostgreSQL."""
+
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": BRIDGE_GLOBAL_CLAIM_LOCK_KEY},
+        )
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -349,6 +369,13 @@ def _selected_file_rows(
             422,
             "external_selected_files_required",
             "旧系统上传前必须先完成人工文件选择",
+        )
+    if len(selected) != 1:
+        raise ExecutionApiError(
+            422,
+            "external_exactly_one_file_required",
+            "旧系统每次上传必须且只能选择一份原始记录",
+            details={"selected_file_count": len(selected)},
         )
     primary_file_id = str(input_data.get("primary_file_id") or "")
     if not primary_file_id:
@@ -571,7 +598,7 @@ def _reverify_operation_sources(
     expected_inspector = summary.get("inspector")
     if (
         not isinstance(files, list)
-        or not files
+        or len(files) != 1
         or not isinstance(expected_inspector, str)
         or not expected_inspector
     ):
@@ -935,10 +962,41 @@ def approve_prepared_external_operation(
     return operation, False
 
 
+def _public_remote_write_performed(
+    operation: ExecutionExternalOperation,
+) -> bool | None:
+    """Return true, false, or unknown without claiming more than we know."""
+
+    reconciliation = dict(operation.verification or {}).get(
+        "reconciliation"
+    )
+    if isinstance(reconciliation, dict):
+        if reconciliation.get("action") == "confirm_completed":
+            return True
+        if reconciliation.get("action") == "confirm_no_side_effect":
+            return False
+    if operation.status == "completed":
+        return True
+    if operation.status == "reconciliation_required":
+        return None
+    boundary_index = EXTERNAL_ATTEMPT_STAGES.index(
+        EXTERNAL_REMOTE_WRITE_STAGE
+    )
+    for attempt in operation.attempts or []:
+        stage = attempt.current_stage
+        if (
+            stage in EXTERNAL_ATTEMPT_STAGES
+            and EXTERNAL_ATTEMPT_STAGES.index(stage) >= boundary_index
+        ):
+            return None
+    return False
+
+
 def public_external_operation(
     operation: ExecutionExternalOperation,
 ) -> dict[str, Any]:
     summary = operation.request_summary or {}
+    remote_write_performed = _public_remote_write_performed(operation)
     business_fields = summary.get("business_fields")
     files = summary.get("files")
     public_files = [
@@ -978,12 +1036,38 @@ def public_external_operation(
         "inspector": summary.get("inspector"),
         "files": public_files,
         "safety": {
-            "remote_write_performed": False,
+            "remote_write_performed": remote_write_performed,
             "requires_final_approval": True,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
         },
     }
+    reconciliation_record = dict(operation.verification or {}).get(
+        "reconciliation"
+    )
+    public_reconciliation = None
+    if operation.status == "reconciliation_required" or isinstance(
+        reconciliation_record,
+        dict,
+    ):
+        public_reconciliation = {
+            "required": operation.status == "reconciliation_required",
+            "action": (
+                reconciliation_record.get("action")
+                if isinstance(reconciliation_record, dict)
+                else None
+            ),
+            "attempt_id": (
+                reconciliation_record.get("attempt_id")
+                if isinstance(reconciliation_record, dict)
+                else None
+            ),
+            "resolved_at": (
+                reconciliation_record.get("reconciled_at")
+                if isinstance(reconciliation_record, dict)
+                else None
+            ),
+        }
     return {
         "id": operation.id,
         "operation_key": operation.operation_key,
@@ -1002,7 +1086,8 @@ def public_external_operation(
             "expires_at": _isoformat(operation.approval_expires_at),
             "note": operation.approval_note,
         },
-        "remote_write_performed": False,
+        "remote_write_performed": remote_write_performed,
+        "reconciliation": public_reconciliation,
         "error": (
             {
                 "code": operation.error_code,
@@ -1014,6 +1099,530 @@ def public_external_operation(
         "created_at": operation.created_at.isoformat(),
         "updated_at": operation.updated_at.isoformat(),
     }
+
+
+def _latest_external_attempt(
+    operation: ExecutionExternalOperation,
+) -> ExecutionExternalAttempt | None:
+    attempts = list(operation.attempts or [])
+    if not attempts:
+        return None
+    return max(attempts, key=lambda item: int(item.attempt_no or 0))
+
+
+def public_external_reconciliation_context(
+    operation: ExecutionExternalOperation,
+) -> dict[str, Any]:
+    """Return context for an admin attestation, not a machine probe result."""
+
+    if operation.status != "reconciliation_required":
+        raise conflict(
+            "external_reconciliation_not_required",
+            "当前外部操作不处于待对账状态",
+            operation_id=operation.id,
+            status=operation.status,
+        )
+    attempt = _latest_external_attempt(operation)
+    if attempt is None:
+        raise conflict(
+            "external_reconciliation_attempt_missing",
+            "待对账操作缺少执行尝试，不能人工处置",
+            operation_id=operation.id,
+        )
+    if (
+        attempt.status != "failed"
+        or attempt.current_stage not in EXTERNAL_ATTEMPT_STAGES
+        or _stage_index(attempt.current_stage)
+        < _stage_index(EXTERNAL_REMOTE_WRITE_STAGE)
+    ):
+        raise conflict(
+            "external_reconciliation_attempt_invalid",
+            "最新执行尝试不满足人工对账条件",
+            attempt_id=attempt.id,
+            status=attempt.status,
+            current_stage=attempt.current_stage,
+        )
+    summary = operation.request_summary or {}
+    files = summary.get("files")
+    source_file = (
+        files[0]
+        if isinstance(files, list)
+        and len(files) == 1
+        and isinstance(files[0], dict)
+        else {}
+    )
+    return {
+        "evidence_kind": "admin_attestation_v1",
+        "attestation_notice": (
+            "以下证据由管理员根据只读核对结果人工声明；"
+            "当前系统不会自动执行或签名远端探针。"
+        ),
+        "operation": public_external_operation(operation),
+        "attempt": {
+            "id": attempt.id,
+            "attempt_no": attempt.attempt_no,
+            "bridge_id": attempt.bridge_id,
+            "status": attempt.status,
+            "current_stage": attempt.current_stage,
+            "checkpoints": [
+                {
+                    "stage": item.get("stage"),
+                    "at": item.get("at"),
+                }
+                for item in (attempt.checkpoints or [])
+                if isinstance(item, dict)
+            ],
+            "error": (
+                {
+                    "code": attempt.error_code,
+                    "message": attempt.error_message,
+                }
+                if attempt.error_code
+                else None
+            ),
+            "started_at": _isoformat(attempt.started_at),
+            "finished_at": _isoformat(attempt.finished_at),
+        },
+        "expected_evidence": {
+            "target_sample_number": summary.get("target_sample_number"),
+            "payload_checksum": operation.payload_checksum,
+            "source_file_sha256": source_file.get("content_sha256"),
+            "confirm_completed": {
+                "exact_record_count": 1,
+                "target_file_count": 1,
+                "business_fields_match": True,
+                "inspector_match": True,
+            },
+            "confirm_no_side_effect": {
+                "exact_record_count": 0,
+                "contains_record_count": 0,
+                "target_file_count": 0,
+            },
+        },
+    }
+
+
+def _normalized_reconciliation_evidence(
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    value = dict(evidence or {})
+    checked_at = value.get("checked_at")
+    if isinstance(checked_at, datetime):
+        value["checked_at"] = checked_at.isoformat()
+    return value
+
+
+def _reconciliation_checked_at(
+    evidence: dict[str, Any],
+) -> datetime:
+    raw_value = evidence.get("checked_at")
+    if isinstance(raw_value, datetime):
+        value = raw_value
+    elif isinstance(raw_value, str):
+        try:
+            value = datetime.fromisoformat(
+                raw_value.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise ExecutionApiError(
+                422,
+                "external_reconciliation_checked_at_invalid",
+                "对账证据时间格式无效",
+            ) from exc
+    else:
+        raise ExecutionApiError(
+            422,
+            "external_reconciliation_checked_at_invalid",
+            "对账证据必须包含核验时间",
+        )
+    if value.tzinfo is None:
+        raise ExecutionApiError(
+            422,
+            "external_reconciliation_checked_at_timezone_required",
+            "对账证据时间必须包含时区",
+        )
+    return _aware_utc(value)
+
+
+def _validate_manual_reconciliation_evidence(
+    operation: ExecutionExternalOperation,
+    *,
+    action: str,
+    evidence: dict[str, Any],
+    now: datetime,
+) -> None:
+    """Validate an admin attestation's shape; no remote probe runs here."""
+    checked_at = _reconciliation_checked_at(evidence)
+    oldest_allowed = _aware_utc(now) - timedelta(
+        minutes=settings.EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES
+    )
+    newest_allowed = _aware_utc(now) + timedelta(minutes=5)
+    if checked_at < oldest_allowed or checked_at > newest_allowed:
+        raise conflict(
+            "external_reconciliation_evidence_stale",
+            "只读对账证据已过期或时间异常，请重新核验",
+            checked_at=checked_at.isoformat(),
+        )
+
+    if action == "confirm_completed":
+        summary = operation.request_summary or {}
+        files = summary.get("files")
+        expected_sha256 = (
+            files[0].get("content_sha256")
+            if isinstance(files, list)
+            and len(files) == 1
+            and isinstance(files[0], dict)
+            else None
+        )
+        valid = (
+            evidence.get("exact_record_count") == 1
+            and bool(str(evidence.get("remote_record_id") or "").strip())
+            and evidence.get("business_fields_match") is True
+            and evidence.get("inspector_match") is True
+            and evidence.get("target_file_count") == 1
+            and isinstance(expected_sha256, str)
+            and evidence.get("remote_file_sha256") == expected_sha256
+        )
+    elif action == "confirm_no_side_effect":
+        valid = (
+            evidence.get("exact_record_count") == 0
+            and evidence.get("contains_record_count") == 0
+            and evidence.get("target_file_count") == 0
+        )
+    else:
+        valid = False
+    if not valid:
+        raise ExecutionApiError(
+            422,
+            "external_reconciliation_evidence_incomplete",
+            "对账证据不能证明所选结论，操作仍保持锁定",
+        )
+
+
+def reconcile_external_operation(
+    db: Session,
+    *,
+    operation_id: str,
+    actor: ExecutionUser,
+    action: str,
+    attempt_id: str,
+    payload_checksum: str,
+    confirmed_sample_number: str,
+    note: str,
+    evidence: dict[str, Any],
+    now: datetime | None = None,
+) -> tuple[ExecutionExternalOperation, bool]:
+    """Resolve an unknown remote outcome without performing remote I/O."""
+
+    if actor.role != "admin" or not actor.is_active:
+        raise ExecutionApiError(
+            403,
+            "external_reconciliation_admin_required",
+            "只有管理员可以处置旧系统待对账操作",
+        )
+    normalized_note = str(note or "").strip()
+    if not normalized_note:
+        raise ExecutionApiError(
+            422,
+            "external_reconciliation_note_required",
+            "人工对账必须填写核验依据",
+        )
+    locator = (
+        db.query(
+            ExecutionExternalOperation.run_id,
+            ExecutionExternalOperation.node_run_id,
+        )
+        .filter(ExecutionExternalOperation.id == operation_id)
+        .one_or_none()
+    )
+    if locator is None:
+        raise not_found("外部操作预检单", operation_id)
+
+    run = (
+        db.query(ExecutionRun)
+        .filter(ExecutionRun.id == locator.run_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if run is None:
+        raise not_found("外部操作预检单", operation_id)
+    node_run = (
+        db.query(ExecutionNodeRun)
+        .filter(
+            ExecutionNodeRun.id == locator.node_run_id,
+            ExecutionNodeRun.run_id == run.id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if node_run is None:
+        raise not_found("外部操作预检单", operation_id)
+
+    target_sample_number = resolve_legacy_target_sample_number(run)
+    remote_business_key = lock_legacy_remote_business_scope(
+        db,
+        sample_number=target_sample_number,
+    )
+    operation = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id == operation_id,
+            ExecutionExternalOperation.run_id == run.id,
+            ExecutionExternalOperation.node_run_id == node_run.id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if operation is None:
+        raise not_found("外部操作预检单", operation_id)
+    latest_attempt = (
+        db.query(ExecutionExternalAttempt)
+        .filter(ExecutionExternalAttempt.operation_id == operation.id)
+        .order_by(ExecutionExternalAttempt.attempt_no.desc())
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if latest_attempt is None:
+        raise conflict(
+            "external_reconciliation_attempt_missing",
+            "待对账操作缺少执行尝试，不能人工处置",
+            operation_id=operation.id,
+        )
+
+    if operation.connector_key != LEGACY_CONNECTOR_KEY:
+        raise conflict(
+            "external_reconciliation_connector_mismatch",
+            "当前连接器不支持该人工对账契约",
+        )
+    if operation.remote_business_key != remote_business_key:
+        raise conflict(
+            "external_operation_run_changed",
+            "预检单与当前流程运行不一致，请刷新后重试",
+            operation_id=operation.id,
+        )
+    if payload_checksum != operation.payload_checksum:
+        raise conflict(
+            "external_operation_payload_changed",
+            "预检内容已变化，请刷新并重新核对",
+            operation_id=operation.id,
+        )
+    summary_target = str(
+        (operation.request_summary or {}).get("target_sample_number") or ""
+    )
+    if (
+        confirmed_sample_number != summary_target
+        or summary_target != target_sample_number
+    ):
+        raise conflict(
+            "external_operation_sample_confirmation_mismatch",
+            "确认的样品编号与待对账预检单不一致",
+            operation_id=operation.id,
+        )
+    if attempt_id != latest_attempt.id:
+        raise conflict(
+            "external_reconciliation_attempt_changed",
+            "待对账执行尝试已变化，请刷新后重新核验",
+            expected_attempt_id=latest_attempt.id,
+        )
+
+    current_time = now or utcnow()
+    normalized_evidence = _normalized_reconciliation_evidence(evidence)
+    evidence_checksum = _canonical_checksum(normalized_evidence)
+    request_checksum = _canonical_checksum(
+        {
+            "action": action,
+            "attempt_id": attempt_id,
+            "payload_checksum": payload_checksum,
+            "confirmed_sample_number": confirmed_sample_number,
+            "note": normalized_note,
+            "evidence": normalized_evidence,
+        }
+    )
+    verification = dict(operation.verification or {})
+    previous_reconciliation = verification.get("reconciliation")
+    if isinstance(previous_reconciliation, dict):
+        if (
+            previous_reconciliation.get("request_checksum")
+            == request_checksum
+            and previous_reconciliation.get("attempt_id") == attempt_id
+            and previous_reconciliation.get("action") == action
+        ):
+            return operation, True
+        raise conflict(
+            "external_reconciliation_already_resolved",
+            "该外部操作已由另一份对账结论处置",
+            operation_id=operation.id,
+        )
+    _validate_manual_reconciliation_evidence(
+        operation,
+        action=action,
+        evidence=normalized_evidence,
+        now=current_time,
+    )
+
+    if operation.status != "reconciliation_required":
+        raise conflict(
+            "external_reconciliation_not_required",
+            "当前外部操作不处于待对账状态",
+            operation_id=operation.id,
+            status=operation.status,
+        )
+    if node_run.status != "waiting_external":
+        raise conflict(
+            "external_operation_node_not_waiting",
+            "外部操作对应节点已不再等待人工对账",
+            operation_id=operation.id,
+            node_status=node_run.status,
+        )
+    if latest_attempt.status != "failed":
+        raise conflict(
+            "external_reconciliation_attempt_not_failed",
+            "只有已失败且结果未知的执行尝试可以人工对账",
+            attempt_id=latest_attempt.id,
+            status=latest_attempt.status,
+        )
+    if (
+        latest_attempt.current_stage not in EXTERNAL_ATTEMPT_STAGES
+        or _stage_index(latest_attempt.current_stage)
+        < _stage_index(EXTERNAL_REMOTE_WRITE_STAGE)
+    ):
+        raise conflict(
+            "external_reconciliation_prewrite_attempt",
+            "该执行尝试尚未越过远端写入边界，不应人工释放围栏",
+            attempt_id=latest_attempt.id,
+            current_stage=latest_attempt.current_stage,
+        )
+
+    previous_status = operation.status
+    remote_write_performed = action == "confirm_completed"
+    reconciliation_record = {
+        "schema_version": 1,
+        "evidence_kind": "admin_attestation_v1",
+        "action": action,
+        "attempt_id": latest_attempt.id,
+        "attempt_no": latest_attempt.attempt_no,
+        "reconciled_by_id": actor.id,
+        "reconciled_at": current_time.isoformat(),
+        "note": normalized_note,
+        "evidence": normalized_evidence,
+        "evidence_checksum": evidence_checksum,
+        "request_checksum": request_checksum,
+        "remote_write_performed": remote_write_performed,
+    }
+    verification["reconciliation"] = reconciliation_record
+    operation.verification = verification
+    operation.fence_token = None
+    operation.lease_owner = None
+    operation.lease_expires_at = None
+    operation.completed_at = current_time
+
+    if action == "confirm_completed":
+        from app.execution.engine import complete_external_node
+
+        remote_record_id = str(
+            normalized_evidence.get("remote_record_id") or ""
+        ).strip()
+        receipt = {
+            "schema_version": 1,
+            "source": "manual_reconciliation",
+            "remote_record_id": remote_record_id,
+            "target_sample_number": target_sample_number,
+            "remote_file_sha256": normalized_evidence.get(
+                "remote_file_sha256"
+            ),
+            "evidence_checksum": evidence_checksum,
+        }
+        operation.status = "completed"
+        operation.remote_record_id = remote_record_id
+        operation.receipt = receipt
+        operation.error_code = None
+        operation.error_message = None
+        complete_external_node(
+            db,
+            node_run_id=node_run.id,
+            output_data={
+                "status": "completed",
+                "receipt": receipt,
+                "attempt_id": latest_attempt.id,
+                "attempt_no": latest_attempt.attempt_no,
+                "reconciliation": {
+                    "action": action,
+                    "evidence_checksum": evidence_checksum,
+                },
+            },
+        )
+    else:
+        operation.remote_record_id = None
+        operation.receipt = {}
+        operation.error_code = "external_reconciliation_no_side_effect"
+        operation.error_message = (
+            "人工只读对账确认旧系统未产生记录或文件，本次运行已停止"
+        )
+        if run.status == "cancel_pending":
+            from app.execution.engine import cancel_external_waiting_node
+
+            operation.status = "cancelled"
+            cancel_external_waiting_node(
+                db,
+                node_run_id=node_run.id,
+                error_code="run_cancelled",
+                error_message="流程已取消，人工对账确认旧系统未写入",
+            )
+        else:
+            from app.execution.engine import fail_external_waiting_node
+
+            operation.status = "failed"
+            fail_external_waiting_node(
+                db,
+                node_run_id=node_run.id,
+                error_code=operation.error_code,
+                error_message=operation.error_message,
+                actor_user_id=actor.id,
+            )
+
+    append_run_event(
+        db,
+        run_id=operation.run_id,
+        event_type="external_operation.reconciled",
+        actor_type="user",
+        actor_id=actor.id,
+        payload={
+            "operation_id": operation.id,
+            "attempt_id": latest_attempt.id,
+            "attempt_no": latest_attempt.attempt_no,
+            "action": action,
+            "previous_status": previous_status,
+            "status": operation.status,
+            "remote_write_performed": remote_write_performed,
+            "evidence_checksum": evidence_checksum,
+            "remote_record_id": operation.remote_record_id,
+        },
+    )
+    append_audit_log(
+        db,
+        action="external_operation.reconcile",
+        resource_type="execution_external_operation",
+        resource_id=operation.id,
+        actor_user_id=actor.id,
+        details={
+            "run_id": operation.run_id,
+            "attempt_id": latest_attempt.id,
+            "attempt_no": latest_attempt.attempt_no,
+            "action": action,
+            "previous_status": previous_status,
+            "status": operation.status,
+            "remote_write_performed": remote_write_performed,
+            "evidence_checksum": evidence_checksum,
+            "remote_record_id": operation.remote_record_id,
+            "note": normalized_note,
+            "evidence": normalized_evidence,
+        },
+    )
+    return operation, False
 
 
 def _stage_index(stage: str) -> int:
@@ -1065,7 +1674,7 @@ def _append_checkpoint(
         entry["detail"] = detail
     checkpoints.append(entry)
     attempt.checkpoints = checkpoints
-    attempt.current_stage = stage
+    attempt.current_stage = _furthest_stage(attempt.current_stage, stage)
 
 
 def _append_stdout(existing: str | None, appended: str | None) -> str:
@@ -1131,10 +1740,27 @@ def bridge_external_operation(
     return view
 
 
+def ensure_bridge_credential_account(
+    credential: ExecutionCredential,
+    *,
+    account_name: str,
+) -> None:
+    """Fail closed unless a returned credential belongs to the claimant."""
+
+    if _account_scope_key(credential.account_name or "") != (
+        _account_scope_key(account_name)
+    ):
+        raise conflict(
+            "external_bridge_account_mismatch",
+            "Bridge 账号与待领取操作绑定的凭据账号不匹配",
+        )
+
+
 def claim_approved_external_operation(
     db: Session,
     *,
     bridge_id: str,
+    account_name: str,
     now: datetime | None = None,
 ) -> (
     tuple[
@@ -1153,10 +1779,29 @@ def claim_approved_external_operation(
     """
 
     current_time = now or utcnow()
+    account_scope_key = _account_scope_key(account_name)
+    lock_external_bridge_claim_capacity(db)
+    active_write_count = (
+        db.query(ExecutionExternalOperation.id)
+        .filter(
+            ExecutionExternalOperation.connector_key
+            == LEGACY_CONNECTOR_KEY,
+            ExecutionExternalOperation.status.in_(
+                BRIDGE_ACTIVE_WRITE_STATUSES
+            )
+        )
+        .count()
+    )
+    if active_write_count >= BRIDGE_GLOBAL_WRITE_CAPACITY:
+        return None
     candidates = (
         db.query(ExecutionExternalOperation.id)
         .filter(
+            ExecutionExternalOperation.connector_key
+            == LEGACY_CONNECTOR_KEY,
             ExecutionExternalOperation.status == "approved",
+            ExecutionExternalOperation.account_scope_key
+            == account_scope_key,
             ExecutionExternalOperation.approval_expires_at.is_not(None),
             ExecutionExternalOperation.approval_expires_at > current_time,
         )
@@ -1221,6 +1866,10 @@ def claim_approved_external_operation(
             operation=operation,
             run=run,
         )
+        ensure_bridge_credential_account(
+            credential,
+            account_name=account_name,
+        )
         _reverify_operation_sources(db, operation=operation)
 
         lease_expires_at = current_time + timedelta(
@@ -1277,6 +1926,12 @@ def claim_approved_external_operation(
                 "bridge_id": bridge_id,
                 "remote_write_performed": False,
             },
+        )
+        # Keep the account assertion adjacent to the returned credential as a
+        # final defense if claim construction changes in the future.
+        ensure_bridge_credential_account(
+            credential,
+            account_name=account_name,
         )
         return operation, attempt, credential
     return None
@@ -1388,6 +2043,27 @@ def _ensure_attempt_active(
         )
 
 
+def _ensure_stage_transition_allowed(
+    operation: ExecutionExternalOperation,
+    attempt: ExecutionExternalAttempt,
+    *,
+    stage: str,
+) -> None:
+    if (
+        operation.status == "cancel_pending"
+        and _stage_before_remote_write(attempt.current_stage)
+        and not _stage_before_remote_write(stage)
+    ):
+        raise conflict(
+            "external_attempt_cancelled_before_remote_write",
+            "流程已请求取消，Bridge 不得开始写入旧系统",
+            operation_id=operation.id,
+            attempt_id=attempt.id,
+            current_stage=attempt.current_stage,
+            requested_stage=stage,
+        )
+
+
 def heartbeat_external_attempt(
     db: Session,
     *,
@@ -1404,13 +2080,21 @@ def heartbeat_external_attempt(
         bridge_id=bridge_id,
     )
     _ensure_attempt_active(operation, attempt, now=current_time)
+    validated_stage = None
+    if stage is not None:
+        validated_stage = _validate_attempt_stage(stage)
+        _ensure_stage_transition_allowed(
+            operation,
+            attempt,
+            stage=validated_stage,
+        )
     lease_expires_at = current_time + timedelta(seconds=BRIDGE_LEASE_SECONDS)
     attempt.lease_expires_at = lease_expires_at
     operation.lease_expires_at = lease_expires_at
-    if stage is not None:
+    if validated_stage is not None:
         _append_checkpoint(
             attempt,
-            stage=_validate_attempt_stage(stage),
+            stage=validated_stage,
             at=current_time,
         )
     attempt.stdout_summary = _append_stdout(
@@ -1436,9 +2120,15 @@ def record_external_attempt_stage(
         bridge_id=bridge_id,
     )
     _ensure_attempt_active(operation, attempt, now=current_time)
+    validated_stage = _validate_attempt_stage(stage)
+    _ensure_stage_transition_allowed(
+        operation,
+        attempt,
+        stage=validated_stage,
+    )
     _append_checkpoint(
         attempt,
-        stage=_validate_attempt_stage(stage),
+        stage=validated_stage,
         at=current_time,
         detail=detail,
     )
@@ -1477,7 +2167,7 @@ def complete_external_attempt(
         and _stage_index(attempt.current_stage)
         >= _stage_index("main_record_verified")
     )
-    if not record_verified and receipt.get("stage") != "completed":
+    if not record_verified:
         raise conflict(
             "external_attempt_not_verified",
             "主单记录尚未核验完成，不能结束本次外部操作",
@@ -1546,6 +2236,7 @@ def settle_external_attempt_failure(
     node_run: ExecutionNodeRun | None,
     operation: ExecutionExternalOperation,
     attempt: ExecutionExternalAttempt,
+    settling_run_status: str,
     stage: str | None,
     error_code: str | None,
     error_message: str | None,
@@ -1564,19 +2255,29 @@ def settle_external_attempt_failure(
     operation.lease_owner = None
     operation.lease_expires_at = None
     reclaimed = _stage_before_remote_write(stage)
+    remote_write_performed: bool | None = False if reclaimed else None
+    settlement_reason: str | None = None
     if reclaimed and operation.status == "cancel_pending":
         from app.execution.engine import cancel_external_waiting_node
 
         operation.status = "cancelled"
-        operation.error_code = "run_cancelled"
-        operation.error_message = "流程已取消，外部操作未写入旧系统"
+        failed_while_settling = settling_run_status == "failure_pending"
+        settlement_reason = (
+            "run_failed" if failed_while_settling else "run_cancelled"
+        )
+        operation.error_code = settlement_reason
+        operation.error_message = (
+            "同一流程已有节点失败，外部操作确认未写入旧系统"
+            if failed_while_settling
+            else "流程已取消，外部操作未写入旧系统"
+        )
         operation.completed_at = now
         if node_run is not None and node_run.status == "waiting_external":
             cancel_external_waiting_node(
                 db,
                 node_run_id=node_run.id,
-                error_code="run_cancelled",
-                error_message="流程运行已取消",
+                error_code=settlement_reason,
+                error_message=operation.error_message,
             )
     elif reclaimed:
         # 批准 TTL 不延长；过期后由 expire_stale_external_operations 收尾。
@@ -1600,11 +2301,12 @@ def settle_external_attempt_failure(
             "stage": stage,
             "code": error_code,
             "message": error_message,
+            "settlement_reason": settlement_reason,
             "status": operation.status,
             "reconciliation_required": (
                 operation.status == "reconciliation_required"
             ),
-            "remote_write_performed": False,
+            "remote_write_performed": remote_write_performed,
         },
     )
     append_audit_log(
@@ -1619,8 +2321,9 @@ def settle_external_attempt_failure(
             "bridge_id": attempt.bridge_id,
             "stage": stage,
             "code": error_code,
+            "settlement_reason": settlement_reason,
             "status": operation.status,
-            "remote_write_performed": False,
+            "remote_write_performed": remote_write_performed,
         },
     )
 
@@ -1636,7 +2339,7 @@ def fail_external_attempt(
     now: datetime | None = None,
 ) -> tuple[ExecutionExternalOperation, ExecutionExternalAttempt]:
     current_time = now or utcnow()
-    _run, node_run, operation, attempt = _attempt_for_bridge(
+    run, node_run, operation, attempt = _attempt_for_bridge(
         db,
         attempt_id=attempt_id,
         bridge_id=bridge_id,
@@ -1662,6 +2365,7 @@ def fail_external_attempt(
         node_run=node_run,
         operation=operation,
         attempt=attempt,
+        settling_run_status=run.status,
         stage=effective_stage,
         error_code=error_code,
         error_message=message,

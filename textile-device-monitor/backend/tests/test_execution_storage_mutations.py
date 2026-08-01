@@ -110,6 +110,44 @@ def test_copy_write_verify_publish_is_idempotent_and_preserves_source(
         workbook.close()
 
 
+def test_verification_closes_stream_before_atomic_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _, service, source, _, _ = _services(tmp_path)
+    source_path = source / "template.xlsx"
+    _create_workbook(source_path)
+
+    verification_streams = []
+    original_load_workbook = load_workbook
+
+    def tracked_load_workbook(*args, **kwargs):
+        filename = kwargs.get("filename", args[0] if args else None)
+        if hasattr(filename, "read"):
+            verification_streams.append(filename)
+        return original_load_workbook(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "app.execution.mutations.load_workbook",
+        tracked_load_workbook,
+    )
+
+    receipt = service.verify_xlsx_cells(
+        ArtifactRef("source", source_path.name),
+        [CellWrite("原始记录", "A1", "原始编号")],
+    )
+
+    assert receipt.verified is True
+    assert verification_streams
+    assert all(stream.closed for stream in verification_streams)
+
+    replacement_path = source / "replacement.xlsx"
+    shutil.copyfile(source_path, replacement_path)
+    os.replace(replacement_path, source_path)
+    assert source_path.is_file()
+    assert not replacement_path.exists()
+
+
 def test_same_mutation_id_rejects_different_source_or_writes(tmp_path: Path):
     _, service, source, _, _ = _services(tmp_path)
     _create_workbook(source / "one.xlsx")

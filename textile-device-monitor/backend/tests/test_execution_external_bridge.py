@@ -15,8 +15,10 @@ from app.api.execution import (
     approve_external_operation,
     claim_external_bridge_operation,
     complete_external_bridge_attempt,
+    external_operation_reconciliation_context,
     fail_external_bridge_attempt,
     heartbeat_external_bridge_attempt,
+    reconcile_external_operation_result,
     record_external_bridge_attempt_stage,
 )
 from app.config import settings
@@ -28,6 +30,7 @@ from app.execution.engine import (
     create_run,
     execute_claimed_node,
     expire_stale_external_attempts,
+    fail_node,
     set_run_control_status,
     submit_human_task,
 )
@@ -59,6 +62,7 @@ from app.execution.schemas import (
     ExternalBridgeHeartbeatRequest,
     ExternalBridgeStageRequest,
     ExternalOperationApprovalRequest,
+    ExternalOperationReconciliationRequest,
 )
 
 
@@ -179,6 +183,12 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
             password_hash="not-used",
             role="user",
         )
+        self.admin = ExecutionUser(
+            username="reconciliation-admin",
+            display_name="对账管理员",
+            password_hash="not-used",
+            role="admin",
+        )
         self.category = ExecutionCategory(
             key="regenerated",
             name="再生纤",
@@ -193,7 +203,7 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
             is_active=True,
             is_available=True,
         )
-        self.db.add_all([self.user, self.category, self.root])
+        self.db.add_all([self.user, self.admin, self.category, self.root])
         self.db.flush()
         self.credential = ExecutionCredential(
             user_id=self.user.id,
@@ -231,8 +241,15 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
             BRIDGE_TOKEN,
         )
         self.token_patch.start()
+        self.enabled_patch = patch.object(
+            settings,
+            "EXECUTION_BRIDGE_ENABLED",
+            True,
+        )
+        self.enabled_patch.start()
 
     def tearDown(self):
+        self.enabled_patch.stop()
         self.token_patch.stop()
         self.db.close()
         Base.metadata.drop_all(self.engine)
@@ -297,6 +314,7 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         selected_ids: list[str],
         primary_file_id: str,
         idempotency_key: str | None = None,
+        target_sample_number: str | None = None,
     ):
         run, _duplicate = create_run(
             self.db,
@@ -309,6 +327,7 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
                 idempotency_key
                 or f"bridge-{len(candidates)}-{primary_file_id}"
             ),
+            target_sample_number=target_sample_number,
         )
         self.db.commit()
         self._execute_one("start")
@@ -348,7 +367,9 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
             ExternalOperationApprovalRequest(
                 approved=True,
                 payload_checksum=operation.payload_checksum,
-                confirmed_sample_number="260187115",
+                confirmed_sample_number=(
+                    operation.request_summary["target_sample_number"]
+                ),
             ),
             auth=auth,
             db=self.db,
@@ -357,13 +378,20 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         self.assertEqual(operation.status, "approved")
         return operation
 
-    def _approved_run(self, *, idempotency_key: str | None = None):
-        _path, entry, candidate = self._workbook()
+    def _approved_run(
+        self,
+        *,
+        idempotency_key: str | None = None,
+        filename: str = "260187115-根数法.xlsx",
+        target_sample_number: str | None = None,
+    ):
+        _path, entry, candidate = self._workbook(filename=filename)
         run = self._prepare_run(
             candidates=[candidate],
             selected_ids=[entry.id],
             primary_file_id=entry.id,
             idempotency_key=idempotency_key,
+            target_sample_number=target_sample_number,
         )
         operation = (
             self.db.query(ExecutionExternalOperation)
@@ -373,9 +401,16 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         self._approve(operation)
         return run, operation
 
-    def _claim(self, bridge_id: str = BRIDGE_ID):
+    def _claim(
+        self,
+        bridge_id: str = BRIDGE_ID,
+        account_name: str = "masked-account",
+    ):
         return claim_external_bridge_operation(
-            ExternalBridgeClaimRequest(bridge_id=bridge_id),
+            ExternalBridgeClaimRequest(
+                bridge_id=bridge_id,
+                account_name=account_name,
+            ),
             db=self.db,
             x_execution_bridge_key=BRIDGE_TOKEN,
         )
@@ -423,6 +458,7 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
             "authenticated",
             "permission_verified",
             "remote_absence_verified",
+            "file_copy_ready",
             "file_copy_started",
             "file_copy_verified",
             "main_record_save_started",
@@ -473,6 +509,116 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
             self.db.query(ExecutionNodeRun)
             .filter_by(run_id=run.id, node_id="upload")
             .one()
+        )
+
+    def _fail_running_sibling(
+        self,
+        run,
+        *,
+        error_code="parallel_branch_failed",
+        error_message="并行兄弟节点失败",
+    ):
+        sibling = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="end")
+            .one()
+        )
+        lease_token = "parallel-sibling-lease"
+        sibling.status = "running"
+        sibling.attempt_count = 1
+        sibling.lease_owner = "parallel-worker"
+        sibling.lease_token = lease_token
+        sibling.lease_expires_at = utcnow() + timedelta(minutes=5)
+        self.db.add(
+            ExecutionNodeAttempt(
+                node_run_id=sibling.id,
+                attempt_number=1,
+                worker_id="parallel-worker",
+                lease_token=lease_token,
+                status="running",
+            )
+        )
+        self.db.flush()
+        fail_node(
+            self.db,
+            node_run_id=sibling.id,
+            lease_token=lease_token,
+            error_code=error_code,
+            error_message=error_message,
+        )
+        self.db.commit()
+        self.db.refresh(run)
+        return sibling
+
+    def _reconciliation_required_run(self, *, cancel_pending=False):
+        run, operation = self._approved_run()
+        attempt_id = self._claim()["attempt"]["id"]
+        self._stage(attempt_id, "file_copy_started")
+        if cancel_pending:
+            set_run_control_status(
+                self.db,
+                run_id=run.id,
+                action="cancel",
+                actor=self.user,
+            )
+            self.db.commit()
+        self._fail(
+            attempt_id,
+            "file_copy_started",
+            error_code="transport_result_unknown",
+            message="写入边界后的响应丢失",
+        )
+        self.db.refresh(run)
+        self.db.refresh(operation)
+        self.assertEqual(operation.status, "reconciliation_required")
+        return run, operation, attempt_id
+
+    def _reconciliation_payload(
+        self,
+        operation,
+        attempt_id,
+        *,
+        action,
+        evidence=None,
+        note="已使用只读探针逐项核对",
+    ):
+        source_sha256 = operation.request_summary["files"][0][
+            "content_sha256"
+        ]
+        if evidence is None and action == "confirm_completed":
+            evidence = {
+                "checked_at": utcnow(),
+                "exact_record_count": 1,
+                "remote_record_id": "manual-record-260187115",
+                "business_fields_match": True,
+                "inspector_match": True,
+                "target_file_count": 1,
+                "remote_file_sha256": source_sha256,
+            }
+        elif evidence is None:
+            evidence = {
+                "checked_at": utcnow(),
+                "exact_record_count": 0,
+                "contains_record_count": 0,
+                "target_file_count": 0,
+            }
+        return ExternalOperationReconciliationRequest(
+            action=action,
+            attempt_id=attempt_id,
+            payload_checksum=operation.payload_checksum,
+            confirmed_sample_number=operation.request_summary[
+                "target_sample_number"
+            ],
+            note=note,
+            evidence=evidence,
+        )
+
+    def _reconcile(self, operation, payload, *, actor=None):
+        return reconcile_external_operation_result(
+            operation.id,
+            payload,
+            auth=AuthContext(session=None, user=actor or self.admin),
+            db=self.db,
         )
 
     def test_claim_flips_state_and_returns_full_package(self):
@@ -553,6 +699,43 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
 
     def test_claim_without_approved_operation_returns_false(self):
         self.assertEqual(self._claim(), {"claimed": False})
+
+    def test_claim_is_bound_to_requested_credential_account(self):
+        _run, operation = self._approved_run()
+
+        self.assertEqual(
+            self._claim(account_name="another-account"),
+            {"claimed": False},
+        )
+        self.db.refresh(operation)
+        self.assertEqual(operation.status, "approved")
+        self.assertEqual(self.db.query(ExecutionExternalAttempt).count(), 0)
+
+        claimed = self._claim(account_name="  MASKED-ACCOUNT  ")
+        self.assertTrue(claimed["claimed"])
+        self.assertEqual(
+            claimed["operation"]["credential"]["account_name"],
+            "masked-account",
+        )
+
+    def test_global_capacity_declines_second_claim_while_one_is_in_progress(self):
+        self._approved_run(idempotency_key="bridge-capacity-first")
+        self._approved_run(
+            idempotency_key="bridge-capacity-second",
+            filename="260187115-第二份-根数法.xlsx",
+            target_sample_number="260187115-2",
+        )
+
+        self.assertTrue(self._claim()["claimed"])
+        self.assertEqual(self._claim(), {"claimed": False})
+        self.assertEqual(
+            sorted(
+                item.status
+                for item in self.db.query(ExecutionExternalOperation).all()
+            ),
+            ["approved", "in_progress"],
+        )
+        self.assertEqual(self.db.query(ExecutionExternalAttempt).count(), 1)
 
     def test_claim_skips_expired_approval(self):
         _run, operation = self._approved_run()
@@ -672,14 +855,48 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         )
         self.db.rollback()
 
+    def test_attempt_current_stage_is_monotonic_across_stage_and_heartbeat(self):
+        _run, _operation = self._approved_run()
+        attempt_id = self._claim()["attempt"]["id"]
+
+        ready = self._stage(attempt_id, "file_copy_ready")
+        self.assertEqual(
+            ready["attempt"]["current_stage"],
+            "file_copy_ready",
+        )
+        stale_heartbeat = self._heartbeat(
+            attempt_id,
+            stage="permission_verified",
+        )
+        self.assertEqual(
+            stale_heartbeat["attempt"]["current_stage"],
+            "file_copy_ready",
+        )
+        stale_stage = self._stage(attempt_id, "authenticated")
+        self.assertEqual(
+            stale_stage["attempt"]["current_stage"],
+            "file_copy_ready",
+        )
+        self.assertEqual(
+            [
+                item["stage"]
+                for item in stale_stage["attempt"]["checkpoints"]
+            ],
+            [
+                "file_copy_ready",
+                "permission_verified",
+                "authenticated",
+            ],
+        )
+
     def test_fail_before_copy_returns_operation_to_approved(self):
         run, operation = self._approved_run()
         attempt_id = self._claim()["attempt"]["id"]
-        self._stage(attempt_id, "authenticated")
+        self._stage(attempt_id, "file_copy_ready")
 
         failed = self._fail(
             attempt_id,
-            "permission_verified",
+            "file_copy_ready",
             error_code="legacy_permission_denied",
             message="账号无特殊纤维模块权限",
         )
@@ -720,16 +937,21 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
 
         failed = self._fail(
             attempt_id,
-            "file_copy_started",
+            "authenticated",
             error_code="sftp_link_broken",
             message="文件传输中断",
         )
 
         self.assertEqual(failed["attempt"]["status"], "failed")
         self.assertEqual(
+            failed["attempt"]["current_stage"],
+            "file_copy_started",
+        )
+        self.assertEqual(
             failed["operation"]["status"],
             "reconciliation_required",
         )
+        self.assertIsNone(failed["operation"]["remote_write_performed"])
         self.db.refresh(operation)
         self.assertEqual(operation.status, "reconciliation_required")
         self.assertEqual(operation.error_code, "sftp_link_broken")
@@ -746,6 +968,16 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
             .one()
         )
         self.assertTrue(event.payload["reconciliation_required"])
+        self.assertIsNone(event.payload["remote_write_performed"])
+        audit = (
+            self.db.query(ExecutionAuditLog)
+            .filter_by(
+                action="external_operation.fail_attempt",
+                resource_id=operation.id,
+            )
+            .one()
+        )
+        self.assertIsNone(audit.details["remote_write_performed"])
 
         # 同一样品的业务围栏在对账前不得释放。
         second = self._prepare_run(
@@ -775,6 +1007,7 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         self.assertEqual(completed["attempt"]["status"], "completed")
         self.assertEqual(completed["attempt"]["exit_code"], 0)
         self.assertEqual(completed["operation"]["status"], "completed")
+        self.assertTrue(completed["operation"]["remote_write_performed"])
         self.db.refresh(operation)
         self.assertEqual(operation.status, "completed")
         self.assertEqual(operation.receipt, receipt)
@@ -828,7 +1061,18 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         )
         self.db.rollback()
 
-        # receipt.stage == completed 同样可以放行完成通道。
+        with self.assertRaises(ExecutionApiError) as forged_receipt:
+            self._complete(
+                attempt_id,
+                {"stage": "completed", "remote_record_id": "RC-1"},
+            )
+        self.assertEqual(
+            forged_receipt.exception.code,
+            "external_attempt_not_verified",
+        )
+        self.db.rollback()
+
+        self._stages_until_verified(attempt_id)
         completed = self._complete(
             attempt_id,
             {"stage": "completed", "remote_record_id": "RC-1"},
@@ -886,10 +1130,22 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
     def test_bridge_endpoints_require_configured_matching_token(self):
         self._approved_run()
 
+        with patch.object(settings, "EXECUTION_BRIDGE_ENABLED", False):
+            with self.assertRaises(ExecutionApiError) as disabled:
+                self._claim()
+        self.assertEqual(disabled.exception.status_code, 503)
+        self.assertEqual(
+            disabled.exception.code,
+            "execution_bridge_disabled",
+        )
+
         with patch.object(settings, "EXECUTION_BRIDGE_TOKEN", ""):
             with self.assertRaises(ExecutionApiError) as unconfigured:
                 claim_external_bridge_operation(
-                    ExternalBridgeClaimRequest(bridge_id=BRIDGE_ID),
+                    ExternalBridgeClaimRequest(
+                        bridge_id=BRIDGE_ID,
+                        account_name="masked-account",
+                    ),
                     db=self.db,
                     x_execution_bridge_key=BRIDGE_TOKEN,
                 )
@@ -901,7 +1157,10 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
 
         with self.assertRaises(ExecutionApiError) as wrong_key:
             claim_external_bridge_operation(
-                ExternalBridgeClaimRequest(bridge_id=BRIDGE_ID),
+                ExternalBridgeClaimRequest(
+                    bridge_id=BRIDGE_ID,
+                    account_name="masked-account",
+                ),
                 db=self.db,
                 x_execution_bridge_key="wrong-token",
             )
@@ -913,7 +1172,10 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
 
         with self.assertRaises(ExecutionApiError) as missing_key:
             claim_external_bridge_operation(
-                ExternalBridgeClaimRequest(bridge_id=BRIDGE_ID),
+                ExternalBridgeClaimRequest(
+                    bridge_id=BRIDGE_ID,
+                    account_name="masked-account",
+                ),
                 db=self.db,
                 x_execution_bridge_key=None,
             )
@@ -967,6 +1229,51 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         self.assertEqual(run.status, "cancelled")
         self.assertIsNotNone(run.finished_at)
 
+    def test_cancel_pending_cannot_cross_remote_write_boundary(self):
+        run, operation = self._approved_run()
+        attempt_id = self._claim()["attempt"]["id"]
+        self._stage(attempt_id, "file_copy_ready")
+
+        set_run_control_status(
+            self.db,
+            run_id=run.id,
+            action="cancel",
+            actor=self.user,
+        )
+        self.db.commit()
+
+        with self.assertRaises(ExecutionApiError) as blocked_stage:
+            self._stage(attempt_id, "file_copy_started")
+        self.assertEqual(
+            blocked_stage.exception.code,
+            "external_attempt_cancelled_before_remote_write",
+        )
+        self.db.rollback()
+
+        with self.assertRaises(ExecutionApiError) as blocked_heartbeat:
+            self._heartbeat(attempt_id, stage="file_copy_verified")
+        self.assertEqual(
+            blocked_heartbeat.exception.code,
+            "external_attempt_cancelled_before_remote_write",
+        )
+        self.db.rollback()
+
+        attempt = self.db.get(ExecutionExternalAttempt, attempt_id)
+        self.db.refresh(operation)
+        self.assertEqual(attempt.current_stage, "file_copy_ready")
+        self.assertEqual(operation.status, "cancel_pending")
+        self.assertNotIn(
+            "file_copy_started",
+            [item["stage"] for item in (attempt.checkpoints or [])],
+        )
+
+        failed = self._fail(
+            attempt_id,
+            "file_copy_ready",
+            error_code="abort_acknowledged",
+        )
+        self.assertEqual(failed["operation"]["status"], "cancelled")
+
     def test_cancel_then_post_copy_failure_keeps_reconciliation(self):
         run, operation = self._approved_run()
         attempt_id = self._claim()["attempt"]["id"]
@@ -993,6 +1300,431 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         self.assertEqual(operation.status, "reconciliation_required")
         self.assertEqual(self._upload_node(run).status, "waiting_external")
         self.assertEqual(run.status, "cancel_pending")
+
+    def test_admin_can_reconcile_confirmed_completion_idempotently(self):
+        run, operation, attempt_id = self._reconciliation_required_run()
+        context = external_operation_reconciliation_context(
+            operation.id,
+            auth=AuthContext(session=None, user=self.admin),
+            db=self.db,
+        )
+        self.assertEqual(
+            context["evidence_kind"],
+            "admin_attestation_v1",
+        )
+        self.assertIn("管理员", context["attestation_notice"])
+        self.assertEqual(context["attempt"]["id"], attempt_id)
+        self.assertEqual(
+            context["attempt"]["current_stage"],
+            "file_copy_started",
+        )
+        self.assertNotIn("stdout_summary", context["attempt"])
+
+        payload = self._reconciliation_payload(
+            operation,
+            attempt_id,
+            action="confirm_completed",
+        )
+        resolved = self._reconcile(operation, payload)
+
+        self.assertFalse(resolved["duplicate"])
+        self.assertEqual(resolved["operation"]["status"], "completed")
+        self.assertTrue(resolved["remote_write_performed"])
+        self.db.refresh(operation)
+        self.assertEqual(operation.status, "completed")
+        self.assertEqual(
+            operation.remote_record_id,
+            "manual-record-260187115",
+        )
+        self.assertEqual(
+            operation.receipt["source"],
+            "manual_reconciliation",
+        )
+        attempt = self.db.get(ExecutionExternalAttempt, attempt_id)
+        self.assertEqual(attempt.status, "failed")
+        self.assertEqual(self._upload_node(run).status, "succeeded")
+
+        duplicate = self._reconcile(operation, payload)
+        self.assertTrue(duplicate["duplicate"])
+        self.assertTrue(duplicate["remote_write_performed"])
+
+        opposite = self._reconciliation_payload(
+            operation,
+            attempt_id,
+            action="confirm_no_side_effect",
+        )
+        with self.assertRaises(ExecutionApiError) as already_resolved:
+            self._reconcile(operation, opposite)
+        self.assertEqual(
+            already_resolved.exception.code,
+            "external_reconciliation_already_resolved",
+        )
+        self.db.rollback()
+
+        event = (
+            self.db.query(ExecutionEvent)
+            .filter_by(
+                run_id=run.id,
+                event_type="external_operation.reconciled",
+            )
+            .one()
+        )
+        self.assertTrue(event.payload["remote_write_performed"])
+        audit = (
+            self.db.query(ExecutionAuditLog)
+            .filter_by(
+                action="external_operation.reconcile",
+                resource_id=operation.id,
+            )
+            .one()
+        )
+        self.assertEqual(audit.actor_user_id, self.admin.id)
+        self.assertIn("evidence_checksum", audit.details)
+
+    def test_confirmed_no_side_effect_fails_run_and_releases_fence(self):
+        run, operation, attempt_id = self._reconciliation_required_run()
+        payload = self._reconciliation_payload(
+            operation,
+            attempt_id,
+            action="confirm_no_side_effect",
+        )
+
+        resolved = self._reconcile(operation, payload)
+
+        self.assertEqual(resolved["operation"]["status"], "failed")
+        self.assertFalse(resolved["remote_write_performed"])
+        self.db.refresh(run)
+        self.db.refresh(operation)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(self._upload_node(run).status, "failed")
+        self.assertEqual(operation.receipt, {})
+        self.assertEqual(
+            operation.verification["reconciliation"]["action"],
+            "confirm_no_side_effect",
+        )
+
+        source = operation.request_summary["files"][0]
+        second = self._prepare_run(
+            candidates=[{
+                "id": source["id"],
+                "root_id": source["root_id"],
+                "relative_path": source["relative_path"],
+                "name": source["filename"],
+                "fingerprint": source["fingerprint"],
+            }],
+            selected_ids=[source["id"]],
+            primary_file_id=source["id"],
+            idempotency_key="bridge-after-no-side-effect",
+        )
+        self.assertEqual(second.status, "waiting_external")
+
+    def test_cancel_pending_no_side_effect_finishes_cancelled(self):
+        run, operation, attempt_id = self._reconciliation_required_run(
+            cancel_pending=True
+        )
+        payload = self._reconciliation_payload(
+            operation,
+            attempt_id,
+            action="confirm_no_side_effect",
+        )
+
+        resolved = self._reconcile(operation, payload)
+
+        self.assertEqual(resolved["operation"]["status"], "cancelled")
+        self.assertFalse(resolved["remote_write_performed"])
+        self.db.refresh(run)
+        self.assertEqual(run.status, "cancelled")
+        self.assertEqual(self._upload_node(run).status, "cancelled")
+        self.assertFalse(
+            (run.output_data or {}).get("cancelled_after_side_effect", False)
+        )
+
+    def test_cancel_pending_confirmed_completion_records_side_effect(self):
+        run, operation, attempt_id = self._reconciliation_required_run(
+            cancel_pending=True
+        )
+        payload = self._reconciliation_payload(
+            operation,
+            attempt_id,
+            action="confirm_completed",
+        )
+
+        resolved = self._reconcile(operation, payload)
+
+        self.assertEqual(resolved["operation"]["status"], "completed")
+        self.assertTrue(resolved["remote_write_performed"])
+        self.db.refresh(run)
+        self.assertEqual(run.status, "cancelled")
+        self.assertEqual(self._upload_node(run).status, "succeeded")
+        self.assertTrue(
+            (run.output_data or {}).get("cancelled_after_side_effect")
+        )
+
+    def test_cancel_after_reconciliation_required_waits_for_no_effect_result(self):
+        run, operation, attempt_id = self._reconciliation_required_run()
+
+        set_run_control_status(
+            self.db,
+            run_id=run.id,
+            action="cancel",
+            actor=self.user,
+        )
+        self.db.commit()
+        self.db.refresh(run)
+        self.db.refresh(operation)
+
+        self.assertEqual(run.status, "cancel_pending")
+        self.assertEqual(operation.status, "reconciliation_required")
+        self.assertEqual(self._upload_node(run).status, "waiting_external")
+
+        resolved = self._reconcile(
+            operation,
+            self._reconciliation_payload(
+                operation,
+                attempt_id,
+                action="confirm_no_side_effect",
+            ),
+        )
+        self.assertEqual(resolved["operation"]["status"], "cancelled")
+        self.db.refresh(run)
+        self.assertEqual(run.status, "cancelled")
+        self.assertFalse(
+            (run.output_data or {}).get("cancelled_after_side_effect", False)
+        )
+
+    def test_cancel_after_reconciliation_required_records_completed_write(self):
+        run, operation, attempt_id = self._reconciliation_required_run()
+        set_run_control_status(
+            self.db,
+            run_id=run.id,
+            action="cancel",
+            actor=self.user,
+        )
+        self.db.commit()
+
+        resolved = self._reconcile(
+            operation,
+            self._reconciliation_payload(
+                operation,
+                attempt_id,
+                action="confirm_completed",
+            ),
+        )
+        self.assertEqual(resolved["operation"]["status"], "completed")
+        self.db.refresh(run)
+        self.assertEqual(run.status, "cancelled")
+        self.assertTrue(
+            (run.output_data or {}).get("cancelled_after_side_effect")
+        )
+
+    def test_sibling_failure_preserves_reconciliation_until_no_effect_result(self):
+        run, operation, attempt_id = self._reconciliation_required_run()
+        self._fail_running_sibling(run)
+        self.db.refresh(operation)
+
+        self.assertEqual(run.status, "failure_pending")
+        self.assertEqual(run.error_code, "parallel_branch_failed")
+        self.assertEqual(operation.status, "reconciliation_required")
+        self.assertEqual(self._upload_node(run).status, "waiting_external")
+
+        resolved = self._reconcile(
+            operation,
+            self._reconciliation_payload(
+                operation,
+                attempt_id,
+                action="confirm_no_side_effect",
+            ),
+        )
+        self.assertEqual(resolved["operation"]["status"], "failed")
+        self.db.refresh(run)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "parallel_branch_failed")
+        self.assertFalse(
+            (run.output_data or {}).get(
+                "failed_after_external_side_effect",
+                False,
+            )
+        )
+
+    def test_sibling_failure_preserves_reconciliation_until_completed_result(self):
+        run, operation, attempt_id = self._reconciliation_required_run()
+        self._fail_running_sibling(run)
+
+        resolved = self._reconcile(
+            operation,
+            self._reconciliation_payload(
+                operation,
+                attempt_id,
+                action="confirm_completed",
+            ),
+        )
+        self.assertEqual(resolved["operation"]["status"], "completed")
+        self.db.refresh(run)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "parallel_branch_failed")
+        self.assertTrue(
+            (run.output_data or {}).get(
+                "failed_after_external_side_effect"
+            )
+        )
+
+    def test_sibling_failure_cancels_inflight_attempt_that_fails_prewrite(self):
+        run, operation = self._approved_run()
+        attempt_id = self._claim()["attempt"]["id"]
+        self._stage(attempt_id, "file_copy_ready")
+
+        self._fail_running_sibling(run)
+        self.db.refresh(operation)
+        self.assertEqual(run.status, "failure_pending")
+        self.assertEqual(operation.status, "cancel_pending")
+        self.assertEqual(self._upload_node(run).status, "waiting_external")
+
+        failed = self._fail(
+            attempt_id,
+            "file_copy_ready",
+            error_code="abort_acknowledged",
+        )
+        self.assertEqual(failed["operation"]["status"], "cancelled")
+        self.assertEqual(
+            failed["operation"]["error"]["code"],
+            "run_failed",
+        )
+        self.db.refresh(run)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "parallel_branch_failed")
+        self.assertEqual(self._upload_node(run).error_code, "run_failed")
+
+    def test_sibling_failure_accepts_inflight_completion_then_fails_run(self):
+        run, operation = self._approved_run()
+        attempt_id = self._claim()["attempt"]["id"]
+        self._stages_until_verified(attempt_id)
+
+        self._fail_running_sibling(run)
+        self.db.refresh(operation)
+        self.assertEqual(operation.status, "cancel_pending")
+
+        completed = self._complete(
+            attempt_id,
+            {"stage": "completed", "remote_record_id": "RC-SETTLED"},
+        )
+        self.assertEqual(completed["operation"]["status"], "completed")
+        self.db.refresh(run)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "parallel_branch_failed")
+        self.assertTrue(
+            (run.output_data or {}).get(
+                "failed_after_external_side_effect"
+            )
+        )
+
+    def test_paused_no_side_effect_defers_run_failure(self):
+        run, operation, attempt_id = self._reconciliation_required_run()
+        set_run_control_status(
+            self.db,
+            run_id=run.id,
+            action="pause",
+            actor=self.user,
+        )
+        self.db.commit()
+        self.db.refresh(run)
+        self.assertEqual(run.status, "paused")
+
+        payload = self._reconciliation_payload(
+            operation,
+            attempt_id,
+            action="confirm_no_side_effect",
+        )
+        self._reconcile(operation, payload)
+
+        self.db.refresh(run)
+        self.assertEqual(run.status, "paused")
+        self.assertEqual(self._upload_node(run).status, "failed")
+        deferred = (
+            self.db.query(ExecutionEvent)
+            .filter_by(
+                run_id=run.id,
+                event_type="run.failure_deferred",
+            )
+            .one()
+        )
+        self.assertEqual(
+            deferred.payload["code"],
+            "external_reconciliation_no_side_effect",
+        )
+
+    def test_reconciliation_rejects_operator_and_mismatched_file_hash(self):
+        _run, operation, attempt_id = self._reconciliation_required_run()
+        payload = self._reconciliation_payload(
+            operation,
+            attempt_id,
+            action="confirm_completed",
+        )
+        with self.assertRaises(ExecutionApiError) as denied:
+            self._reconcile(operation, payload, actor=self.user)
+        self.assertEqual(
+            denied.exception.code,
+            "external_reconciliation_admin_required",
+        )
+        self.db.rollback()
+
+        invalid_payload = self._reconciliation_payload(
+            operation,
+            attempt_id,
+            action="confirm_completed",
+            evidence={
+                "checked_at": utcnow(),
+                "exact_record_count": 1,
+                "remote_record_id": "manual-record-260187115",
+                "business_fields_match": True,
+                "inspector_match": True,
+                "target_file_count": 1,
+                "remote_file_sha256": "0" * 64,
+            },
+        )
+        with self.assertRaises(ExecutionApiError) as incomplete:
+            self._reconcile(operation, invalid_payload)
+        self.assertEqual(
+            incomplete.exception.code,
+            "external_reconciliation_evidence_incomplete",
+        )
+        self.db.rollback()
+        self.db.refresh(operation)
+        self.assertEqual(operation.status, "reconciliation_required")
+
+    def test_reconciliation_context_rejects_nonrequired_or_invalid_attempt(self):
+        _run, approved = self._approved_run()
+        with self.assertRaises(ExecutionApiError) as not_required:
+            external_operation_reconciliation_context(
+                approved.id,
+                auth=AuthContext(session=None, user=self.admin),
+                db=self.db,
+            )
+        self.assertEqual(
+            not_required.exception.code,
+            "external_reconciliation_not_required",
+        )
+        self.db.rollback()
+        approved.status = "reconciliation_required"
+        attempt = ExecutionExternalAttempt(
+            operation_id=approved.id,
+            attempt_no=1,
+            bridge_id=BRIDGE_ID,
+            status="in_progress",
+            current_stage="file_copy_started",
+            started_at=utcnow(),
+        )
+        self.db.add(attempt)
+        self.db.commit()
+        with self.assertRaises(ExecutionApiError) as invalid_attempt:
+            external_operation_reconciliation_context(
+                approved.id,
+                auth=AuthContext(session=None, user=self.admin),
+                db=self.db,
+            )
+        self.assertEqual(
+            invalid_attempt.exception.code,
+            "external_reconciliation_attempt_invalid",
+        )
 
 
 if __name__ == "__main__":

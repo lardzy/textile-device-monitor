@@ -790,32 +790,39 @@ class FileMutationService:
         writes: Sequence[CellWrite],
     ) -> WorkbookVerificationReceipt:
         mismatches: list[dict[str, object]] = []
-        workbook = load_workbook(
-            filename=workbook_path,
-            read_only=True,
-            data_only=False,
-            keep_links=True,
-        )
-        try:
-            for item in writes:
-                if item.sheet not in workbook.sheetnames:
-                    actual: object = None
-                    reason = "worksheet_not_found"
-                else:
-                    actual = workbook[item.sheet][item.cell].value
-                    reason = "value_mismatch"
-                if item.sheet not in workbook.sheetnames or not _values_equal(item.value, actual):
-                    mismatches.append(
-                        {
-                            "sheet": item.sheet,
-                            "cell": item.cell,
-                            "expected": _encode_cell_value(item.value),
-                            "actual": _encode_cell_value(actual),
-                            "reason": reason,
-                        }
-                    )
-        finally:
-            workbook.close()
+        # Own the underlying stream explicitly. On Windows, read-only openpyxl
+        # worksheets can retain a ZipExtFile after Workbook.close(), keeping the
+        # .xlsx locked until garbage collection and breaking the atomic replace.
+        with workbook_path.open("rb") as workbook_stream:
+            workbook = load_workbook(
+                filename=workbook_stream,
+                read_only=True,
+                data_only=False,
+                keep_links=True,
+            )
+            try:
+                for item in writes:
+                    if item.sheet not in workbook.sheetnames:
+                        actual: object = None
+                        reason = "worksheet_not_found"
+                    else:
+                        actual = workbook[item.sheet][item.cell].value
+                        reason = "value_mismatch"
+                    if item.sheet not in workbook.sheetnames or not _values_equal(
+                        item.value,
+                        actual,
+                    ):
+                        mismatches.append(
+                            {
+                                "sheet": item.sheet,
+                                "cell": item.cell,
+                                "expected": _encode_cell_value(item.value),
+                                "actual": _encode_cell_value(actual),
+                                "reason": reason,
+                            }
+                        )
+            finally:
+                workbook.close()
 
         return WorkbookVerificationReceipt(
             workbook_ref=workbook_ref,

@@ -45,6 +45,7 @@ DEFAULT_PERMISSIONS = (
     ("file.write", "创建工作副本"),
     ("file.publish", "发布执行制品"),
     ("audit.read", "查看审计记录"),
+    ("external_operation.reconcile", "人工处置旧系统待对账操作"),
     ("user.manage", "管理用户"),
     ("credential.manage", "管理个人凭据"),
 )

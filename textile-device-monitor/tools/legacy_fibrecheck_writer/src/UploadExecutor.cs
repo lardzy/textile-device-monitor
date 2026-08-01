@@ -11,7 +11,8 @@ namespace LegacyFibreCheckWriter
     /// <summary>
     /// 旧系统上传写入执行器。阶段与交接手册一致：
     /// authenticated → permission_verified → remote_absence_verified →
-    /// file_copy_started → file_copy_verified → main_record_save_started →
+    /// file_copy_ready →（等待 Bridge 许可）→ file_copy_started →
+    /// file_copy_verified → main_record_save_started →
     /// main_record_verified → completed。
     /// file_copy_started 起的任何失败以 reconciliation_required 收尾，绝不自动重试。
     /// </summary>
@@ -21,6 +22,7 @@ namespace LegacyFibreCheckWriter
         public const int ExitPackageError = 21;
         public const int ExitSourceMismatch = 22;
         public const int ExitTargetFileConflict = 23;
+        public const int ExitSideEffectPermitDenied = 24;
 
         private static readonly string[] SideEffectStages =
         {
@@ -46,7 +48,8 @@ namespace LegacyFibreCheckWriter
             string password,
             string packagePath,
             string sourceRoot,
-            Action<object> emit)
+            Action<object> emit,
+            Func<bool> awaitSideEffectPermit)
         {
             var result = new Result();
             Action<string, object> stage = (name, detail) =>
@@ -106,6 +109,22 @@ namespace LegacyFibreCheckWriter
             if (string.IsNullOrWhiteSpace(relativePath) || string.IsNullOrWhiteSpace(fileName))
             {
                 result.Receipt["error"] = "package_file_entry_invalid";
+                return Finish(result, ExitPackageError, null, emit);
+            }
+            try
+            {
+                if (!string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal)
+                    || fileName == "."
+                    || fileName == ".."
+                    || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                {
+                    result.Receipt["error"] = "package_filename_invalid";
+                    return Finish(result, ExitPackageError, null, emit);
+                }
+            }
+            catch (Exception)
+            {
+                result.Receipt["error"] = "package_filename_invalid";
                 return Finish(result, ExitPackageError, null, emit);
             }
 
@@ -195,7 +214,30 @@ namespace LegacyFibreCheckWriter
                 string inspectorId = inspector.Key;
 
                 // 6) 源文件核验（存在、大小、SHA-256 与预检单一致）
-                string sourcePath = Path.Combine(sourceRoot, relativePath.Replace('/', '\\'));
+                string normalizedSourceRoot;
+                string sourcePath;
+                try
+                {
+                    normalizedSourceRoot = Path.GetFullPath(sourceRoot);
+                    if (!normalizedSourceRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                        && !normalizedSourceRoot.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                    {
+                        normalizedSourceRoot += Path.DirectorySeparatorChar;
+                    }
+                    sourcePath = Path.GetFullPath(Path.Combine(
+                        normalizedSourceRoot,
+                        relativePath.Replace('/', Path.DirectorySeparatorChar)));
+                }
+                catch (Exception)
+                {
+                    result.Receipt["error"] = "package_relative_path_invalid";
+                    return Finish(result, ExitPackageError, null, emit);
+                }
+                if (!sourcePath.StartsWith(normalizedSourceRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Receipt["error"] = "package_relative_path_outside_source_root";
+                    return Finish(result, ExitPackageError, null, emit);
+                }
                 byte[] sourceBytes;
                 try
                 {
@@ -245,7 +287,21 @@ namespace LegacyFibreCheckWriter
                     return Finish(result, ExitTargetFileConflict, null, emit);
                 }
 
-                // 8) 文件复制（副作用起点；此后失败一律 reconciliation_required）
+                // 8) Bridge 必须先把副作用边界持久化到服务端，再通过 stdin
+                // 发放一次性许可。没有许可时本进程不得创建目录或文件。
+                stage("file_copy_ready", new SortedDictionary<string, object>
+                {
+                    { "file_name", fileName },
+                    { "size_bytes", sourceBytes.LongLength },
+                    { "content_sha256", sourceSha },
+                });
+                if (awaitSideEffectPermit == null || !awaitSideEffectPermit())
+                {
+                    result.Receipt["error"] = "side_effect_permit_denied";
+                    return Finish(result, ExitSideEffectPermitDenied, null, emit);
+                }
+
+                // 文件复制是副作用起点；此后失败一律 reconciliation_required。
                 stage("file_copy_started", new SortedDictionary<string, object>
                 {
                     { "file_name", fileName },
@@ -255,7 +311,15 @@ namespace LegacyFibreCheckWriter
                 try
                 {
                     Directory.CreateDirectory(targetDir);
-                    File.WriteAllBytes(targetPath, sourceBytes);
+                    using (var stream = new FileStream(
+                        targetPath,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.None))
+                    {
+                        stream.Write(sourceBytes, 0, sourceBytes.Length);
+                        stream.Flush();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -329,11 +393,13 @@ namespace LegacyFibreCheckWriter
                         return Finish(result, ExitReconciliationRequired, "main_record_save_started", emit);
                     }
                     var mismatches = new List<string>();
+                    if (!string.Equals(saved.ID, savedId, StringComparison.Ordinal)) mismatches.Add("ID");
                     if (saved.FibreSort != "棉再生纤") mismatches.Add("FibreSort");
                     if (saved.CheckWay != "定量") mismatches.Add("CheckWay");
                     if (saved.CheckUser1 != inspectorId) mismatches.Add("CheckUser1");
                     if (saved.CheckUserItem1 != "棉再生纤定量-根数法") mismatches.Add("CheckUserItem1");
                     if (saved.CheckUserNumber1 != 1) mismatches.Add("CheckUserNumber1");
+                    if (saved.ReviewUserNumber1 != 1) mismatches.Add("ReviewUserNumber1");
                     if (saved.FilePath != fileName) mismatches.Add("FilePath");
                     if (saved.FileType != "定量试验") mismatches.Add("FileType");
                     if (saved.CreateUser != staff.Id) mismatches.Add("CreateUser");
@@ -372,6 +438,7 @@ namespace LegacyFibreCheckWriter
             result.ReconciliationRequired = failureStage != null;
             if (failureStage != null)
             {
+                result.Receipt["failure_stage"] = failureStage;
                 emit(new SortedDictionary<string, object>
                 {
                     { "stage", "reconciliation_required" },

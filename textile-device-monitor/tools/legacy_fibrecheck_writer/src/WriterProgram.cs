@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using LegacyFibreCheckRunner;
 using Toone.FibreCheck.Entites.CommonEntities;
 using Toone.FibreCheck.Entites.CommonEntities.CommunicationEntities;
@@ -32,6 +33,7 @@ namespace LegacyFibreCheckWriter
             string packagePath = null;
             string sourceRoot = null;
             bool executeUpload = false;
+            bool sideEffectPermitStdin = false;
             for (int i = 0; i < args.Length; i++)
             {
                 string value = i + 1 < args.Length ? args[i + 1] : null;
@@ -41,6 +43,7 @@ namespace LegacyFibreCheckWriter
                     case "--account": account = value; i++; break;
                     case "--probe-sample-no": probeSampleNo = value; i++; break;
                     case "--execute-upload": executeUpload = true; break;
+                    case "--side-effect-permit-stdin": sideEffectPermitStdin = true; break;
                     case "--package": packagePath = value; i++; break;
                     case "--source-root": sourceRoot = value; i++; break;
                     default:
@@ -50,12 +53,15 @@ namespace LegacyFibreCheckWriter
             }
             if (string.IsNullOrWhiteSpace(fibreCheckDir) || string.IsNullOrWhiteSpace(account))
             {
-                Console.Error.WriteLine("用法: FibreCheckWriter.exe --fibrecheck-dir <目录> --account <账号> [--probe-sample-no <编号> | --execute-upload --package <任务包.json> --source-root <目录>]");
+                Console.Error.WriteLine("用法: FibreCheckWriter.exe --fibrecheck-dir <目录> --account <账号> [--probe-sample-no <编号> | --execute-upload --side-effect-permit-stdin --package <任务包.json> --source-root <目录>]");
                 return 2;
             }
-            if (executeUpload && (string.IsNullOrWhiteSpace(packagePath) || string.IsNullOrWhiteSpace(sourceRoot)))
+            if (executeUpload && (
+                string.IsNullOrWhiteSpace(packagePath)
+                || string.IsNullOrWhiteSpace(sourceRoot)
+                || !sideEffectPermitStdin))
             {
-                Console.Error.WriteLine("--execute-upload 模式必须提供 --package 与 --source-root");
+                Console.Error.WriteLine("--execute-upload 模式必须提供任务包、源目录和 stdin 副作用许可协议");
                 return 2;
             }
             string password = Environment.GetEnvironmentVariable("FIBRECHECK_RUNNER_PASSWORD");
@@ -80,7 +86,14 @@ namespace LegacyFibreCheckWriter
             Action<object> emit = entry => Console.Out.Write(MiniJson.Write(entry) + "\n");
             try
             {
-                return UploadExecutor.Execute(fibreCheckDir, account, password, packagePath, sourceRoot, emit);
+                return UploadExecutor.Execute(
+                    fibreCheckDir,
+                    account,
+                    password,
+                    packagePath,
+                    sourceRoot,
+                    emit,
+                    WaitForSideEffectPermit);
             }
             catch (Exception ex)
             {
@@ -103,6 +116,39 @@ namespace LegacyFibreCheckWriter
                 });
                 return UploadExecutor.ExitReconciliationRequired;
             }
+        }
+
+        private static bool WaitForSideEffectPermit()
+        {
+            string decision = null;
+            Exception readError = null;
+            var completed = new ManualResetEvent(false);
+            var reader = new Thread(() =>
+            {
+                try
+                {
+                    decision = Console.In.ReadLine();
+                }
+                catch (Exception ex)
+                {
+                    readError = ex;
+                }
+                finally
+                {
+                    completed.Set();
+                }
+            });
+            reader.IsBackground = true;
+            reader.Start();
+            if (!completed.WaitOne(TimeSpan.FromSeconds(60)))
+            {
+                return false;
+            }
+            return readError == null
+                && string.Equals(
+                    decision,
+                    "PERMIT_REMOTE_WRITE",
+                    StringComparison.Ordinal);
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

@@ -39,7 +39,7 @@ const SYSTEMS = [
   {
     key: 'legacy_inspection',
     name: '旧检务系统',
-    description: '用于后续 Windows Agent 调用 FibreCheck；首版不会自动提交。',
+    description: '用于 Windows Bridge 调用 FibreCheck；任务批准后可由已启用的 Bridge 领取。',
   },
   {
     key: 'new_inspection',
@@ -164,7 +164,7 @@ export default function ExecutionSettings() {
         showIcon
         type="info"
         message="每位用户独立维护自己的外部系统账号"
-        description="密码只会加密保存在服务端，页面和接口永远不会回显明文；当前连接器仍处于禁用状态。"
+        description="页面和接口不会回显密码；Windows Bridge 还会用本机受控口令核对任务绑定账号，管理员可通过 Bridge 令牌统一启停真实写入。"
       />
       <div className="execution-credential-grid">
         {SYSTEMS.map((system) => {

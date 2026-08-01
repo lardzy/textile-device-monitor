@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ORMModel(BaseModel):
@@ -166,6 +166,79 @@ class ExternalOperationApprovalRequest(BaseModel):
     note: Optional[str] = Field(default=None, max_length=1000)
 
 
+class ExternalReconciliationCompletedEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checked_at: datetime
+    exact_record_count: Literal[1]
+    remote_record_id: str = Field(min_length=1, max_length=200)
+    business_fields_match: Literal[True]
+    inspector_match: Literal[True]
+    target_file_count: Literal[1]
+    remote_file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("remote_record_id")
+    @classmethod
+    def normalize_remote_record_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Remote record id cannot be empty")
+        return normalized
+
+
+class ExternalReconciliationNoSideEffectEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checked_at: datetime
+    exact_record_count: Literal[0]
+    contains_record_count: Literal[0]
+    target_file_count: Literal[0]
+
+
+class ExternalOperationReconciliationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["confirm_completed", "confirm_no_side_effect"]
+    attempt_id: str = Field(min_length=1, max_length=36)
+    payload_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    confirmed_sample_number: str = Field(min_length=1, max_length=200)
+    note: str = Field(min_length=1, max_length=2000)
+    evidence: (
+        ExternalReconciliationCompletedEvidence
+        | ExternalReconciliationNoSideEffectEvidence
+    )
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Reconciliation note cannot be empty")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_evidence_for_action(self):
+        if (
+            self.action == "confirm_completed"
+            and not isinstance(
+                self.evidence,
+                ExternalReconciliationCompletedEvidence,
+            )
+        ):
+            raise ValueError("Completed action requires completed evidence")
+        if (
+            self.action == "confirm_no_side_effect"
+            and not isinstance(
+                self.evidence,
+                ExternalReconciliationNoSideEffectEvidence,
+            )
+        ):
+            raise ValueError(
+                "No-side-effect action requires absence evidence"
+            )
+        return self
+
+
 class ExternalBridgeClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -174,6 +247,15 @@ class ExternalBridgeClaimRequest(BaseModel):
         min_length=1,
         max_length=100,
     )
+    account_name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("account_name")
+    @classmethod
+    def normalize_account_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Bridge account name cannot be empty")
+        return normalized
 
 
 class ExternalBridgeHeartbeatRequest(BaseModel):

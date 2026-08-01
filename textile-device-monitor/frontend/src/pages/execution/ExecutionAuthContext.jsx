@@ -101,6 +101,9 @@ export function ExecutionAuthProvider({ children }) {
       canHandleHumanTasks: hasPermission('human_task.handle'),
       canManageUsers: hasPermission('user.manage'),
       canManageCredentials: hasPermission('credential.manage'),
+      canReconcileExternalOperations: (
+        isAdmin && permissionKeys.has('external_operation.reconcile')
+      ),
     };
   }, [error, loading, login, logout, refresh, user]);
 

@@ -146,6 +146,7 @@ export default function ExecutionRunWorkspace() {
   const {
     canHandleHumanTasks,
     canRunWorkflow,
+    canReconcileExternalOperations,
   } = useExecutionAuth();
   const [snapshot, setSnapshot] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -497,6 +498,7 @@ export default function ExecutionRunWorkspace() {
           runId={runId}
           refreshKey={run.updated_at}
           canApprove={canRunWorkflow}
+          canReconcile={canReconcileExternalOperations}
           onChanged={() => loadSnapshot({ quiet: true })}
         />
       ),

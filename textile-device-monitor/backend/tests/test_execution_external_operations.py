@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from openpyxl import Workbook
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.api.execution import (
@@ -17,6 +18,7 @@ from app.api.execution import (
     approve_external_operation,
     external_operation_detail,
     router,
+    start_run,
     upsert_credential,
 )
 from app.database import Base
@@ -51,6 +53,7 @@ from app.execution.persistence import register_persistence_executors
 from app.execution.schemas import (
     CredentialUpsert,
     ExternalOperationApprovalRequest,
+    RunCreate,
 )
 from app.execution.validation import validate_definition
 
@@ -500,7 +503,7 @@ class ExecutionExternalOperationTests(unittest.TestCase):
             )
         )
 
-    def test_all_selected_files_are_reread_and_inspectors_must_match(self):
+    def test_preflight_rejects_more_than_one_selected_file(self):
         _path1, entry1, candidate1 = self._workbook(
             filename="260187115-a.xlsx",
             inspector="张三",
@@ -523,11 +526,45 @@ class ExecutionExternalOperationTests(unittest.TestCase):
         )
         self.assertEqual(run.status, "failed")
         self.assertEqual(node.status, "failed")
-        self.assertEqual(node.error_code, "external_inspector_conflict")
+        self.assertEqual(
+            node.error_code,
+            "external_exactly_one_file_required",
+        )
         self.assertEqual(
             self.db.query(ExecutionExternalOperation).count(),
             0,
         )
+
+    def test_approval_rejects_legacy_preflight_with_multiple_files(self):
+        _path, entry, candidate = self._workbook()
+        self._prepare_run(
+            candidates=[candidate],
+            selected_ids=[entry.id],
+            primary_file_id=entry.id,
+        )
+        operation = self.db.query(ExecutionExternalOperation).one()
+        summary = deepcopy(operation.request_summary)
+        summary["files"].append(dict(summary["files"][0]))
+        operation.request_summary = summary
+        self.db.commit()
+
+        with self.assertRaises(ExecutionApiError) as invalid:
+            approve_external_operation(
+                operation.id,
+                ExternalOperationApprovalRequest(
+                    approved=True,
+                    payload_checksum=operation.payload_checksum,
+                    confirmed_sample_number="260187115",
+                ),
+                auth=AuthContext(session=None, user=self.user),
+                db=self.db,
+            )
+
+        self.assertEqual(
+            invalid.exception.code,
+            "external_operation_preflight_invalid",
+        )
+        self.db.rollback()
 
     def test_approval_only_changes_local_state_and_is_idempotent(self):
         _path, entry, candidate = self._workbook()
@@ -760,6 +797,42 @@ class ExecutionExternalOperationTests(unittest.TestCase):
         )
         self.assertTrue(same_duplicate)
         self.assertEqual(same.id, run.id)
+
+    def test_start_run_integrity_recovery_mirrors_target_sample_number(self):
+        _path, entry, candidate = self._workbook()
+        existing, duplicate = create_run(
+            self.db,
+            workflow=self.workflow,
+            actor=self.user,
+            inspection_number="260187115",
+            input_data={"files": [candidate]},
+            global_data={},
+            idempotency_key="target-integrity-recovery",
+            target_sample_number="260187115-1",
+        )
+        self.assertFalse(duplicate)
+        self.db.commit()
+        payload = RunCreate(
+            workflow_id=self.workflow.id,
+            inspection_number="260187115",
+            input_data={"files": [candidate]},
+            global_data={},
+            idempotency_key="target-integrity-recovery",
+            target_sample_number=" 260187115-1 ",
+        )
+
+        with patch(
+            "app.api.execution.create_run",
+            side_effect=IntegrityError("insert", {}, Exception("race")),
+        ):
+            recovered = start_run(
+                payload,
+                auth=AuthContext(session=None, user=self.user),
+                db=self.db,
+            )
+
+        self.assertTrue(recovered["duplicate"])
+        self.assertEqual(recovered["run"]["id"], existing.id)
 
     def test_approval_rejects_credential_revision_drift(self):
         _path, entry, candidate = self._workbook()

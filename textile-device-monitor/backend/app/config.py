@@ -110,8 +110,9 @@ class Settings(BaseSettings):
     EXECUTION_SSE_MAX_SECONDS: int = 300
     EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES: int = 30
     EXECUTION_EXTERNAL_APPROVAL_TTL_MINUTES: int = 15
-    # Shared secret authenticating the external-operation Bridge client.
-    # Bridge endpoints stay disabled (503) while this is empty.
+    # Independent kill switch plus shared secret for the external Bridge.
+    # Both must be configured before any Bridge endpoint is available.
+    EXECUTION_BRIDGE_ENABLED: bool = False
     EXECUTION_BRIDGE_TOKEN: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

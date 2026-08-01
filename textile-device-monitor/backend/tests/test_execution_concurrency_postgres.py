@@ -24,6 +24,7 @@ import pytest
 from openpyxl import Workbook
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "")
@@ -57,6 +58,7 @@ from app.execution.engine import (
 )
 from app.execution.errors import ExecutionApiError
 from app.execution.external_operations import (
+    lock_external_bridge_claim_capacity,
     lock_legacy_remote_business_scope,
 )
 from app.execution.models import (
@@ -164,6 +166,28 @@ def test_external_business_scope_uses_one_transaction_lock_per_sample():
             holder.commit()
             assert future.result(timeout=10) == expected_key
     finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_external_bridge_capacity_check_uses_one_transaction_lock():
+    """The claim capacity fence must remain held until its transaction ends."""
+
+    holder = SessionLocal()
+    contender = SessionLocal()
+    try:
+        lock_external_bridge_claim_capacity(holder)
+        contender.execute(text("SET LOCAL lock_timeout = '200ms'"))
+        with pytest.raises(DBAPIError):
+            lock_external_bridge_claim_capacity(contender)
+        contender.rollback()
+
+        holder.commit()
+        lock_external_bridge_claim_capacity(contender)
+        contender.rollback()
+    finally:
+        contender.rollback()
+        contender.close()
         holder.rollback()
         holder.close()
 

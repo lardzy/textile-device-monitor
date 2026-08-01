@@ -17,6 +17,7 @@ FibreCheckWriter.exe ^
   --fibrecheck-dir C:\path\to\FibreCheck ^
   --account lisy ^
   --execute-upload ^
+  --side-effect-permit-stdin ^
   --package C:\path\to\bridge-package.json ^
   --source-root "\\192.168.105.82\材料检测中心\10特纤\02-检验\2026-再生纤"
 ```
@@ -25,15 +26,18 @@ FibreCheckWriter.exe ^
 
 ```text
 authenticated → permission_verified → remote_absence_verified →
-file_copy_started → file_copy_verified →
+file_copy_ready →（等待 stdin 许可）→ file_copy_started → file_copy_verified →
 main_record_save_started → main_record_verified → completed
 ```
 
+- `file_copy_ready` 之后 Writer 会阻塞，只有 Bridge 已把 `file_copy_started`
+  持久化到服务端且从 stdin 写入精确的 `PERMIT_REMOTE_WRITE` 后才会继续；
+  60 秒内没有许可即在副作用前安全退出。
 - `file_copy_started`（含）之后的任何失败输出 `reconciliation_required` 事件并返回
   退出码 30；绝不自动重试、绝不回滚远端已发生的副作用。
 - 文件复制后逐字节回读比对 SHA-256；主记录保存后通过官方 DAL 回读并逐字段核验
-  （SampleNo/FibreSort/CheckWay/CheckUser1/CheckUserItem1/CheckUserNumber1/
-  FilePath/FileType/CreateUser）。
+  （ID/SampleNo/FibreSort/CheckWay/CheckUser1/CheckUserItem1/CheckUserNumber1/
+  ReviewUserNumber1/FilePath/FileType/CreateUser）。
 - 主记录保存调用官方 `SpecialWoolDAL.SaveSpecialWoolManage`（空明细列表场景下等价于
   单行 INSERT），CreateUser/CreateTime/ID 由 DAL 按旧客户端语义写入。
 
