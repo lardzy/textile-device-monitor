@@ -436,6 +436,15 @@ QUERIES: tuple[QueryDefinition, ...] = (
     ),
 )
 
+# 高频推荐刷新只需要任务主表和任务项目。保持 QUERIES 及默认探针模式完全不
+# 变；仅当 CLI 显式传入 --task-snapshot-only 时采用这个严格白名单。
+TASK_SNAPSHOT_QUERY_KEYS = ("tasks", "task_check_items")
+TASK_SNAPSHOT_QUERIES: tuple[QueryDefinition, ...] = tuple(
+    query for query in QUERIES if query.key in TASK_SNAPSHOT_QUERY_KEYS
+)
+if tuple(query.key for query in TASK_SNAPSHOT_QUERIES) != TASK_SNAPSHOT_QUERY_KEYS:
+    raise RuntimeError("任务快照查询定义缺失或顺序错误")
+
 FINAL_ENTRY_REQUIRED_QUERY_KEYS = (
     "task_check_items",
     "task_entry_routes",
@@ -712,10 +721,13 @@ def query_parameters(sample_no: str) -> dict[str, str]:
     }
 
 
-def build_manifest(sample_no: str) -> list[dict[str, Any]]:
+def build_manifest(
+    sample_no: str,
+    queries: Sequence[QueryDefinition] = QUERIES,
+) -> list[dict[str, Any]]:
     parameters = query_parameters(sample_no)
     manifest: list[dict[str, Any]] = []
-    for query in QUERIES:
+    for query in queries:
         entry = query.manifest_entry()
         entry["bound_parameters"] = {
             name: parameters[name]
@@ -1965,7 +1977,13 @@ class ReadOnlyProbeRunner:
         self.connection = connection
         self.read_only_transaction_started = False
 
-    def run(self, sample_no: str) -> dict[str, Any]:
+    def run(
+        self,
+        sample_no: str,
+        *,
+        queries: Sequence[QueryDefinition] = QUERIES,
+        include_final_entry_view: bool = True,
+    ) -> dict[str, Any]:
         parameters = query_parameters(sample_no)
         results: dict[str, Any] = {}
         try:
@@ -1974,13 +1992,18 @@ class ReadOnlyProbeRunner:
             except AttributeError:
                 pass
             self._start_read_only_transaction()
-            for query in QUERIES:
+            for query in queries:
                 results[query.key] = self._execute_query(query, parameters)
-            return {
+            document = {
                 "read_only_transaction_started": self.read_only_transaction_started,
                 "results": results,
-                "final_entry_view": build_final_entry_view(sample_no, results),
             }
+            if include_final_entry_view:
+                document["final_entry_view"] = build_final_entry_view(
+                    sample_no,
+                    results,
+                )
+            return document
         finally:
             try:
                 self.connection.rollback()
@@ -2049,6 +2072,7 @@ def build_base_document(
     sample_no: str,
     mode: str,
     profile: OracleProfile | None,
+    queries: Sequence[QueryDefinition] = QUERIES,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -2063,7 +2087,7 @@ def build_base_document(
             "file_server_access": False,
             "attachment_paths": "basename_and_hash_only",
         },
-        "query_manifest": build_manifest(sample_no),
+        "query_manifest": build_manifest(sample_no, queries),
     }
 
 
@@ -2137,6 +2161,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="可选：改用 FibreCheck 目录内其它配置条目的凭据，格式 配置文件名:条目名；"
         "不提供时仍使用主配置 FibreCheckEntities",
     )
+    parser.add_argument(
+        "--task-snapshot-only",
+        action="store_true",
+        help="仅查询 Task 和 Task_CheckItem，供任务推荐缓存刷新使用",
+    )
     return parser
 
 
@@ -2162,11 +2191,19 @@ def run_cli(
                 data_source=validate_data_source_override(args.data_source),
             )
             data_source_overridden = True
+        selected_queries = (
+            TASK_SNAPSHOT_QUERIES
+            if args.task_snapshot_only
+            else QUERIES
+        )
         document = build_base_document(
             sample_no=sample_no,
             mode="manifest" if args.manifest else "probe",
             profile=profile,
+            queries=selected_queries,
         )
+        if args.task_snapshot_only:
+            document["query_scope"] = "task_snapshot"
         if data_source_overridden and document["profile"] is not None:
             document["profile"]["data_source_overridden"] = True
         if args.manifest:
@@ -2179,7 +2216,11 @@ def run_cli(
             )
             connection = connector(profile, oracle_client_dir)
             try:
-                run_result = ReadOnlyProbeRunner(connection).run(sample_no)
+                run_result = ReadOnlyProbeRunner(connection).run(
+                    sample_no,
+                    queries=selected_queries,
+                    include_final_entry_view=not args.task_snapshot_only,
+                )
                 document.update(run_result)
                 document["connection_attempted"] = True
             finally:

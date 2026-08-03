@@ -1180,6 +1180,34 @@ class ProbeTests(unittest.TestCase):
         for sql, parameters in connection.executed[1:]:
             probe.assert_read_only_sql(sql)
             self.assertIsNotNone(parameters)
+        self.assertEqual(
+            set(result["results"]),
+            {query.key for query in probe.QUERIES},
+        )
+        self.assertIn("final_entry_view", result)
+
+    def test_task_snapshot_mode_only_executes_two_queries_and_rolls_back(self) -> None:
+        connection = FakeConnection()
+        result = probe.ReadOnlyProbeRunner(connection).run(
+            "260187115",
+            queries=probe.TASK_SNAPSHOT_QUERIES,
+            include_final_entry_view=False,
+        )
+
+        self.assertEqual(
+            connection.executed[0],
+            (probe.READ_ONLY_TRANSACTION_SQL, None),
+        )
+        self.assertEqual(connection.rollback_count, 1)
+        self.assertEqual(
+            tuple(result["results"]),
+            probe.TASK_SNAPSHOT_QUERY_KEYS,
+        )
+        self.assertEqual(
+            len(connection.executed),
+            1 + len(probe.TASK_SNAPSHOT_QUERIES),
+        )
+        self.assertNotIn("final_entry_view", result)
 
     def test_read_only_transaction_failure_stops_all_queries(self) -> None:
         connection = FailingReadOnlyConnection()
@@ -1273,6 +1301,42 @@ class ProbeTests(unittest.TestCase):
             self.assertNotIn("APPUSER", rendered)
             self.assertNotIn("db.internal", rendered)
             self.assertNotIn(r"\\server\share", rendered)
+
+    def test_cli_task_snapshot_only_keeps_probe_mode_and_subset_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_dir = self.make_fibrecheck_dir(root)
+            output = root / "task-snapshot.json"
+            connection = FakeConnection()
+
+            exit_code = probe.run_cli(
+                [
+                    "--fibrecheck-dir",
+                    str(install_dir),
+                    "--sample-no",
+                    "260187115",
+                    "--task-snapshot-only",
+                    "--output",
+                    str(output),
+                ],
+                connector=lambda *_: connection,
+            )
+
+            self.assertEqual(exit_code, 0)
+            document = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(document["mode"], "probe")
+            self.assertEqual(document["query_scope"], "task_snapshot")
+            self.assertEqual(
+                set(document["results"]),
+                set(probe.TASK_SNAPSHOT_QUERY_KEYS),
+            )
+            self.assertEqual(
+                tuple(item["key"] for item in document["query_manifest"]),
+                probe.TASK_SNAPSHOT_QUERY_KEYS,
+            )
+            self.assertNotIn("final_entry_view", document)
+            self.assertEqual(connection.rollback_count, 1)
+            self.assertEqual(connection.close_count, 1)
 
     def test_data_source_override_is_validated_and_applied(self) -> None:
         self.assertEqual(

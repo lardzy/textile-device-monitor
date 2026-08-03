@@ -545,7 +545,11 @@ def _specialized_node_type(
         if (
             isinstance(node, dict)
             and node.get("disabled") is not True
-            and node.get("type") in REGENERATED_FIBER_RULES
+            and node.get("type")
+            in {
+                *REGENERATED_FIBER_RULES.keys(),
+                "file.electron_microscopy_gbt36422",
+            }
         ):
             return str(node["type"])
     return None
@@ -722,7 +726,46 @@ def catalog_recommendations(
                 else "incomplete"
             )
         )
-        if node_type is not None:
+        task_cache_state: Optional[str] = None
+        if node_type == "file.electron_microscopy_gbt36422":
+            from app.execution.electron_microscopy import (
+                electron_microscopy_match,
+            )
+
+            if node_type not in match_cache:
+                match_cache[node_type] = electron_microscopy_match(
+                    db, inspection_number=inspection_number
+                )
+            match = match_cache[node_type]
+            any_cache_updated = any_cache_updated or bool(
+                match["cache_updated"]
+            )
+            index_state = str(match["index_state"])
+            query_state = (
+                "complete"
+                if _is_complete_inspection_number(inspection_number)
+                else ("incomplete" if inspection_number else "empty")
+            )
+            for condition in match["matched_conditions"]:
+                if condition not in conditions:
+                    conditions.append(condition)
+                    score += 1
+            candidate_count = int(match["image_count"])
+            if match["folders"]:
+                first_folder = match["folders"][0]
+                candidate_preview = {
+                    "name": str(first_folder["name"]),
+                    "relative_path": str(first_folder["relative_path"]),
+                    "suffix": "",
+                }
+            diagnostics = {
+                "filename_match_count": int(match["folder_match_count"]),
+                "worksheet_match_count": 0,
+                "full_match_count": 1 if match["full_match"] else 0,
+            }
+            full_match = bool(match["full_match"])
+            task_cache_state = str(match["task_cache_state"])
+        elif node_type is not None:
             if node_type not in match_cache:
                 match_cache[node_type] = match_regenerated_fiber_workbooks(
                     db,
@@ -822,6 +865,7 @@ def catalog_recommendations(
                 "query_state": query_state,
                 "runnable": runnable,
                 "diagnostics": diagnostics,
+                "task_cache_state": task_cache_state,
                 "_category_order": category_order.get(
                     workflow.category.key,
                     0,

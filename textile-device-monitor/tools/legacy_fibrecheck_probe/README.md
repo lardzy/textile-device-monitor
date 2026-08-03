@@ -76,6 +76,21 @@ py -3 -m venv .venv
 
 凭据始终只从配置文件中读取，不通过命令行传递，也不会写入输出 JSON。
 
+执行系统的任务推荐缓存只需要 `Task` 和 `Task_CheckItem`。其独立 Windows
+Bridge 会显式使用下面的轻量模式；默认探针行为和完整查询范围不变：
+
+```powershell
+.\.venv\Scripts\python.exe probe.py `
+  --fibrecheck-dir "C:\FibreCheck" `
+  --sample-no 26A029794 `
+  --task-snapshot-only `
+  --output ".\task-snapshot.json"
+```
+
+轻量模式仍以 `SET TRANSACTION READ ONLY` 开始并始终 `rollback()`，但只执行
+上述两条查询，不生成 `final_entry_view`。输出会带有
+`query_scope: task_snapshot`，供调用方确认查询范围。
+
 `--fibrecheck-dir` 中必须存在主配置文件 `Toone.FibreCheck.Entites.dll.config`。工具只读取其中名为 `FibreCheckEntities` 的 Oracle 配置，不会自动尝试 HD 或其它区域配置。配置中的数据库账号仅在进程内用于连接，不会写入 JSON。
 
 ## 查询范围

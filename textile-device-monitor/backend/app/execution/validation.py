@@ -36,6 +36,7 @@ NODE_ROOT_ACCESS_REQUIREMENTS = {
     "file.regenerated_fiber_count_method": {"root_id": {"read"}},
     "file.regenerated_fiber_area_method": {"root_id": {"read"}},
     "electron.group": {"root_id": {"read"}},
+    "file.electron_microscopy_gbt36422": {"root_id": {"read"}},
     "workbook.copy": {"staging_root_id": {"write"}},
     "artifact.publish": {"publish_root_id": {"publish"}},
 }

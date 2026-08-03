@@ -23,6 +23,10 @@ import {
   submitHumanTask,
 } from '../../api/execution';
 import { useExecutionAuth } from './ExecutionAuthContext';
+import ExecutionImageSelector, {
+  imageSelectionFolderId,
+  imageSelectionImageId,
+} from './ExecutionImageSelector';
 import ExecutionResultFiles, { resultFileId } from './ExecutionResultFiles';
 import SchemaFields from './SchemaFields';
 
@@ -46,11 +50,18 @@ const requestErrorMessage = error => (
     : error?.message || '人工任务操作失败'
 );
 
+const taskConditionLabels = {
+  task_item_name: '检测项目名称',
+  test_method: '测试方法',
+};
+
 export default function HumanTaskCard({ task, nodeRun, onChanged }) {
   const { user } = useExecutionAuth();
   const [form] = Form.useForm();
   const selectedFiles = Form.useWatch('selected_files', form) || [];
   const primaryFileId = Form.useWatch('primary_file_id', form) || null;
+  const selectedFolderIds = Form.useWatch('selected_folder_ids', form) || [];
+  const selectedImageIds = Form.useWatch('selected_image_ids', form) || [];
   const [working, setWorking] = useState(false);
   const [approvalMutation, setApprovalMutation] = useState(null);
   const [approvalMutationError, setApprovalMutationError] = useState(null);
@@ -69,6 +80,9 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
     const properties = { ...(schema.properties || {}) };
     delete properties.selected_files;
     delete properties.primary_file_id;
+    delete properties.selected_folder_ids;
+    delete properties.selected_image_ids;
+    delete properties.primary_image_id;
     return { ...schema, properties };
   }, [schema]);
   const candidatePayload = nodeRun?.input_data?.files
@@ -88,6 +102,20 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
       || candidatePayload.groups
       || [];
   const candidates = allCandidates.filter(candidate => Boolean(candidateId(candidate)));
+  const hasImageSelection = Object.hasOwn(candidatePayload, 'folders')
+    || Object.hasOwn(candidatePayload, 'images');
+  const imageFolders = Array.isArray(candidatePayload.folders)
+    ? candidatePayload.folders
+    : [];
+  const imageCandidates = Array.isArray(candidatePayload.images)
+    ? candidatePayload.images
+    : [];
+  const folderSelectionRequired = Boolean(candidatePayload.folder_selection_required);
+  const imageListTruncated = Boolean(candidatePayload.truncated);
+  const taskValidationState = candidatePayload.task_validation_state;
+  const missingTaskConditions = Array.isArray(candidatePayload.missing_conditions)
+    ? candidatePayload.missing_conditions.filter(value => taskConditionLabels[value])
+    : [];
   const ignoredCandidateCount = allCandidates.length - candidates.length;
   const hasResultDetails = candidates.some(candidate => (
     candidate?.result
@@ -101,6 +129,21 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
 
   const valuesForSubmit = () => {
     const values = form.getFieldsValue();
+    if (hasImageSelection) {
+      const normalizedImageIds = Array.isArray(values.selected_image_ids)
+        ? values.selected_image_ids.map(value => String(value))
+        : [];
+      return {
+        ...values,
+        selected_folder_ids: Array.isArray(values.selected_folder_ids)
+          ? values.selected_folder_ids.map(value => String(value))
+          : [],
+        selected_image_ids: normalizedImageIds,
+        primary_image_id: values.primary_image_id
+          ? String(values.primary_image_id)
+          : normalizedImageIds[0],
+      };
+    }
     if (!Array.isArray(values.selected_files)) {
       return values;
     }
@@ -147,6 +190,24 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
       primary_file_id: candidateId(values.primary_file)
         || values.primary_file_id
         || candidateId(candidates.find(candidate => candidate.is_primary))
+        || undefined,
+      selected_folder_ids: Array.isArray(values.selected_folder_ids)
+        ? values.selected_folder_ids.map(imageSelectionFolderId).filter(Boolean).map(String)
+        : (Array.isArray(candidatePayload.selected_folder_ids)
+          ? candidatePayload.selected_folder_ids
+          : imageFolders.filter(folder => folder.selected))
+          .map(imageSelectionFolderId)
+          .filter(Boolean)
+          .map(String),
+      selected_image_ids: Array.isArray(values.selected_image_ids)
+        ? values.selected_image_ids.map(imageSelectionImageId).filter(Boolean).map(String)
+        : imageCandidates.filter(image => image.selected)
+          .map(imageSelectionImageId)
+          .filter(Boolean)
+          .map(String),
+      primary_image_id: imageSelectionImageId(values.primary_image)
+        || values.primary_image_id
+        || imageSelectionImageId(imageCandidates.find(image => image.is_primary))
         || undefined,
     });
     formSyncRef.current = syncIdentity;
@@ -372,7 +433,106 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
           />
         ) : (
           <>
-          {candidates.length > 0 && (hasResultDetails ? (
+          {hasImageSelection && (
+            <Form.Item label="图片结果选择" required>
+              {imageListTruncated && (
+                <Alert
+                  showIcon
+                  type="warning"
+                  message="候选图片数量超过展示上限"
+                  description="当前仅展示最近的 2000 张图片，请核对检验编号或整理目录后刷新索引。"
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              {taskValidationState === 'pending' && (
+                <Alert
+                  showIcon
+                  type="info"
+                  message="旧系统任务信息正在后台刷新"
+                  description="当前可先根据编号文件夹选择图片；刷新完成后，流程推荐会自动更新。"
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              {taskValidationState === 'warning' && missingTaskConditions.length > 0 && (
+                <Alert
+                  showIcon
+                  type="warning"
+                  message="旧系统任务条件未完全匹配"
+                  description={`未匹配：${missingTaskConditions
+                    .map(value => taskConditionLabels[value])
+                    .join('、')}。本轮仍允许人工核对并选择图片。`}
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              {folderSelectionRequired && (
+                <Form.Item
+                  name="selected_folder_ids"
+                  noStyle
+                  rules={[{
+                    validator: (_, value) => (
+                      Array.isArray(value) && value.length > 0
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('请至少选择一个结果文件夹'))
+                    ),
+                  }]}
+                >
+                  <SilentFormField />
+                </Form.Item>
+              )}
+              <Form.Item
+                name="selected_image_ids"
+                noStyle
+                rules={[{
+                  validator: (_, value) => {
+                    if (!Array.isArray(value) || value.length === 0) {
+                      return Promise.reject(new Error('请至少选择一张结果图片'));
+                    }
+                    if (value.length > 10) {
+                      return Promise.reject(new Error('最多选择 10 张结果图片'));
+                    }
+                    return Promise.resolve();
+                  },
+                }]}
+              >
+                <SilentFormField />
+              </Form.Item>
+              <Form.Item name="primary_image_id" noStyle>
+                <SilentFormField />
+              </Form.Item>
+              <ExecutionImageSelector
+                folders={imageFolders}
+                images={imageCandidates}
+                disabled={working}
+                selectedFolderIds={Array.isArray(selectedFolderIds) ? selectedFolderIds : []}
+                selectedImageIds={Array.isArray(selectedImageIds) ? selectedImageIds : []}
+                onSelectedFolderIdsChange={(value) => {
+                  form.setFieldValue('selected_folder_ids', value);
+                  form.validateFields(['selected_folder_ids']).catch(() => {});
+                }}
+                onSelectedImageIdsChange={(value) => {
+                  form.setFieldValue('selected_image_ids', value);
+                  form.validateFields(['selected_image_ids']).catch(() => {});
+                }}
+                onPrimaryImageIdChange={(value) => {
+                  form.setFieldValue('primary_image_id', value || undefined);
+                }}
+              />
+              <Form.Item noStyle shouldUpdate>
+                {() => {
+                  const errors = [
+                    ...form.getFieldError('selected_folder_ids'),
+                    ...form.getFieldError('selected_image_ids'),
+                  ];
+                  return errors.length ? (
+                    <div className="execution-result-file-selection__error" role="alert">
+                      {errors[0]}
+                    </div>
+                  ) : null;
+                }}
+              </Form.Item>
+            </Form.Item>
+          )}
+          {!hasImageSelection && candidates.length > 0 && (hasResultDetails ? (
             <Form.Item label={`文件读取结果（${candidates.length}）`} required>
               <Form.Item
                 name="selected_files"

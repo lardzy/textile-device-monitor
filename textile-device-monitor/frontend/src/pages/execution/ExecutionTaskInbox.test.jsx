@@ -456,4 +456,119 @@ describe('ExecutionTaskInbox', () => {
       primary_file_id: 'candidate-2',
     });
   });
+
+  it('按顶层文件夹汇总电镜图片，支持大图切换并只提交稳定图片 ID', async () => {
+    const submitted = vi.fn();
+    const imageTask = {
+      ...openTask,
+      title: '选择纤维微观形貌图片',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    const inputData = {
+      folder_selection_required: true,
+      truncated: true,
+      folders: [{
+        id: 'folder-main',
+        folder_name: '26A029794',
+        relative_path: '26A029794',
+      }, {
+        id: 'folder-retake',
+        folder_name: '26A029794-补拍',
+        relative_path: '26A029794-补拍',
+      }],
+      images: [{
+        id: 'image-bmp',
+        folder_id: 'folder-main',
+        folder_name: '26A029794',
+        name: '26A029794_纵面_01.BMP',
+        relative_path: '26A029794/纵面/26A029794_纵面_01.BMP',
+        preview_url: '/preview/image-bmp',
+      }, {
+        id: 'image-jpeg',
+        folder_id: 'folder-main',
+        folder_name: '26A029794',
+        name: '26A029794_横截面_02.JPEG',
+        relative_path: '26A029794/横截面/26A029794_横截面_02.JPEG',
+        preview_url: '/preview/image-jpeg',
+      }, {
+        id: 'image-png',
+        folder_id: 'folder-retake',
+        folder_name: '26A029794-补拍',
+        name: '26A029794_补拍_03.PNG',
+        relative_path: '26A029794-补拍/补拍/26A029794_补拍_03.PNG',
+        preview_url: '/preview/image-png',
+      }, ...Array.from({ length: 9 }, (_, index) => ({
+        id: `image-extra-${index + 1}`,
+        folder_id: 'folder-main',
+        folder_name: '26A029794',
+        name: `26A029794_补充_${index + 1}.jpg`,
+        relative_path: `26A029794/补充/26A029794_补充_${index + 1}.jpg`,
+        preview_url: `/preview/image-extra-${index + 1}`,
+      }))],
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [imageTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(imageTask),
+          node_run: {
+            node_id: 'select-images',
+            input_data: inputData,
+          },
+        })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({
+          ...imageTask,
+          status: 'completed',
+          revision: 3,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('选择纤维微观形貌图片'));
+    expect(screen.getByText('候选图片数量超过展示上限')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '确认提交' }));
+    expect(await screen.findByText('请至少选择一个结果文件夹', { exact: true }))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: /26A029794 11 张图片/ }));
+    expect(await screen.findByText('26A029794_纵面_01.BMP')).toBeInTheDocument();
+    expect(screen.getByText('26A029794_横截面_02.JPEG')).toBeInTheDocument();
+    expect(screen.queryByText('26A029794_补拍_03.PNG')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '选择 26A029794_纵面_01.BMP' }));
+    await user.click(screen.getByRole('button', { name: '选择 26A029794_横截面_02.JPEG' }));
+    expect(screen.getByText('已选 2 / 10')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '查看大图 26A029794_纵面_01.BMP' }));
+    expect(await screen.findByRole('dialog')).toHaveTextContent('26A029794_纵面_01.BMP');
+    await user.click(screen.getByRole('button', { name: '下一张图片' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('26A029794_横截面_02.JPEG');
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+
+    await user.click(screen.getByRole('button', { name: '选择当前图片' }));
+    expect(await screen.findByText('已按当前顺序选择前 10 张图片')).toBeInTheDocument();
+    expect(screen.getByText('已选 10 / 10')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '清空选择' }));
+    await user.click(screen.getByRole('button', { name: '选择 26A029794_纵面_01.BMP' }));
+    await user.click(screen.getByRole('button', { name: '选择 26A029794_横截面_02.JPEG' }));
+
+    await user.click(screen.getByRole('checkbox', { name: /26A029794-补拍 1 张图片/ }));
+    expect(await screen.findByText('26A029794_补拍_03.PNG')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toMatchObject({
+      selected_folder_ids: ['folder-main', 'folder-retake'],
+      selected_image_ids: ['image-bmp', 'image-jpeg'],
+      primary_image_id: 'image-bmp',
+    });
+    expect(submitted.mock.calls[0][0].data).not.toHaveProperty('relative_path');
+  });
 });

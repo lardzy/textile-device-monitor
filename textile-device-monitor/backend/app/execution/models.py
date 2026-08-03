@@ -743,6 +743,38 @@ class ExecutionFileIndexEntry(Base):
     missing_since = Column(DateTime(timezone=True), index=True)
 
 
+class ExecutionTaskSnapshotCache(Base):
+    """Read-only FibreCheck task facts cached for workflow recommendations.
+
+    The cache is also the small hand-off queue used by the Windows read-only
+    probe.  No legacy-system mutation is represented by this table.
+    """
+
+    __tablename__ = "execution_task_snapshot_cache"
+
+    inspection_number = Column(String(200), primary_key=True)
+    status = Column(String(30), nullable=False, default="queued", index=True)
+    snapshot = Column(JSON_VARIANT, nullable=False, default=dict)
+    revision = Column(Integer, nullable=False, default=1)
+    refresh_requested_at = Column(
+        DateTime(timezone=True), nullable=False, default=utcnow, index=True
+    )
+    fetched_at = Column(DateTime(timezone=True))
+    expires_at = Column(DateTime(timezone=True), index=True)
+    claimed_by = Column(String(100))
+    claim_token = Column(String(36))
+    claim_expires_at = Column(DateTime(timezone=True), index=True)
+    error_code = Column(String(100))
+    error_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
 class ExecutionIndexJob(Base):
     __tablename__ = "execution_index_jobs"
     __table_args__ = (

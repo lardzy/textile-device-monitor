@@ -83,9 +83,16 @@ HSTS_MAX_AGE=0
 `/data/execution-source`；无需先在 Docker 宿主机手工挂载共享盘。默认
 `EXECUTION_SOURCE_ROOT=/data/execution-source/10特纤/02-检验`，其下直接包含
 `2026-特种毛`、`2026-再生纤`、`2026-麻棉` 和 `2026-电镜`。
-首版后台自动索引由 `EXECUTION_AUTO_INDEX_ROOT_IDS` 控制，默认只扫描
-`regenerated_fiber_records`；其它目录仍可从执行系统手动触发刷新，避免首次
-接入共享盘时批量打开无关历史工作簿。
+首版后台自动索引由 `EXECUTION_AUTO_INDEX_ROOT_IDS` 控制，默认扫描
+`regenerated_fiber_records` 和 `electron_microscopy_records`。再生纤扫描只记录
+文件元数据，不会批量打开历史工作簿；电镜根目录会索引到“编号
+文件夹/部位/图片”层级，供图片选择节点使用。其它目录仍可从执行系统
+手动触发刷新。
+
+“电镜—纤维微观形貌 GB/T 36422-2018”流程使用 PostgreSQL 任务快照缓存
+匹配旧系统项目名和测试方法。推荐请求只读本地缓存；缓存缺失或过期
+时，由独立的 Windows 只读 Bridge 合并刷新，默认 15 分钟有效。当前受控
+项目名包括“纤维微观形貌”及同标准子项“膜平面形貌”。
 
 再生纤根数法只识别工作表 `根数法报告1`，并检查该工作表的
 `B14:J14`；其它编号工作表及汇总表不作为目标工作表。

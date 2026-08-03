@@ -326,6 +326,32 @@ def _register_builtins() -> None:
             ),
         ),
         NodeType(
+            "file.electron_microscopy_gbt36422",
+            1,
+            "电镜—纤维微观形貌 GB/T 36422-2018",
+            "文件",
+            "按编号目录与旧系统任务信息查找可选电镜图片",
+            required_config=("root_id",),
+            config_schema=ROOT_QUERY_CONFIG_SCHEMA,
+            input_schema=_object_schema(
+                {"inspection_number": {"type": "string"}},
+            ),
+            output_schema=_object_schema(
+                {
+                    "folders": {"type": "array"},
+                    "images": {"type": "array"},
+                    "folder_selection_required": {"type": "boolean"},
+                    "selected_folder_ids": {"type": "array"},
+                    "image_count": {"type": "integer"},
+                    "truncated": {"type": "boolean"},
+                    "task": {"type": ["object", "null"]},
+                    "task_validation_state": {"type": "string"},
+                    "task_cache_state": {"type": "string"},
+                    "missing_conditions": {"type": "array"},
+                }
+            ),
+        ),
+        NodeType(
             "human.file_selection",
             1,
             "人工选择文件",
@@ -346,6 +372,35 @@ def _register_builtins() -> None:
                     "primary_file_id": {"type": ["string", "null"]},
                     "primary_file": {"type": ["object", "null"]},
                 },
+            ),
+        ),
+        NodeType(
+            "human.image_selection",
+            1,
+            "人工选择图片",
+            "人工",
+            "从编号文件夹中选择 1 至 10 张图片",
+            "human",
+            config_schema=HUMAN_CONFIG_SCHEMA,
+            input_schema=_object_schema(
+                {
+                    "folders": {"type": "array"},
+                    "images": {"type": "array"},
+                    "folder_selection_required": {"type": "boolean"},
+                    "truncated": {"type": "boolean"},
+                    "task_validation_state": {"type": "string"},
+                    "task_cache_state": {"type": "string"},
+                    "missing_conditions": {"type": "array"},
+                }
+            ),
+            output_schema=_object_schema(
+                {
+                    "selected_folder_ids": {"type": "array"},
+                    "selected_image_ids": {"type": "array"},
+                    "selected_images": {"type": "array"},
+                    "primary_image_id": {"type": ["string", "null"]},
+                    "primary_image": {"type": ["object", "null"]},
+                }
             ),
         ),
         NodeType(

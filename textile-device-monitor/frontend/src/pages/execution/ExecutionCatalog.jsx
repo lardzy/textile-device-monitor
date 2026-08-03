@@ -99,8 +99,11 @@ const recommendationConditionLabels = {
   category: '优先类别',
   source_root: '数据根',
   filename: '文件名',
+  folder: '结果文件夹',
   worksheet: '工作表',
   content_range: '内容范围',
+  task_item_name: '旧系统检测项目',
+  test_method: '测试方法',
 };
 
 const recommendationDisplay = (recommendation, loading) => {

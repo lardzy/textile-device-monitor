@@ -49,7 +49,13 @@ from app.execution.validation import (
 
 RUN_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 NODE_TERMINAL_STATUSES = {"succeeded", "failed", "skipped", "cancelled"}
-HUMAN_NODE_TYPES = {"input.form", "human.file_selection", "human.input", "human.confirm"}
+HUMAN_NODE_TYPES = {
+    "input.form",
+    "human.file_selection",
+    "human.image_selection",
+    "human.input",
+    "human.confirm",
+}
 UNSETTLED_EXTERNAL_OPERATION_STATUSES = {
     "in_progress",
     "cancel_pending",
@@ -464,6 +470,106 @@ def _normalize_human_submission(
     node_run: ExecutionNodeRun,
     data: dict[str, Any],
 ) -> dict[str, Any]:
+    if node_run.node_type == "human.image_selection":
+        selected_ids = data.get("selected_image_ids")
+        if not isinstance(selected_ids, list) or not 1 <= len(selected_ids) <= 10:
+            raise ExecutionApiError(
+                422,
+                "image_selection_count_invalid",
+                "请选择 1 至 10 张图片",
+            )
+        offered_images = node_run.input_data.get("images") or []
+        images_by_id = {
+            str(item.get("id")): item
+            for item in offered_images
+            if isinstance(item, dict) and item.get("id")
+        }
+        folder_ids = (
+            data.get("selected_folder_ids")
+            or node_run.input_data.get("selected_folder_ids")
+            or []
+        )
+        if not isinstance(folder_ids, list):
+            raise ExecutionApiError(
+                422, "image_folder_selection_invalid", "图片目录选择格式无效"
+            )
+        selected_folder_ids = list(dict.fromkeys(str(value) for value in folder_ids))
+        offered_folder_ids = {
+            str(item.get("id"))
+            for item in (node_run.input_data.get("folders") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        if any(value not in offered_folder_ids for value in selected_folder_ids):
+            raise ExecutionApiError(
+                409,
+                "image_folder_not_offered",
+                "所选图片目录不在当前候选列表中",
+            )
+        if node_run.input_data.get("folder_selection_required") and not selected_folder_ids:
+            raise ExecutionApiError(
+                422, "image_folder_selection_required", "请先选择图片所在目录"
+            )
+        normalized_images: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        gateway = build_file_gateway(db)
+        for value in selected_ids:
+            image_id = str(value)
+            if image_id in seen:
+                continue
+            candidate = images_by_id.get(image_id)
+            if candidate is None:
+                raise ExecutionApiError(
+                    409,
+                    "image_candidate_not_offered",
+                    "所选图片不在当前候选列表中",
+                )
+            if (
+                selected_folder_ids
+                and candidate.get("folder_id") not in selected_folder_ids
+            ):
+                raise ExecutionApiError(
+                    422,
+                    "image_candidate_outside_selected_folders",
+                    "所选图片不属于已选择的目录",
+                )
+            _validate_index_candidate(
+                db, run=run, candidate=candidate, gateway=gateway
+            )
+            normalized_images.append(candidate)
+            seen.add(image_id)
+        if not 1 <= len(normalized_images) <= 10:
+            raise ExecutionApiError(
+                422,
+                "image_selection_count_invalid",
+                "去除重复项后，请选择 1 至 10 张图片",
+            )
+        primary_image_id = data.get("primary_image_id")
+        if primary_image_id is not None:
+            primary_image_id = str(primary_image_id)
+        elif len(normalized_images) == 1:
+            primary_image_id = str(normalized_images[0]["id"])
+        primary_image = next(
+            (
+                item
+                for item in normalized_images
+                if str(item.get("id")) == primary_image_id
+            ),
+            None,
+        )
+        if primary_image_id and primary_image is None:
+            raise ExecutionApiError(
+                422,
+                "primary_image_not_selected",
+                "主图必须是本次已选择的图片之一",
+            )
+        return {
+            **data,
+            "selected_folder_ids": selected_folder_ids,
+            "selected_image_ids": [str(item["id"]) for item in normalized_images],
+            "selected_images": normalized_images,
+            "primary_image_id": primary_image_id,
+            "primary_image": primary_image,
+        }
     if node_run.node_type != "human.file_selection":
         _assert_declared_root_refs(run, data)
         return data

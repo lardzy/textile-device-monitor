@@ -153,6 +153,33 @@ class HumanTaskRejectRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class TaskSnapshotBridgeClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$",
+        min_length=1,
+        max_length=100,
+    )
+
+
+class TaskSnapshotBridgeCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(min_length=1, max_length=100)
+    claim_token: str = Field(min_length=36, max_length=36)
+    snapshot: dict[str, Any]
+
+
+class TaskSnapshotBridgeFailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(min_length=1, max_length=100)
+    claim_token: str = Field(min_length=36, max_length=36)
+    error_code: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=1000)
+
+
 class NodeRetryRequest(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=1000)
 

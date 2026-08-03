@@ -351,6 +351,135 @@ def _regenerated_method_definition(
     }
 
 
+def _electron_microscopy_gbt36422_definition() -> dict[str, Any]:
+    slug = "electron-microscopy-gbt36422"
+    name = "电镜—纤维微观形貌 GB/T 36422-2018"
+    return {
+        "schema_version": "1.0",
+        "metadata": {
+            "slug": slug,
+            "name": name,
+            "category": "electron_microscopy",
+        },
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "inspection_number": {
+                    "type": "string",
+                    "title": "检验编号",
+                    "minLength": 1,
+                }
+            },
+            "required": ["inspection_number"],
+            "additionalProperties": False,
+        },
+        "global_schema": {"type": "object", "properties": {}},
+        "root_slots": [
+            {
+                "name": "source",
+                "root_id": "electron_microscopy_records",
+                "access": "read",
+            }
+        ],
+        "credential_slots": [],
+        "nodes": [
+            {
+                "id": "start",
+                "type": "core.start",
+                "type_version": 1,
+                "name": "开始",
+                "config": {},
+                "input_mapping": {},
+                "ui": {"x": 40, "y": 180},
+            },
+            {
+                "id": "discover",
+                "type": "file.electron_microscopy_gbt36422",
+                "type_version": 1,
+                "name": "查找微观形貌图片",
+                "config": {
+                    "root_id": "electron_microscopy_records",
+                    "require_full_task_match": False,
+                },
+                "input_mapping": {
+                    "inspection_number": "$.inputs.inspection_number"
+                },
+                "ui": {"x": 280, "y": 180},
+            },
+            {
+                "id": "select-images",
+                "type": "human.image_selection",
+                "type_version": 1,
+                "name": "选择图片结果",
+                "config": {
+                    "title": "请选择用于纤维微观形貌结果的图片",
+                    "description": "可选择一个或多个编号目录，图片总数为 1 至 10 张。",
+                    "allow_multiple": True,
+                    "minimum": 1,
+                    "maximum": 10,
+                    "presentation": "image_gallery",
+                },
+                "input_mapping": {
+                    "folders": "$.nodes.discover.output.folders",
+                    "images": "$.nodes.discover.output.images",
+                    "folder_selection_required": (
+                        "$.nodes.discover.output.folder_selection_required"
+                    ),
+                    "selected_folder_ids": (
+                        "$.nodes.discover.output.selected_folder_ids"
+                    ),
+                    "truncated": "$.nodes.discover.output.truncated",
+                    "task": "$.nodes.discover.output.task",
+                    "task_validation_state": (
+                        "$.nodes.discover.output.task_validation_state"
+                    ),
+                    "task_cache_state": (
+                        "$.nodes.discover.output.task_cache_state"
+                    ),
+                    "missing_conditions": (
+                        "$.nodes.discover.output.missing_conditions"
+                    ),
+                },
+                "ui": {"x": 540, "y": 180},
+            },
+            {
+                "id": "end",
+                "type": "core.end",
+                "type_version": 1,
+                "name": "结束",
+                "config": {},
+                "input_mapping": {
+                    "selected_folder_ids": (
+                        "$.nodes.select-images.output.selected_folder_ids"
+                    ),
+                    "selected_image_ids": (
+                        "$.nodes.select-images.output.selected_image_ids"
+                    ),
+                    "selected_images": (
+                        "$.nodes.select-images.output.selected_images"
+                    ),
+                    "primary_image_id": (
+                        "$.nodes.select-images.output.primary_image_id"
+                    ),
+                    "primary_image": (
+                        "$.nodes.select-images.output.primary_image"
+                    ),
+                },
+                "ui": {"x": 800, "y": 180},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "discover"},
+            {
+                "id": "e2",
+                "source": "discover",
+                "target": "select-images",
+            },
+            {"id": "e3", "source": "select-images", "target": "end"},
+        ],
+    }
+
+
 def _controlled_write_test_definition() -> dict[str, Any]:
     node_specs = (
         ("start", "core.start", "开始", {}),
@@ -541,6 +670,12 @@ LEGACY_REGENERATED_WORKFLOW = (
     "再生纤原始资料发现与选择",
 )
 
+ELECTRON_MICROSCOPY_WORKFLOW = (
+    "electron-microscopy-gbt36422",
+    "电镜—纤维微观形貌 GB/T 36422-2018",
+)
+LEGACY_ELECTRON_WORKFLOW = "electron-source-selection"
+
 
 def _required_input_count(definition: dict[str, Any]) -> int:
     input_schema = definition.get("input_schema") or {}
@@ -623,6 +758,98 @@ def ensure_default_catalog(db: Session) -> None:
         workflow.slug: workflow
         for workflow in db.query(ExecutionWorkflow).all()
     }
+    electron_slug, electron_name = ELECTRON_MICROSCOPY_WORKFLOW
+    if electron_slug not in workflows_by_slug:
+        definition = _electron_microscopy_gbt36422_definition()
+        capabilities = {"read": True, "write": False}
+        workflow = ExecutionWorkflow(
+            slug=electron_slug,
+            category_id=categories_by_key["electron_microscopy"].id,
+            name=electron_name,
+            description=(
+                "按编号目录与旧系统任务项目识别 GB/T 36422-2018 "
+                "纤维微观形貌流程，并选择 1 至 10 张图片。"
+            ),
+            draft_definition=deepcopy(definition),
+            draft_revision=1,
+            published_version_number=1,
+            capabilities=deepcopy(capabilities),
+            required_input_count=1,
+            is_enabled=True,
+        )
+        db.add(workflow)
+        db.flush()
+        db.add(
+            ExecutionWorkflowVersion(
+                workflow_id=workflow.id,
+                version_number=1,
+                schema_version="1.0",
+                definition=deepcopy(definition),
+                checksum=definition_checksum(definition),
+                capabilities=deepcopy(capabilities),
+                contract_checksum=workflow_contract_checksum(
+                    definition, capabilities
+                ),
+                release_note="电镜微观形貌图片选择首版",
+            )
+        )
+        workflows_by_slug[electron_slug] = workflow
+
+    legacy_electron = workflows_by_slug.get(LEGACY_ELECTRON_WORKFLOW)
+    if legacy_electron is not None:
+        original_electron = _default_definition(
+            slug=LEGACY_ELECTRON_WORKFLOW,
+            name="电镜原始资料发现与选择",
+            category_key="electron_microscopy",
+            root_id="electron_microscopy_records",
+        )
+        electron_v1 = next(
+            (
+                version
+                for version in legacy_electron.versions
+                if version.version_number == 1
+            ),
+            None,
+        )
+        untouched_electron = bool(
+            legacy_electron.created_by_id is None
+            and legacy_electron.updated_by_id is None
+            and legacy_electron.draft_revision == 1
+            and legacy_electron.published_version_number == 1
+            and len(legacy_electron.versions) == 1
+            and electron_v1 is not None
+            and definition_checksum(legacy_electron.draft_definition)
+            == definition_checksum(original_electron)
+            and electron_v1.checksum == definition_checksum(original_electron)
+        )
+        if untouched_electron:
+            deprecated_capabilities = {
+                "read": True,
+                "write": False,
+                "hidden": True,
+                "system_deprecated": True,
+            }
+            legacy_electron.capabilities = deepcopy(deprecated_capabilities)
+            legacy_electron.is_enabled = False
+            legacy_electron.availability_code = "system_replaced"
+            legacy_electron.availability_message = (
+                "已由纤维微观形貌 GB/T 36422-2018 流程替代"
+            )
+            legacy_electron.published_version_number = 2
+            db.add(
+                ExecutionWorkflowVersion(
+                    workflow_id=legacy_electron.id,
+                    version_number=2,
+                    schema_version="1.0",
+                    definition=deepcopy(original_electron),
+                    checksum=definition_checksum(original_electron),
+                    capabilities=deepcopy(deprecated_capabilities),
+                    contract_checksum=workflow_contract_checksum(
+                        original_electron, deprecated_capabilities
+                    ),
+                    release_note="由微观形貌专用流程替代",
+                )
+            )
     for slug, name, node_type, result_node_type in REGENERATED_METHOD_WORKFLOWS:
         definition = _regenerated_method_definition(
             slug=slug,

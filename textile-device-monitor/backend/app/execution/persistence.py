@@ -202,6 +202,11 @@ def queue_refresh(
     max_depth: Optional[int] = 1,
 ) -> tuple[ExecutionIndexJob, bool]:
     root = storage_root_by_key(db, root_id)
+    if root_id == "electron_microscopy_records":
+        # Numbered result folders can contain project-specific subfolders at
+        # arbitrary depth. This remains a background scan; user searches never
+        # walk the shared directory synchronously.
+        max_depth = None
     if root.access_mode != "read":
         raise ExecutionApiError(
             403,
@@ -302,7 +307,11 @@ def enqueue_due_index_jobs(
                         ExecutionIndexJob(
                             storage_root_id=root.id,
                             status="queued",
-                            max_depth=1,
+                            max_depth=(
+                                None
+                                if root.root_id == "electron_microscopy_records"
+                                else 1
+                            ),
                         )
                     )
                     db.flush()
@@ -775,6 +784,10 @@ def register_persistence_executors() -> None:
     from app.execution.regenerated_fiber import (
         register_regenerated_fiber_executors,
     )
+    from app.execution.electron_microscopy import (
+        register_electron_microscopy_executors,
+    )
 
     register_regenerated_fiber_executors()
+    register_electron_microscopy_executors()
     _EXECUTORS_REGISTERED = True

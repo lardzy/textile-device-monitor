@@ -177,8 +177,11 @@ def test_index_interval_safe_default_is_five_minutes() -> None:
     settings = Settings(APP_ENV="development")
     assert settings.EXECUTION_INDEX_INTERVAL_SECONDS == 300
     assert settings.execution_auto_index_root_ids() == [
-        "regenerated_fiber_records"
+        "regenerated_fiber_records",
+        "electron_microscopy_records",
     ]
+    assert settings.EXECUTION_TASK_SNAPSHOT_TTL_MINUTES == 15
+    assert settings.EXECUTION_TASK_SNAPSHOT_RETRY_SECONDS == 60
     assert settings.EXECUTION_NODE_MAX_ATTEMPTS == 5
     assert settings.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS == 45
     assert settings.WEB_TRANSPORT == "http"

@@ -80,6 +80,7 @@ from app.execution.models import (
     ExecutionCredential,
     ExecutionEvent,
     ExecutionExternalOperation,
+    ExecutionFileIndexEntry,
     ExecutionFileMutation,
     ExecutionHumanTask,
     ExecutionIndexJob,
@@ -114,6 +115,14 @@ from app.execution.mutation_runtime import (
 )
 from app.execution.registry import node_registry
 from app.execution.regenerated_fiber import catalog_recommendations
+from app.execution.electron_microscopy import (
+    ELECTRON_IMAGE_SUFFIXES,
+    ELECTRON_ROOT_ID,
+    claim_task_snapshot_refresh,
+    complete_task_snapshot_refresh,
+    fail_task_snapshot_refresh,
+    request_task_snapshot_refresh,
+)
 from app.execution.schemas import (
     CredentialUpsert,
     ExternalBridgeClaimRequest,
@@ -136,6 +145,9 @@ from app.execution.schemas import (
     MutationWriteRequest,
     NodeRetryRequest,
     RunCreate,
+    TaskSnapshotBridgeClaimRequest,
+    TaskSnapshotBridgeCompleteRequest,
+    TaskSnapshotBridgeFailRequest,
     UserCreate,
     UserUpdate,
     WorkflowCreate,
@@ -2312,6 +2324,123 @@ def _require_bridge_key(provided_key: Optional[str]) -> None:
         )
 
 
+def _require_readonly_bridge_key(provided_key: Optional[str]) -> None:
+    """Authenticate the read-only task probe without enabling write Bridge."""
+
+    configured = settings.EXECUTION_BRIDGE_TOKEN.strip()
+    if not configured:
+        raise ExecutionApiError(
+            503,
+            "execution_task_snapshot_bridge_not_configured",
+            "服务端未配置任务信息只读 Bridge 接入令牌",
+        )
+    if not provided_key or not hmac.compare_digest(
+        provided_key.encode("utf-8"), configured.encode("utf-8")
+    ):
+        raise ExecutionApiError(
+            401,
+            "execution_bridge_unauthorized",
+            "Bridge 接入令牌无效",
+        )
+
+
+@router.post("/task-snapshots/{inspection_number}/refresh", status_code=202)
+def refresh_task_snapshot(
+    inspection_number: str,
+    force: bool = Query(default=True),
+    _auth: AuthContext = Depends(permission("workflow.read", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    row, queued = request_task_snapshot_refresh(
+        db, inspection_number=inspection_number, force=force
+    )
+    db.commit()
+    return {
+        "inspection_number": row.inspection_number,
+        "queued": queued,
+        "status": row.status,
+        "revision": row.revision,
+        "remote_write_performed": False,
+    }
+
+
+@router.post("/task-snapshot-bridge/claim")
+def claim_task_snapshot_bridge(
+    payload: TaskSnapshotBridgeClaimRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(
+        default=None, alias="X-Execution-Bridge-Key"
+    ),
+):
+    _require_readonly_bridge_key(x_execution_bridge_key)
+    row = claim_task_snapshot_refresh(db, bridge_id=payload.bridge_id)
+    if row is None:
+        return {"claimed": False, "remote_write_performed": False}
+    response = {
+        "claimed": True,
+        "inspection_number": row.inspection_number,
+        "claim_token": row.claim_token,
+        "claim_expires_at": row.claim_expires_at.isoformat(),
+        "remote_write_performed": False,
+    }
+    db.commit()
+    return response
+
+
+@router.post("/task-snapshot-bridge/{inspection_number}/complete")
+def complete_task_snapshot_bridge(
+    inspection_number: str,
+    payload: TaskSnapshotBridgeCompleteRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(
+        default=None, alias="X-Execution-Bridge-Key"
+    ),
+):
+    _require_readonly_bridge_key(x_execution_bridge_key)
+    row = complete_task_snapshot_refresh(
+        db,
+        inspection_number=inspection_number,
+        bridge_id=payload.bridge_id,
+        claim_token=payload.claim_token,
+        snapshot=payload.snapshot,
+    )
+    db.commit()
+    return {
+        "inspection_number": row.inspection_number,
+        "status": row.status,
+        "revision": row.revision,
+        "expires_at": row.expires_at.isoformat(),
+        "remote_write_performed": False,
+    }
+
+
+@router.post("/task-snapshot-bridge/{inspection_number}/fail")
+def fail_task_snapshot_bridge(
+    inspection_number: str,
+    payload: TaskSnapshotBridgeFailRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(
+        default=None, alias="X-Execution-Bridge-Key"
+    ),
+):
+    _require_readonly_bridge_key(x_execution_bridge_key)
+    row = fail_task_snapshot_refresh(
+        db,
+        inspection_number=inspection_number,
+        bridge_id=payload.bridge_id,
+        claim_token=payload.claim_token,
+        error_code=payload.error_code,
+        message=payload.message,
+    )
+    db.commit()
+    return {
+        "inspection_number": row.inspection_number,
+        "status": row.status,
+        "revision": row.revision,
+        "remote_write_performed": False,
+    }
+
+
 @router.post("/external-bridge/claim")
 def claim_external_bridge_operation(
     payload: ExternalBridgeClaimRequest,
@@ -3857,6 +3986,79 @@ def search_files(
             limit=limit,
         )
     return result
+
+
+@router.get("/files/index/{entry_id}/preview")
+def preview_indexed_electron_image(
+    entry_id: str,
+    _auth: AuthContext = Depends(permission("file.read")),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(ExecutionFileIndexEntry, ExecutionStorageRoot)
+        .join(
+            ExecutionStorageRoot,
+            ExecutionStorageRoot.id
+            == ExecutionFileIndexEntry.storage_root_id,
+        )
+        .filter(ExecutionFileIndexEntry.id == entry_id)
+        .one_or_none()
+    )
+    if row is None:
+        raise not_found("索引图片", entry_id)
+    entry, root = row
+    if (
+        root.root_id != ELECTRON_ROOT_ID
+        or entry.missing_since is not None
+        or entry.extension.casefold() not in ELECTRON_IMAGE_SUFFIXES
+    ):
+        raise ExecutionApiError(
+            415,
+            "indexed_image_preview_unsupported",
+            "该索引文件不是可预览的电镜图片",
+        )
+    gateway = build_file_gateway(db)
+    try:
+        path = gateway.resolve(
+            ArtifactRef(root.root_id, entry.relative_path),
+            expected_type="file",
+        )
+        stat = path.stat()
+    except (StorageError, OSError) as exc:
+        raise ExecutionApiError(
+            409,
+            "indexed_image_stale",
+            "图片已移动或当前无法读取，请刷新文件索引",
+        ) from exc
+    if f"{stat.st_size}:{stat.st_mtime_ns}" != entry.fingerprint:
+        raise ExecutionApiError(
+            409,
+            "indexed_image_stale",
+            "图片已发生变化，请刷新文件索引后重新选择",
+        )
+    if stat.st_size > 30 * 1024 * 1024:
+        raise ExecutionApiError(
+            413,
+            "indexed_image_preview_too_large",
+            "图片超过 30 MiB，不能在线预览",
+        )
+    media_type = _inline_raster_media_type(entry.extension)
+    if media_type is None:
+        raise ExecutionApiError(
+            415,
+            "indexed_image_preview_unsupported",
+            "该图片格式不能在线预览",
+        )
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": "inline",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, max-age=60",
+        },
+    )
 
 
 @router.post("/files/refresh", status_code=202)

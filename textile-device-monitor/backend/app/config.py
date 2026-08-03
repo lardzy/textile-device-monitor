@@ -99,7 +99,15 @@ class Settings(BaseSettings):
     EXECUTION_RUNTIME_ROOT: str = "/data/execution-runtime"
     EXECUTION_PUBLISH_ROOT: str = "/data/execution-publish"
     EXECUTION_INDEX_INTERVAL_SECONDS: int = 300
-    EXECUTION_AUTO_INDEX_ROOT_IDS: str = "regenerated_fiber_records"
+    EXECUTION_AUTO_INDEX_ROOT_IDS: str = (
+        "regenerated_fiber_records,electron_microscopy_records"
+    )
+    # Contract-review changes are normally visible within this window. A stale
+    # value may still rank the catalog while one background refresh is queued;
+    # the first image-selection release exposes stale/missing facts as a
+    # warning instead of blocking the operator.
+    EXECUTION_TASK_SNAPSHOT_TTL_MINUTES: int = 15
+    EXECUTION_TASK_SNAPSHOT_RETRY_SECONDS: int = 60
     EXECUTION_WORKER_POLL_SECONDS: float = 1.0
     EXECUTION_WORKER_LEASE_SECONDS: int = 60
     EXECUTION_NODE_MAX_ATTEMPTS: int = 5
@@ -383,6 +391,15 @@ class Settings(BaseSettings):
         if self.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS < 15:
             raise RuntimeError(
                 "Production worker heartbeat timeout must be at least 15 seconds"
+            )
+        if not 1 <= self.EXECUTION_TASK_SNAPSHOT_TTL_MINUTES <= 1440:
+            raise RuntimeError(
+                "Production task snapshot TTL must be between 1 and 1440 minutes"
+            )
+        if not 10 <= self.EXECUTION_TASK_SNAPSHOT_RETRY_SECONDS <= 3600:
+            raise RuntimeError(
+                "Production task snapshot retry delay must be between 10 and "
+                "3600 seconds"
             )
         if not 1 <= self.EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES <= 1440:
             raise RuntimeError(
