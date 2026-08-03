@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "operation_type": "generic_item_record",
+  "sample_number": "000000000",
+  "check_item_no": "00.EXAMPLE",
+  "check_item_name": "通用项目示例",
+  "expected_existing_register_count": 0,
+  "generic_record": {
+    "header": {
+      "grade": "",
+      "unit": "%",
+      "judge_basis": "",
+      "test_method": "示例方法",
+      "sample_description": "",
+      "standard_type": "",
+      "report_check_item_name": "",
+      "attach_info": "",
+      "remark": "",
+      "total_judge": ""
+    },
+    "details": [
+      {
+        "standard_location": "",
+        "standard_value": "",
+        "real_location": "部位一",
+        "real_value": "示例结果"
+      }
+    ]
+  }
+}

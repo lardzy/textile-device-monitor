@@ -29,17 +29,66 @@ WRITE_KEYWORD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 PATH_COLUMN_NAMES = {
+    "ATTACHINFO",
+    "DOCUMENTNAME",
     "FILEPATH",
     "FILENAME",
     "ORIGINALDATAFILENAME",
     "TEMPLATEFILENAME",
     "REPORTNAME",
 }
+SENSITIVE_ID_COLUMN_NAMES = {"DOCUMENTUPLOADINDEX"}
 ID_COLUMN_PATTERN = re.compile(
     r"(?:^ID$|ID$|USER\d*$)",
     re.IGNORECASE,
 )
 LOGIN_COLUMN_NAMES = {"LOGINNAME"}
+MAPPING_CONFIG_QUERY_KEY = "original_key_data_mapping_configs"
+ORACLE_IDENTIFIER_PATTERN = re.compile(r"^[A-Z][A-Z0-9_$#]{0,29}$")
+SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+MAPPING_CONFIG_RAW_COLUMNS = (
+    "TaskCheckItemID",
+    "CheckItemID",
+    "DocumentID",
+    "MappingCount",
+    "DataTableName",
+    "MappedTableExists",
+    "ConfigPresent",
+    "SeqNum",
+    "KeyDataField",
+    "KeyDataType",
+    "ConfigValue",
+    "ConfigValue_En",
+    "ConfigValue_CnEn",
+    "ConfigValue_NewCnEn",
+)
+MAPPING_CONFIG_CANONICAL_FIELDS = (
+    "SeqNum",
+    "KeyDataField",
+    "KeyDataType",
+    "ConfigValue",
+    "ConfigValue_En",
+    "ConfigValue_CnEn",
+    "ConfigValue_NewCnEn",
+)
+MAPPING_CONFIG_FAILURE_REASONS = frozenset(
+    {
+        "mapping_count_invalid",
+        "mapping_missing",
+        "mapping_not_unique",
+        "mapping_table_name_invalid",
+        "mapped_table_state_invalid",
+        "config_presence_invalid",
+        "config_presence_inconsistent",
+        "config_missing",
+        "config_value_invalid",
+        "duplicate_config_sort_key",
+        "mapping_fingerprint_missing",
+        "mapping_fingerprint_not_unique",
+        "mapping_fingerprint_invalid",
+        "mapping_query_incomplete",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -173,6 +222,83 @@ QUERIES: tuple[QueryDefinition, ...] = (
         """,
     ),
     QueryDefinition(
+        key="currency_item_records",
+        purpose="核验通用项目记录登记主记录",
+        sql="""
+            SELECT
+                cir."ID", cir."CheckRecordRegisterID", cir."SampleNo",
+                cir."Grade", cir."JudgeBasis", cir."CheckItemID",
+                cir."CheckItemName", cir."SampleDescription", cir."TestMethod",
+                cir."StandardType", cir."Unit", cir."ReportCheckItemName",
+                cir."AttachInfo", cir."Remark", cir."TotalJudge", cir."CheckUser"
+            FROM "CurrencyItemRecordNew" cir
+            WHERE cir."SampleNo" = :sample_no
+            ORDER BY cir."ID"
+        """,
+    ),
+    QueryDefinition(
+        key="currency_item_record_details",
+        purpose="核验通用项目记录登记的标准值、允差及实测值明细",
+        sql="""
+            SELECT
+                d."ID", d."CurrencyItemRecordNewID", d."StandardLocation",
+                d."StandardValue", d."RealLocation", d."RealValue", d."SeqNum"
+            FROM "CurrencyItemRecordNewDetail" d
+            JOIN "CurrencyItemRecordNew" cir
+              ON cir."ID" = d."CurrencyItemRecordNewID"
+            WHERE cir."SampleNo" = :sample_no
+            ORDER BY d."CurrencyItemRecordNewID", d."SeqNum", d."ID"
+        """,
+    ),
+    QueryDefinition(
+        key="currency_excel_records",
+        purpose="诊断相似旧链 CurrExcelOriRecord；不作为最终录入事实源",
+        sql="""
+            SELECT
+                cer."ID", cer."ReportNo", cer."CheckItemID", cer."CheckItemName",
+                cer."DepartmentID", cer."Department", cer."PositionID",
+                cer."Position", cer."CheckUser", cer."ReviewUser", cer."AuditUser",
+                cer."CheckDate", cer."FilePath", cer."FileName", cer."CopyRegion",
+                cer."SheetName", cer."Remark", cer."ReportCheckItem",
+                cer."OriginalDataFilename", cer."Judgement"
+            FROM "CurrExcelOriRecord" cer
+            WHERE cer."ReportNo" = :sample_no
+            ORDER BY cer."CheckItemID", cer."FileName", cer."SheetName", cer."ID"
+        """,
+    ),
+    QueryDefinition(
+        key="original_key_data_list",
+        purpose="核验 Excel 原始记录的列表型关键数据",
+        sql="""
+            SELECT
+                okdl."SampleNo", okdl."CheckItemID", okdl."ExcelTemplateName",
+                okdl."KeyDataField", okdl."SeqNum", okdl."OriginalRecordID",
+                okdl."Column1", okdl."Column2", okdl."Column3", okdl."Column4",
+                okdl."Column5", okdl."Column6", okdl."Column7", okdl."Column8",
+                okdl."Column9", okdl."Column10", okdl."Column11", okdl."Column12",
+                okdl."Column13", okdl."Column14", okdl."Column15", okdl."Column16",
+                okdl."Column17", okdl."Column18", okdl."Column19", okdl."Column20"
+            FROM "OriginalKeyData_List" okdl
+            WHERE okdl."SampleNo" = :sample_no
+            ORDER BY okdl."CheckItemID", okdl."ExcelTemplateName",
+                     okdl."SeqNum", okdl."OriginalRecordID"
+        """,
+    ),
+    QueryDefinition(
+        key="original_key_data_other",
+        purpose="核验以原始记录 ID 关联的其它 Excel 关键数据",
+        sql="""
+            SELECT
+                okdo."ID", okdo."SampleNo", okdo."ExcelTemplateName",
+                okdo."OriginalRecordID", okdo."CheckItemNo",
+                okdo."OriginalData", okdo."DataType"
+            FROM "OriginalKeyData_Other" okdo
+            WHERE okdo."SampleNo" = :sample_no
+            ORDER BY okdo."CheckItemNo", okdo."ExcelTemplateName",
+                     okdo."OriginalRecordID", okdo."ID"
+        """,
+    ),
+    QueryDefinition(
         key="check_record_register",
         purpose="核验检验记录登记及其原始文件引用",
         sql="""
@@ -235,6 +361,104 @@ QUERIES: tuple[QueryDefinition, ...] = (
             ORDER BY ci."SeqNum", ci."ID"
         """,
     ),
+    QueryDefinition(
+        key="task_entry_routes",
+        purpose="按任务项目读取 CheckItem 配置的实际原始记录入口类",
+        sql="""
+            SELECT
+                ci."ID" AS "TaskCheckItemID", ci."TaskID", ci."CheckItemID",
+                item."No" AS "CatalogCheckItemNo",
+                item."ItemName" AS "CatalogCheckItemName",
+                item."OriginalDataInputUIClassName", item."PositionID"
+            FROM "Task_CheckItem" ci
+            JOIN "Task" t ON t."ID" = ci."TaskID"
+            JOIN "CheckItem" item ON item."ID" = ci."CheckItemID"
+            WHERE t."ReportNo" = :sample_no
+            ORDER BY ci."SeqNum", ci."ID"
+        """,
+    ),
+    QueryDefinition(
+        key="check_record_templates",
+        purpose="按 CheckItem 的 StandardDocument 关系读取实际原始记录模板",
+        sql="""
+            SELECT
+                ci."ID" AS "TaskCheckItemID", ci."CheckItemID",
+                d."ID" AS "DocumentID", d."DocumentName",
+                d."DocumentUploadTime", d."DocumentUploadIndex"
+            FROM "Task_CheckItem" ci
+            JOIN "Task" t ON t."ID" = ci."TaskID"
+            JOIN "CheckItem" item ON item."ID" = ci."CheckItemID"
+            JOIN "StandardDocument" sd ON sd."StandardID" = item."ID"
+            JOIN "Document" d ON d."ID" = sd."DocumentID"
+            WHERE t."ReportNo" = :sample_no
+            ORDER BY ci."SeqNum", d."DocumentName", d."ID"
+        """,
+    ),
+    QueryDefinition(
+        key=MAPPING_CONFIG_QUERY_KEY,
+        purpose="为每个已配置原始记录模板生成与 writer 一致的映射配置指纹",
+        sql="""
+            SELECT
+                ci."ID" AS "TaskCheckItemID",
+                ci."CheckItemID" AS "CheckItemID",
+                d."ID" AS "DocumentID",
+                (
+                    SELECT COUNT(*)
+                    FROM "OriginalKeyDataTableMapping" mx
+                    WHERE mx."CheckItemID" = ci."CheckItemID"
+                      AND mx."ExcelTemplateName" = d."DocumentName"
+                ) AS "MappingCount",
+                m."DataTableName" AS "DataTableName",
+                CASE WHEN ut."TABLE_NAME" IS NULL THEN 0 ELSE 1 END
+                    AS "MappedTableExists",
+                CASE WHEN c."ID" IS NULL THEN 0 ELSE 1 END AS "ConfigPresent",
+                c."SeqNum" AS "SeqNum",
+                c."KeyDataField" AS "KeyDataField",
+                c."KeyDataType" AS "KeyDataType",
+                c."ConfigValue" AS "ConfigValue",
+                c."ConfigValue_En" AS "ConfigValue_En",
+                c."ConfigValue_CnEn" AS "ConfigValue_CnEn",
+                c."ConfigValue_NewCnEn" AS "ConfigValue_NewCnEn"
+            FROM "Task_CheckItem" ci
+            JOIN "Task" t ON t."ID" = ci."TaskID"
+            JOIN "StandardDocument" sd ON sd."StandardID" = ci."CheckItemID"
+            JOIN "Document" d ON d."ID" = sd."DocumentID"
+            LEFT JOIN "OriginalKeyDataTableMapping" m
+              ON m."CheckItemID" = ci."CheckItemID"
+             AND m."ExcelTemplateName" = d."DocumentName"
+            LEFT JOIN USER_TABLES ut ON ut."TABLE_NAME" = m."DataTableName"
+            LEFT JOIN "OriginalKeyDataConfig" c
+              ON c."CheckItemTable" = m."DataTableName"
+            WHERE t."ReportNo" = :sample_no
+            ORDER BY ci."SeqNum", d."DocumentName", d."ID",
+                     m."DataTableName", c."SeqNum", c."KeyDataField"
+        """,
+    ),
+)
+
+FINAL_ENTRY_REQUIRED_QUERY_KEYS = (
+    "task_check_items",
+    "task_entry_routes",
+    "check_record_templates",
+    MAPPING_CONFIG_QUERY_KEY,
+    "currency_item_records",
+    "currency_item_record_details",
+    "check_record_register",
+    "original_key_data",
+    "original_key_data_list",
+    "original_key_data_other",
+)
+FINAL_ENTRY_EXCLUDED_INFERENCE_SOURCES = (
+    "special_wool_prefix",
+    "quantification_tests",
+    "quantification_test_details",
+    "currency_excel_records",
+)
+COMMON_DETAIL_TABLE_COLUMNS = (
+    "standard_location",
+    "standard_value",
+    "real_location",
+    "real_value",
 )
 
 
@@ -466,7 +690,7 @@ def sanitize_scalar(column: str, value: Any) -> Any:
         return sanitize_path_value(value)
     if upper in LOGIN_COLUMN_NAMES:
         return mask_login(str(value))
-    if ID_COLUMN_PATTERN.search(column):
+    if upper in SENSITIVE_ID_COLUMN_NAMES or ID_COLUMN_PATTERN.search(column):
         return digest_text(str(value))
     return str(value)
 
@@ -499,6 +723,1209 @@ def build_manifest(sample_no: str) -> list[dict[str, Any]]:
         }
         manifest.append(entry)
     return manifest
+
+
+def _final_entry_query_rows(
+    results: Mapping[str, Any],
+    key: str,
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
+    state = results.get(key)
+    if not isinstance(state, Mapping):
+        return None, {"query": key, "status": "missing"}
+    status = state.get("status")
+    if status != "ok":
+        issue: dict[str, Any] = {
+            "query": key,
+            "status": str(status or "invalid"),
+        }
+        raw_error = state.get("error")
+        if isinstance(raw_error, Mapping):
+            error = {
+                name: str(raw_error[name])[:120]
+                for name in ("type", "code")
+                if raw_error.get(name) is not None
+            }
+            if error:
+                issue["error"] = error
+        return None, issue
+    raw_rows = state.get("rows")
+    if not isinstance(raw_rows, list) or any(
+        not isinstance(row, Mapping) for row in raw_rows
+    ):
+        return None, {"query": key, "status": "invalid_rows"}
+    return [dict(row) for row in raw_rows], None
+
+
+def _nonnegative_integer(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value))
+    except Exception:  # noqa: BLE001
+        return None
+    if not number.is_finite() or number < 0 or number != number.to_integral_value():
+        return None
+    return int(number)
+
+
+def _writer_integer_text(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value))
+    except Exception:  # noqa: BLE001
+        return None
+    if not number.is_finite() or number < 0 or number != number.to_integral_value():
+        return None
+    return str(int(number))
+
+
+def _writer_canonical_piece(value: str) -> str:
+    # .NET string.Length counts UTF-16 code units, not Unicode code points.
+    utf16_length = len(value.encode("utf-16-le")) // 2
+    return f"{utf16_length}:{value}|"
+
+
+def _mapping_config_scope(row: Mapping[str, Any]) -> dict[str, Any]:
+    scope: dict[str, Any] = {}
+    for column in ("TaskCheckItemID", "CheckItemID", "DocumentID"):
+        raw_value = row.get(column)
+        if not isinstance(raw_value, str) or not raw_value:
+            raise ProbeError("映射配置查询返回了无效的模板作用域。")
+        scope[column] = sanitize_scalar(column, raw_value)
+    return scope
+
+
+def _incomplete_mapping_config_row(
+    row: Mapping[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    if reason not in MAPPING_CONFIG_FAILURE_REASONS:
+        reason = "mapping_fingerprint_invalid"
+    table_state = _binary_state(row.get("MappedTableExists"))
+    return {
+        **_mapping_config_scope(row),
+        "MappingConfigStatus": "incomplete",
+        "MappingConfigCount": None,
+        "MappingConfigSha256": None,
+        "MappingConfigReason": reason,
+        "MappedTableExists": (
+            bool(table_state) if table_state is not None else None
+        ),
+    }
+
+
+def _binary_state(value: Any) -> int | None:
+    parsed = _nonnegative_integer(value)
+    return parsed if parsed in {0, 1} else None
+
+
+def _fingerprint_mapping_config_rows(
+    columns: Sequence[str],
+    raw_rows: Sequence[Sequence[Any]],
+) -> list[dict[str, Any]]:
+    """Collapse private mapping/config rows into safe writer-compatible hashes."""
+    if tuple(columns) != MAPPING_CONFIG_RAW_COLUMNS:
+        raise ProbeError("映射配置查询返回列与预期不一致。")
+
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for values in raw_rows:
+        if len(values) != len(columns):
+            raise ProbeError("映射配置查询返回行与预期不一致。")
+        row = dict(zip(columns, values))
+        raw_scope = tuple(row[column] for column in MAPPING_CONFIG_RAW_COLUMNS[:3])
+        if any(not isinstance(value, str) or not value for value in raw_scope):
+            raise ProbeError("映射配置查询返回了无效的模板作用域。")
+        grouped.setdefault(raw_scope, []).append(row)
+
+    fingerprints: list[dict[str, Any]] = []
+    for rows in grouped.values():
+        first = rows[0]
+        mapping_counts = {
+            _nonnegative_integer(row.get("MappingCount")) for row in rows
+        }
+        if None in mapping_counts or len(mapping_counts) != 1:
+            fingerprints.append(
+                _incomplete_mapping_config_row(first, "mapping_count_invalid")
+            )
+            continue
+        mapping_count = next(iter(mapping_counts))
+        if mapping_count == 0:
+            fingerprints.append(
+                _incomplete_mapping_config_row(first, "mapping_missing")
+            )
+            continue
+        if mapping_count != 1:
+            fingerprints.append(
+                _incomplete_mapping_config_row(first, "mapping_not_unique")
+            )
+            continue
+
+        table_names = {row.get("DataTableName") for row in rows}
+        if (
+            len(table_names) != 1
+            or not isinstance(next(iter(table_names)), str)
+            or not ORACLE_IDENTIFIER_PATTERN.fullmatch(next(iter(table_names)))
+        ):
+            fingerprints.append(
+                _incomplete_mapping_config_row(
+                    first,
+                    "mapping_table_name_invalid",
+                )
+            )
+            continue
+        table_name = next(iter(table_names))
+
+        table_states = {_binary_state(row.get("MappedTableExists")) for row in rows}
+        if None in table_states or len(table_states) != 1:
+            fingerprints.append(
+                _incomplete_mapping_config_row(
+                    first,
+                    "mapped_table_state_invalid",
+                )
+            )
+            continue
+        mapped_table_exists = table_states == {1}
+
+        presence_states = [_binary_state(row.get("ConfigPresent")) for row in rows]
+        if any(state is None for state in presence_states):
+            fingerprints.append(
+                _incomplete_mapping_config_row(first, "config_presence_invalid")
+            )
+            continue
+        if len(set(presence_states)) != 1:
+            fingerprints.append(
+                _incomplete_mapping_config_row(
+                    first,
+                    "config_presence_inconsistent",
+                )
+            )
+            continue
+        if presence_states[0] == 0:
+            fingerprints.append(
+                _incomplete_mapping_config_row(first, "config_missing")
+            )
+            continue
+
+        canonical_rows: list[list[str]] = []
+        sort_keys: set[tuple[str, str]] = set()
+        config_invalid = False
+        duplicate_sort_key = False
+        for row in rows:
+            seq_num = _writer_integer_text(row.get("SeqNum"))
+            key_data_field = row.get("KeyDataField")
+            if (
+                seq_num is None
+                or not isinstance(key_data_field, str)
+                or not key_data_field
+            ):
+                config_invalid = True
+                break
+            sort_key = (seq_num, key_data_field)
+            if sort_key in sort_keys:
+                duplicate_sort_key = True
+                break
+            sort_keys.add(sort_key)
+
+            values = [seq_num, key_data_field]
+            for field_name in MAPPING_CONFIG_CANONICAL_FIELDS[2:]:
+                value = row.get(field_name)
+                if value is not None and not isinstance(value, str):
+                    config_invalid = True
+                    break
+                values.append(value or "")
+            if config_invalid:
+                break
+            canonical_rows.append(values)
+
+        if config_invalid:
+            fingerprints.append(
+                _incomplete_mapping_config_row(first, "config_value_invalid")
+            )
+            continue
+        if duplicate_sort_key:
+            fingerprints.append(
+                _incomplete_mapping_config_row(
+                    first,
+                    "duplicate_config_sort_key",
+                )
+            )
+            continue
+
+        canonical_parts = [_writer_canonical_piece(table_name)]
+        for values in canonical_rows:
+            canonical_parts.extend(
+                _writer_canonical_piece(value) for value in values
+            )
+        fingerprint = hashlib.sha256(
+            "".join(canonical_parts).encode("utf-8")
+        ).hexdigest()
+        fingerprints.append(
+            {
+                **_mapping_config_scope(first),
+                "MappingConfigStatus": "complete",
+                "MappingConfigCount": len(canonical_rows),
+                "MappingConfigSha256": fingerprint,
+                "MappingConfigReason": None,
+                "MappedTableExists": mapped_table_exists,
+            }
+        )
+    return fingerprints
+
+
+def _sequence_sort_key(value: Any) -> tuple[int, Any]:
+    if value is None:
+        return (2, "")
+    try:
+        number = Decimal(str(value))
+    except Exception:  # noqa: BLE001
+        return (1, str(value))
+    if number.is_finite():
+        return (0, number)
+    return (1, str(value))
+
+
+def _ordered_by_sequence(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    indexed_rows = list(enumerate(rows))
+    indexed_rows.sort(
+        key=lambda item: (_sequence_sort_key(item[1].get("SeqNum")), item[0]),
+    )
+    return [row for _, row in indexed_rows]
+
+
+def _normalized_path_reference(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {"count": 0, "items": []}
+    raw_items = value.get("items")
+    if not isinstance(raw_items, list):
+        return {"count": 0, "items": []}
+    items: list[dict[str, str]] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, Mapping):
+            continue
+        basename = raw_item.get("basename")
+        path_hash = raw_item.get("path_hash")
+        if not isinstance(basename, str) or not isinstance(path_hash, str):
+            continue
+        if not path_hash.startswith("sha256:"):
+            continue
+        safe_basename = basename.replace(chr(92), "/").rsplit("/", 1)[-1]
+        items.append({"basename": safe_basename, "path_hash": path_hash})
+    return {"count": len(items), "items": items}
+
+
+def _normalize_common_detail_table(
+    rows: Sequence[dict[str, Any]],
+    *,
+    complete: bool,
+) -> dict[str, Any]:
+    normalized_rows = []
+    for row in _ordered_by_sequence(rows):
+        normalized_rows.append(
+            {
+                "detail_id": row.get("ID"),
+                "seq_num": row.get("SeqNum"),
+                "values": [
+                    row.get("StandardLocation"),
+                    row.get("StandardValue"),
+                    row.get("RealLocation"),
+                    row.get("RealValue"),
+                ],
+            }
+        )
+    return {
+        "status": "complete" if complete else "incomplete",
+        "columns": list(COMMON_DETAIL_TABLE_COLUMNS),
+        "rows": normalized_rows,
+    }
+
+
+def _normalize_common_record(
+    row: Mapping[str, Any],
+    detail_rows: Sequence[dict[str, Any]],
+    key_results: Sequence[dict[str, Any]],
+    *,
+    details_complete: bool,
+    key_results_complete: bool,
+) -> dict[str, Any]:
+    return {
+        "record_id": row.get("ID"),
+        "check_record_register_id": row.get("CheckRecordRegisterID"),
+        "check_item_id": row.get("CheckItemID"),
+        "main_fields": {
+            "sample_no": row.get("SampleNo"),
+            "grade": row.get("Grade"),
+            "judge_basis": row.get("JudgeBasis"),
+            "check_item_name": row.get("CheckItemName"),
+            "sample_description": row.get("SampleDescription"),
+            "test_method": row.get("TestMethod"),
+            "standard_type": row.get("StandardType"),
+            "unit": row.get("Unit"),
+            "report_check_item_name": row.get("ReportCheckItemName"),
+            "remark": row.get("Remark"),
+            "total_judge": row.get("TotalJudge"),
+            "check_user": row.get("CheckUser"),
+        },
+        "attachment_references": _normalized_path_reference(row.get("AttachInfo")),
+        "detail_table": _normalize_common_detail_table(
+            detail_rows,
+            complete=details_complete,
+        ),
+        "key_results_status": (
+            "complete" if key_results_complete else "incomplete"
+        ),
+        "key_results": [
+            _normalize_key_result(item)
+            for item in _ordered_by_sequence(key_results)
+        ],
+    }
+
+
+def _normalize_key_result(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "original_record_id": row.get("OriginalRecordID"),
+        "check_item_id": row.get("CheckItemID"),
+        "excel_template_name": row.get("ExcelTemplateName"),
+        "config_group_key": row.get("ConfigGroupKey"),
+        "seq_num": row.get("SeqNum"),
+        "check_item_name": row.get("CheckItemName"),
+        "measure_unit": row.get("MeasureUnit"),
+        "sample_identity": row.get("SampleIdentity"),
+        "check_method": row.get("CheckMethod"),
+        "check_method_1": row.get("CheckMethod1"),
+        "standard_value": row.get("StandardValue"),
+        "check_result": row.get("CheckResult"),
+        "check_result_2": row.get("CheckResult2"),
+        "check_result_3": row.get("CheckResult3"),
+        "judgement": row.get("Judgement"),
+        "remark": row.get("Remark"),
+        "judge_basis": row.get("JudgeBasis"),
+        "is_sub_check_item": row.get("IsSubCheckItem"),
+        "is_show_after_detail": row.get("IsShowAfterDetail"),
+        "is_show_before_detail": row.get("IsShowBeforeDetail"),
+        "grade": row.get("Grade"),
+        "test_location": row.get("TestLocation"),
+    }
+
+
+def _normalize_list_data(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "original_record_id": row.get("OriginalRecordID"),
+        "check_item_id": row.get("CheckItemID"),
+        "excel_template_name": row.get("ExcelTemplateName"),
+        "key_data_field": row.get("KeyDataField"),
+        "seq_num": row.get("SeqNum"),
+        "values": [row.get(f"Column{index}") for index in range(1, 21)],
+    }
+
+
+def _normalize_other_data(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "other_data_id": row.get("ID"),
+        "original_record_id": row.get("OriginalRecordID"),
+        "sample_no": row.get("SampleNo"),
+        "excel_template_name": row.get("ExcelTemplateName"),
+        "check_item_no": row.get("CheckItemNo"),
+        "original_data": row.get("OriginalData"),
+        "data_type": row.get("DataType"),
+    }
+
+
+def _normalize_entry_route(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "task_check_item_id": row.get("TaskCheckItemID"),
+        "task_id": row.get("TaskID"),
+        "check_item_id": row.get("CheckItemID"),
+        "catalog_check_item_no": row.get("CatalogCheckItemNo"),
+        "catalog_check_item_name": row.get("CatalogCheckItemName"),
+        "original_data_input_ui_class_name": row.get(
+            "OriginalDataInputUIClassName"
+        ),
+        "position_id": row.get("PositionID"),
+    }
+
+
+def _normalize_mapping_config(
+    row: Mapping[str, Any] | None,
+    *,
+    missing_reason: str,
+) -> dict[str, Any]:
+    if row is None:
+        reason = (
+            missing_reason
+            if missing_reason in MAPPING_CONFIG_FAILURE_REASONS
+            else "mapping_fingerprint_invalid"
+        )
+        return {
+            "status": "incomplete",
+            "config_count": None,
+            "expected_mapping_config_sha256": None,
+            "mapped_table_exists": None,
+            "reason": reason,
+        }
+
+    status = row.get("MappingConfigStatus")
+    if status == "complete":
+        count = _nonnegative_integer(row.get("MappingConfigCount"))
+        fingerprint = row.get("MappingConfigSha256")
+        mapped_table_exists = row.get("MappedTableExists")
+        if (
+            count is not None
+            and count > 0
+            and isinstance(fingerprint, str)
+            and SHA256_HEX_PATTERN.fullmatch(fingerprint)
+            and isinstance(mapped_table_exists, bool)
+            and row.get("MappingConfigReason") is None
+        ):
+            return {
+                "status": "complete",
+                "config_count": count,
+                "expected_mapping_config_sha256": fingerprint,
+                "mapped_table_exists": mapped_table_exists,
+                "reason": None,
+            }
+        reason = "mapping_fingerprint_invalid"
+    elif status == "incomplete":
+        raw_reason = row.get("MappingConfigReason")
+        reason = (
+            raw_reason
+            if raw_reason in MAPPING_CONFIG_FAILURE_REASONS
+            else "mapping_fingerprint_invalid"
+        )
+    else:
+        reason = "mapping_fingerprint_invalid"
+    return {
+        "status": "incomplete",
+        "config_count": None,
+        "expected_mapping_config_sha256": None,
+        "mapped_table_exists": (
+            row.get("MappedTableExists")
+            if isinstance(row.get("MappedTableExists"), bool)
+            else None
+        ),
+        "reason": reason,
+    }
+
+
+def _normalize_configured_template(
+    row: Mapping[str, Any],
+    mapping_row: Mapping[str, Any] | None,
+    *,
+    missing_reason: str,
+) -> dict[str, Any]:
+    return {
+        "task_check_item_id": row.get("TaskCheckItemID"),
+        "check_item_id": row.get("CheckItemID"),
+        "document_id": row.get("DocumentID"),
+        "document_name": _normalized_path_reference(row.get("DocumentName")),
+        "document_upload_time": row.get("DocumentUploadTime"),
+        "document_upload_index": row.get("DocumentUploadIndex"),
+        "mapping_config": _normalize_mapping_config(
+            mapping_row,
+            missing_reason=missing_reason,
+        ),
+    }
+
+
+def _normalize_excel_register(
+    row: Mapping[str, Any],
+    key_results: Sequence[dict[str, Any]],
+    list_data: Sequence[dict[str, Any]],
+    other_data: Sequence[dict[str, Any]],
+    *,
+    association_complete: bool,
+) -> dict[str, Any]:
+    return {
+        "status": "complete" if association_complete else "incomplete",
+        "register_id": row.get("ID"),
+        "check_item_id": row.get("CheckItemID"),
+        "main_fields": {
+            "sample_no": row.get("SampleNo"),
+            "position_id": row.get("PositionID"),
+            "level": row.get("Level"),
+            "create_user": row.get("CreateUser"),
+            "create_time": row.get("CreateTime"),
+            "review_user": row.get("ReviewUser"),
+            "review_time": row.get("ReviewTime"),
+            "audit_user": row.get("AuditUser"),
+            "audit_time": row.get("AuditTime"),
+            "last_update_time": row.get("LastUpdateTime"),
+            "last_update_user": row.get("LastUpdateUser"),
+            "legacy_original_record_id": row.get("OriginalRecordID"),
+            "sample_identity": row.get("SampleIdentity"),
+            "check_user": row.get("CheckUser"),
+            "equipment_no": row.get("EquipmentNo"),
+            "proof_user": row.get("ProofUser"),
+            "proof_time": row.get("ProofTime"),
+            "check_basis": row.get("CheckBasis"),
+            "original_picture_id": row.get("OriginalPictureID"),
+        },
+        "template_reference": _normalized_path_reference(
+            row.get("TemplateFilename")
+        ),
+        "original_file_reference": _normalized_path_reference(
+            row.get("OriginalDataFilename")
+        ),
+        "key_results": [
+            _normalize_key_result(item)
+            for item in _ordered_by_sequence(key_results)
+        ],
+        "list_data": [
+            _normalize_list_data(item)
+            for item in _ordered_by_sequence(list_data)
+        ],
+        "other_data": [_normalize_other_data(item) for item in other_data],
+    }
+
+
+def _add_final_entry_reason(
+    reasons: list[dict[str, Any]],
+    code: str,
+    **details: Any,
+) -> None:
+    reason = {"code": code, **details}
+    if reason not in reasons:
+        reasons.append(reason)
+
+
+def build_final_entry_view(
+    sample_no: str,
+    results: Mapping[str, Any],
+) -> dict[str, Any]:
+    source_rows: dict[str, list[dict[str, Any]] | None] = {}
+    incomplete_queries: list[dict[str, Any]] = []
+    mapping_config_issue: dict[str, Any] | None = None
+    for key in FINAL_ENTRY_REQUIRED_QUERY_KEYS:
+        rows, issue = _final_entry_query_rows(results, key)
+        source_rows[key] = rows
+        if issue is not None:
+            if key == MAPPING_CONFIG_QUERY_KEY:
+                mapping_config_issue = issue
+            else:
+                incomplete_queries.append(issue)
+
+    view: dict[str, Any] = {
+        "schema_version": 1,
+        "sample_no": sample_no,
+        "status": "complete",
+        "incomplete": False,
+        "association_policy": {
+            "project_scope": "Task_CheckItem.CheckItemID exact match",
+            "generic_key_result_link": (
+                "CurrencyItemRecordNew.ID = OriginalKeyData.OriginalRecordID; "
+                "verified by CheckRecordRegister.OriginalRecordID = "
+                "CurrencyItemRecordNew.ID"
+            ),
+            "excel_key_result_link": (
+                "CheckRecordRegister.ID = OriginalKeyData.OriginalRecordID"
+            ),
+            "entry_route_source": "CheckItem.OriginalDataInputUIClassName",
+            "template_source": "StandardDocument JOIN Document",
+            "excluded_inference_sources": list(
+                FINAL_ENTRY_EXCLUDED_INFERENCE_SOURCES
+            ),
+        },
+        "incomplete_queries": incomplete_queries,
+        "writer_preflight_incomplete_queries": (
+            [mapping_config_issue] if mapping_config_issue is not None else []
+        ),
+        "projects": [],
+    }
+
+    task_items = source_rows["task_check_items"]
+    if task_items is None:
+        view["status"] = "incomplete"
+        view["incomplete"] = True
+        view["project_count"] = None
+        return view
+
+    check_item_occurrences: dict[Any, int] = {}
+    for task_item in task_items:
+        check_item_id = task_item.get("CheckItemID")
+        if check_item_id:
+            check_item_occurrences[check_item_id] = (
+                check_item_occurrences.get(check_item_id, 0) + 1
+            )
+
+    projects: list[dict[str, Any]] = []
+    for task_item in task_items:
+        reasons: list[dict[str, Any]] = []
+        for issue in incomplete_queries:
+            _add_final_entry_reason(
+                reasons,
+                "query_incomplete",
+                query=issue["query"],
+                status=issue["status"],
+            )
+
+        task_check_item_id = task_item.get("ID")
+        check_item_id = task_item.get("CheckItemID")
+        expected_result_count = _nonnegative_integer(task_item.get("CheckCount"))
+        if expected_result_count is None:
+            _add_final_entry_reason(reasons, "invalid_expected_result_count")
+
+        if not task_check_item_id:
+            _add_final_entry_reason(reasons, "missing_task_check_item_id")
+        if not check_item_id:
+            _add_final_entry_reason(reasons, "missing_check_item_id")
+        elif check_item_occurrences.get(check_item_id, 0) != 1:
+            _add_final_entry_reason(
+                reasons,
+                "ambiguous_check_item_id",
+                occurrence_count=check_item_occurrences.get(check_item_id, 0),
+            )
+        project_scope_complete = bool(check_item_id) and (
+            check_item_occurrences.get(check_item_id, 0) == 1
+        )
+
+        route = None
+        route_rows = source_rows["task_entry_routes"]
+        if route_rows is not None and task_check_item_id:
+            route_candidates = [
+                row
+                for row in route_rows
+                if row.get("TaskCheckItemID") == task_check_item_id
+            ]
+            exact_routes = [
+                row
+                for row in route_candidates
+                if row.get("CheckItemID") == check_item_id
+            ]
+            if len(route_candidates) != len(exact_routes):
+                _add_final_entry_reason(reasons, "entry_route_project_mismatch")
+            if len(exact_routes) == 1:
+                route = _normalize_entry_route(exact_routes[0])
+            elif not exact_routes:
+                _add_final_entry_reason(reasons, "missing_entry_route")
+            else:
+                _add_final_entry_reason(
+                    reasons,
+                    "ambiguous_entry_route",
+                    occurrence_count=len(exact_routes),
+                )
+
+        template_rows = source_rows["check_record_templates"]
+        mapping_config_rows = source_rows[MAPPING_CONFIG_QUERY_KEY]
+        configured_templates: list[dict[str, Any]] = []
+        configured_template_count: int | None = None
+        if template_rows is not None and task_check_item_id:
+            template_candidates = [
+                row
+                for row in template_rows
+                if row.get("TaskCheckItemID") == task_check_item_id
+            ]
+            exact_templates = [
+                row
+                for row in template_candidates
+                if row.get("CheckItemID") == check_item_id
+            ]
+            if len(template_candidates) != len(exact_templates):
+                _add_final_entry_reason(reasons, "template_project_mismatch")
+            exact_mapping_rows: list[dict[str, Any]] = []
+            if mapping_config_rows is not None:
+                mapping_candidates = [
+                    row
+                    for row in mapping_config_rows
+                    if row.get("TaskCheckItemID") == task_check_item_id
+                ]
+                exact_mapping_rows = [
+                    row
+                    for row in mapping_candidates
+                    if row.get("CheckItemID") == check_item_id
+                ]
+
+            for template in exact_templates:
+                matching_rows = [
+                    row
+                    for row in exact_mapping_rows
+                    if row.get("DocumentID") == template.get("DocumentID")
+                ]
+                mapping_row = matching_rows[0] if len(matching_rows) == 1 else None
+                if mapping_config_rows is None:
+                    missing_reason = "mapping_query_incomplete"
+                elif not matching_rows:
+                    missing_reason = "mapping_fingerprint_missing"
+                elif len(matching_rows) != 1:
+                    missing_reason = "mapping_fingerprint_not_unique"
+                else:
+                    missing_reason = "mapping_fingerprint_invalid"
+                normalized_template = _normalize_configured_template(
+                    template,
+                    mapping_row,
+                    missing_reason=missing_reason,
+                )
+                configured_templates.append(normalized_template)
+            configured_template_count = len(configured_templates)
+
+        generic_records: list[dict[str, Any]] = []
+        project_common_rows: list[dict[str, Any]] = []
+        valid_common_ids: list[Any] = []
+        generic_record_count: int | None = None
+        common_rows = source_rows["currency_item_records"]
+        common_detail_rows = source_rows["currency_item_record_details"]
+        if project_scope_complete and common_rows is not None:
+            project_common_rows = [
+                row for row in common_rows if row.get("CheckItemID") == check_item_id
+            ]
+            generic_record_count = len(project_common_rows)
+            common_ids = [row.get("ID") for row in project_common_rows]
+            valid_common_ids = [value for value in common_ids if value]
+            if len(valid_common_ids) != len(common_ids):
+                _add_final_entry_reason(reasons, "missing_common_record_id")
+            if len(valid_common_ids) != len(set(valid_common_ids)):
+                _add_final_entry_reason(reasons, "duplicate_common_record_id")
+        common_linkage_complete = (
+            project_scope_complete
+            and common_rows is not None
+            and len(valid_common_ids) == len(project_common_rows)
+            and len(valid_common_ids) == len(set(valid_common_ids))
+        )
+        generic_id_set = set(valid_common_ids)
+
+        registers: list[dict[str, Any]] = []
+        register_count: int | None = None
+        file_reference_count: int | None = None
+        template_reference_count: int | None = None
+        unique_template_names: list[str] | None = None
+        referenced_template_paths: dict[str, str] = {}
+        register_rows = source_rows["check_record_register"]
+        if project_scope_complete and register_rows is not None:
+            registers = [
+                row for row in register_rows if row.get("CheckItemID") == check_item_id
+            ]
+            register_count = len(registers)
+            file_reference_count = sum(
+                1
+                for row in registers
+                if _normalized_path_reference(
+                    row.get("OriginalDataFilename")
+                )["count"]
+                > 0
+            )
+            template_reference_count = sum(
+                1
+                for row in registers
+                if _normalized_path_reference(row.get("TemplateFilename"))["count"]
+                > 0
+            )
+            unique_template_names = []
+            for row in registers:
+                reference = _normalized_path_reference(row.get("TemplateFilename"))
+                for item in reference["items"]:
+                    name = item["basename"]
+                    referenced_template_paths.setdefault(
+                        item["path_hash"],
+                        name,
+                    )
+                    if name not in unique_template_names:
+                        unique_template_names.append(name)
+
+        referenced_path_hashes = set(referenced_template_paths)
+        for template in configured_templates:
+            configured_path_hashes = {
+                item["path_hash"]
+                for item in template["document_name"]["items"]
+            }
+            template["referenced_by_existing_records"] = bool(
+                configured_path_hashes & referenced_path_hashes
+            )
+        for referenced_path_hash, referenced_name in referenced_template_paths.items():
+            matching_templates = [
+                template
+                for template in configured_templates
+                if referenced_path_hash
+                in {
+                    item["path_hash"]
+                    for item in template["document_name"]["items"]
+                }
+            ]
+            if not matching_templates:
+                _add_final_entry_reason(
+                    reasons,
+                    "referenced_template_configuration_missing",
+                    template_basename=referenced_name,
+                )
+                continue
+            if len(matching_templates) != 1:
+                _add_final_entry_reason(
+                    reasons,
+                    "referenced_template_configuration_not_unique",
+                    template_basename=referenced_name,
+                    occurrence_count=len(matching_templates),
+                )
+                continue
+            mapping_config = matching_templates[0]["mapping_config"]
+            if mapping_config["status"] != "complete":
+                _add_final_entry_reason(
+                    reasons,
+                    "template_mapping_config_incomplete",
+                    template_basename=referenced_name,
+                    reason=mapping_config["reason"],
+                )
+
+        register_ids = [row.get("ID") for row in registers]
+        valid_register_ids = [value for value in register_ids if value]
+        register_linkage_complete = (
+            project_scope_complete
+            and register_rows is not None
+            and len(valid_register_ids) == len(register_ids)
+            and len(valid_register_ids) == len(set(valid_register_ids))
+        )
+        if registers and len(valid_register_ids) != len(register_ids):
+            _add_final_entry_reason(reasons, "missing_register_id")
+        if len(valid_register_ids) != len(set(valid_register_ids)):
+            _add_final_entry_reason(reasons, "duplicate_register_id")
+        register_id_set = set(valid_register_ids)
+
+        key_result_linkage_mode: str | None = None
+        if project_scope_complete and common_rows is not None:
+            key_result_linkage_mode = (
+                "generic_record"
+                if project_common_rows
+                else "check_record_register"
+            )
+
+        generic_bridge_complete = False
+        if (
+            key_result_linkage_mode == "generic_record"
+            and common_linkage_complete
+            and register_linkage_complete
+        ):
+            bridge_ids = {
+                row.get("OriginalRecordID")
+                for row in registers
+                if row.get("OriginalRecordID") in generic_id_set
+            }
+            bridge_mismatches = [
+                row
+                for row in registers
+                if row.get("OriginalRecordID") not in generic_id_set
+            ]
+            unbridged_generic_ids = generic_id_set - bridge_ids
+            if bridge_mismatches:
+                _add_final_entry_reason(
+                    reasons,
+                    "generic_register_bridge_mismatch",
+                    occurrence_count=len(bridge_mismatches),
+                )
+            if unbridged_generic_ids:
+                _add_final_entry_reason(
+                    reasons,
+                    "unbridged_generic_records",
+                    occurrence_count=len(unbridged_generic_ids),
+                )
+            generic_bridge_complete = (
+                not bridge_mismatches and not unbridged_generic_ids
+            )
+
+        key_rows = source_rows["original_key_data"]
+        linked_generic_key_rows: list[dict[str, Any]] = []
+        linked_excel_key_rows: list[dict[str, Any]] = []
+        key_result_count: int | None = None
+        key_results_complete = False
+        if (
+            key_result_linkage_mode is not None
+            and common_linkage_complete
+            and register_linkage_complete
+            and key_rows is not None
+        ):
+            target_key_rows = [
+                row for row in key_rows if row.get("CheckItemID") == check_item_id
+            ]
+            allowed_original_record_ids = (
+                generic_id_set
+                if key_result_linkage_mode == "generic_record"
+                else register_id_set
+            )
+            linked_key_rows = [
+                row
+                for row in target_key_rows
+                if row.get("OriginalRecordID") in allowed_original_record_ids
+            ]
+            unlinked_key_rows = [
+                row
+                for row in target_key_rows
+                if row.get("OriginalRecordID") not in allowed_original_record_ids
+            ]
+            mismatched_key_rows = [
+                row
+                for row in key_rows
+                if row.get("OriginalRecordID") in allowed_original_record_ids
+                and row.get("CheckItemID") != check_item_id
+            ]
+            if unlinked_key_rows:
+                _add_final_entry_reason(
+                    reasons,
+                    "unlinked_key_results",
+                    occurrence_count=len(unlinked_key_rows),
+                )
+            if mismatched_key_rows:
+                _add_final_entry_reason(
+                    reasons,
+                    "key_result_project_mismatch",
+                    occurrence_count=len(mismatched_key_rows),
+                )
+            association_path_complete = (
+                generic_bridge_complete
+                if key_result_linkage_mode == "generic_record"
+                else True
+            )
+            if association_path_complete:
+                if key_result_linkage_mode == "generic_record":
+                    linked_generic_key_rows = linked_key_rows
+                else:
+                    linked_excel_key_rows = linked_key_rows
+            if (
+                association_path_complete
+                and not unlinked_key_rows
+                and not mismatched_key_rows
+            ):
+                key_result_count = len(linked_key_rows)
+                key_results_complete = True
+
+        for row in project_common_rows:
+            record_id = row.get("ID")
+            details = []
+            if common_detail_rows is not None and record_id:
+                details = [
+                    detail
+                    for detail in common_detail_rows
+                    if detail.get("CurrencyItemRecordNewID") == record_id
+                ]
+            record_key_rows = [
+                key_row
+                for key_row in linked_generic_key_rows
+                if key_row.get("OriginalRecordID") == record_id
+            ]
+            generic_records.append(
+                _normalize_common_record(
+                    row,
+                    details,
+                    record_key_rows,
+                    details_complete=(common_detail_rows is not None),
+                    key_results_complete=key_results_complete,
+                )
+            )
+
+        list_rows = source_rows["original_key_data_list"]
+        linked_list_rows: list[dict[str, Any]] = []
+        list_data_count: int | None = None
+        list_data_complete = False
+        if (
+            key_result_linkage_mode is not None
+            and register_linkage_complete
+            and list_rows is not None
+        ):
+            target_list_rows = [
+                row for row in list_rows if row.get("CheckItemID") == check_item_id
+            ]
+            mismatched_list_rows = [
+                row
+                for row in list_rows
+                if row.get("OriginalRecordID") in register_id_set
+                and row.get("CheckItemID") != check_item_id
+            ]
+            unlinked_list_rows: list[dict[str, Any]] = []
+            if key_result_linkage_mode == "check_record_register":
+                linked_list_rows = [
+                    row
+                    for row in target_list_rows
+                    if row.get("OriginalRecordID") in register_id_set
+                ]
+                unlinked_list_rows = [
+                    row
+                    for row in target_list_rows
+                    if row.get("OriginalRecordID") not in register_id_set
+                ]
+            elif target_list_rows:
+                _add_final_entry_reason(
+                    reasons,
+                    "list_data_not_excel_linkage",
+                    occurrence_count=len(target_list_rows),
+                )
+            if unlinked_list_rows:
+                _add_final_entry_reason(
+                    reasons,
+                    "unlinked_list_data",
+                    occurrence_count=len(unlinked_list_rows),
+                )
+            if mismatched_list_rows:
+                _add_final_entry_reason(
+                    reasons,
+                    "list_data_project_mismatch",
+                    occurrence_count=len(mismatched_list_rows),
+                )
+            if (
+                not target_list_rows
+                and key_result_linkage_mode == "generic_record"
+                and not mismatched_list_rows
+            ):
+                list_data_count = 0
+                list_data_complete = True
+            elif (
+                key_result_linkage_mode == "check_record_register"
+                and not unlinked_list_rows
+                and not mismatched_list_rows
+            ):
+                list_data_count = len(linked_list_rows)
+                list_data_complete = True
+
+        other_rows = source_rows["original_key_data_other"]
+        linked_other_rows: list[dict[str, Any]] = []
+        other_data_count: int | None = None
+        other_data_complete = False
+        if (
+            key_result_linkage_mode is not None
+            and register_linkage_complete
+            and other_rows is not None
+        ):
+            check_item_no = task_item.get("CheckItemNo")
+            target_other_rows = [
+                row
+                for row in other_rows
+                if check_item_no
+                and row.get("CheckItemNo") == check_item_no
+            ]
+            register_linked_other_rows = [
+                row
+                for row in other_rows
+                if row.get("OriginalRecordID") in register_id_set
+            ]
+            mismatched_other_rows = [
+                row
+                for row in register_linked_other_rows
+                if (
+                    not check_item_no
+                    or (
+                        row.get("CheckItemNo")
+                        and row.get("CheckItemNo") != check_item_no
+                    )
+                )
+            ]
+            unlinked_other_rows: list[dict[str, Any]] = []
+            if key_result_linkage_mode == "check_record_register":
+                linked_other_rows = [
+                    row
+                    for row in register_linked_other_rows
+                    if row not in mismatched_other_rows
+                ]
+                unlinked_other_rows = [
+                    row
+                    for row in target_other_rows
+                    if row.get("OriginalRecordID") not in register_id_set
+                ]
+            elif target_other_rows:
+                _add_final_entry_reason(
+                    reasons,
+                    "other_data_not_excel_linkage",
+                    occurrence_count=len(target_other_rows),
+                )
+            if unlinked_other_rows:
+                _add_final_entry_reason(
+                    reasons,
+                    "unlinked_other_data",
+                    occurrence_count=len(unlinked_other_rows),
+                )
+            if mismatched_other_rows:
+                _add_final_entry_reason(
+                    reasons,
+                    "other_data_project_mismatch",
+                    occurrence_count=len(mismatched_other_rows),
+                )
+            if (
+                not target_other_rows
+                and key_result_linkage_mode == "generic_record"
+                and not mismatched_other_rows
+            ):
+                other_data_count = 0
+                other_data_complete = True
+            elif (
+                key_result_linkage_mode == "check_record_register"
+                and not unlinked_other_rows
+                and not mismatched_other_rows
+            ):
+                other_data_count = len(linked_other_rows)
+                other_data_complete = True
+
+        excel_records: list[dict[str, Any]] = []
+        if (
+            key_result_linkage_mode == "check_record_register"
+            and register_rows is not None
+            and project_scope_complete
+        ):
+            for register in registers:
+                register_id = register.get("ID")
+                register_key_rows = [
+                    row
+                    for row in linked_excel_key_rows
+                    if row.get("OriginalRecordID") == register_id
+                ]
+                register_list_rows = [
+                    row
+                    for row in linked_list_rows
+                    if row.get("OriginalRecordID") == register_id
+                ]
+                register_other_rows = [
+                    row
+                    for row in linked_other_rows
+                    if row.get("OriginalRecordID") == register_id
+                ]
+                excel_records.append(
+                    _normalize_excel_register(
+                        register,
+                        register_key_rows,
+                        register_list_rows,
+                        register_other_rows,
+                        association_complete=(
+                            bool(register_id)
+                            and key_results_complete
+                            and list_data_complete
+                            and other_data_complete
+                        ),
+                    )
+                )
+
+        project = {
+            "status": "incomplete" if reasons else "complete",
+            "incomplete": bool(reasons),
+            "incomplete_reasons": reasons,
+            "task_check_item_id": task_check_item_id,
+            "task_id": task_item.get("TaskID"),
+            "check_item_id": check_item_id,
+            "check_item_no": task_item.get("CheckItemNo"),
+            "check_item_name": task_item.get("CheckItemName"),
+            "check_method": task_item.get("CheckMethod"),
+            "remark": task_item.get("Remark"),
+            "give_judgement": task_item.get("GiveJudgement"),
+            "sample_identify": task_item.get("SampleIdentify"),
+            "seq_num": task_item.get("SeqNum"),
+            "check_item_category": task_item.get("CheckItemCategory"),
+            "check_item_eng_name": task_item.get("CheckItemEngName"),
+            "expected_result_count": expected_result_count,
+            "generic_record_count": generic_record_count,
+            "register_count": register_count,
+            "file_reference_count": file_reference_count,
+            "template_reference_count": template_reference_count,
+            "unique_template_names": unique_template_names,
+            "key_result_linkage_mode": key_result_linkage_mode,
+            "key_result_count": key_result_count,
+            "list_data_count": list_data_count,
+            "other_data_count": other_data_count,
+            "entry_route": route,
+            "configured_template_count": configured_template_count,
+            "configured_templates": configured_templates,
+            "generic_records": generic_records,
+            "excel_records": excel_records,
+        }
+        projects.append(project)
+
+    view["projects"] = projects
+    view["project_count"] = len(projects)
+    view["incomplete"] = bool(incomplete_queries) or any(
+        project["incomplete"] for project in projects
+    )
+    view["status"] = "incomplete" if view["incomplete"] else "complete"
+    return view
 
 
 def connect_oracle(
@@ -552,6 +1979,7 @@ class ReadOnlyProbeRunner:
             return {
                 "read_only_transaction_started": self.read_only_transaction_started,
                 "results": results,
+                "final_entry_view": build_final_entry_view(sample_no, results),
             }
         finally:
             try:
@@ -589,10 +2017,14 @@ class ReadOnlyProbeRunner:
         try:
             cursor.execute(compact_sql(query.sql), parameters)
             columns = [str(item[0]) for item in cursor.description or ()]
-            rows = [
-                sanitize_row(columns, row)
-                for row in cursor.fetchall()
-            ]
+            raw_rows = cursor.fetchall()
+            if query.key == MAPPING_CONFIG_QUERY_KEY:
+                rows = _fingerprint_mapping_config_rows(columns, raw_rows)
+            else:
+                rows = [
+                    sanitize_row(columns, row)
+                    for row in raw_rows
+                ]
             return {
                 "status": "ok",
                 "row_count": len(rows),

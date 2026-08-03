@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "operation_type": "excel_check_record",
+  "sample_number": "00A000000",
+  "check_item_no": "5103.5",
+  "check_item_name": "纤维微观形貌",
+  "expected_existing_register_count": 0,
+  "excel_record": {
+    "template_name": "微观形貌.xls",
+    "collection_mode": "standard",
+    "expected_mapping_config_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "key_result_count": 1,
+    "expected_key_identities": [
+      "纵面"
+    ],
+    "register": {
+      "level": "",
+      "sample_identity": "",
+      "equipment_no": "",
+      "check_basis": ""
+    },
+    "workbook": {
+      "relative_path": "payload/microscopy.xls",
+      "filename": "microscopy.xls",
+      "size_bytes": 0,
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}

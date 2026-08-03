@@ -85,11 +85,71 @@ py -3 -m venv .venv
 - `SpecialWoolManage`：完全匹配和前缀匹配；
 - `User`：主记录中引用的检验、复核、创建和审核人员；
 - `QuantificationTest` 与 `QuantificationTest_Detail`；
+- `CurrencyItemRecordNew` 与 `CurrencyItemRecordNewDetail`：通用项目记录登记；
+- `CurrExcelOriRecord`：仅用于诊断相似旧链，不作为最终录入事实源；
 - `CheckRecordRegister`；
-- `OriginalKeyData_CheckItem`；
-- `Task` 与 `Task_CheckItem`。
+- `OriginalKeyData_CheckItem`、`OriginalKeyData_List` 与
+  `OriginalKeyData_Other`；
+- `Task` 与 `Task_CheckItem`；
+- `CheckItem.OriginalDataInputUIClassName`：任务项目实际原始记录入口类；
+- `StandardDocument JOIN Document`：任务项目实际配置的原始记录模板；
+- `OriginalKeyDataTableMapping`、`OriginalKeyDataConfig` 与 `USER_TABLES`：
+  只在进程内生成 writer 可校验的模板映射配置 SHA-256；动态表名和配置原文
+  不会写入输出。
 
 查询失败会按查询项记录安全错误类型和 Oracle 错误代码，后续查询仍会继续。输出 JSON 仍可能包含内部业务信息，只应保存在受控临时目录，不应提交到 Git。
+
+## 最终录入读取视图
+
+正常探测输出会增加 `final_entry_view`。它不是另一组数据库查询，而是只基于已经脱敏的查询结果生成的规范化只读视图：
+
+- 每个 `projects[]` 元素严格对应一条 `Task_CheckItem`；项目范围只用精确
+  `CheckItemID`，同一任务中出现重复 `CheckItemID` 时会拒绝分摊并标为
+  `incomplete`。
+- `expected_result_count` 直接来自 `Task_CheckItem.CheckCount`。
+- `generic_record_count` 来自同一 `CheckItemID` 的
+  `CurrencyItemRecordNew`。每条 `generic_records[]` 都包含主字段和按
+  `SeqNum` 排序的四列表格：`standard_location`、`standard_value`、
+  `real_location`、`real_value`。
+- `register_count` 是同一 `CheckItemID` 的 `CheckRecordRegister` 行数。
+  `file_reference_count` 只统计 `OriginalDataFilename` 非空的登记行；
+  `TemplateFilename` 不计入上传文件，而由 `template_reference_count` 和
+  `unique_template_names` 单独报告。
+- `key_result_count` 来自 `OriginalKeyData_CheckItem`，但关联路径按已证明的
+  数据结构拆开：存在同项目 `CurrencyItemRecordNew` 时，
+  `OriginalKeyData.OriginalRecordID` 必须等于通用主记录 `ID`，并且必须有
+  同项目 `CheckRecordRegister.OriginalRecordID` 反向指向该主记录；没有通用
+  主记录的 Excel 项目才允许
+  `CheckRecordRegister.ID = OriginalKeyData.OriginalRecordID`。视图通过
+  `key_result_linkage_mode` 明示实际使用的路径，通用项目的结果放在对应
+  `generic_records[].key_results` 中。
+- `list_data_count`、`other_data_count` 分别来自
+  `OriginalKeyData_List`、`OriginalKeyData_Other`，只走 Excel 的
+  `CheckRecordRegister.ID` 路径。以上关联都会再次核对项目
+  `CheckItemID`（`Other` 同时核对 `CheckItemNo`）；桥接缺失、无法关联或
+  项目不一致时不会猜测归属。
+- `entry_route` 来自 `CheckItem.OriginalDataInputUIClassName`；
+  `configured_templates` 来自 `StandardDocument JOIN Document`。旧的
+  `CurrencyExeclTemplateSet` 不再查询，`CurrExcelOriRecord` 只保留诊断用途。
+- 每个 `configured_templates[]` 都包含独立的 `mapping_config`。其中
+  `expected_mapping_config_sha256` 与 writer 使用相同的
+  `DataTableName + OriginalKeyDataConfig` canonical 规则，配置按
+  `SeqNum, KeyDataField` 排序；只有这两个字段同时重复时才拒绝生成指纹。
+  `mapped_table_exists` 只是事实字段：旧 DAL 在动态 DataTable 不存在时会跳过
+  `DataScripts`，因此值为 `false` 不会使指纹或项目变为 `incomplete`。
+- 已有 Excel 登记只用 `CheckRecordRegister.TemplateFilename` 与配置模板的
+  `path_hash` 精确匹配；basename 仅用于展示和错误提示，同名但路径散列不同
+  不会被当作同一模板。未被已有登记引用的其它配置模板即使映射不完整，也
+  不会污染已有结果的读取状态。
+- `special_wool_prefix`、`QuantificationTest*` 和 `CurrExcelOriRecord` 都不会被
+  用来推断最终录入项目、登记、文件或结果。
+
+任一核心读取查询失败时，`final_entry_view.status` 和受影响项目的 `status`
+会变为 `incomplete`。映射配置查询错误另列在
+`writer_preflight_incomplete_queries`：generic 或没有 Excel 登记的项目不受
+影响；已有 Excel 登记的目标模板无法证明时才会标为 `incomplete`。无法证明
+的计数使用 `null`，不会把查询失败误报成 `0`。内部 ID 仍为散列；文件和
+模板路径仍只包含 basename 与路径散列，`DocumentUploadIndex` 也会散列。
 
 ## 样品编号限制
 
