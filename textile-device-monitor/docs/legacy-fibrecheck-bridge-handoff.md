@@ -289,6 +289,36 @@ Runner 的 `--dry-run-upload` 模式已实现并实测：
 `file_copy_ready` → 服务端持久化 `file_copy_started` → stdin 一次性许可的
 fail-closed 握手，并补阶段单调化、账号匹配和全局容量门禁；验证完成前继续冻结写入。
 
+### 阶段 E：图片类特纤上传与复核预检 —— 已实现、保持禁写（2026-08-03）
+
+执行系统新增两个操作类型：
+
+```text
+legacy_special_wool_image_upload
+legacy_special_wool_review
+```
+
+- 图片上传固定为 `FibreSort=图片`、`CheckWay=''`、`CheckItem=图片`、`CheckCount=1`；
+  检验员使用执行系统当前用户显示名。源文件必须是同一运行中生成、登记并重新
+  核对 SHA-256 的 `编号-图片-纤维微观形貌原始记录.xls`。
+- 旧客户端 `SpecialWoolAddUI.UploadFileToFileServer` 按上传文件名是否包含“图片”
+  决定 `FileType.图片`，因此生成文件名中的“图片”不能删除。
+- 复核使用独立阶段：`authenticated → permission_verified → remote_state_verified
+  → review_save_ready → review_save_started → review_main_verified →
+  review_children_verified → completed`；副作用边界是 `review_save_started`。
+- 当前后端预检声明 `execution_capability.available=false` 并拒绝批准；Bridge 不
+  声明这两种能力，Writer 也明确拒绝，不能回落到根数法写入实现。
+
+Windows 下一轮必须先做只读/断点取证，不做真实保存：
+
+1. 证明目标编号远端精确/Contains 占用查询，并把最终 `原号/-1/-2` 分配放到
+   Bridge 写前预检；当前服务端分配仅是本系统围栏内暂定值。
+2. 跟踪 `OriginalDataPictureFile` 的创建、`CheckItemID` 来源、主记录/图片子记录
+   保存顺序和保存后回读条件。
+3. 跟踪“特纤复核”对 `SpecialWoolManage.ReviewUser/ReviewTime`、图片记录以及
+   细度/定量子记录的联动；确认失败时事务边界和可观察结果。
+4. 完成上述证据、测试和最终变更清单后，再回到用户确认是否允许一次受控写入。
+
 ## 7. 后续阶段仍缺少的能力
 
 - ~~Bridge 机器身份认证、claim/heartbeat/complete/reconcile API~~（2026-08-01 已实现）；
@@ -308,6 +338,9 @@ fail-closed 握手，并补阶段单调化、账号匹配和全局容量门禁�
 - PostgreSQL 下两个 Bridge 并发领取的真实竞争验证（服务端容量目标为全局 1）；
 - UTF-8 编码修复后的第二次端到端验证；
 - Bridge 完成/失败响应中断时的本地持久回执与运维恢复流程。
+- 图片上传的远端编号最终分配、`OriginalDataPictureFile + CheckItemID` 子记录创建
+  与保存后回读证明；
+- 特纤复核对主记录、细度/定量/图片子记录的联动和事务边界证明。
 
 上述安全门禁缺失或未验证时，只能运行只读登录、对账、dry-run 和无副作用的
 自动化测试；`EXECUTION_BRIDGE_ENABLED` 必须保持为 `false`。
@@ -350,3 +383,11 @@ tools/legacy_fibrecheck_writer/README.md
 observation 绑定与 Windows 凭据 ACL 收口；门禁通过后再进行第二次端到端验证，
 最后用配置开关把上传节点接入默认流程。任何成功未知都不得自动重试、不得释放
 业务围栏、不得静默重复提交。
+
+微观形貌工作流及 `260061860` 的本轮实现进度见：
+
+```text
+.tmp/execution-system-brainstorm/09_电镜纤维微观形貌首版.md
+```
+
+本轮只在 Docker 测试数据库和 staging 生成 `.xls`，没有执行图片上传或特纤复核。

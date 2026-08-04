@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -117,6 +118,27 @@ def _same_identifier(left: Any, right: Any) -> bool:
     return str(left).strip() == str(right).strip()
 
 
+def _compact_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _project_key(item: Mapping[str, Any]) -> str:
+    """Build a stable public key without exposing FibreCheck record IDs."""
+
+    identity = "\0".join(
+        _compact_text(item.get(key))
+        for key in (
+            "ID",
+            "CheckItemID",
+            "CheckItemNo",
+            "CheckItemName",
+            "CheckMethod",
+            "SeqNum",
+        )
+    )
+    return "task-project:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+
+
 def build_snapshot(
     document: Mapping[str, Any],
     inspection_number: str,
@@ -145,16 +167,23 @@ def build_snapshot(
     if not isinstance(results, Mapping):
         raise SnapshotBridgeError("probe_results_invalid", "探针结果结构无效")
     tasks = _query_rows(results, "tasks")
+    task_samples = _query_rows(results, "task_samples")
     task_items = _query_rows(results, "task_check_items")
 
     # 旧系统中不存在对应 Task 是可缓存的正常事实，避免后端不断重复查询。
     if not tasks:
-        if task_items:
+        if task_samples or task_items:
             raise SnapshotBridgeError(
                 "probe_task_link_invalid",
-                "任务不存在但返回了任务项目",
+                "任务不存在但返回了样品或任务项目",
             )
-        return {"sample_name": None, "check_basis": None, "projects": []}
+        return {
+            "schema_version": 2,
+            "sample_name": None,
+            "sample_names": [],
+            "check_basis": None,
+            "projects": [],
+        }
     if len(tasks) != 1:
         raise SnapshotBridgeError(
             "probe_task_not_unique",
@@ -171,6 +200,17 @@ def build_snapshot(
     if task_id is None:
         raise SnapshotBridgeError("probe_task_id_missing", "任务主记录缺少标识")
 
+    sample_names: list[str] = []
+    seen_sample_names: set[str] = set()
+    for sample in task_samples:
+        if not _same_identifier(sample.get("TaskID"), task_id):
+            continue
+        sample_name = _compact_text(sample.get("SampleName"))
+        folded = sample_name.casefold()
+        if sample_name and folded not in seen_sample_names:
+            sample_names.append(sample_name)
+            seen_sample_names.add(folded)
+
     projects = []
     for item in task_items:
         # 探针查询已由 Task join 限定；仍再次按 TaskID 过滤，避免把其它任务的
@@ -180,6 +220,7 @@ def build_snapshot(
             continue
         projects.append(
             {
+                "project_key": _project_key(item),
                 "check_item_no": item.get("CheckItemNo"),
                 "check_item_name": item.get("CheckItemName"),
                 "check_method": item.get("CheckMethod"),
@@ -191,8 +232,11 @@ def build_snapshot(
         )
 
     return {
-        # 当前探针的 tasks 查询不读取样品名称；字段保留给将来的兼容升级。
-        "sample_name": None,
+        "schema_version": 2,
+        # 只有唯一非空名称时给出无歧义快捷值；全量选项保留在
+        # sample_names，供后续人工确认节点处理一任务多样品情况。
+        "sample_name": sample_names[0] if len(sample_names) == 1 else None,
+        "sample_names": sample_names,
         "check_basis": task.get("CheckBasis"),
         "projects": projects,
     }

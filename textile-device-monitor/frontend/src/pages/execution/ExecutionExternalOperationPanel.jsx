@@ -38,6 +38,26 @@ const STATUS = {
   expired: { label: '已过期，请重新运行', color: 'default' },
 };
 
+const OPERATION_META = {
+  legacy_regenerated_fiber_count_upload: {
+    title: '旧系统上传-再生纤-根数法',
+    subject: '上传',
+  },
+  legacy_special_wool_image_upload: {
+    title: '旧系统上传-特种毛-图片',
+    subject: '上传',
+  },
+  legacy_special_wool_review: {
+    title: '旧系统-特纤复核',
+    subject: '复核',
+  },
+};
+
+const operationMeta = operation => (
+  OPERATION_META[operation?.request_summary?.operation_type]
+  || { title: '旧系统外部操作', subject: '操作' }
+);
+
 const requestErrorMessage = error => (
   error?.requestId
     ? `${error.message || '请求失败'}（请求编号：${error.requestId}）`
@@ -378,6 +398,9 @@ export default function ExecutionExternalOperationPanel({
   const hasReconciliationRequired = operations.some(
     operation => operation.status === 'reconciliation_required',
   );
+  const hasUnavailableOperation = operations.some(operation => (
+    operation?.request_summary?.safety?.execution_available === false
+  ));
   const reconciliationSummary = (
     reconciling?.context?.operation?.request_summary
     || reconciling?.operation?.request_summary
@@ -401,15 +424,19 @@ export default function ExecutionExternalOperationPanel({
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Alert
           showIcon
-          type={hasReconciliationRequired ? 'error' : 'warning'}
+          type={hasReconciliationRequired ? 'error' : hasUnavailableOperation ? 'info' : 'warning'}
           message={
             hasReconciliationRequired
               ? '存在执行结果未知的旧系统操作，禁止重试'
+              : hasUnavailableOperation
+                ? '当前仅开放预检，不会写入旧系统'
               : '批准可能触发真实的旧系统写入'
           }
           description={
             hasReconciliationRequired
               ? '业务围栏仍保持锁定。必须先用只读探针核对远端记录和文件，再由管理员录入明确结论。'
+              : hasUnavailableOperation
+                ? '相关字段、制品和目标编号仍会形成可核对的预检单；实机子记录与复核语义验证完成前，批准按钮保持禁用。'
               : '批准后任务进入连接器队列；若 Windows Bridge 已启用，它可以立即领取、复制文件并通过 FibreCheck 写入旧检务系统。'
           }
         />
@@ -421,13 +448,17 @@ export default function ExecutionExternalOperationPanel({
             color: 'default',
           };
           const files = Array.isArray(summary.files) ? summary.files : [];
+          const meta = operationMeta(operation);
+          const executionAvailable = summary?.safety?.execution_available !== false;
           let cardAction = null;
-          if (operation.status === 'prepared' && canApprove) {
+          if (operation.status === 'prepared' && canApprove && executionAvailable) {
             cardAction = (
               <Button type="primary" onClick={() => openConfirmation(operation)}>
                 核对并批准预检单
               </Button>
             );
+          } else if (operation.status === 'prepared' && !executionAvailable) {
+            cardAction = <Tag color="blue">仅预检</Tag>;
           } else if (operation.status === 'reconciliation_required') {
             cardAction = canReconcile ? (
               <Button
@@ -448,7 +479,7 @@ export default function ExecutionExternalOperationPanel({
               size="small"
               title={(
                 <Space>
-                  <span>旧系统上传-再生纤-根数法</span>
+                  <span>{meta.title}</span>
                   <Tag color={status.color}>{status.label}</Tag>
                 </Space>
               )}
@@ -482,7 +513,9 @@ export default function ExecutionExternalOperationPanel({
                     : []),
                   {
                     key: 'inspector',
-                    label: '检验员',
+                    label: summary.operation_type === 'legacy_special_wool_review'
+                      ? '复核账号'
+                      : '检验员',
                     children: summary.inspector || '—',
                   },
                   {
@@ -492,11 +525,28 @@ export default function ExecutionExternalOperationPanel({
                       business.fiber_category,
                       business.inspection_method,
                       business.inspection_item,
+                      business.review_action,
+                      business.review_item,
                       business.inspection_copies
                         ? `${business.inspection_copies} 份`
                         : null,
+                      business.review_copies
+                        ? `${business.review_copies} 份`
+                        : null,
                     ].filter(Boolean).join(' · ') || '—',
                   },
+                  ...(!executionAvailable ? [{
+                    key: 'capability',
+                    label: '执行状态',
+                    children: (
+                      <Alert
+                        showIcon
+                        type="info"
+                        message="已生成预检单，真实写入仍锁定"
+                        description={summary.execution_capability?.message}
+                      />
+                    ),
+                  }] : []),
                   {
                     key: 'checksum',
                     label: '预检摘要',
@@ -530,12 +580,13 @@ export default function ExecutionExternalOperationPanel({
                   },
                 ]}
               />
-              <Table
-                size="small"
-                pagination={false}
-                rowKey="id"
-                dataSource={files}
-                columns={[
+              {files.length > 0 && (
+                <Table
+                  size="small"
+                  pagination={false}
+                  rowKey={row => row.id || row.artifact_id}
+                  dataSource={files}
+                  columns={[
                   {
                     title: '文件',
                     dataIndex: 'filename',
@@ -563,8 +614,9 @@ export default function ExecutionExternalOperationPanel({
                       </Text>
                     ),
                   },
-                ]}
-              />
+                  ]}
+                />
+              )}
               {operation.error && (
                 <Alert
                   style={{ marginTop: 12 }}
@@ -579,7 +631,7 @@ export default function ExecutionExternalOperationPanel({
       </Space>
 
       <Modal
-        title="最终核对本次旧系统上传预检单"
+        title={`最终核对本次${operationMeta(confirming).subject}预检单`}
         open={Boolean(confirming)}
         okText="批准并进入连接器队列"
         cancelText="返回检查"

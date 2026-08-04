@@ -571,4 +571,181 @@ describe('ExecutionTaskInbox', () => {
     });
     expect(submitted.mock.calls[0][0].data).not.toHaveProperty('relative_path');
   });
+
+  it('微观形貌原始记录支持分词选择、手工修正和多值判定', async () => {
+    const submitted = vi.fn();
+    const recordTask = {
+      ...openTask,
+      title: '填写微观形貌原始记录',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [recordTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(recordTask),
+          node_run: {
+            node_id: 'microscopy-record-input',
+            input_data: {
+              task_kind: 'microscopy_record_input',
+              inspection_number: '260061860',
+              selected_image_ids: ['image-1', 'image-2', 'image-3'],
+              projects: [{
+                project_key: 'project-morphology',
+                project_name: '纤维微观形貌',
+                test_method: 'GB/T 36422-2018',
+                sample_identify: '膜外侧，膜内侧、截面',
+                give_judgement: '1',
+              }],
+              sample_name_analysis: {
+                original: 'Surgicel-Fibrillar 止血纱布',
+                candidates: ['Surgicel-Fibrillar', '氧化再生纤维素纤维'],
+              },
+              check_basis_options: ['GB/T 36422-2018', '客户要求'],
+            },
+          },
+        })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({ ...recordTask, status: 'completed', revision: 3 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('填写微观形貌原始记录'));
+    expect(await screen.findByText('260061860')).toBeInTheDocument();
+    expect(screen.getByText('已选图片').parentElement).toHaveTextContent('3 张');
+    expect(screen.getByText('Surgicel-Fibrillar 止血纱布')).toBeInTheDocument();
+    expect(screen.getByText('指标要求与测试结果将在后续版本完善'))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '氧化再生纤维素纤维' }));
+    const sampleName = screen.getByRole('textbox', { name: '写入样品名称' });
+    expect(sampleName).toHaveValue('氧化再生纤维素纤维');
+    await user.type(sampleName, '（纱布）');
+    await user.click(screen.getByRole('radio', { name: '膜内侧' }));
+    await user.click(screen.getByRole('combobox', { name: '判定依据' }));
+    await user.click((await screen.findAllByText('客户要求')).at(-1));
+    await user.click(screen.getByRole('radio', { name: '符合' }).closest('label'));
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toMatchObject({
+      selected_project_key: 'project-morphology',
+      sample_name: '氧化再生纤维素纤维（纱布）',
+      sample_identity: '膜内侧',
+      judge_basis: '客户要求',
+      judgement: '符合',
+    });
+  });
+
+  it('样品识别单值自动选用，不判否时隐藏判定区', async () => {
+    const recordTask = {
+      ...openTask,
+      title: '核对微观形貌信息',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [recordTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(recordTask),
+          node_run: {
+            node_id: 'microscopy-record-input',
+            input_data: {
+              task_kind: 'microscopy_record_input',
+              projects: [{
+                project_key: 'project-one',
+                project_name: '纤维微观形貌',
+                sample_identify: '正面',
+                give_judgement: '0',
+              }],
+              sample_name_analysis: {
+                original: '止血材料',
+                candidates: ['止血材料'],
+              },
+              selected_image_ids: ['image-1'],
+            },
+          },
+        })),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('核对微观形貌信息'));
+    expect(await screen.findByText('正面')).toBeInTheDocument();
+    expect(screen.getAllByText('已自动选用')).toHaveLength(2);
+    expect(screen.queryByText('判定信息')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: '符合' })).not.toBeInTheDocument();
+  });
+
+  it('打印确认会展示工作簿入口并绑定文件 SHA-256', async () => {
+    const submitted = vi.fn();
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const sha256 = 'a'.repeat(64);
+    const printTask = {
+      ...openTask,
+      title: '打印微观形貌原始记录',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [printTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(printTask),
+          node_run: {
+            node_id: 'microscopy-print',
+            input_data: {
+              task_kind: 'microscopy_print_confirmation',
+              artifact: {
+                id: 'artifact-record-1',
+                name: '260061860-纤维微观形貌.xls',
+                download_url: '/api/execution/v1/artifacts/artifact-record-1/download',
+                preview_url: '/api/execution/v1/artifacts/artifact-record-1/preview',
+                sha256,
+              },
+            },
+          },
+        })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({ ...printTask, status: 'completed', revision: 3 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('打印微观形貌原始记录'));
+    expect(await screen.findByRole('link', { name: /下载工作簿/ }))
+      .toHaveAttribute('href', '/api/execution/v1/artifacts/artifact-record-1/download');
+    expect(screen.getByText(sha256)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /打开并打印/ }));
+    expect(openSpy).toHaveBeenCalledWith(
+      '/api/execution/v1/artifacts/artifact-record-1/preview',
+      '_blank',
+      'noopener,noreferrer',
+    );
+
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+    expect(await screen.findByText('请完成打印并确认文件校验和')).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: /已完成打印/ }));
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toMatchObject({
+      printed: true,
+      artifact_sha256: sha256,
+    });
+    openSpy.mockRestore();
+  });
 });

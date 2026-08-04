@@ -351,7 +351,7 @@ def _regenerated_method_definition(
     }
 
 
-def _electron_microscopy_gbt36422_definition() -> dict[str, Any]:
+def _electron_microscopy_gbt36422_image_selection_definition() -> dict[str, Any]:
     slug = "electron-microscopy-gbt36422"
     name = "电镜—纤维微观形貌 GB/T 36422-2018"
     return {
@@ -478,6 +478,229 @@ def _electron_microscopy_gbt36422_definition() -> dict[str, Any]:
             {"id": "e3", "source": "select-images", "target": "end"},
         ],
     }
+
+
+def _electron_microscopy_image_selection_default_checksums() -> set[str]:
+    """Recognize the two system-owned image-only definitions shipped in v1.
+
+    The first deployed definition predated the informational ``truncated``
+    mapping.  Both definitions execute the same four-node image-selection DAG;
+    accepting both keeps existing installations upgradable without relaxing
+    the no-admin-edit guard in ``ensure_default_catalog``.
+    """
+
+    current = _electron_microscopy_gbt36422_image_selection_definition()
+    legacy = deepcopy(current)
+    select_node = next(
+        node for node in legacy["nodes"] if node["id"] == "select-images"
+    )
+    select_node["input_mapping"].pop("truncated", None)
+    return {
+        definition_checksum(current),
+        definition_checksum(legacy),
+    }
+
+
+def _electron_microscopy_gbt36422_definition() -> dict[str, Any]:
+    """Current full workflow; keep the image-only v1 reproducible above."""
+
+    definition = _electron_microscopy_gbt36422_image_selection_definition()
+    start, discover, select_images = deepcopy(definition["nodes"][:3])
+    definition["root_slots"] = [
+        {
+            "name": "source",
+            "root_id": "electron_microscopy_records",
+            "access": "read",
+        },
+        {
+            "name": "staging",
+            "root_id": "execution_staging",
+            "access": "write",
+        },
+    ]
+    definition["credential_slots"] = [
+        {
+            "name": "legacy_account",
+            "system_key": "legacy_inspection",
+            "required": True,
+        }
+    ]
+    definition["nodes"] = [
+        start,
+        discover,
+        select_images,
+        {
+            "id": "prepare-record",
+            "type": "data.microscopy_record_context",
+            "type_version": 1,
+            "name": "准备原始记录字段",
+            "config": {},
+            "input_mapping": {
+                "inspection_number": "$.inputs.inspection_number",
+                "task": "$.nodes.discover.output.task",
+                "selected_image_ids": (
+                    "$.nodes.select-images.output.selected_image_ids"
+                ),
+                "selected_images": (
+                    "$.nodes.select-images.output.selected_images"
+                ),
+            },
+            "ui": {"x": 780, "y": 180},
+        },
+        {
+            "id": "record-input",
+            "type": "human.input",
+            "type_version": 1,
+            "name": "确认原始记录信息",
+            "config": {
+                "title": "确认微观形貌原始记录信息",
+                "description": (
+                    "请选择任务项目、样品名称和样品识别；"
+                    "只有任务单要求判否时才显示判定信息。"
+                ),
+                "form_schema": {
+                    "type": "object",
+                    "properties": {
+                        "selected_project_key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100,
+                        },
+                        "sample_name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 500,
+                        },
+                        "sample_identity": {"type": ["string", "null"]},
+                        "judge_basis": {"type": ["string", "null"]},
+                        "judgement": {"type": ["string", "null"]},
+                    },
+                    "required": ["selected_project_key", "sample_name"],
+                    "additionalProperties": False,
+                },
+            },
+            "input_mapping": {
+                "record_context": "$.nodes.prepare-record.output"
+            },
+            "ui": {"x": 1020, "y": 180},
+        },
+        {
+            "id": "generate-record",
+            "type": "workbook.microscopy_original_record",
+            "type_version": 1,
+            "name": "生成微观形貌原始记录",
+            "config": {"staging_root_id": "execution_staging"},
+            "input_mapping": {
+                "inspection_number": "$.inputs.inspection_number",
+                "selected_image_ids": (
+                    "$.nodes.select-images.output.selected_image_ids"
+                ),
+                "selected_images": (
+                    "$.nodes.select-images.output.selected_images"
+                ),
+                "task": "$.nodes.discover.output.task",
+                "sample_name": "$.nodes.record-input.output.sample_name",
+                "sample_identification": (
+                    "$.nodes.record-input.output.sample_identity"
+                ),
+                "judgement_required": (
+                    "$.nodes.record-input.output.judgement_required"
+                ),
+                "judgement_basis": (
+                    "$.nodes.record-input.output.judge_basis"
+                ),
+                "judgement": "$.nodes.record-input.output.judgement",
+            },
+            "ui": {"x": 1260, "y": 180},
+        },
+        {
+            "id": "print-confirm",
+            "type": "human.confirm",
+            "type_version": 1,
+            "name": "打印原始记录",
+            "config": {
+                "title": "下载并按需打印原始记录",
+                "description": (
+                    "请下载生成的 Excel；如需打印，请使用工作表“微观形貌”"
+                    "的默认打印区域。"
+                ),
+                "form_schema": {
+                    "type": "object",
+                    "properties": {
+                        "printed": {"type": "boolean", "const": True},
+                        "artifact_sha256": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$",
+                        },
+                    },
+                    "required": ["printed", "artifact_sha256"],
+                    "additionalProperties": False,
+                },
+            },
+            "input_mapping": {
+                "task_kind": "microscopy_print_confirmation",
+                "artifact": "$.nodes.generate-record.output.original_record",
+            },
+            "ui": {"x": 1500, "y": 180},
+        },
+        {
+            "id": "upload-record",
+            "type": "external.legacy_special_wool_image_upload",
+            "type_version": 1,
+            "name": "旧系统上传-特种毛-图片",
+            "config": {
+                "credential_slot": "legacy_account",
+                "generation_node_id": "generate-record",
+            },
+            "input_mapping": {
+                "original_record": (
+                    "$.nodes.generate-record.output.original_record"
+                )
+            },
+            "ui": {"x": 1740, "y": 180},
+        },
+        {
+            "id": "review-record",
+            "type": "external.legacy_special_wool_review",
+            "type_version": 1,
+            "name": "旧系统-特纤复核",
+            "config": {
+                "credential_slot": "legacy_account",
+                "upload_node_id": "upload-record",
+            },
+            "input_mapping": {
+                "upload_result": "$.nodes.upload-record.output"
+            },
+            "ui": {"x": 1980, "y": 180},
+        },
+        {
+            "id": "end",
+            "type": "core.end",
+            "type_version": 1,
+            "name": "结束",
+            "config": {},
+            "input_mapping": {
+                "original_record": (
+                    "$.nodes.generate-record.output.original_record"
+                ),
+                "upload": "$.nodes.upload-record.output",
+                "review": "$.nodes.review-record.output",
+            },
+            "ui": {"x": 2220, "y": 180},
+        },
+    ]
+    definition["edges"] = [
+        {"id": "e1", "source": "start", "target": "discover"},
+        {"id": "e2", "source": "discover", "target": "select-images"},
+        {"id": "e3", "source": "select-images", "target": "prepare-record"},
+        {"id": "e4", "source": "prepare-record", "target": "record-input"},
+        {"id": "e5", "source": "record-input", "target": "generate-record"},
+        {"id": "e6", "source": "generate-record", "target": "print-confirm"},
+        {"id": "e7", "source": "print-confirm", "target": "upload-record"},
+        {"id": "e8", "source": "upload-record", "target": "review-record"},
+        {"id": "e9", "source": "review-record", "target": "end"},
+    ]
+    return definition
 
 
 def _controlled_write_test_definition() -> dict[str, Any]:
@@ -761,14 +984,19 @@ def ensure_default_catalog(db: Session) -> None:
     electron_slug, electron_name = ELECTRON_MICROSCOPY_WORKFLOW
     if electron_slug not in workflows_by_slug:
         definition = _electron_microscopy_gbt36422_definition()
-        capabilities = {"read": True, "write": False}
+        capabilities = {
+            "read": True,
+            "write": True,
+            "external_write": True,
+        }
         workflow = ExecutionWorkflow(
             slug=electron_slug,
             category_id=categories_by_key["electron_microscopy"].id,
             name=electron_name,
             description=(
                 "按编号目录与旧系统任务项目识别 GB/T 36422-2018 "
-                "纤维微观形貌流程，并选择 1 至 10 张图片。"
+                "纤维微观形貌流程，选图后生成可核对的原始记录，"
+                "再进入旧系统上传和特纤复核预检。"
             ),
             draft_definition=deepcopy(definition),
             draft_revision=1,
@@ -790,10 +1018,119 @@ def ensure_default_catalog(db: Session) -> None:
                 contract_checksum=workflow_contract_checksum(
                     definition, capabilities
                 ),
-                release_note="电镜微观形貌图片选择首版",
+                release_note="电镜微观形貌原始记录与旧系统预检首版",
             )
         )
         workflows_by_slug[electron_slug] = workflow
+    else:
+        existing_electron = workflows_by_slug[electron_slug]
+        image_selection_checksums = (
+            _electron_microscopy_image_selection_default_checksums()
+        )
+        version_one = next(
+            (
+                version
+                for version in existing_electron.versions
+                if version.version_number == 1
+            ),
+            None,
+        )
+        untouched_image_selection = bool(
+            existing_electron.created_by_id is None
+            and existing_electron.updated_by_id is None
+            and existing_electron.draft_revision == 1
+            and existing_electron.published_version_number == 1
+            and len(existing_electron.versions) == 1
+            and version_one is not None
+            and definition_checksum(existing_electron.draft_definition)
+            in image_selection_checksums
+            and version_one.checksum in image_selection_checksums
+        )
+        if untouched_image_selection:
+            definition = _electron_microscopy_gbt36422_definition()
+            capabilities = {
+                "read": True,
+                "write": True,
+                "external_write": True,
+            }
+            existing_electron.description = (
+                "按编号目录与旧系统任务项目识别 GB/T 36422-2018 "
+                "纤维微观形貌流程，选图后生成可核对的原始记录，"
+                "再进入旧系统上传和特纤复核预检。"
+            )
+            existing_electron.draft_definition = deepcopy(definition)
+            existing_electron.draft_revision = 2
+            existing_electron.published_version_number = 2
+            existing_electron.capabilities = deepcopy(capabilities)
+            existing_electron.required_input_count = 1
+            db.add(
+                ExecutionWorkflowVersion(
+                    workflow_id=existing_electron.id,
+                    version_number=2,
+                    schema_version="1.0",
+                    definition=deepcopy(definition),
+                    checksum=definition_checksum(definition),
+                    capabilities=deepcopy(capabilities),
+                    contract_checksum=workflow_contract_checksum(
+                        definition, capabilities
+                    ),
+                    release_note=(
+                        "增加字段确认、微观形貌原始记录生成、"
+                        "打印确认及旧系统上传/复核预检"
+                    ),
+                )
+            )
+        else:
+            full_definition = _electron_microscopy_gbt36422_definition()
+            full_checksum = definition_checksum(full_definition)
+            version_two = next(
+                (
+                    version
+                    for version in existing_electron.versions
+                    if version.version_number == 2
+                ),
+                None,
+            )
+            legacy_capabilities = {"read": True, "write": True}
+            capability_upgrade_required = bool(
+                existing_electron.created_by_id is None
+                and existing_electron.updated_by_id is None
+                and existing_electron.draft_revision == 2
+                and existing_electron.published_version_number == 2
+                and len(existing_electron.versions) == 2
+                and version_two is not None
+                and definition_checksum(existing_electron.draft_definition)
+                == full_checksum
+                and version_two.checksum == full_checksum
+                and existing_electron.capabilities == legacy_capabilities
+                and version_two.capabilities == legacy_capabilities
+            )
+            if capability_upgrade_required:
+                capabilities = {
+                    "read": True,
+                    "write": True,
+                    "external_write": True,
+                }
+                existing_electron.draft_revision = 3
+                existing_electron.published_version_number = 3
+                existing_electron.capabilities = deepcopy(capabilities)
+                db.add(
+                    ExecutionWorkflowVersion(
+                        workflow_id=existing_electron.id,
+                        version_number=3,
+                        schema_version="1.0",
+                        definition=deepcopy(full_definition),
+                        checksum=full_checksum,
+                        capabilities=deepcopy(capabilities),
+                        contract_checksum=workflow_contract_checksum(
+                            full_definition, capabilities
+                        ),
+                        release_note=(
+                            "补充受控外部操作能力声明；"
+                            "旧系统图片上传与特纤复核仍保持禁写"
+                        ),
+                    )
+                )
 
     legacy_electron = workflows_by_slug.get(LEGACY_ELECTRON_WORKFLOW)
     if legacy_electron is not None:

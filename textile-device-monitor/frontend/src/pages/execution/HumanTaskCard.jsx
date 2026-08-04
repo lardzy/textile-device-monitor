@@ -28,6 +28,9 @@ import ExecutionImageSelector, {
   imageSelectionImageId,
 } from './ExecutionImageSelector';
 import ExecutionResultFiles, { resultFileId } from './ExecutionResultFiles';
+import MicroscopyRecordHumanTask, {
+  microscopyTaskKind,
+} from './MicroscopyRecordHumanTask';
 import SchemaFields from './SchemaFields';
 
 const { Paragraph, Text } = Typography;
@@ -76,6 +79,11 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
     type: 'object',
     properties: {},
   };
+  const taskKind = microscopyTaskKind(task, nodeRun);
+  const hasMicroscopyTask = [
+    'microscopy_record_input',
+    'microscopy_print_confirmation',
+  ].includes(taskKind);
   const formSchema = useMemo(() => {
     const properties = { ...(schema.properties || {}) };
     delete properties.selected_files;
@@ -83,8 +91,17 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
     delete properties.selected_folder_ids;
     delete properties.selected_image_ids;
     delete properties.primary_image_id;
+    if (hasMicroscopyTask) {
+      delete properties.selected_project_key;
+      delete properties.sample_name;
+      delete properties.sample_identity;
+      delete properties.judge_basis;
+      delete properties.judgement;
+      delete properties.artifact_sha256;
+      delete properties.printed;
+    }
     return { ...schema, properties };
-  }, [schema]);
+  }, [hasMicroscopyTask, schema]);
   const candidatePayload = nodeRun?.input_data?.files
     || nodeRun?.input_data?.result_files
     || nodeRun?.input_data?.results
@@ -633,6 +650,14 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
               </Checkbox.Group>
             </Form.Item>
           ))}
+          {hasMicroscopyTask && (
+            <MicroscopyRecordHumanTask
+              taskKind={taskKind}
+              form={form}
+              inputData={candidatePayload}
+              disabled={working}
+            />
+          )}
           <SchemaFields schema={formSchema} />
           <Space wrap>
             <Button loading={working} onClick={() => execute('save')}>保存草稿</Button>

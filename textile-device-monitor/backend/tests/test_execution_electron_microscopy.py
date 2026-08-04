@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
 from app.execution.catalog import (
+    _electron_microscopy_gbt36422_image_selection_definition,
     bind_user_role,
     ensure_default_catalog,
     ensure_default_rbac,
@@ -32,6 +33,9 @@ from app.execution.engine import (
     submit_human_task,
 )
 from app.execution.errors import ExecutionApiError
+from app.execution.microscopy_original_record import (
+    register_microscopy_original_record_executor,
+)
 from app.execution.models import (
     ExecutionFileIndexEntry,
     ExecutionHumanTask,
@@ -39,6 +43,7 @@ from app.execution.models import (
     ExecutionTaskSnapshotCache,
     ExecutionUser,
     ExecutionWorkflow,
+    ExecutionWorkflowVersion,
     utcnow,
 )
 from app.execution.persistence import (
@@ -48,11 +53,17 @@ from app.execution.persistence import (
 )
 from app.execution.regenerated_fiber import catalog_recommendations
 from app.execution.security import hash_password
+from app.execution.validation import (
+    definition_checksum,
+    validate_definition,
+    workflow_contract_checksum,
+)
 
 
 class ElectronMicroscopyWorkflowTests(unittest.TestCase):
     def setUp(self):
         register_persistence_executors()
+        register_microscopy_original_record_executor()
         self.tempdir = tempfile.TemporaryDirectory()
         self.root_path = Path(self.tempdir.name) / "2026-电镜"
         self.root_path.mkdir(parents=True)
@@ -123,6 +134,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             claim_token=token,
             snapshot={
                 "sample_name": "示例样品",
+                "sample_names": ["示例样品"],
                 "check_basis": "---",
                 "projects": [
                     {
@@ -136,6 +148,13 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         )
         self.db.commit()
 
+        cached = cached_task_snapshot(
+            self.db, inspection_number="26A029794"
+        )["snapshot"]
+        self.assertEqual(cached["schema_version"], 2)
+        self.assertEqual(cached["sample_names"], ["示例样品"])
+        self.assertTrue(cached["projects"][0]["project_key"].startswith("task-project:"))
+
     def _execute_one(self):
         node = claim_next_node(self.db, worker_id="electron-worker")
         self.assertIsNotNone(node)
@@ -144,6 +163,149 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         execute_claimed_node(self.db, node_run_id=node.id, lease_token=token)
         self.db.commit()
         return node
+
+    def test_default_catalog_publishes_the_full_microscopy_workflow(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        node_types = {
+            node["type"] for node in workflow.draft_definition["nodes"]
+        }
+        self.assertTrue(
+            {
+                "human.image_selection",
+                "data.microscopy_record_context",
+                "human.input",
+                "workbook.microscopy_original_record",
+                "human.confirm",
+                "external.legacy_special_wool_image_upload",
+                "external.legacy_special_wool_review",
+            }.issubset(node_types)
+        )
+        self.assertEqual(
+            workflow.capabilities,
+            {"read": True, "write": True, "external_write": True},
+        )
+        validation = validate_definition(
+            workflow.draft_definition,
+            for_publish=True,
+        )
+        self.assertTrue(
+            validation.valid,
+            [issue.as_dict() for issue in validation.issues],
+        )
+
+    def test_untouched_image_only_workflow_is_upgraded_to_version_two(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        old_definition = _electron_microscopy_gbt36422_image_selection_definition()
+        select_node = next(
+            node for node in old_definition["nodes"]
+            if node["id"] == "select-images"
+        )
+        select_node["input_mapping"].pop("truncated")
+        old_capabilities = {"read": True, "write": False}
+        version = self.db.query(ExecutionWorkflowVersion).filter_by(
+            workflow_id=workflow.id,
+            version_number=1,
+        ).one()
+        workflow.draft_definition = old_definition
+        workflow.draft_revision = 1
+        workflow.published_version_number = 1
+        workflow.capabilities = old_capabilities
+        workflow.created_by_id = None
+        workflow.updated_by_id = None
+        version.definition = old_definition
+        version.checksum = definition_checksum(old_definition)
+        version.capabilities = old_capabilities
+        version.contract_checksum = workflow_contract_checksum(
+            old_definition,
+            old_capabilities,
+        )
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 2)
+        self.assertEqual(workflow.published_version_number, 2)
+        self.assertEqual(
+            workflow.capabilities,
+            {"read": True, "write": True, "external_write": True},
+        )
+        self.assertEqual(
+            self.db.query(ExecutionWorkflowVersion)
+            .filter_by(workflow_id=workflow.id)
+            .count(),
+            2,
+        )
+
+    def test_admin_edited_image_only_workflow_is_not_overwritten(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        old_definition = _electron_microscopy_gbt36422_image_selection_definition()
+        old_definition["metadata"]["name"] = "管理员保留版本"
+        workflow.draft_definition = old_definition
+        workflow.draft_revision = 2
+        workflow.updated_by_id = self.user.id
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 2)
+        self.assertEqual(
+            workflow.draft_definition["metadata"]["name"],
+            "管理员保留版本",
+        )
+
+    def test_system_version_two_receives_external_preflight_capability(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        definition = workflow.draft_definition
+        legacy_capabilities = {"read": True, "write": True}
+        workflow.draft_revision = 2
+        workflow.published_version_number = 2
+        workflow.capabilities = legacy_capabilities
+        workflow.created_by_id = None
+        workflow.updated_by_id = None
+        self.db.add(
+            ExecutionWorkflowVersion(
+                workflow_id=workflow.id,
+                version_number=2,
+                schema_version="1.0",
+                definition=definition,
+                checksum=definition_checksum(definition),
+                capabilities=legacy_capabilities,
+                contract_checksum=workflow_contract_checksum(
+                    definition,
+                    legacy_capabilities,
+                ),
+                release_note="历史完整流程版本",
+            )
+        )
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 3)
+        self.assertEqual(workflow.published_version_number, 3)
+        self.assertEqual(
+            workflow.capabilities,
+            {"read": True, "write": True, "external_write": True},
+        )
+        version_three = self.db.query(ExecutionWorkflowVersion).filter_by(
+            workflow_id=workflow.id,
+            version_number=3,
+        ).one()
+        self.assertEqual(version_three.capabilities, workflow.capabilities)
 
     def test_recommendation_scores_folder_and_same_project_task_facts(self):
         self._image("26A029794-lisy/纵面/IMAGE01.BMP")
@@ -280,7 +442,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             preview_indexed_electron_image(entry.id, None, self.db)
         self.assertEqual(raised.exception.code, "indexed_image_stale")
 
-    def test_default_workflow_accepts_controlled_project_alias_and_validates_images(self):
+    def test_default_workflow_accepts_controlled_project_alias_and_continues_to_record_input(self):
         first = self._image("26A029794-lisy/纵面/one.bmp")
         second = self._image("26A029794-补拍/横截面/two.PNG")
         self._complete_snapshot(project_name="膜平面形貌")
@@ -345,11 +507,25 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             actor=self.user,
         )
         self.db.commit()
-        self._execute_one()  # end
+        self._execute_one()  # prepare record context
+        self._execute_one()  # create record-input human task
         self.db.refresh(run)
-        self.assertEqual(run.status, "completed")
-        self.assertEqual(run.output_data["selected_image_ids"], [first.id])
-        self.assertEqual(run.output_data["primary_image_id"], first.id)
+        self.assertEqual(run.status, "waiting_human")
+        record_task = (
+            self.db.query(ExecutionHumanTask)
+            .filter_by(run_id=run.id, status="open")
+            .one()
+        )
+        self.assertEqual(
+            record_task.node_run.input_data["record_context"]["task_kind"],
+            "microscopy_record_input",
+        )
+        self.assertEqual(
+            record_task.node_run.input_data["record_context"][
+                "selected_image_ids"
+            ],
+            [first.id],
+        )
 
     def test_numbered_folder_images_are_prioritized_before_result_limit(self):
         target = self._image("26A029794-result/deep/target.bmp")

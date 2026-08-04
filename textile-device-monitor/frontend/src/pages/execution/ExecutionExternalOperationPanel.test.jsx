@@ -98,6 +98,55 @@ const installHandlers = (onReconcile) => {
 };
 
 describe('ExecutionExternalOperationPanel reconciliation', () => {
+  it('特种毛图片上传在实机语义未验证时只展示预检', async () => {
+    installHandlers();
+    server.use(
+      http.get(
+        '/api/execution/v1/runs/run-1/external-operations',
+        () => HttpResponse.json({
+          items: [{
+            ...operation,
+            status: 'prepared',
+            error: null,
+            request_summary: {
+              ...operation.request_summary,
+              operation_type: 'legacy_special_wool_image_upload',
+              safety: { execution_available: false },
+              execution_capability: {
+                available: false,
+                message: '图片子记录语义尚未完成实机证明',
+              },
+              business_fields: {
+                fiber_category: '图片',
+                inspection_method: '',
+                inspection_item: '图片',
+                inspection_copies: 1,
+              },
+            },
+          }],
+        }),
+      ),
+    );
+
+    render(
+      <ExecutionExternalOperationPanel
+        runId="run-1"
+        canApprove
+      />,
+    );
+
+    expect(
+      await screen.findByText('旧系统上传-特种毛-图片'),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('仅预检')).not.toHaveLength(0);
+    expect(
+      screen.queryByRole('button', { name: '核对并批准预检单' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText('图片子记录语义尚未完成实机证明'),
+    ).toBeInTheDocument();
+  });
+
   it('普通运行用户只能看到锁定告警，不能录入对账结论', async () => {
     installHandlers();
 

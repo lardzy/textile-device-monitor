@@ -28,6 +28,9 @@ from app.execution.outbox import (
     fail_outbox_record,
 )
 from app.execution.excel_runtime import register_excel_executors
+from app.execution.microscopy_original_record import (
+    register_microscopy_original_record_executor,
+)
 from app.execution.worker_state import (
     default_worker_id,
     record_worker_heartbeat,
@@ -139,6 +142,7 @@ class ExecutionWorker:
         register_persistence_executors()
         register_mutation_executors()
         register_excel_executors()
+        register_microscopy_original_record_executor()
         self.worker_id = worker_id or default_worker_id()
         self._stopping = False
         self._next_outbox_cleanup_at = 0.0
@@ -252,6 +256,7 @@ def main() -> None:
     register_persistence_executors()
     register_mutation_executors()
     register_excel_executors()
+    register_microscopy_original_record_executor()
     ExecutionWorker().run_forever()
 
 

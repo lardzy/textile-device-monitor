@@ -426,6 +426,133 @@ def _register_builtins() -> None:
         NodeType("parallel.join", 1, "并行汇合", "控制", "等待输入分支"),
         NodeType("result.aggregate", 1, "结果汇总", "基础", "汇总上游输出"),
         NodeType(
+            "data.microscopy_record_context",
+            1,
+            "准备微观形貌原始记录字段",
+            "数据",
+            "从旧系统任务快照和已选图片生成受控人工确认上下文",
+            input_schema=_object_schema(
+                {
+                    "inspection_number": {"type": "string", "minLength": 1},
+                    "task": {"type": "object"},
+                    "selected_image_ids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 10,
+                    },
+                    "selected_images": {"type": "array"},
+                },
+                required=("inspection_number", "task", "selected_image_ids"),
+            ),
+            output_schema=_object_schema(
+                {
+                    "task_kind": {
+                        "type": "string",
+                        "const": "microscopy_record_input",
+                    },
+                    "inspection_number": {"type": "string"},
+                    "selected_image_ids": {"type": "array"},
+                    "selected_images": {"type": "array"},
+                    "projects": {"type": "array", "minItems": 1},
+                    "sample_name_analysis": {"type": "object"},
+                    "sample_identification_options": {"type": "array"},
+                    "check_basis_options": {"type": "array"},
+                    "judgement_required": {"type": "boolean"},
+                },
+                required=(
+                    "task_kind",
+                    "inspection_number",
+                    "selected_image_ids",
+                    "projects",
+                    "sample_name_analysis",
+                    "judgement_required",
+                ),
+            ),
+        ),
+        NodeType(
+            "workbook.microscopy_original_record",
+            1,
+            "生成微观形貌原始记录",
+            "Excel",
+            "把任务字段和 1 至 10 张电镜图片写入版本化 .xls 模板",
+            required_config=("staging_root_id",),
+            config_schema=_object_schema(
+                {
+                    "staging_root_id": {
+                        "type": "string",
+                        "const": "execution_staging",
+                    }
+                },
+                required=("staging_root_id",),
+            ),
+            input_schema=_object_schema(
+                {
+                    "inspection_number": {"type": "string", "minLength": 1},
+                    "selected_image_ids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 10,
+                    },
+                    "selected_images": {"type": "array"},
+                    "task": {"type": "object"},
+                    "sample_name": {"type": "string", "minLength": 1},
+                    "sample_identification": {"type": ["string", "null"]},
+                    "judgement_required": {"type": ["boolean", "null"]},
+                    "judgement_basis": {"type": ["string", "null"]},
+                    "judgement": {"type": ["string", "null"]},
+                },
+                required=(
+                    "inspection_number",
+                    "selected_image_ids",
+                    "selected_images",
+                    "task",
+                    "sample_name",
+                ),
+            ),
+            output_schema=_object_schema(
+                {
+                    "artifact_id": {"type": "string"},
+                    "original_record": _object_schema(
+                        {
+                            "artifact_id": {"type": "string"},
+                            "root_id": {
+                                "type": "string",
+                                "const": "execution_staging",
+                            },
+                            "relative_path": {"type": "string"},
+                            "filename": {
+                                "type": "string",
+                                "pattern": r"\.xls$",
+                            },
+                            "media_type": {"type": "string"},
+                            "size_bytes": {"type": "integer"},
+                            "content_sha256": {
+                                "type": "string",
+                                "pattern": r"^[0-9a-f]{64}$",
+                            },
+                            "role": {"type": "string", "const": "working"},
+                            "download_url": {"type": "string"},
+                        },
+                        required=(
+                            "artifact_id",
+                            "root_id",
+                            "relative_path",
+                            "filename",
+                            "content_sha256",
+                        ),
+                    ),
+                    "verification": {"type": "object"},
+                    "print": {"type": "object"},
+                },
+                required=(
+                    "artifact_id",
+                    "original_record",
+                    "verification",
+                    "print",
+                ),
+            ),
+        ),
+        NodeType(
             "workbook.copy",
             1,
             "创建工作副本",
@@ -601,6 +728,151 @@ def _register_builtins() -> None:
                         "type": "boolean",
                         "const": False,
                     },
+                },
+                required=(
+                    "operation_id",
+                    "operation_key",
+                    "payload_checksum",
+                    "status",
+                    "requires_final_approval",
+                    "remote_write_performed",
+                ),
+            ),
+        ),
+        NodeType(
+            "external.legacy_special_wool_image_upload",
+            1,
+            "旧系统上传-特种毛-图片",
+            "连接器",
+            "生成图片类特种毛检验上传预检单；实机子记录语义证明完成前不可执行",
+            execution_kind="external_side_effect",
+            required_config=("credential_slot", "generation_node_id"),
+            config_schema=_object_schema(
+                {
+                    "credential_slot": {
+                        "type": "string",
+                        "pattern": r"^[A-Za-z][A-Za-z0-9_.-]{0,99}$",
+                    },
+                    "generation_node_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                    },
+                },
+                required=("credential_slot", "generation_node_id"),
+            ),
+            input_schema=_object_schema(
+                {
+                    "original_record": _object_schema(
+                        {
+                            "artifact_id": {
+                                "type": "string",
+                                "minLength": 1,
+                            },
+                            "root_id": {
+                                "type": "string",
+                                "const": "execution_staging",
+                            },
+                            "relative_path": {
+                                "type": "string",
+                                "minLength": 1,
+                            },
+                            "filename": {
+                                "type": "string",
+                                "pattern": r"\.xls$",
+                            },
+                            "content_sha256": {
+                                "type": "string",
+                                "pattern": r"^[0-9a-f]{64}$",
+                            },
+                        },
+                        required=(
+                            "artifact_id",
+                            "root_id",
+                            "relative_path",
+                            "filename",
+                            "content_sha256",
+                        ),
+                    )
+                },
+                required=("original_record",),
+            ),
+            output_schema=_object_schema(
+                {
+                    "operation_id": {"type": "string"},
+                    "operation_key": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "payload_checksum": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "status": {"type": "string"},
+                    "requires_final_approval": {
+                        "type": "boolean",
+                        "const": True,
+                    },
+                    "remote_write_performed": {
+                        "type": "boolean",
+                    },
+                    "target_sample_number": {"type": "string"},
+                    "receipt": {"type": "object"},
+                },
+                required=(
+                    "operation_id",
+                    "operation_key",
+                    "payload_checksum",
+                    "status",
+                    "requires_final_approval",
+                    "remote_write_performed",
+                ),
+            ),
+        ),
+        NodeType(
+            "external.legacy_special_wool_review",
+            1,
+            "旧系统-特纤复核",
+            "连接器",
+            "生成图片类特种毛检验复核预检单；主记录及子记录联动证明完成前不可执行",
+            execution_kind="external_side_effect",
+            required_config=("credential_slot", "upload_node_id"),
+            config_schema=_object_schema(
+                {
+                    "credential_slot": {
+                        "type": "string",
+                        "pattern": r"^[A-Za-z][A-Za-z0-9_.-]{0,99}$",
+                    },
+                    "upload_node_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                    },
+                },
+                required=("credential_slot", "upload_node_id"),
+            ),
+            input_schema=_object_schema(
+                {"upload_result": {"type": "object"}},
+                required=("upload_result",),
+            ),
+            output_schema=_object_schema(
+                {
+                    "operation_id": {"type": "string"},
+                    "operation_key": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "payload_checksum": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "status": {"type": "string"},
+                    "requires_final_approval": {
+                        "type": "boolean",
+                        "const": True,
+                    },
+                    "remote_write_performed": {"type": "boolean"},
+                    "receipt": {"type": "object"},
                 },
                 required=(
                     "operation_id",

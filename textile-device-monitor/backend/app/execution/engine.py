@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -14,7 +15,11 @@ from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
     LEGACY_REGENERATED_COUNT_NODE,
+    LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+    LEGACY_SPECIAL_WOOL_REVIEW_NODE,
     prepare_legacy_regenerated_count_operation,
+    prepare_legacy_special_wool_image_operation,
+    prepare_legacy_special_wool_review_operation,
     settle_external_attempt_failure,
 )
 from app.execution.models import (
@@ -569,6 +574,177 @@ def _normalize_human_submission(
             "selected_images": normalized_images,
             "primary_image_id": primary_image_id,
             "primary_image": primary_image,
+        }
+    task_kind = str(
+        node_run.input_data.get("task_kind")
+        or (node_run.input_data.get("record_context") or {}).get("task_kind")
+        or ""
+    )
+    if task_kind == "microscopy_record_input":
+        context = node_run.input_data.get("record_context") or node_run.input_data
+        projects = context.get("projects") or []
+        if not isinstance(projects, list) or not projects:
+            raise ExecutionApiError(
+                422,
+                "microscopy_project_missing",
+                "未读取到可用于生成微观形貌原始记录的检测项目",
+            )
+        selected_key = str(data.get("selected_project_key") or "").strip()
+        selected_project = next(
+            (
+                value
+                for index, value in enumerate(projects)
+                if isinstance(value, dict)
+                and str(
+                    value.get("project_key")
+                    or value.get("key")
+                    or value.get("task_check_item_id")
+                    or value.get("id")
+                    or f"project-{index + 1}"
+                )
+                == selected_key
+            ),
+            None,
+        )
+        if selected_project is None:
+            raise ExecutionApiError(
+                409,
+                "microscopy_project_not_offered",
+                "所选检测项目不在当前任务快照中，请刷新后重试",
+            )
+
+        sample_name = " ".join(str(data.get("sample_name") or "").strip().split())
+        if not sample_name:
+            raise ExecutionApiError(
+                422, "microscopy_sample_name_required", "请选择或填写样品名称"
+            )
+        if len(sample_name) > 500:
+            raise ExecutionApiError(
+                422, "microscopy_sample_name_too_long", "样品名称不能超过 500 个字符"
+            )
+
+        def compact_options(value: Any) -> list[str]:
+            values = value if isinstance(value, list) else [value]
+            result: list[str] = []
+            seen: set[str] = set()
+            for item in values:
+                parts = (
+                    re.split(r"[，,、]", item)
+                    if isinstance(item, str)
+                    else [item]
+                )
+                for part in parts:
+                    text = " ".join(str(part or "").strip().split())
+                    if text and text.casefold() not in seen:
+                        result.append(text)
+                        seen.add(text.casefold())
+            return result
+
+        identities = compact_options(
+            selected_project.get("sample_identify")
+            or selected_project.get("sample_identity")
+            or selected_project.get("sample_identification")
+            or context.get("sample_identify")
+            or context.get("sample_identity")
+        )
+        submitted_identity = " ".join(
+            str(data.get("sample_identity") or "").strip().split()
+        )
+        if len(identities) == 1:
+            sample_identity = identities[0]
+        elif identities:
+            if submitted_identity not in identities:
+                raise ExecutionApiError(
+                    422,
+                    "microscopy_sample_identity_invalid",
+                    "请选择任务单中提供的样品识别",
+                )
+            sample_identity = submitted_identity
+        else:
+            sample_identity = None
+
+        raw_judgement_flag = selected_project.get(
+            "give_judgement", context.get("give_judgement")
+        )
+        judgement_required = not (
+            raw_judgement_flag is None
+            or raw_judgement_flag is False
+            or raw_judgement_flag == 0
+            or str(raw_judgement_flag).strip().casefold()
+            in {"", "0", "false", "no", "否", "否定"}
+        )
+        basis_options = compact_options(
+            selected_project.get("check_basis_options")
+            or selected_project.get("judge_basis_options")
+            or context.get("check_basis_options")
+        )
+        judgement_options = compact_options(
+            selected_project.get("judgement_options")
+            or context.get("judgement_options")
+            or ["符合", "不符合"]
+        )
+        if judgement_required:
+            submitted_basis = " ".join(
+                str(data.get("judge_basis") or "").strip().split()
+            )
+            if len(basis_options) == 1:
+                judge_basis = basis_options[0]
+            elif basis_options:
+                if submitted_basis not in basis_options:
+                    raise ExecutionApiError(
+                        422,
+                        "microscopy_judge_basis_invalid",
+                        "请选择任务单中提供的判定依据",
+                    )
+                judge_basis = submitted_basis
+            else:
+                judge_basis = submitted_basis or None
+            judgement = " ".join(
+                str(data.get("judgement") or "").strip().split()
+            )
+            if not judgement or (
+                judgement_options and judgement not in judgement_options
+            ):
+                raise ExecutionApiError(
+                    422,
+                    "microscopy_judgement_invalid",
+                    "请选择本次判定结果",
+                )
+        else:
+            judge_basis = None
+            judgement = None
+
+        return {
+            "selected_project_key": selected_key,
+            "selected_project": selected_project,
+            "sample_name": sample_name,
+            "sample_identity": sample_identity,
+            "judgement_required": judgement_required,
+            "judge_basis": judge_basis,
+            "judgement": judgement,
+        }
+    if task_kind == "microscopy_print_confirmation":
+        artifact = node_run.input_data.get("artifact") or {}
+        expected_sha = str(
+            artifact.get("sha256") or artifact.get("content_sha256") or ""
+        ).strip().casefold()
+        submitted_sha = str(data.get("artifact_sha256") or "").strip().casefold()
+        if data.get("printed") is not True:
+            raise ExecutionApiError(
+                422,
+                "microscopy_print_confirmation_required",
+                "请确认是否已按需要完成打印",
+            )
+        if not expected_sha or submitted_sha != expected_sha:
+            raise ExecutionApiError(
+                409,
+                "microscopy_print_artifact_changed",
+                "待打印原始记录已变化，请重新打开并核对",
+            )
+        return {
+            "printed": True,
+            "artifact_sha256": expected_sha,
+            "artifact": artifact,
         }
     if node_run.node_type != "human.file_selection":
         _assert_declared_root_refs(run, data)
@@ -2324,7 +2500,22 @@ def _prepare_external_operation_wait(
         )
     context.run = run
     context.node_run = node_run
-    operation, reused = prepare_legacy_regenerated_count_operation(
+    preparers = {
+        LEGACY_REGENERATED_COUNT_NODE: (
+            prepare_legacy_regenerated_count_operation
+        ),
+        LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE: (
+            prepare_legacy_special_wool_image_operation
+        ),
+        LEGACY_SPECIAL_WOOL_REVIEW_NODE: (
+            prepare_legacy_special_wool_review_operation
+        ),
+    }
+    try:
+        preparer = preparers[node_run.node_type]
+    except KeyError as exc:
+        raise ValueError("unsupported_external_node") from exc
+    operation, reused = preparer(
         db,
         run=run,
         node_run=node_run,
@@ -2336,6 +2527,15 @@ def _prepare_external_operation_wait(
         "operation_key": operation.operation_key,
         "payload_checksum": operation.payload_checksum,
         "status": operation.status,
+        "target_sample_number": (
+            (operation.request_summary or {}).get("target_sample_number")
+        ),
+        "execution_capability": dict(
+            (operation.request_summary or {}).get(
+                "execution_capability"
+            )
+            or {"available": True}
+        ),
         "requires_final_approval": True,
         "remote_write_performed": False,
     }
@@ -2993,7 +3193,11 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
         if node_run.node_type in HUMAN_NODE_TYPES:
             _create_human_task(db, context)
             return
-        if node_run.node_type == LEGACY_REGENERATED_COUNT_NODE:
+        if node_run.node_type in {
+            LEGACY_REGENERATED_COUNT_NODE,
+            LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+            LEGACY_SPECIAL_WOOL_REVIEW_NODE,
+        }:
             _prepare_external_operation_wait(db, context)
             return
         executor = node_registry.executor(

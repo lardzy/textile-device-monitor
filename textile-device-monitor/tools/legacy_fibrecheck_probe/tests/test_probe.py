@@ -1186,7 +1186,7 @@ class ProbeTests(unittest.TestCase):
         )
         self.assertIn("final_entry_view", result)
 
-    def test_task_snapshot_mode_only_executes_two_queries_and_rolls_back(self) -> None:
+    def test_task_snapshot_mode_only_executes_whitelisted_queries_and_rolls_back(self) -> None:
         connection = FakeConnection()
         result = probe.ReadOnlyProbeRunner(connection).run(
             "260187115",

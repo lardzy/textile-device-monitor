@@ -76,7 +76,8 @@ py -3 -m venv .venv
 
 凭据始终只从配置文件中读取，不通过命令行传递，也不会写入输出 JSON。
 
-执行系统的任务推荐缓存只需要 `Task` 和 `Task_CheckItem`。其独立 Windows
+执行系统的任务推荐缓存只需要 `Task`、`Task_Sample` 和
+`Task_CheckItem`。其独立 Windows
 Bridge 会显式使用下面的轻量模式；默认探针行为和完整查询范围不变：
 
 ```powershell

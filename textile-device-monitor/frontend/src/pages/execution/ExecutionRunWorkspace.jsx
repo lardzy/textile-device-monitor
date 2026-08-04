@@ -374,8 +374,8 @@ export default function ExecutionRunWorkspace() {
   const resultFiles = extractExecutionResultFiles(snapshot.outputs);
   const primaryResultFileId = extractPrimaryFileId(snapshot.outputs);
   const hasExternalOperations = (snapshot.definition.nodes || []).some(node => (
-    (node.data?.nodeType || node.node_type || node.type)
-      === 'external.legacy_regenerated_fiber_count_upload'
+    String(node.data?.nodeType || node.node_type || node.type || '')
+      .startsWith('external.legacy_')
   ));
 
   const actions = (

@@ -219,28 +219,70 @@ def _normalize_snapshot(
             422, "task_snapshot_invalid", "任务快照缺少检测项目列表"
         )
     normalized_projects: list[dict[str, Any]] = []
-    for value in projects:
+    for index, value in enumerate(projects):
         if not isinstance(value, dict):
             raise ExecutionApiError(
                 422, "task_snapshot_invalid", "任务快照中的检测项目格式无效"
             )
+        check_item_no = value.get("check_item_no")
+        check_item_name = str(value.get("check_item_name") or "").strip()
+        check_method = str(
+            value.get("check_method") or value.get("test_method") or ""
+        ).strip()
+        project_key = str(value.get("project_key") or "").strip()
+        if not project_key:
+            identity = "\0".join(
+                str(item or "").strip()
+                for item in (
+                    check_item_no,
+                    check_item_name,
+                    check_method,
+                    value.get("check_count"),
+                    index,
+                )
+            )
+            project_key = (
+                "task-project:"
+                + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+            )
         normalized_projects.append(
             {
-                "check_item_no": value.get("check_item_no"),
-                "check_item_name": str(value.get("check_item_name") or "").strip(),
-                "check_method": str(
-                    value.get("check_method") or value.get("test_method") or ""
-                ).strip(),
+                "project_key": project_key[:100],
+                "check_item_no": check_item_no,
+                "check_item_name": check_item_name,
+                "check_method": check_method,
                 "check_count": value.get("check_count"),
                 "sample_identify": value.get("sample_identify"),
                 "remark": value.get("remark"),
                 "give_judgement": value.get("give_judgement"),
             }
         )
+    raw_names = snapshot.get("sample_names")
+    if not isinstance(raw_names, list):
+        raw_names = [snapshot.get("sample_name")]
+    sample_names: list[str] = []
+    seen_names: set[str] = set()
+    for value in raw_names:
+        name = " ".join(str(value or "").strip().split())
+        if name and name.casefold() not in seen_names:
+            sample_names.append(name)
+            seen_names.add(name.casefold())
+    explicit_sample_name = " ".join(
+        str(snapshot.get("sample_name") or "").strip().split()
+    )
+    if explicit_sample_name and explicit_sample_name.casefold() not in seen_names:
+        sample_names.insert(0, explicit_sample_name)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "inspection_number": inspection_number,
-        "sample_name": snapshot.get("sample_name"),
+        "sample_name": (
+            explicit_sample_name
+            if explicit_sample_name
+            else sample_names[0]
+            if len(sample_names) == 1
+            else None
+        ),
+        "sample_names": sample_names,
         "check_basis": snapshot.get("check_basis"),
         "projects": normalized_projects,
     }

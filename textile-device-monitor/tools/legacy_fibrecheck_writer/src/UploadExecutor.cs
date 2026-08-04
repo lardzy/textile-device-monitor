@@ -18,6 +18,9 @@ namespace LegacyFibreCheckWriter
     /// </summary>
     internal static class UploadExecutor
     {
+        private const string RegeneratedCountOperation = "legacy_regenerated_fiber_count_upload";
+        private const string SpecialWoolImageOperation = "legacy_special_wool_image_upload";
+        private const string SpecialWoolReviewOperation = "legacy_special_wool_review";
         public const int ExitReconciliationRequired = 30;
         public const int ExitPackageError = 21;
         public const int ExitSourceMismatch = 22;
@@ -85,6 +88,32 @@ namespace LegacyFibreCheckWriter
             if (summary == null)
             {
                 result.Receipt["error"] = "package_missing_request_summary";
+                return Finish(result, ExitPackageError, null, emit);
+            }
+            string operationType = GetStr(summary, "operation_type");
+            if (string.IsNullOrWhiteSpace(operationType))
+            {
+                // 兼容早期已批准的根数法任务包；新操作必须显式声明类型。
+                operationType = RegeneratedCountOperation;
+            }
+            if (!string.Equals(operationType, RegeneratedCountOperation, StringComparison.Ordinal))
+            {
+                result.Receipt["error"] = "writer_capability_unavailable";
+                result.Receipt["operation_type"] = operationType;
+                result.Receipt["remote_write_performed"] = false;
+                if (string.Equals(operationType, SpecialWoolImageOperation, StringComparison.Ordinal))
+                {
+                    result.Receipt["missing_proof"] = "OriginalDataPictureFile_CheckItemID_and_child_readback";
+                }
+                else if (string.Equals(operationType, SpecialWoolReviewOperation, StringComparison.Ordinal))
+                {
+                    result.Receipt["missing_proof"] = "review_main_and_children_atomic_readback";
+                }
+                else
+                {
+                    result.Receipt["missing_proof"] = "unknown_operation_profile";
+                }
+                // 严禁让新节点落入根数法硬编码保存路径。
                 return Finish(result, ExitPackageError, null, emit);
             }
             string target = GetStr(summary, "target_sample_number");

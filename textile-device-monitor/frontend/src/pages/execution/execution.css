@@ -676,6 +676,127 @@
   border-radius: 8px;
 }
 
+.execution-microscopy-record,
+.execution-microscopy-print {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.execution-microscopy-record__summary {
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, auto);
+  gap: 12px;
+  background: linear-gradient(135deg, #f5f8ff 0%, #eef4ff 100%);
+  border: 1px solid #cdd9f3;
+  border-radius: 10px;
+}
+
+.execution-microscopy-record__summary > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.execution-microscopy-record__summary strong {
+  overflow-wrap: anywhere;
+  color: #1f3f91;
+  font-size: 17px;
+}
+
+.execution-microscopy-record__section {
+  padding: 13px;
+  background: #fff;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+}
+
+.execution-microscopy-record__section.is-judgement {
+  border-color: #ead59b;
+  background: #fffdf7;
+}
+
+.execution-microscopy-record__heading {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.execution-microscopy-record__heading > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.execution-microscopy-record__source-name {
+  margin: 0 0 10px !important;
+  padding: 8px 10px;
+  color: #36445d;
+  background: #f6f8fb;
+  border: 1px solid #e1e6ee;
+  border-radius: 7px;
+  overflow-wrap: anywhere;
+}
+
+.execution-microscopy-record__suggestions {
+  margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.execution-microscopy-record__automatic {
+  margin-inline-start: 8px;
+}
+
+.execution-microscopy-record .ant-form-item:last-child,
+.execution-microscopy-print .ant-form-item:last-child {
+  margin-bottom: 0;
+}
+
+.execution-microscopy-print__file {
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: #f5fbf7;
+  border: 1px solid #c9e4d1;
+  border-radius: 10px;
+}
+
+.execution-microscopy-print__file > .anticon {
+  flex: 0 0 auto;
+  color: #21875a;
+  font-size: 26px;
+}
+
+.execution-microscopy-print__file > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.execution-microscopy-print__file strong {
+  overflow-wrap: anywhere;
+}
+
+.execution-microscopy-print__hint {
+  margin: -5px 0 0 !important;
+}
+
+@media (max-width: 720px) {
+  .execution-microscopy-record__summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .execution-candidate-list {
   width: 100%;
   display: flex;

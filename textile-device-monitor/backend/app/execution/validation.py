@@ -37,6 +37,7 @@ NODE_ROOT_ACCESS_REQUIREMENTS = {
     "file.regenerated_fiber_area_method": {"root_id": {"read"}},
     "electron.group": {"root_id": {"read"}},
     "file.electron_microscopy_gbt36422": {"root_id": {"read"}},
+    "workbook.microscopy_original_record": {"staging_root_id": {"write"}},
     "workbook.copy": {"staging_root_id": {"write"}},
     "artifact.publish": {"publish_root_id": {"publish"}},
 }
@@ -1101,6 +1102,99 @@ def validate_definition(
                     "legacy_result_node_invalid",
                     "旧系统根数法上传必须来自再生纤根数法结果读取节点",
                     f"$.nodes[{selection_id}].input_mapping.files",
+                )
+            )
+
+    special_wool_image_nodes = [
+        (node_id, node)
+        for node_id, node in node_by_id.items()
+        if node.get("type")
+        == "external.legacy_special_wool_image_upload"
+    ]
+    for external_id, external_node in special_wool_image_nodes:
+        config = external_node.get("config") or {}
+        credential_slot = config.get("credential_slot")
+        if (
+            not isinstance(credential_slot, str)
+            or credential_system_by_name.get(credential_slot)
+            != "legacy_inspection"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_credential_slot_invalid",
+                    "特种毛图片上传节点必须引用 legacy_inspection 凭据槽位",
+                    f"$.nodes[{external_id}].config.credential_slot",
+                )
+            )
+        generation_id = config.get("generation_node_id")
+        generation_node = node_by_id.get(generation_id)
+        if (
+            generation_node is None
+            or generation_node.get("type")
+            != "workbook.microscopy_original_record"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_special_wool_generation_node_invalid",
+                    "特种毛图片上传必须引用微观形貌原始记录生成节点",
+                    f"$.nodes[{external_id}].config.generation_node_id",
+                )
+            )
+            continue
+        mapping = external_node.get("input_mapping") or {}
+        expected = f"$.nodes.{generation_id}.output.original_record"
+        if mapping.get("original_record") != expected:
+            issues.append(
+                ValidationIssue(
+                    "legacy_special_wool_artifact_mapping_invalid",
+                    "特种毛图片上传只能使用生成节点签发的原始记录制品",
+                    f"$.nodes[{external_id}].input_mapping.original_record",
+                )
+            )
+
+    special_wool_review_nodes = [
+        (node_id, node)
+        for node_id, node in node_by_id.items()
+        if node.get("type") == "external.legacy_special_wool_review"
+    ]
+    for review_id, review_node in special_wool_review_nodes:
+        config = review_node.get("config") or {}
+        credential_slot = config.get("credential_slot")
+        if (
+            not isinstance(credential_slot, str)
+            or credential_system_by_name.get(credential_slot)
+            != "legacy_inspection"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_credential_slot_invalid",
+                    "特纤复核节点必须引用 legacy_inspection 凭据槽位",
+                    f"$.nodes[{review_id}].config.credential_slot",
+                )
+            )
+        upload_id = config.get("upload_node_id")
+        upload_node = node_by_id.get(upload_id)
+        if (
+            upload_node is None
+            or upload_node.get("type")
+            != "external.legacy_special_wool_image_upload"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_special_wool_upload_node_invalid",
+                    "特纤复核必须引用同一流程的特种毛图片上传节点",
+                    f"$.nodes[{review_id}].config.upload_node_id",
+                )
+            )
+            continue
+        mapping = review_node.get("input_mapping") or {}
+        expected = f"$.nodes.{upload_id}.output"
+        if mapping.get("upload_result") != expected:
+            issues.append(
+                ValidationIssue(
+                    "legacy_special_wool_review_mapping_invalid",
+                    "特纤复核只能使用所引用图片上传节点的完整回执",
+                    f"$.nodes[{review_id}].input_mapping.upload_result",
                 )
             )
 

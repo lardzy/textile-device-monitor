@@ -16,7 +16,7 @@ import bridge  # noqa: E402
 INSPECTION_NUMBER = "26A029794"
 
 
-def probe_document(*, tasks=None, items=None):
+def probe_document(*, tasks=None, samples=None, items=None):
     task_rows = (
         [
             {
@@ -45,6 +45,11 @@ def probe_document(*, tasks=None, items=None):
         if items is None
         else items
     )
+    sample_rows = (
+        [{"TaskID": "task-1", "SampleName": "Surgicel-Fibrillar"}]
+        if samples is None
+        else samples
+    )
     return {
         "schema_version": 1,
         "mode": "probe",
@@ -53,6 +58,11 @@ def probe_document(*, tasks=None, items=None):
         "read_only_transaction_started": True,
         "results": {
             "tasks": {"status": "ok", "row_count": len(task_rows), "rows": task_rows},
+            "task_samples": {
+                "status": "ok",
+                "row_count": len(sample_rows),
+                "rows": sample_rows,
+            },
             "task_check_items": {
                 "status": "ok",
                 "row_count": len(item_rows),
@@ -104,10 +114,13 @@ class SnapshotMappingTests(unittest.TestCase):
         self.assertEqual(
             snapshot,
             {
-                "sample_name": None,
+                "schema_version": 2,
+                "sample_name": "Surgicel-Fibrillar",
+                "sample_names": ["Surgicel-Fibrillar"],
                 "check_basis": "---",
                 "projects": [
                     {
+                        "project_key": snapshot["projects"][0]["project_key"],
                         "check_item_no": "5103.5",
                         "check_item_name": "纤维微观形貌",
                         "check_method": "GB/T 36422-2018",
@@ -122,13 +135,34 @@ class SnapshotMappingTests(unittest.TestCase):
 
     def test_missing_task_is_a_valid_empty_snapshot(self):
         snapshot = bridge.build_snapshot(
-            probe_document(tasks=[], items=[]),
+            probe_document(tasks=[], samples=[], items=[]),
             INSPECTION_NUMBER,
         )
         self.assertEqual(
             snapshot,
-            {"sample_name": None, "check_basis": None, "projects": []},
+            {
+                "schema_version": 2,
+                "sample_name": None,
+                "sample_names": [],
+                "check_basis": None,
+                "projects": [],
+            },
         )
+
+    def test_multiple_sample_names_remain_explicit_options(self):
+        snapshot = bridge.build_snapshot(
+            probe_document(
+                samples=[
+                    {"TaskID": "task-1", "SampleName": "样品 A"},
+                    {"TaskID": "task-1", "SampleName": "样品 B"},
+                    {"TaskID": "task-1", "SampleName": " 样品 A "},
+                    {"TaskID": "another-task", "SampleName": "不应进入快照"},
+                ]
+            ),
+            INSPECTION_NUMBER,
+        )
+        self.assertIsNone(snapshot["sample_name"])
+        self.assertEqual(snapshot["sample_names"], ["样品 A", "样品 B"])
 
     def test_duplicate_task_is_rejected(self):
         task = probe_document()["results"]["tasks"]["rows"][0]

@@ -3,6 +3,13 @@
 x86 .NET Framework 4.x 控制台程序，由集中式 Bridge 以“一任务一进程”方式调用，
 完成旧检务系统“特纤管理—检验”上传的受控写入。
 
+> 当前真实写入白名单仅包含 `legacy_regenerated_fiber_count_upload`。
+> `legacy_special_wool_image_upload` 与 `legacy_special_wool_review` 已有执行系统
+> 节点契约、预检单和独立阶段协议，但 Writer 会在登录/文件复制/DAL 保存之前返回
+> `writer_capability_unavailable`。在 `OriginalDataPictureFile + CheckItemID` 子记录保存、
+> 保存后回读，以及复核对子记录的联动更新完成实机证明前，严禁把这两个类型转入
+> 现有根数法硬编码写入路径。
+
 ## 两种模式
 
 ### 只读探针（--probe-sample-no）
@@ -75,3 +82,15 @@ Instant Client 运行时件（来源：部门共享 ODAC 11.2.0.2.50 xcopy 包�
 - 任务包中的目标编号经过严格格式校验，源文件经大小 + SHA-256 比对；
 - 目标记录已存在（精确或 Contains 语义）或目标文件已存在时直接拒绝；
 - 输出中的内部 ID 以 `sha256:` 散列表示，口令被显式抹除。
+
+## 待证明的图片上传与特纤复核边界
+
+- 图片上传固定业务字段已经锁定为：`FibreSort=图片`、`CheckWay=''`、
+  `CheckUserItem1=图片`、检验份数 1、复核项目/份数为图片/1。
+- 执行系统只接受同一次运行中由服务端签发的 `.xls` 微观形貌制品，并在批准前
+  重新核对制品行、路径、大小和 SHA-256；目标号按 `原号、-1、-2...` 对本系统
+  围栏做暂定分配，仍必须由 Windows 只读探针核对旧库占用后才能批准。
+- 图片上传还需证明旧客户端创建 `OriginalDataPictureFile` 时的 `CheckItemID` 来源及
+  主记录/子记录回读；特纤复核还需证明 `ReviewUser/ReviewTime` 与细度、定量子记录
+  的完整联动。当前两者的 `execution_capability.available=false`，不能批准、领取或
+  获得 stdin 副作用许可。

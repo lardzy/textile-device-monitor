@@ -306,6 +306,7 @@ def _external_operation_for_approval(
         db.query(
             ExecutionExternalOperation.run_id,
             ExecutionExternalOperation.node_run_id,
+            ExecutionExternalOperation.request_summary,
         )
         .filter(ExecutionExternalOperation.id == operation_id)
         .one_or_none()
@@ -340,9 +341,12 @@ def _external_operation_for_approval(
     if node_run is None:
         raise not_found("外部操作预检单", operation_id)
 
+    target_sample_number = str(
+        (locator.request_summary or {}).get("target_sample_number") or ""
+    ).strip() or resolve_legacy_target_sample_number(run)
     remote_business_key = lock_legacy_remote_business_scope(
         db,
-        sample_number=resolve_legacy_target_sample_number(run),
+        sample_number=target_sample_number,
     )
     operation = (
         db.query(ExecutionExternalOperation)
@@ -2455,6 +2459,7 @@ def claim_external_bridge_operation(
         db,
         bridge_id=payload.bridge_id,
         account_name=payload.account_name,
+        supported_operation_types=set(payload.supported_operation_types),
     )
     if result is None:
         return {"claimed": False}

@@ -37,6 +37,7 @@ def claim_document(account=ACCOUNT):
         "operation": {
             "credential": {"account_name": account},
             "request_summary": {
+                "operation_type": bridge.LEGACY_REGENERATED_COUNT_OPERATION,
                 "target_sample_number": "260187115-2",
                 "files": [
                     {
@@ -108,6 +109,49 @@ class BridgeProtocolTests(unittest.TestCase):
         popen.assert_not_called()
         self.assertEqual(api.calls[0][1]["account_name"], ACCOUNT)
         self.assertEqual(api.calls[-1][1]["error_code"], "credential_account_mismatch")
+
+    def test_claim_advertises_only_proven_writer_capability(self):
+        api = ApiStub(claim={"claimed": False})
+        with patch.object(bridge, "api_request", side_effect=api):
+            outcome = bridge.run_one_cycle(
+                self.args,
+                "bridge-token",
+                ACCOUNT,
+                "secret",
+                self.root_map,
+            )
+        self.assertEqual(outcome, "idle")
+        self.assertEqual(
+            api.calls[0][1]["supported_operation_types"],
+            [bridge.LEGACY_REGENERATED_COUNT_OPERATION],
+        )
+
+    def test_unproven_special_wool_operation_never_starts_writer(self):
+        claim = claim_document()
+        claim["operation"]["request_summary"].update({
+            "operation_type": bridge.LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
+            "execution_capability": {"available": False},
+        })
+        api = ApiStub(claim=claim)
+        with patch.object(bridge, "api_request", side_effect=api), patch.object(
+            bridge.subprocess,
+            "Popen",
+        ) as popen:
+            outcome = bridge.run_one_cycle(
+                self.args,
+                "bridge-token",
+                ACCOUNT,
+                "secret",
+                self.root_map,
+            )
+        self.assertEqual(outcome, "claimed")
+        popen.assert_not_called()
+        failure = api.calls[-1][1]
+        self.assertEqual(failure["stage"], "authenticated")
+        self.assertEqual(
+            failure["error_code"],
+            "writer_capability_unavailable",
+        )
 
     def test_writer_receives_permit_only_after_boundary_is_persisted(self):
         process = FakeProcess(

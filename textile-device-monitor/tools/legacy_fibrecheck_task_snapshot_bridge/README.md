@@ -3,8 +3,8 @@
 这是执行系统与 FibreCheck 旧系统之间的独立、只读 Windows 进程。它从执
 行系统领取待刷新的样品编号，调用相邻目录中的
 `legacy_fibrecheck_probe/probe.py`，再把任务检测依据和项目列表提交到缓存。
-Bridge 固定传入探针的 `--task-snapshot-only`，因此每次刷新只查询 `Task` 和
-`Task_CheckItem`，不会为首页推荐重复执行完整旧系统对账查询。
+Bridge 固定传入探针的 `--task-snapshot-only`，因此每次刷新只查询
+`Task`、`Task_Sample` 和 `Task_CheckItem`，不会为首页推荐重复执行完整旧系统对账查询。
 
 它不会上传文件、修改 Oracle、操作 FibreCheck 界面，也不会复用任何旧系统
 写入工具。现有探针会先执行 `SET TRANSACTION READ ONLY`，所有查询完成后
@@ -52,6 +52,7 @@ Bridge 固定传入探针的 `--task-snapshot-only`，因此每次刷新只查�
 - 探针必须确认真实连接和只读事务，且 `tasks`、`task_check_items` 查询均成功。
 - 同编号没有 Task 时提交空项目快照；同编号存在多个 Task、编号错配或查询失
   败时调用 `.../fail`，不会用不确定数据覆盖缓存。
+- `Task_Sample` 只保留属于已确认 Task 的非空样品名称，并去重后返回。
 - `Task_CheckItem` 只保留属于已确认 Task 的项目。
 - 成功调用 `.../{inspection_number}/complete`；请求都携带
   `X-Execution-Bridge-Key`。

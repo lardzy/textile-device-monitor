@@ -34,6 +34,10 @@ import urllib.request
 SIDE_EFFECT_STAGE = "file_copy_started"
 SIDE_EFFECT_READY_STAGE = "file_copy_ready"
 SIDE_EFFECT_PERMIT = "PERMIT_REMOTE_WRITE"
+LEGACY_REGENERATED_COUNT_OPERATION = "legacy_regenerated_fiber_count_upload"
+LEGACY_SPECIAL_WOOL_IMAGE_OPERATION = "legacy_special_wool_image_upload"
+LEGACY_SPECIAL_WOOL_REVIEW_OPERATION = "legacy_special_wool_review"
+SUPPORTED_OPERATION_TYPES = (LEGACY_REGENERATED_COUNT_OPERATION,)
 PROGRESS_STAGES = (
     "authenticated",
     "permission_verified",
@@ -45,6 +49,33 @@ PROGRESS_STAGES = (
     "main_record_verified",
     "completed",
 )
+REVIEW_PROGRESS_STAGES = (
+    "authenticated",
+    "permission_verified",
+    "remote_state_verified",
+    "review_save_ready",
+    "review_save_started",
+    "review_main_verified",
+    "review_children_verified",
+    "completed",
+)
+OPERATION_STAGE_PROFILES = {
+    LEGACY_REGENERATED_COUNT_OPERATION: (
+        PROGRESS_STAGES,
+        "file_copy_ready",
+        "file_copy_started",
+    ),
+    LEGACY_SPECIAL_WOOL_IMAGE_OPERATION: (
+        PROGRESS_STAGES,
+        "file_copy_ready",
+        "file_copy_started",
+    ),
+    LEGACY_SPECIAL_WOOL_REVIEW_OPERATION: (
+        REVIEW_PROGRESS_STAGES,
+        "review_save_ready",
+        "review_save_started",
+    ),
+}
 
 
 class BridgeError(Exception):
@@ -84,16 +115,24 @@ def normalized_identity(value: str | None) -> str:
     return unicodedata.normalize("NFKC", value or "").strip().casefold()
 
 
-def furthest_stage(*stages: str | None) -> str | None:
-    known = [stage for stage in stages if stage in PROGRESS_STAGES]
+def furthest_stage(
+    *values: str | None,
+    progress_stages: tuple[str, ...] = PROGRESS_STAGES,
+) -> str | None:
+    known = [stage for stage in values if stage in progress_stages]
     if not known:
         return None
-    return max(known, key=PROGRESS_STAGES.index)
+    return max(known, key=progress_stages.index)
 
 
-def stage_before_side_effect(stage: str | None) -> bool:
-    return stage not in PROGRESS_STAGES or (
-        PROGRESS_STAGES.index(stage) < PROGRESS_STAGES.index(SIDE_EFFECT_STAGE)
+def stage_before_side_effect(
+    stage: str | None,
+    *,
+    progress_stages: tuple[str, ...] = PROGRESS_STAGES,
+    side_effect_stage: str = SIDE_EFFECT_STAGE,
+) -> bool:
+    return stage not in progress_stages or (
+        progress_stages.index(stage) < progress_stages.index(side_effect_stage)
     )
 
 
@@ -135,7 +174,11 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         token,
         "POST",
         "/external-bridge/claim",
-        {"bridge_id": args.bridge_id, "account_name": account},
+        {
+            "bridge_id": args.bridge_id,
+            "account_name": account,
+            "supported_operation_types": list(SUPPORTED_OPERATION_TYPES),
+        },
     )
     if not claim.get("claimed"):
         print("没有待领取的旧系统操作")
@@ -145,6 +188,9 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     operation = claim["operation"]
     attempt_id = attempt["id"]
     summary = operation.get("request_summary") or {}
+    operation_type = (
+        summary.get("operation_type") or LEGACY_REGENERATED_COUNT_OPERATION
+    )
     expected_account = (
         (operation.get("credential") or {}).get("account_name") or ""
     )
@@ -163,6 +209,33 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         )
         print("任务绑定账号与 Bridge 本地账号不一致，已安全拒绝", file=sys.stderr)
         return "claimed"
+    capability = summary.get("execution_capability") or {}
+    if (
+        operation_type not in SUPPORTED_OPERATION_TYPES
+        or capability.get("available") is False
+    ):
+        api_request(
+            args.api_base,
+            token,
+            "POST",
+            f"/external-bridge/attempts/{attempt_id}/fail",
+            {
+                "bridge_id": args.bridge_id,
+                "stage": "authenticated",
+                "error_code": "writer_capability_unavailable",
+                "message": (
+                    "该外部操作尚未完成官方 DAL 行为证明，Bridge 已在副作用前拒绝"
+                ),
+            },
+        )
+        print(
+            f"Writer 能力未开放: {operation_type}",
+            file=sys.stderr,
+        )
+        return "claimed"
+    progress_stages, side_effect_ready_stage, side_effect_stage = (
+        OPERATION_STAGE_PROFILES[operation_type]
+    )
     files = summary.get("files") or []
     if len(files) != 1:
         api_request(
@@ -218,7 +291,11 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     def terminate_before_side_effect() -> None:
         with state_lock:
             confirmed_stage = stage_holder["confirmed"]
-        if not stage_before_side_effect(confirmed_stage):
+        if not stage_before_side_effect(
+            confirmed_stage,
+            progress_stages=progress_stages,
+            side_effect_stage=side_effect_stage,
+        ):
             return
         try:
             process.terminate()
@@ -276,19 +353,20 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         # 必须使用服务端已确认的最远合法阶段。
         if local_stage == "reconciliation_required":
             return
-        if local_stage not in PROGRESS_STAGES:
+        if local_stage not in progress_stages:
             stage_report_error = BridgeError(f"Writer 返回未知阶段: {local_stage}")
             terminate_before_side_effect()
             return
         with state_lock:
             stage_holder["local"] = local_stage
         try:
-            if local_stage == SIDE_EFFECT_READY_STAGE:
-                ready_response = persist_stage(SIDE_EFFECT_READY_STAGE)
+            if local_stage == side_effect_ready_stage:
+                ready_response = persist_stage(side_effect_ready_stage)
                 with state_lock:
                     stage_holder["confirmed"] = furthest_stage(
                         stage_holder["confirmed"],
-                        SIDE_EFFECT_READY_STAGE,
+                        side_effect_ready_stage,
+                        progress_stages=progress_stages,
                     )
                     last_stage = stage_holder["confirmed"]
                 if observe_abort(ready_response):
@@ -296,12 +374,12 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
 
                 # 服务端先持久化副作用边界；只有成功响应后才允许 Writer 继续。
                 boundary_response = persist_stage(
-                    SIDE_EFFECT_STAGE,
+                    side_effect_stage,
                     "server_persisted_before_writer_permit",
                 )
                 with state_lock:
-                    stage_holder["confirmed"] = SIDE_EFFECT_STAGE
-                    last_stage = SIDE_EFFECT_STAGE
+                    stage_holder["confirmed"] = side_effect_stage
+                    last_stage = side_effect_stage
                 if observe_abort(boundary_response):
                     return
                 if process.stdin is None:
@@ -313,8 +391,8 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             with state_lock:
                 already_confirmed = stage_holder["confirmed"]
             if (
-                local_stage == SIDE_EFFECT_STAGE
-                and already_confirmed == SIDE_EFFECT_STAGE
+                local_stage == side_effect_stage
+                and already_confirmed == side_effect_stage
             ):
                 # Writer 获许可后会回显实际开始；边界已先行持久化。
                 return
@@ -323,6 +401,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                 stage_holder["confirmed"] = furthest_stage(
                     stage_holder["confirmed"],
                     local_stage,
+                    progress_stages=progress_stages,
                 )
                 last_stage = stage_holder["confirmed"]
             observe_abort(response)
@@ -368,7 +447,11 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         print("写入完成并已回报")
     else:
         fail_stage = last_stage or "authenticated"
-        if abort_requested.is_set() and stage_before_side_effect(fail_stage):
+        if abort_requested.is_set() and stage_before_side_effect(
+            fail_stage,
+            progress_stages=progress_stages,
+            side_effect_stage=side_effect_stage,
+        ):
             error_code = "abort_acknowledged"
             error_message = "收到取消请求，Writer 在副作用许可前停止"
         elif stage_report_error is not None:

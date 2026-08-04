@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tempfile
 import unicodedata
@@ -19,6 +20,7 @@ from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.models import (
     ExecutionCredential,
+    ExecutionArtifact,
     ExecutionExternalAttempt,
     ExecutionExternalOperation,
     ExecutionFileIndexEntry,
@@ -39,12 +41,25 @@ from app.execution.workbook_format import (
 LEGACY_REGENERATED_COUNT_NODE = (
     "external.legacy_regenerated_fiber_count_upload"
 )
+LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE = (
+    "external.legacy_special_wool_image_upload"
+)
+LEGACY_SPECIAL_WOOL_REVIEW_NODE = "external.legacy_special_wool_review"
 LEGACY_CONNECTOR_KEY = "legacy_fibrecheck"
 LEGACY_CREDENTIAL_SYSTEM = "legacy_inspection"
 LEGACY_REMOTE_MODULE = (
     "inspection_record_registration:special_fiber:inspection"
 )
 OPERATION_KEY_PREFIX = "legacy-regenerated-count-upload:v1"
+SPECIAL_WOOL_IMAGE_OPERATION_KEY_PREFIX = (
+    "legacy-special-wool-image-upload:v1"
+)
+SPECIAL_WOOL_REVIEW_OPERATION_KEY_PREFIX = "legacy-special-wool-review:v1"
+LEGACY_REGENERATED_COUNT_OPERATION = (
+    "legacy_regenerated_fiber_count_upload"
+)
+LEGACY_SPECIAL_WOOL_IMAGE_OPERATION = "legacy_special_wool_image_upload"
+LEGACY_SPECIAL_WOOL_REVIEW_OPERATION = "legacy_special_wool_review"
 ACTIVE_REMOTE_OPERATION_STATUSES = (
     "prepared",
     "approved",
@@ -76,6 +91,54 @@ EXTERNAL_ATTEMPT_STAGES = (
     "main_record_save_started",
     "main_record_verified",
     "completed",
+)
+SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES = (
+    "authenticated",
+    "permission_verified",
+    "remote_state_verified",
+    "review_save_ready",
+    "review_save_started",
+    "review_main_verified",
+    "review_children_verified",
+    "completed",
+)
+EXTERNAL_OPERATION_STAGE_PROFILES = {
+    LEGACY_REGENERATED_COUNT_OPERATION: (
+        EXTERNAL_ATTEMPT_STAGES,
+        EXTERNAL_REMOTE_WRITE_STAGE,
+        "main_record_verified",
+    ),
+    LEGACY_SPECIAL_WOOL_IMAGE_OPERATION: (
+        EXTERNAL_ATTEMPT_STAGES,
+        EXTERNAL_REMOTE_WRITE_STAGE,
+        "main_record_verified",
+    ),
+    LEGACY_SPECIAL_WOOL_REVIEW_OPERATION: (
+        SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES,
+        "review_save_started",
+        "review_children_verified",
+    ),
+}
+SPECIAL_WOOL_EXECUTION_CAPABILITY = {
+    LEGACY_SPECIAL_WOOL_IMAGE_OPERATION: {
+        "available": False,
+        "code": "legacy_special_wool_image_write_unverified",
+        "message": (
+            "图片类特种毛记录的 OriginalDataPictureFile、CheckItemID 与保存后"
+            "子记录核对语义尚未完成实机证明，当前仅开放预检"
+        ),
+    },
+    LEGACY_SPECIAL_WOOL_REVIEW_OPERATION: {
+        "available": False,
+        "code": "legacy_special_wool_review_write_unverified",
+        "message": (
+            "特纤复核对主记录、细度/定量子记录及 CheckItemID 的联动保存语义"
+            "尚未完成实机证明，当前仅开放预检"
+        ),
+    },
+}
+_LEGACY_SAMPLE_NUMBER_RE = re.compile(
+    r"^[0-9A-Z]{9,20}(?:-[0-9A-Z]{1,8})?$"
 )
 
 
@@ -131,6 +194,111 @@ def _remote_business_key(sample_number: str) -> str:
         LEGACY_REMOTE_MODULE,
         normalized,
     )
+
+
+def _operation_type(operation: ExecutionExternalOperation) -> str:
+    return str(
+        (operation.request_summary or {}).get("operation_type") or ""
+    ).strip()
+
+
+def _operation_stage_profile(
+    operation: ExecutionExternalOperation,
+) -> tuple[tuple[str, ...], str, str]:
+    return EXTERNAL_OPERATION_STAGE_PROFILES.get(
+        _operation_type(operation),
+        EXTERNAL_OPERATION_STAGE_PROFILES[
+            LEGACY_REGENERATED_COUNT_OPERATION
+        ],
+    )
+
+
+def _operation_execution_capability(
+    operation: ExecutionExternalOperation,
+) -> dict[str, Any]:
+    declared = (operation.request_summary or {}).get(
+        "execution_capability"
+    )
+    if isinstance(declared, dict):
+        return dict(declared)
+    return {"available": True}
+
+
+def _ensure_operation_execution_available(
+    operation: ExecutionExternalOperation,
+) -> None:
+    capability = _operation_execution_capability(operation)
+    if capability.get("available") is not False:
+        return
+    raise conflict(
+        str(capability.get("code") or "external_capability_unavailable"),
+        str(
+            capability.get("message")
+            or "当前旧系统外部操作仅支持预检，尚未开放执行"
+        ),
+        operation_id=operation.id,
+        operation_type=_operation_type(operation),
+        execution_available=False,
+    )
+
+
+def allocate_legacy_sample_number(
+    base_number: str,
+    occupied_numbers: set[str] | list[str] | tuple[str, ...],
+) -> str:
+    """Allocate base, base-1, base-2... against a trusted occupancy set.
+
+    This helper is deliberately deterministic.  Backend preflight uses only
+    durable execution-operation fences as its occupancy set; the returned
+    value remains provisional until a Windows read-only FibreCheck probe has
+    verified the legacy database immediately before final approval.
+    """
+
+    normalized_base = unicodedata.normalize("NFKC", base_number).strip().upper()
+    if not _LEGACY_SAMPLE_NUMBER_RE.fullmatch(normalized_base):
+        raise ExecutionApiError(
+            422,
+            "external_target_sample_number_invalid",
+            "旧系统目标样品编号格式无效",
+        )
+    occupied = {
+        unicodedata.normalize("NFKC", str(value)).strip().casefold()
+        for value in occupied_numbers
+        if str(value).strip()
+    }
+    candidate = normalized_base
+    suffix = 0
+    while candidate.casefold() in occupied:
+        suffix += 1
+        candidate = f"{normalized_base}-{suffix}"
+        if suffix > 99999999:
+            raise ExecutionApiError(
+                409,
+                "external_target_sample_number_exhausted",
+                "旧系统目标样品编号后缀已耗尽",
+            )
+    return candidate
+
+
+def _locally_occupied_target_numbers(db: Session) -> set[str]:
+    occupied: set[str] = set()
+    rows = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.connector_key == LEGACY_CONNECTOR_KEY,
+            ExecutionExternalOperation.status.in_(
+                (*ACTIVE_REMOTE_OPERATION_STATUSES, "completed")
+            ),
+        )
+        .all()
+    )
+    for row in rows:
+        target = str(
+            (row.request_summary or {}).get("target_sample_number") or ""
+        ).strip()
+        if target:
+            occupied.add(target)
+    return occupied
 
 
 def resolve_legacy_target_sample_number(run: "ExecutionRun") -> str:
@@ -310,6 +478,182 @@ def _stable_snapshot_summary(
                 candidate_id=candidate_id,
             )
         return expected_size, digest.hexdigest(), inspector_name
+
+
+def _generated_microscopy_artifact_rows(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    input_data: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str]:
+    """Bind the upload preflight to a server-created immutable artifact row."""
+
+    declared = input_data.get("original_record")
+    if not isinstance(declared, dict):
+        raise ExecutionApiError(
+            422,
+            "special_wool_original_record_required",
+            "旧系统上传前必须先生成纤维微观形貌原始记录",
+        )
+    artifact_id = str(declared.get("artifact_id") or "").strip()
+    if not artifact_id:
+        raise ExecutionApiError(
+            422,
+            "special_wool_original_record_invalid",
+            "生成制品缺少服务器签发的制品标识",
+        )
+    row = (
+        db.query(ExecutionArtifact, ExecutionStorageRoot)
+        .join(
+            ExecutionStorageRoot,
+            ExecutionStorageRoot.id == ExecutionArtifact.storage_root_id,
+        )
+        .filter(ExecutionArtifact.id == artifact_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if row is None:
+        raise conflict(
+            "special_wool_original_record_stale",
+            "生成的微观形貌原始记录已不存在，请重新生成",
+            artifact_id=artifact_id,
+        )
+    artifact, root = row
+    expected_media_type = "application/vnd.ms-excel"
+    if (
+        artifact.run_id != run.id
+        or artifact.role != "working"
+        or artifact.media_type != expected_media_type
+        or root.root_id != "execution_staging"
+        or root.access_mode != "write"
+        or str(declared.get("root_id") or "") != root.root_id
+        or str(declared.get("relative_path") or "")
+        != artifact.relative_path
+        or str(declared.get("filename") or "") != artifact.filename
+        or str(declared.get("content_sha256") or "")
+        != artifact.content_sha256
+        or artifact.filename.casefold().endswith(".xls") is False
+        or "图片" not in artifact.filename
+    ):
+        raise conflict(
+            "special_wool_original_record_stale",
+            "生成制品与服务器记录不一致，请重新生成后再上传",
+            artifact_id=artifact_id,
+        )
+
+    gateway = build_file_gateway(db)
+    ref = ArtifactRef(root.root_id, artifact.relative_path)
+    try:
+        path = gateway.resolve(ref, expected_type="file")
+        fingerprint = gateway.fingerprint(ref)
+    except (StorageError, OSError, ValueError) as exc:
+        raise conflict(
+            "special_wool_original_record_unavailable",
+            "生成的微观形貌原始记录当前不可读取",
+            artifact_id=artifact_id,
+        ) from exc
+    if (
+        fingerprint.size != artifact.size_bytes
+        or fingerprint.sha256 != artifact.content_sha256
+        or detect_workbook_format(path) is not WorkbookFormat.OLE
+    ):
+        raise conflict(
+            "special_wool_original_record_changed",
+            "生成的微观形貌原始记录内容已变化，请重新生成",
+            artifact_id=artifact_id,
+        )
+
+    operator = db.get(ExecutionUser, run.created_by_id)
+    inspector = str(operator.display_name if operator is not None else "").strip()
+    if not inspector:
+        raise ExecutionApiError(
+            422,
+            "special_wool_operator_display_name_missing",
+            "当前执行系统账号未配置姓名，不能生成旧系统上传预检单",
+        )
+    return [
+        {
+            "id": artifact.id,
+            "artifact_id": artifact.id,
+            "root_id": root.root_id,
+            "relative_path": artifact.relative_path,
+            "filename": artifact.filename,
+            "content_sha256": artifact.content_sha256,
+            "size_bytes": artifact.size_bytes,
+            "is_primary": True,
+            "media_type": artifact.media_type,
+            "role": artifact.role,
+        }
+    ], inspector
+
+
+def _reverify_generated_artifact_source(
+    db: Session,
+    *,
+    operation: ExecutionExternalOperation,
+) -> None:
+    summary = operation.request_summary or {}
+    files = summary.get("files")
+    if (
+        not isinstance(files, list)
+        or len(files) != 1
+        or not isinstance(files[0], dict)
+    ):
+        raise conflict(
+            "external_operation_preflight_invalid",
+            "预检单缺少生成制品核对信息，请重新运行流程",
+            operation_id=operation.id,
+        )
+    expected = files[0]
+    row = (
+        db.query(ExecutionArtifact, ExecutionStorageRoot)
+        .join(
+            ExecutionStorageRoot,
+            ExecutionStorageRoot.id == ExecutionArtifact.storage_root_id,
+        )
+        .filter(ExecutionArtifact.id == str(expected.get("artifact_id") or ""))
+        .with_for_update()
+        .one_or_none()
+    )
+    if row is None:
+        raise conflict(
+            "special_wool_original_record_changed",
+            "批准前生成制品已不存在，请重新运行流程",
+        )
+    artifact, root = row
+    if (
+        artifact.run_id != operation.run_id
+        or root.root_id != expected.get("root_id")
+        or artifact.relative_path != expected.get("relative_path")
+        or artifact.filename != expected.get("filename")
+        or artifact.content_sha256 != expected.get("content_sha256")
+        or artifact.size_bytes != expected.get("size_bytes")
+        or artifact.role != "working"
+        or artifact.media_type != "application/vnd.ms-excel"
+        or not artifact.filename.casefold().endswith(".xls")
+        or "图片" not in artifact.filename
+    ):
+        raise conflict(
+            "special_wool_original_record_changed",
+            "批准前生成制品记录已变化，请重新运行流程",
+        )
+    gateway = build_file_gateway(db)
+    ref = ArtifactRef(root.root_id, artifact.relative_path)
+    try:
+        fingerprint = gateway.fingerprint(ref)
+    except (StorageError, OSError, ValueError) as exc:
+        raise conflict(
+            "special_wool_original_record_unavailable",
+            "批准前无法重新读取生成制品",
+        ) from exc
+    if (
+        fingerprint.size != artifact.size_bytes
+        or fingerprint.sha256 != artifact.content_sha256
+    ):
+        raise conflict(
+            "special_wool_original_record_changed",
+            "批准前生成制品内容已变化，请重新运行流程",
+        )
 
 
 def _credential_for_node(
@@ -593,6 +937,13 @@ def _reverify_operation_sources(
     *,
     operation: ExecutionExternalOperation,
 ) -> None:
+    operation_type = _operation_type(operation)
+    if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
+        _reverify_generated_artifact_source(db, operation=operation)
+        return
+    if operation_type == LEGACY_SPECIAL_WOOL_REVIEW_OPERATION:
+        _reverify_special_wool_review_source(db, operation=operation)
+        return
     summary = operation.request_summary or {}
     files = summary.get("files")
     expected_inspector = summary.get("inspector")
@@ -685,58 +1036,18 @@ def _reverify_operation_sources(
             )
 
 
-def prepare_legacy_regenerated_count_operation(
+def _create_prepared_external_operation(
     db: Session,
     *,
     run: ExecutionRun,
     node_run: ExecutionNodeRun,
-    node: dict[str, Any],
-    input_data: dict[str, Any],
+    credential: ExecutionCredential,
+    account_scope_key: str,
+    remote_business_key: str,
+    request_summary: dict[str, Any],
+    operation_key_prefix: str,
 ) -> tuple[ExecutionExternalOperation, bool]:
-    """Create a durable preflight record without contacting FibreCheck."""
-
-    if node_run.node_type != LEGACY_REGENERATED_COUNT_NODE:
-        raise ValueError("unsupported_external_node")
-    if (run.capabilities_snapshot or {}).get("external_write") is not True:
-        raise ExecutionApiError(
-            403,
-            "workflow_external_write_capability_required",
-            "当前流程未声明外部系统写入能力",
-        )
-    credential = _credential_for_node(db, run=run, node=node)
-    account_scope_key = _account_scope_key(credential.account_name or "")
-    source_number = run.inspection_number.strip()
-    target_number = resolve_legacy_target_sample_number(run)
-    remote_business_key = lock_legacy_remote_business_scope(
-        db,
-        sample_number=target_number,
-    )
-    files, inspector_name = _selected_file_rows(
-        db,
-        run=run,
-        input_data=input_data,
-    )
     credential_revision = int(credential.revision)
-    request_summary = {
-        "schema_version": 1,
-        "operation_type": "legacy_regenerated_fiber_count_upload",
-        "source_inspection_number": source_number,
-        "target_sample_number": target_number,
-        "business_fields": {
-            "fiber_category": "棉再生纤",
-            "inspection_method": "定量",
-            "inspection_item": "棉再生纤定量-根数法",
-            "inspection_copies": 1,
-        },
-        "inspector": inspector_name,
-        "files": files,
-        "safety": {
-            "remote_write_performed": False,
-            "requires_final_approval": True,
-            "requires_source_reverification": True,
-            "overwrite_allowed": False,
-        },
-    }
     payload_checksum = _canonical_checksum(
         {
             "request_summary": request_summary,
@@ -750,7 +1061,7 @@ def prepare_legacy_regenerated_count_operation(
     )
     operation_key = hashlib.sha256(
         (
-            f"{OPERATION_KEY_PREFIX}:{run.id}:{node_run.node_id}"
+            f"{operation_key_prefix}:{run.id}:{node_run.node_id}"
         ).encode("utf-8")
     ).hexdigest()
     prepared_at = utcnow()
@@ -759,9 +1070,7 @@ def prepare_legacy_regenerated_count_operation(
     )
     existing = (
         db.query(ExecutionExternalOperation)
-        .filter(
-            ExecutionExternalOperation.node_run_id == node_run.id,
-        )
+        .filter(ExecutionExternalOperation.node_run_id == node_run.id)
         .populate_existing()
         .with_for_update()
         .one_or_none()
@@ -769,9 +1078,7 @@ def prepare_legacy_regenerated_count_operation(
     if existing is None:
         existing = (
             db.query(ExecutionExternalOperation)
-            .filter(
-                ExecutionExternalOperation.operation_key == operation_key,
-            )
+            .filter(ExecutionExternalOperation.operation_key == operation_key)
             .populate_existing()
             .with_for_update()
             .one_or_none()
@@ -858,6 +1165,348 @@ def prepare_legacy_regenerated_count_operation(
     return operation, False
 
 
+def prepare_legacy_regenerated_count_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    node: dict[str, Any],
+    input_data: dict[str, Any],
+) -> tuple[ExecutionExternalOperation, bool]:
+    """Create a durable preflight record without contacting FibreCheck."""
+
+    if node_run.node_type != LEGACY_REGENERATED_COUNT_NODE:
+        raise ValueError("unsupported_external_node")
+    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+        raise ExecutionApiError(
+            403,
+            "workflow_external_write_capability_required",
+            "当前流程未声明外部系统写入能力",
+        )
+    credential = _credential_for_node(db, run=run, node=node)
+    account_scope_key = _account_scope_key(credential.account_name or "")
+    source_number = run.inspection_number.strip()
+    target_number = resolve_legacy_target_sample_number(run)
+    remote_business_key = lock_legacy_remote_business_scope(
+        db,
+        sample_number=target_number,
+    )
+    files, inspector_name = _selected_file_rows(
+        db,
+        run=run,
+        input_data=input_data,
+    )
+    request_summary = {
+        "schema_version": 1,
+        "operation_type": LEGACY_REGENERATED_COUNT_OPERATION,
+        "source_inspection_number": source_number,
+        "target_sample_number": target_number,
+        "business_fields": {
+            "fiber_category": "棉再生纤",
+            "inspection_method": "定量",
+            "inspection_item": "棉再生纤定量-根数法",
+            "inspection_copies": 1,
+        },
+        "inspector": inspector_name,
+        "files": files,
+        "safety": {
+            "remote_write_performed": False,
+            "requires_final_approval": True,
+            "requires_source_reverification": True,
+            "overwrite_allowed": False,
+        },
+    }
+    return _create_prepared_external_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        credential=credential,
+        account_scope_key=account_scope_key,
+        remote_business_key=remote_business_key,
+        request_summary=request_summary,
+        operation_key_prefix=OPERATION_KEY_PREFIX,
+    )
+
+
+def prepare_legacy_special_wool_image_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    node: dict[str, Any],
+    input_data: dict[str, Any],
+) -> tuple[ExecutionExternalOperation, bool]:
+    """Prepare an image-category SpecialWool upload without remote writes.
+
+    The backend can allocate only against its durable operation fences.  The
+    summary therefore labels the candidate provisional and the capability as
+    unavailable until a Windows read-only probe supplies legacy occupancy and
+    the official image-child save/readback behavior has been proved.
+    """
+
+    if node_run.node_type != LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE:
+        raise ValueError("unsupported_external_node")
+    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+        raise ExecutionApiError(
+            403,
+            "workflow_external_write_capability_required",
+            "当前流程未声明外部系统写入能力",
+        )
+    credential = _credential_for_node(db, run=run, node=node)
+    account_scope_key = _account_scope_key(credential.account_name or "")
+    source_number = run.inspection_number.strip().upper()
+    requested_base = resolve_legacy_target_sample_number(run).upper()
+    # Serialize the base family before consulting locally durable fences.
+    lock_legacy_remote_business_scope(db, sample_number=requested_base)
+    existing = (
+        db.query(ExecutionExternalOperation)
+        .filter(ExecutionExternalOperation.node_run_id == node_run.id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if existing is not None:
+        target_number = str(
+            (existing.request_summary or {}).get("target_sample_number") or ""
+        ).strip()
+        if (
+            _operation_type(existing) != LEGACY_SPECIAL_WOOL_IMAGE_OPERATION
+            or not target_number
+        ):
+            raise conflict(
+                "external_operation_idempotency_conflict",
+                "该节点已绑定另一份外部操作预检单",
+                operation_id=existing.id,
+            )
+    else:
+        target_number = allocate_legacy_sample_number(
+            requested_base,
+            _locally_occupied_target_numbers(db),
+        )
+    remote_business_key = lock_legacy_remote_business_scope(
+        db,
+        sample_number=target_number,
+    )
+    files, inspector_name = _generated_microscopy_artifact_rows(
+        db,
+        run=run,
+        input_data=input_data,
+    )
+    request_summary = {
+        "schema_version": 1,
+        "operation_type": LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
+        "profile": "special_wool_image_v1",
+        "source_inspection_number": source_number,
+        "target_sample_number": target_number,
+        "target_allocation": {
+            "base_number": requested_base,
+            "candidate_number": target_number,
+            "suffix_policy": "base_then_numeric_suffix",
+            "occupancy_scope": "execution_operation_fences_only",
+            "legacy_readonly_verification_required": True,
+        },
+        "business_fields": {
+            "fiber_category": "图片",
+            "inspection_method": "",
+            "inspection_item": "图片",
+            "inspection_copies": 1,
+            "review_item": "图片",
+            "review_copies": 1,
+        },
+        "inspector": inspector_name,
+        "files": files,
+        "execution_capability": dict(
+            SPECIAL_WOOL_EXECUTION_CAPABILITY[
+                LEGACY_SPECIAL_WOOL_IMAGE_OPERATION
+            ]
+        ),
+        "safety": {
+            "remote_write_performed": False,
+            "requires_final_approval": True,
+            "requires_source_reverification": True,
+            "overwrite_allowed": False,
+            "remote_target_allocation_verified": False,
+        },
+    }
+    return _create_prepared_external_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        credential=credential,
+        account_scope_key=account_scope_key,
+        remote_business_key=remote_business_key,
+        request_summary=request_summary,
+        operation_key_prefix=SPECIAL_WOOL_IMAGE_OPERATION_KEY_PREFIX,
+    )
+
+
+def _special_wool_upload_source_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    input_data: dict[str, Any],
+) -> ExecutionExternalOperation:
+    upload_result = input_data.get("upload_result")
+    operation_id = (
+        str(upload_result.get("operation_id") or "").strip()
+        if isinstance(upload_result, dict)
+        else ""
+    )
+    if not operation_id:
+        raise ExecutionApiError(
+            422,
+            "special_wool_upload_result_required",
+            "特纤复核必须引用本流程已完成的图片上传结果",
+        )
+    source = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id == operation_id,
+            ExecutionExternalOperation.run_id == run.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if (
+        source is None
+        or _operation_type(source) != LEGACY_SPECIAL_WOOL_IMAGE_OPERATION
+        or source.status != "completed"
+        or not isinstance(source.receipt, dict)
+        or not source.receipt
+    ):
+        raise conflict(
+            "special_wool_upload_not_completed",
+            "特纤复核只能衔接本流程已完成且已回读核对的图片上传",
+            operation_id=operation_id,
+        )
+    return source
+
+
+def prepare_legacy_special_wool_review_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    node: dict[str, Any],
+    input_data: dict[str, Any],
+) -> tuple[ExecutionExternalOperation, bool]:
+    """Prepare an independent SpecialWool review fence."""
+
+    if node_run.node_type != LEGACY_SPECIAL_WOOL_REVIEW_NODE:
+        raise ValueError("unsupported_external_node")
+    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+        raise ExecutionApiError(
+            403,
+            "workflow_external_write_capability_required",
+            "当前流程未声明外部系统写入能力",
+        )
+    credential = _credential_for_node(db, run=run, node=node)
+    account_scope_key = _account_scope_key(credential.account_name or "")
+    source = _special_wool_upload_source_operation(
+        db,
+        run=run,
+        input_data=input_data,
+    )
+    source_summary = source.request_summary or {}
+    target_number = str(
+        source_summary.get("target_sample_number") or ""
+    ).strip()
+    if not target_number:
+        raise conflict(
+            "special_wool_upload_receipt_invalid",
+            "图片上传回执缺少目标样品编号，不能进入复核",
+        )
+    remote_business_key = lock_legacy_remote_business_scope(
+        db,
+        sample_number=target_number,
+    )
+    request_summary = {
+        "schema_version": 1,
+        "operation_type": LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
+        "profile": "special_wool_review_v1",
+        "source_inspection_number": run.inspection_number.strip().upper(),
+        "target_sample_number": target_number,
+        "source_operation": {
+            "operation_id": source.id,
+            "payload_checksum": source.payload_checksum,
+            "receipt_checksum": _canonical_checksum(source.receipt),
+        },
+        "business_fields": {
+            "fiber_category": "图片",
+            "review_action": "特纤复核",
+            "review_item": "图片",
+            "review_copies": 1,
+        },
+        "files": list(source_summary.get("files") or []),
+        "execution_capability": dict(
+            SPECIAL_WOOL_EXECUTION_CAPABILITY[
+                LEGACY_SPECIAL_WOOL_REVIEW_OPERATION
+            ]
+        ),
+        "safety": {
+            "remote_write_performed": False,
+            "requires_final_approval": True,
+            "requires_source_reverification": True,
+            "overwrite_allowed": False,
+        },
+    }
+    return _create_prepared_external_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        credential=credential,
+        account_scope_key=account_scope_key,
+        remote_business_key=remote_business_key,
+        request_summary=request_summary,
+        operation_key_prefix=SPECIAL_WOOL_REVIEW_OPERATION_KEY_PREFIX,
+    )
+
+
+def _reverify_special_wool_review_source(
+    db: Session,
+    *,
+    operation: ExecutionExternalOperation,
+) -> None:
+    source_ref = (operation.request_summary or {}).get("source_operation")
+    if not isinstance(source_ref, dict):
+        raise conflict(
+            "external_operation_preflight_invalid",
+            "复核预检单缺少来源上传操作",
+            operation_id=operation.id,
+        )
+    source = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id
+            == str(source_ref.get("operation_id") or ""),
+            ExecutionExternalOperation.run_id == operation.run_id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    target = str(
+        (operation.request_summary or {}).get("target_sample_number") or ""
+    )
+    if (
+        source is None
+        or source.status != "completed"
+        or _operation_type(source) != LEGACY_SPECIAL_WOOL_IMAGE_OPERATION
+        or source.payload_checksum != source_ref.get("payload_checksum")
+        or not isinstance(source.receipt, dict)
+        or _canonical_checksum(source.receipt)
+        != source_ref.get("receipt_checksum")
+        or str(
+            (source.request_summary or {}).get("target_sample_number") or ""
+        )
+        != target
+    ):
+        raise conflict(
+            "special_wool_upload_result_changed",
+            "复核所引用的图片上传结果已变化，请重新运行流程",
+            operation_id=operation.id,
+        )
+
+
 def approve_prepared_external_operation(
     db: Session,
     *,
@@ -902,6 +1551,7 @@ def approve_prepared_external_operation(
         _ensure_preflight_not_expired(operation, now=now)
     else:
         _ensure_approval_not_expired(operation, now=now)
+    _ensure_operation_execution_available(operation)
     _bound_credential_for_approval(
         db,
         operation=operation,
@@ -979,14 +1629,15 @@ def _public_remote_write_performed(
         return True
     if operation.status == "reconciliation_required":
         return None
-    boundary_index = EXTERNAL_ATTEMPT_STAGES.index(
-        EXTERNAL_REMOTE_WRITE_STAGE
+    attempt_stages, write_boundary, _verified_stage = (
+        _operation_stage_profile(operation)
     )
+    boundary_index = attempt_stages.index(write_boundary)
     for attempt in operation.attempts or []:
         stage = attempt.current_stage
         if (
-            stage in EXTERNAL_ATTEMPT_STAGES
-            and EXTERNAL_ATTEMPT_STAGES.index(stage) >= boundary_index
+            stage in attempt_stages
+            and attempt_stages.index(stage) >= boundary_index
         ):
             return None
     return False
@@ -1004,6 +1655,7 @@ def public_external_operation(
             key: item.get(key)
             for key in (
                 "id",
+                "artifact_id",
                 "root_id",
                 "relative_path",
                 "filename",
@@ -1019,6 +1671,7 @@ def public_external_operation(
     public_summary = {
         "schema_version": summary.get("schema_version"),
         "operation_type": summary.get("operation_type"),
+        "profile": summary.get("profile"),
         "source_inspection_number": (
             summary.get("source_inspection_number")
             or summary.get("target_sample_number")
@@ -1031,15 +1684,36 @@ def public_external_operation(
                 "inspection_method",
                 "inspection_item",
                 "inspection_copies",
+                "review_action",
+                "review_item",
+                "review_copies",
             )
         } if isinstance(business_fields, dict) else {},
         "inspector": summary.get("inspector"),
         "files": public_files,
+        "target_allocation": (
+            dict(summary.get("target_allocation"))
+            if isinstance(summary.get("target_allocation"), dict)
+            else None
+        ),
+        "source_operation": (
+            dict(summary.get("source_operation"))
+            if isinstance(summary.get("source_operation"), dict)
+            else None
+        ),
+        "execution_capability": (
+            dict(summary.get("execution_capability"))
+            if isinstance(summary.get("execution_capability"), dict)
+            else {"available": True}
+        ),
         "safety": {
             "remote_write_performed": remote_write_performed,
             "requires_final_approval": True,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
+            "execution_available": _operation_execution_capability(
+                operation
+            ).get("available") is not False,
         },
     }
     reconciliation_record = dict(operation.verification or {}).get(
@@ -1129,11 +1803,14 @@ def public_external_reconciliation_context(
             "待对账操作缺少执行尝试，不能人工处置",
             operation_id=operation.id,
         )
+    attempt_stages, write_boundary, _verified_stage = (
+        _operation_stage_profile(operation)
+    )
     if (
         attempt.status != "failed"
-        or attempt.current_stage not in EXTERNAL_ATTEMPT_STAGES
-        or _stage_index(attempt.current_stage)
-        < _stage_index(EXTERNAL_REMOTE_WRITE_STAGE)
+        or attempt.current_stage not in attempt_stages
+        or attempt_stages.index(attempt.current_stage)
+        < attempt_stages.index(write_boundary)
     ):
         raise conflict(
             "external_reconciliation_attempt_invalid",
@@ -1331,6 +2008,7 @@ def reconcile_external_operation(
         db.query(
             ExecutionExternalOperation.run_id,
             ExecutionExternalOperation.node_run_id,
+            ExecutionExternalOperation.request_summary,
         )
         .filter(ExecutionExternalOperation.id == operation_id)
         .one_or_none()
@@ -1360,7 +2038,9 @@ def reconcile_external_operation(
     if node_run is None:
         raise not_found("外部操作预检单", operation_id)
 
-    target_sample_number = resolve_legacy_target_sample_number(run)
+    target_sample_number = str(
+        (locator.request_summary or {}).get("target_sample_number") or ""
+    ).strip() or resolve_legacy_target_sample_number(run)
     remote_business_key = lock_legacy_remote_business_scope(
         db,
         sample_number=target_sample_number,
@@ -1485,10 +2165,13 @@ def reconcile_external_operation(
             attempt_id=latest_attempt.id,
             status=latest_attempt.status,
         )
+    attempt_stages, write_boundary, _verified_stage = (
+        _operation_stage_profile(operation)
+    )
     if (
-        latest_attempt.current_stage not in EXTERNAL_ATTEMPT_STAGES
-        or _stage_index(latest_attempt.current_stage)
-        < _stage_index(EXTERNAL_REMOTE_WRITE_STAGE)
+        latest_attempt.current_stage not in attempt_stages
+        or attempt_stages.index(latest_attempt.current_stage)
+        < attempt_stages.index(write_boundary)
     ):
         raise conflict(
             "external_reconciliation_prewrite_attempt",
@@ -1625,26 +2308,62 @@ def reconcile_external_operation(
     return operation, False
 
 
-def _stage_index(stage: str) -> int:
-    return EXTERNAL_ATTEMPT_STAGES.index(stage)
+def _stage_index(
+    stage: str,
+    operation: ExecutionExternalOperation | None = None,
+) -> int:
+    stages = (
+        _operation_stage_profile(operation)[0]
+        if operation is not None
+        else EXTERNAL_ATTEMPT_STAGES
+    )
+    return stages.index(stage)
 
 
-def _stage_before_remote_write(stage: str | None) -> bool:
-    if stage is None or stage not in EXTERNAL_ATTEMPT_STAGES:
+def _stage_before_remote_write(
+    stage: str | None,
+    operation: ExecutionExternalOperation | None = None,
+) -> bool:
+    stages, boundary, _verified = (
+        _operation_stage_profile(operation)
+        if operation is not None
+        else (
+            EXTERNAL_ATTEMPT_STAGES,
+            EXTERNAL_REMOTE_WRITE_STAGE,
+            "main_record_verified",
+        )
+    )
+    if stage is None or stage not in stages:
         return True
-    return _stage_index(stage) < _stage_index(EXTERNAL_REMOTE_WRITE_STAGE)
+    return stages.index(stage) < stages.index(boundary)
 
 
-def _furthest_stage(*stages: str | None) -> str | None:
-    known = [stage for stage in stages if stage in EXTERNAL_ATTEMPT_STAGES]
+def _furthest_stage(
+    *values: str | None,
+    operation: ExecutionExternalOperation | None = None,
+) -> str | None:
+    stages = (
+        _operation_stage_profile(operation)[0]
+        if operation is not None
+        else EXTERNAL_ATTEMPT_STAGES
+    )
+    known = [stage for stage in values if stage in stages]
     if not known:
         return None
-    return max(known, key=_stage_index)
+    return max(known, key=stages.index)
 
 
-def _validate_attempt_stage(stage: str) -> str:
+def _validate_attempt_stage(
+    stage: str,
+    operation: ExecutionExternalOperation | None = None,
+) -> str:
     normalized = stage.strip()
-    if normalized not in EXTERNAL_ATTEMPT_STAGES:
+    stages = (
+        _operation_stage_profile(operation)[0]
+        if operation is not None
+        else EXTERNAL_ATTEMPT_STAGES
+    )
+    if normalized not in stages:
         raise ExecutionApiError(
             422,
             "external_attempt_stage_invalid",
@@ -1657,6 +2376,7 @@ def _validate_attempt_stage(stage: str) -> str:
 def _append_checkpoint(
     attempt: ExecutionExternalAttempt,
     *,
+    operation: ExecutionExternalOperation | None = None,
     stage: str,
     at: datetime,
     detail: str | None = None,
@@ -1674,7 +2394,11 @@ def _append_checkpoint(
         entry["detail"] = detail
     checkpoints.append(entry)
     attempt.checkpoints = checkpoints
-    attempt.current_stage = _furthest_stage(attempt.current_stage, stage)
+    attempt.current_stage = _furthest_stage(
+        attempt.current_stage,
+        stage,
+        operation=operation,
+    )
 
 
 def _append_stdout(existing: str | None, appended: str | None) -> str:
@@ -1761,6 +2485,7 @@ def claim_approved_external_operation(
     *,
     bridge_id: str,
     account_name: str,
+    supported_operation_types: set[str] | None = None,
     now: datetime | None = None,
 ) -> (
     tuple[
@@ -1779,6 +2504,9 @@ def claim_approved_external_operation(
     """
 
     current_time = now or utcnow()
+    supported_types = supported_operation_types or {
+        LEGACY_REGENERATED_COUNT_OPERATION
+    }
     account_scope_key = _account_scope_key(account_name)
     lock_external_bridge_claim_capacity(db)
     active_write_count = (
@@ -1809,7 +2537,7 @@ def claim_approved_external_operation(
             ExecutionExternalOperation.created_at.asc(),
             ExecutionExternalOperation.id.asc(),
         )
-        .limit(5)
+        .limit(20)
         .all()
     )
     for (operation_id,) in candidates:
@@ -1853,6 +2581,12 @@ def claim_approved_external_operation(
             .one_or_none()
         )
         if operation is None or operation.status != "approved":
+            continue
+        if (
+            _operation_type(operation) not in supported_types
+            or _operation_execution_capability(operation).get("available")
+            is False
+        ):
             continue
         if node_run is None or node_run.status != "waiting_external":
             raise conflict(
@@ -2051,8 +2785,8 @@ def _ensure_stage_transition_allowed(
 ) -> None:
     if (
         operation.status == "cancel_pending"
-        and _stage_before_remote_write(attempt.current_stage)
-        and not _stage_before_remote_write(stage)
+        and _stage_before_remote_write(attempt.current_stage, operation)
+        and not _stage_before_remote_write(stage, operation)
     ):
         raise conflict(
             "external_attempt_cancelled_before_remote_write",
@@ -2082,7 +2816,7 @@ def heartbeat_external_attempt(
     _ensure_attempt_active(operation, attempt, now=current_time)
     validated_stage = None
     if stage is not None:
-        validated_stage = _validate_attempt_stage(stage)
+        validated_stage = _validate_attempt_stage(stage, operation)
         _ensure_stage_transition_allowed(
             operation,
             attempt,
@@ -2094,6 +2828,7 @@ def heartbeat_external_attempt(
     if validated_stage is not None:
         _append_checkpoint(
             attempt,
+            operation=operation,
             stage=validated_stage,
             at=current_time,
         )
@@ -2120,7 +2855,7 @@ def record_external_attempt_stage(
         bridge_id=bridge_id,
     )
     _ensure_attempt_active(operation, attempt, now=current_time)
-    validated_stage = _validate_attempt_stage(stage)
+    validated_stage = _validate_attempt_stage(stage, operation)
     _ensure_stage_transition_allowed(
         operation,
         attempt,
@@ -2128,6 +2863,7 @@ def record_external_attempt_stage(
     )
     _append_checkpoint(
         attempt,
+        operation=operation,
         stage=validated_stage,
         at=current_time,
         detail=detail,
@@ -2162,10 +2898,13 @@ def complete_external_attempt(
             "external_receipt_invalid",
             "旧系统上传回执不能为空",
         )
+    attempt_stages, _write_boundary, verified_stage = (
+        _operation_stage_profile(operation)
+    )
     record_verified = (
-        attempt.current_stage in EXTERNAL_ATTEMPT_STAGES
-        and _stage_index(attempt.current_stage)
-        >= _stage_index("main_record_verified")
+        attempt.current_stage in attempt_stages
+        and attempt_stages.index(attempt.current_stage)
+        >= attempt_stages.index(verified_stage)
     )
     if not record_verified:
         raise conflict(
@@ -2254,7 +2993,7 @@ def settle_external_attempt_failure(
 
     operation.lease_owner = None
     operation.lease_expires_at = None
-    reclaimed = _stage_before_remote_write(stage)
+    reclaimed = _stage_before_remote_write(stage, operation)
     remote_write_performed: bool | None = False if reclaimed else None
     settlement_reason: str | None = None
     if reclaimed and operation.status == "cancel_pending":
@@ -2345,11 +3084,16 @@ def fail_external_attempt(
         bridge_id=bridge_id,
     )
     _ensure_attempt_active(operation, attempt, now=current_time)
-    reported_stage = _validate_attempt_stage(stage)
+    reported_stage = _validate_attempt_stage(stage, operation)
     # 失败定位以上报过的最远阶段为准，避免失败上报把操作倒退回可重领区间。
-    effective_stage = _furthest_stage(attempt.current_stage, reported_stage)
+    effective_stage = _furthest_stage(
+        attempt.current_stage,
+        reported_stage,
+        operation=operation,
+    )
     _append_checkpoint(
         attempt,
+        operation=operation,
         stage=reported_stage,
         at=current_time,
         detail=message or error_code,

@@ -347,6 +347,18 @@ QUERIES: tuple[QueryDefinition, ...] = (
         """,
     ),
     QueryDefinition(
+        key="task_samples",
+        purpose="读取委托任务的样品名称",
+        sql="""
+            SELECT
+                s."TaskID", s."SampleName"
+            FROM "Task_Sample" s
+            JOIN "Task" t ON t."ID" = s."TaskID"
+            WHERE t."ReportNo" = :sample_no
+            ORDER BY s."SampleName"
+        """,
+    ),
+    QueryDefinition(
         key="task_check_items",
         purpose="核验委托任务中的检测项目",
         sql="""
@@ -436,9 +448,10 @@ QUERIES: tuple[QueryDefinition, ...] = (
     ),
 )
 
-# 高频推荐刷新只需要任务主表和任务项目。保持 QUERIES 及默认探针模式完全不
-# 变；仅当 CLI 显式传入 --task-snapshot-only 时采用这个严格白名单。
-TASK_SNAPSHOT_QUERY_KEYS = ("tasks", "task_check_items")
+# 高频推荐刷新只需要任务主表、样品名称和任务项目。保持 QUERIES 及
+# 默认探针模式完全不变；仅当 CLI 显式传入
+# --task-snapshot-only 时采用这个严格白名单。
+TASK_SNAPSHOT_QUERY_KEYS = ("tasks", "task_samples", "task_check_items")
 TASK_SNAPSHOT_QUERIES: tuple[QueryDefinition, ...] = tuple(
     query for query in QUERIES if query.key in TASK_SNAPSHOT_QUERY_KEYS
 )
@@ -2164,7 +2177,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--task-snapshot-only",
         action="store_true",
-        help="仅查询 Task 和 Task_CheckItem，供任务推荐缓存刷新使用",
+        help="仅查询 Task、Task_Sample 和 Task_CheckItem，供任务推荐缓存刷新使用",
     )
     return parser
 

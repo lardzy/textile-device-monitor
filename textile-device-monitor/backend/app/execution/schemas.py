@@ -275,6 +275,19 @@ class ExternalBridgeClaimRequest(BaseModel):
         max_length=100,
     )
     account_name: str = Field(min_length=1, max_length=200)
+    supported_operation_types: list[
+        Literal[
+            "legacy_regenerated_fiber_count_upload",
+            "legacy_special_wool_image_upload",
+            "legacy_special_wool_review",
+        ]
+    ] = Field(
+        default_factory=lambda: [
+            "legacy_regenerated_fiber_count_upload"
+        ],
+        min_length=1,
+        max_length=10,
+    )
 
     @field_validator("account_name")
     @classmethod
