@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "operation_type": "excel_check_record",
+  "sample_number": "00A000000",
+  "check_item_no": "5103.5",
+  "check_item_name": "纤维微观形貌",
+  "task_project": {
+    "project_key": "task-project:0dddba88e0b93ac2a58ace0a",
+    "task_check_item_id": "sha256:1111111111111111",
+    "check_item_id": "sha256:2222222222222222",
+    "check_item_no": "5103.5",
+    "check_item_name": "纤维微观形貌",
+    "check_method": "GB/T 36422-2018",
+    "seq_num": 7,
+    "check_count": 1
+  },
+  "expected_existing_register_count": 0,
+  "excel_record": {
+    "template_name": "纤维微观形貌-GB T 36422-2018-2张图.xls",
+    "collection_mode": "standard",
+    "expected_mapping_config_sha256": "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23",
+    "key_result_count": 1,
+    "expected_key_identities": [
+      ""
+    ],
+    "register": {
+      "level": "",
+      "sample_identity": "",
+      "equipment_no": "",
+      "check_basis": ""
+    },
+    "workbook": {
+      "relative_path": "payload/microscopy.xls",
+      "filename": "microscopy.xls",
+      "size_bytes": 0,
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}

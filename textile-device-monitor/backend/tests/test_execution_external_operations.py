@@ -29,6 +29,7 @@ from app.execution.engine import (
     create_run,
     execute_claimed_node,
     expire_stale_external_operations,
+    retry_failed_node,
     set_run_control_status,
     submit_human_task,
 )
@@ -38,8 +39,11 @@ from app.execution.external_operations import (
     _remote_business_key,
 )
 from app.execution.models import (
+    ExecutionAuditLog,
     ExecutionCategory,
     ExecutionCredential,
+    ExecutionEvent,
+    ExecutionExternalAttempt,
     ExecutionExternalOperation,
     ExecutionFileIndexEntry,
     ExecutionHumanTask,
@@ -331,6 +335,87 @@ class ExecutionExternalOperationTests(unittest.TestCase):
         self._execute_one("upload")
         self.db.refresh(run)
         return run
+
+    def _approve_and_expire_with_external_attempts(
+        self,
+        *,
+        run,
+        attempts: list[dict],
+        verification: dict | None = None,
+    ) -> ExecutionExternalOperation:
+        operation = (
+            self.db.query(ExecutionExternalOperation)
+            .filter_by(run_id=run.id)
+            .one()
+        )
+        approve_external_operation(
+            operation.id,
+            ExternalOperationApprovalRequest(
+                approved=True,
+                payload_checksum=operation.payload_checksum,
+                confirmed_sample_number="260187115",
+            ),
+            auth=AuthContext(session=None, user=self.user),
+            db=self.db,
+        )
+        now = utcnow()
+        operation.attempt_count = len(attempts)
+        operation.started_at = now - timedelta(minutes=2)
+        operation.verification = verification or {}
+        for attempt_no, values in enumerate(attempts, start=1):
+            stage = values.get("current_stage")
+            status = values.get("status", "failed")
+            self.db.add(
+                ExecutionExternalAttempt(
+                    operation_id=operation.id,
+                    attempt_no=attempt_no,
+                    bridge_id=f"bridge-{attempt_no}",
+                    status=status,
+                    current_stage=stage,
+                    checkpoints=(
+                        [{"stage": stage, "at": now.isoformat()}]
+                        if stage is not None
+                        else []
+                    ),
+                    exit_code=values.get("exit_code", 1),
+                    error_code=values.get("error_code", "writer_failed"),
+                    error_message="受控测试失败",
+                    started_at=now - timedelta(minutes=1),
+                    finished_at=(
+                        None
+                        if status in {"claimed", "in_progress"}
+                        else now
+                    ),
+                    lease_expires_at=(
+                        now + timedelta(minutes=1)
+                        if status in {"claimed", "in_progress"}
+                        else None
+                    ),
+                )
+            )
+        operation.approval_expires_at = now - timedelta(seconds=1)
+        self.db.commit()
+        self.assertEqual(expire_stale_external_operations(self.db), 1)
+        self.db.commit()
+        self.db.refresh(operation)
+        self.assertEqual(operation.status, "expired")
+        return operation
+
+    def _retry_and_execute_upload(self, run) -> ExecutionNodeRun:
+        retry_failed_node(
+            self.db,
+            run_id=run.id,
+            node_id="upload",
+            actor=self.user,
+            reason="重新生成已过期预检单",
+        )
+        self.db.commit()
+        self._execute_one("upload")
+        return (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="upload")
+            .one()
+        )
 
     def test_worker_only_prepares_durable_operation_and_rereads_i8(self):
         path, entry, candidate = self._workbook()
@@ -1050,6 +1135,234 @@ class ExecutionExternalOperationTests(unittest.TestCase):
             "external_operation_approval_expired",
         )
         self.assertEqual(run.status, "failed")
+
+    def test_expired_preflight_can_be_rearmed_after_explicit_node_retry(self):
+        _path, entry, candidate = self._workbook()
+        run = self._prepare_run(
+            candidates=[candidate],
+            selected_ids=[entry.id],
+            primary_file_id=entry.id,
+            idempotency_key="external-expired-rearm-preflight",
+        )
+        operation = self.db.query(ExecutionExternalOperation).one()
+        operation_id = operation.id
+        operation.preflight_expires_at = utcnow() - timedelta(seconds=1)
+        self.db.commit()
+
+        self.assertEqual(expire_stale_external_operations(self.db), 1)
+        self.db.commit()
+        old_deadline = operation.preflight_expires_at
+        retry_failed_node(
+            self.db,
+            run_id=run.id,
+            node_id="upload",
+            actor=self.user,
+            reason="重新生成已过期预检单",
+        )
+        self.db.commit()
+        self._execute_one("upload")
+
+        self.db.refresh(run)
+        self.db.refresh(operation)
+        self.assertEqual(operation.id, operation_id)
+        self.assertEqual(operation.status, "prepared")
+        self.assertGreater(operation.preflight_expires_at, old_deadline)
+        self.assertIsNone(operation.error_code)
+        self.assertIsNone(operation.completed_at)
+        self.assertEqual(operation.attempt_count, 0)
+        self.assertEqual(run.status, "waiting_external")
+        node = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="upload")
+            .one()
+        )
+        self.assertEqual(node.status, "waiting_external")
+        attempts = (
+            self.db.query(ExecutionNodeAttempt)
+            .filter_by(node_run_id=node.id)
+            .order_by(ExecutionNodeAttempt.attempt_number.asc())
+            .all()
+        )
+        self.assertEqual(
+            [attempt.status for attempt in attempts],
+            ["failed", "waiting_external"],
+        )
+
+    def test_expired_approval_retry_requires_a_fresh_approval(self):
+        _path, entry, candidate = self._workbook()
+        run = self._prepare_run(
+            candidates=[candidate],
+            selected_ids=[entry.id],
+            primary_file_id=entry.id,
+            idempotency_key="external-expired-rearm-approval",
+        )
+        operation = self.db.query(ExecutionExternalOperation).one()
+        auth = AuthContext(session=None, user=self.user)
+        approve_external_operation(
+            operation.id,
+            ExternalOperationApprovalRequest(
+                approved=True,
+                payload_checksum=operation.payload_checksum,
+                confirmed_sample_number="260187115",
+            ),
+            auth=auth,
+            db=self.db,
+        )
+        operation.approval_expires_at = utcnow() - timedelta(seconds=1)
+        self.db.commit()
+
+        self.assertEqual(expire_stale_external_operations(self.db), 1)
+        self.db.commit()
+        retry_failed_node(
+            self.db,
+            run_id=run.id,
+            node_id="upload",
+            actor=self.user,
+            reason="重新确认旧系统写入",
+        )
+        self.db.commit()
+        self._execute_one("upload")
+
+        self.db.refresh(operation)
+        self.assertEqual(operation.status, "prepared")
+        self.assertIsNone(operation.approved_by_id)
+        self.assertIsNone(operation.approved_at)
+        self.assertIsNone(operation.approval_expires_at)
+        self.assertIsNone(operation.approval_note)
+        self.assertIsNone(operation.fence_token)
+        self.assertEqual(operation.receipt, {})
+        self.assertEqual(operation.verification, {})
+
+    def test_two_failed_prewrite_attempts_can_rearm_same_operation(self):
+        _path, entry, candidate = self._workbook()
+        run = self._prepare_run(
+            candidates=[candidate],
+            selected_ids=[entry.id],
+            primary_file_id=entry.id,
+            idempotency_key="external-expired-two-prewrite-attempts",
+        )
+        operation = self._approve_and_expire_with_external_attempts(
+            run=run,
+            attempts=[
+                {"current_stage": "authenticated"},
+                {"current_stage": "permission_verified"},
+            ],
+        )
+        operation_id = operation.id
+
+        node = self._retry_and_execute_upload(run)
+        self.db.refresh(operation)
+
+        self.assertEqual(operation.id, operation_id)
+        self.assertEqual(operation.status, "prepared")
+        self.assertEqual(operation.attempt_count, 2)
+        self.assertEqual(node.status, "waiting_external")
+        durable_attempts = (
+            self.db.query(ExecutionExternalAttempt)
+            .filter_by(operation_id=operation.id)
+            .order_by(ExecutionExternalAttempt.attempt_no.asc())
+            .all()
+        )
+        self.assertEqual(
+            [item.current_stage for item in durable_attempts],
+            ["authenticated", "permission_verified"],
+        )
+        self.assertEqual(
+            [item.status for item in durable_attempts],
+            ["failed", "failed"],
+        )
+        event = (
+            self.db.query(ExecutionEvent)
+            .filter_by(
+                run_id=run.id,
+                event_type="external_operation.rearmed",
+            )
+            .one()
+        )
+        self.assertEqual(event.payload["prior_attempt_count"], 2)
+        self.assertEqual(
+            [item["current_stage"] for item in event.payload["prior_attempts"]],
+            ["authenticated", "permission_verified"],
+        )
+        audit = (
+            self.db.query(ExecutionAuditLog)
+            .filter_by(
+                action="external_operation.rearm",
+                resource_id=operation.id,
+            )
+            .one()
+        )
+        self.assertEqual(audit.details["prior_attempt_count"], 2)
+        self.assertEqual(audit.details["write_boundary"], "file_copy_started")
+
+    def test_rearm_rejects_unsafe_or_unknown_attempt_history(self):
+        cases = [
+            (
+                "write-boundary",
+                [{"current_stage": "file_copy_started"}],
+                None,
+            ),
+            (
+                "unknown-stage",
+                [{"current_stage": "writer_unknown_stage"}],
+                None,
+            ),
+            (
+                "active-attempt",
+                [
+                    {
+                        "current_stage": "permission_verified",
+                        "status": "in_progress",
+                    }
+                ],
+                None,
+            ),
+            (
+                "reconciliation-evidence",
+                [{"current_stage": "permission_verified"}],
+                {
+                    "reconciliation": {
+                        "action": "confirm_no_side_effect",
+                        "attempt_id": "historical-attempt",
+                    }
+                },
+            ),
+        ]
+        for suffix, attempts, verification in cases:
+            with self.subTest(case=suffix):
+                _path, entry, candidate = self._workbook(
+                    filename=f"260187115-{suffix}.xlsx"
+                )
+                run = self._prepare_run(
+                    candidates=[candidate],
+                    selected_ids=[entry.id],
+                    primary_file_id=entry.id,
+                    idempotency_key=f"external-expired-reject-{suffix}",
+                )
+                operation = self._approve_and_expire_with_external_attempts(
+                    run=run,
+                    attempts=attempts,
+                    verification=verification,
+                )
+
+                node = self._retry_and_execute_upload(run)
+                self.db.refresh(operation)
+
+                self.assertEqual(operation.status, "expired")
+                self.assertEqual(node.status, "failed")
+                self.assertEqual(
+                    node.error_code,
+                    "external_operation_not_rearmable",
+                )
+                self.assertEqual(
+                    self.db.query(ExecutionAuditLog)
+                    .filter_by(
+                        action="external_operation.rearm",
+                        resource_id=operation.id,
+                    )
+                    .count(),
+                    0,
+                )
 
     def test_cancelling_run_revokes_prepared_operation(self):
         _path, entry, candidate = self._workbook()

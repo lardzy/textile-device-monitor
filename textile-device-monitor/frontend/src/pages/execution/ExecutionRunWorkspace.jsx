@@ -44,6 +44,7 @@ import {
 import {
   mergeNodeRunStatuses,
   normalizeWorkflowDefinition,
+  resolveExecutionFocusNodeIds,
 } from '../../utils/executionWorkflow';
 import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
@@ -308,24 +309,27 @@ export default function ExecutionRunWorkspace() {
       } else if (action === 'resume') {
         await resumeExecutionRun(runId);
       } else if (action === 'cancel') {
-        await new Promise((resolve, reject) => {
+        const confirmed = await new Promise((resolve) => {
           Modal.confirm({
             title: '取消本次执行？',
             content: '已完成的节点会保留，但未执行节点将不会继续。',
             okText: '确认取消',
             cancelText: '返回',
             okButtonProps: { danger: true },
-            onOk: resolve,
-            onCancel: () => reject(new Error('cancelled')),
+            // Ant Design 会把带一个参数的回调当成“调用方自行关闭”。
+            // 不能在此直接传 Promise.resolve，否则请求会执行但弹窗不会关闭。
+            onOk: () => resolve(true),
+            onCancel: () => resolve(false),
           });
         });
+        if (!confirmed) {
+          return;
+        }
         await cancelExecutionRun(runId);
       }
       await loadSnapshot({ quiet: true });
     } catch (requestError) {
-      if (requestError.message !== 'cancelled') {
-        message.error(requestErrorDescription(requestError));
-      }
+      message.error(requestErrorDescription(requestError));
     } finally {
       setActionLoading(null);
     }
@@ -364,6 +368,11 @@ export default function ExecutionRunWorkspace() {
   const run = snapshot.run || {};
   const status = RUN_STATUS[run.status] || { label: run.status || '未知状态', color: 'default' };
   const nodes = mergeNodeRunStatuses(snapshot.definition.nodes, snapshot.nodeRuns);
+  const focusNodeIds = resolveExecutionFocusNodeIds(
+    snapshot.nodeRuns,
+    snapshot.definition.nodes,
+    run.status,
+  );
   const activeHumanTasks = snapshot.humanTasks.filter(task =>
     ['pending', 'open', 'claimed'].includes(task.status),
   );
@@ -658,6 +667,7 @@ export default function ExecutionRunWorkspace() {
                       nodeRun={snapshot.nodeRuns.find(node => (
                         (node.node_id || node.nodeId) === task.node_id
                       ))}
+                      inspectionNumber={run.inspection_number || variables.inspection_number}
                       onChanged={() => loadSnapshot({ quiet: true })}
                     />
                   ))}
@@ -687,6 +697,7 @@ export default function ExecutionRunWorkspace() {
             edges={snapshot.definition.edges}
             readonly
             fitView
+            focusNodeIds={focusNodeIds}
           />
         </section>
 

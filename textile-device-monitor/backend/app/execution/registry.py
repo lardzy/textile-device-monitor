@@ -352,6 +352,44 @@ def _register_builtins() -> None:
             ),
         ),
         NodeType(
+            "file.paper_fiber_gbt4688_qualitative",
+            1,
+            "纸、纸板和纸浆纤维鉴别分析 GB/T 4688-2020",
+            "文件",
+            "按编号文件夹与旧系统任务信息查找纸类原始记录并读取 Sheet1!W32",
+            required_config=("root_id",),
+            config_schema=_object_schema(
+                {
+                    "root_id": {
+                        "type": "string",
+                        "const": "paper_fiber_records",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 6,
+                    },
+                    "require_full_task_match": {"type": "boolean"},
+                },
+                required=("root_id",),
+            ),
+            input_schema=_object_schema(
+                {"inspection_number": {"type": "string", "minLength": 1}},
+                required=("inspection_number",),
+            ),
+            output_schema=_object_schema(
+                {
+                    "candidates": {"type": "array"},
+                    "count": {"type": "integer"},
+                    "task": {"type": ["object", "null"]},
+                    "matched_task_project": {"type": ["object", "null"]},
+                    "task_validation_state": {"type": "string"},
+                    "task_cache_state": {"type": "string"},
+                    "missing_conditions": {"type": "array"},
+                }
+            ),
+        ),
+        NodeType(
             "human.file_selection",
             1,
             "人工选择文件",
@@ -387,7 +425,9 @@ def _register_builtins() -> None:
                     "folders": {"type": "array"},
                     "images": {"type": "array"},
                     "folder_selection_required": {"type": "boolean"},
+                    "selected_folder_ids": {"type": "array"},
                     "truncated": {"type": "boolean"},
+                    "task": {"type": ["object", "null"]},
                     "task_validation_state": {"type": "string"},
                     "task_cache_state": {"type": "string"},
                     "missing_conditions": {"type": "array"},
@@ -400,6 +440,10 @@ def _register_builtins() -> None:
                     "selected_images": {"type": "array"},
                     "primary_image_id": {"type": ["string", "null"]},
                     "primary_image": {"type": ["object", "null"]},
+                    "task": {"type": ["object", "null"]},
+                    "task_validation_state": {"type": "string"},
+                    "task_cache_state": {"type": "string"},
+                    "missing_conditions": {"type": "array"},
                 }
             ),
         ),
@@ -541,6 +585,17 @@ def _register_builtins() -> None:
                             "content_sha256",
                         ),
                     ),
+                    "selected_image_ids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 10,
+                    },
+                    "image_count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                    },
+                    "template_binding": {"type": "object"},
                     "verification": {"type": "object"},
                     "print": {"type": "object"},
                 },
@@ -549,6 +604,76 @@ def _register_builtins() -> None:
                     "original_record",
                     "verification",
                     "print",
+                ),
+            ),
+        ),
+        NodeType(
+            "workbook.microscopy_check_record",
+            1,
+            "生成检验记录登记工作簿",
+            "Excel",
+            "按选图数量生成旧系统检验记录登记使用的版本化 .xls 工作簿",
+            required_config=("staging_root_id",),
+            config_schema=_object_schema(
+                {
+                    "staging_root_id": {
+                        "type": "string",
+                        "const": "execution_staging",
+                    }
+                },
+                required=("staging_root_id",),
+            ),
+            input_schema=_object_schema(
+                {
+                    "inspection_number": {"type": "string", "minLength": 1},
+                    "image_count": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "selected_image_ids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 10,
+                    },
+                    "template_binding": {"type": "object"},
+                    "expected_key_identities": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 1,
+                        "items": {"type": "string"},
+                    },
+                    "selected_project": {"type": "object"},
+                    "sample_identification": {"type": ["string", "null"]},
+                    "test_method": {"type": ["string", "null"]},
+                    "judgement_required": {"type": ["boolean", "null"]},
+                    "judgement_basis": {"type": ["string", "null"]},
+                    "indicator_requirement": {"type": ["string", "null"]},
+                    "test_result": {"type": ["string", "null"]},
+                    "remark": {"type": ["string", "null"]},
+                    "judgement": {"type": ["string", "null"]},
+                },
+                required=(
+                    "inspection_number",
+                    "image_count",
+                    "selected_image_ids",
+                    "template_binding",
+                ),
+            ),
+            output_schema=_object_schema(
+                {
+                    "artifact_id": {"type": "string"},
+                    "check_record": ARTIFACT_REF_SCHEMA,
+                    "legacy_registration_workbook": ARTIFACT_REF_SCHEMA,
+                    "source_inspection_number": {"type": "string"},
+                    "inspection_number": {"type": "string"},
+                    "image_count": {"type": "integer"},
+                    "template_binding": {"type": "object"},
+                    "verification": {"type": "object"},
+                    "reused": {"type": "boolean"},
+                },
+                required=(
+                    "artifact_id",
+                    "check_record",
+                    "image_count",
+                    "template_binding",
+                    "verification",
                 ),
             ),
         ),
@@ -907,6 +1032,291 @@ def _register_builtins() -> None:
                         "const": True,
                     },
                     "remote_write_performed": {"type": "boolean"},
+                    "receipt": {"type": "object"},
+                },
+                required=(
+                    "operation_id",
+                    "operation_key",
+                    "payload_checksum",
+                    "status",
+                    "requires_final_approval",
+                    "remote_write_performed",
+                ),
+            ),
+        ),
+        NodeType(
+            "external.legacy_microscopy_check_record_entry",
+            1,
+            "旧系统-检验记录登记与校对",
+            "连接器",
+            "使用按选图数量绑定的工作簿新增检验记录并校对",
+            execution_kind="external_side_effect",
+            required_config=(
+                "credential_slot",
+                "generation_node_id",
+                "review_node_id",
+            ),
+            config_schema=_object_schema(
+                {
+                    "credential_slot": {
+                        "type": "string",
+                        "pattern": r"^[A-Za-z][A-Za-z0-9_.-]{0,99}$",
+                    },
+                    "generation_node_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                    },
+                    "review_node_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                    },
+                },
+                required=(
+                    "credential_slot",
+                    "generation_node_id",
+                    "review_node_id",
+                ),
+            ),
+            input_schema=_object_schema(
+                {
+                    "registration_workbook": _object_schema(
+                        {
+                            "artifact_id": {"type": "string", "minLength": 1},
+                            "root_id": {
+                                "type": "string",
+                                "const": "execution_staging",
+                            },
+                            "relative_path": {"type": "string", "minLength": 1},
+                            "filename": {"type": "string", "pattern": r"\.xls$"},
+                            "size_bytes": {"type": "integer", "minimum": 1},
+                            "content_sha256": {
+                                "type": "string",
+                                "pattern": r"^[0-9a-f]{64}$",
+                            },
+                        },
+                        required=(
+                            "artifact_id",
+                            "root_id",
+                            "relative_path",
+                            "filename",
+                            "size_bytes",
+                            "content_sha256",
+                        ),
+                    ),
+                    "template_binding": {"type": "object"},
+                    "selected_project_key": {
+                        "type": "string",
+                        "pattern": r"^task-project:[0-9a-f]{24}$",
+                    },
+                    "selected_project": {"type": "object"},
+                    "review_result": {"type": "object"},
+                    "controlled_test_override": {
+                        "type": ["object", "null"]
+                    },
+                },
+                required=(
+                    "registration_workbook",
+                    "template_binding",
+                    "selected_project_key",
+                    "selected_project",
+                    "review_result",
+                ),
+            ),
+            output_schema=_object_schema(
+                {
+                    "operation_id": {"type": "string"},
+                    "operation_key": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "payload_checksum": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "status": {"type": "string"},
+                    "requires_final_approval": {
+                        "type": "boolean",
+                        "const": True,
+                    },
+                    "remote_write_performed": {"type": "boolean"},
+                    "target_sample_number": {"type": "string"},
+                    "receipt": {"type": "object"},
+                },
+                required=(
+                    "operation_id",
+                    "operation_key",
+                    "payload_checksum",
+                    "status",
+                    "requires_final_approval",
+                    "remote_write_performed",
+                ),
+            ),
+        ),
+        NodeType(
+            "external.legacy_special_wool_qualitative_upload",
+            1,
+            "旧系统上传-纸纤维定性",
+            "连接器",
+            "上传所选纸纤维原始记录并确认不生成图片子记录",
+            execution_kind="external_side_effect",
+            required_config=("credential_slot", "selection_node_id"),
+            config_schema=_object_schema(
+                {
+                    "credential_slot": {"type": "string", "minLength": 1},
+                    "selection_node_id": {"type": "string", "minLength": 1},
+                },
+                required=("credential_slot", "selection_node_id"),
+            ),
+            input_schema=_object_schema(
+                {
+                    "selected_files": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 1,
+                    },
+                    "primary_file_id": {"type": "string", "minLength": 1},
+                    "primary_file": {"type": ["object", "null"]},
+                    "selected_project_key": {
+                        "type": "string",
+                        "pattern": r"^task-project:[0-9a-f]{24}$",
+                    },
+                    "selected_project": {"type": "object"},
+                },
+                required=(
+                    "selected_files",
+                    "primary_file_id",
+                    "selected_project_key",
+                    "selected_project",
+                ),
+            ),
+            output_schema=_object_schema(
+                {
+                    "operation_id": {"type": "string"},
+                    "operation_key": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "payload_checksum": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "status": {"type": "string"},
+                    "requires_final_approval": {
+                        "type": "boolean",
+                        "const": True,
+                    },
+                    "remote_write_performed": {"type": "boolean"},
+                    "target_sample_number": {"type": "string"},
+                    "receipt": {"type": "object"},
+                },
+                required=(
+                    "operation_id",
+                    "operation_key",
+                    "payload_checksum",
+                    "status",
+                    "requires_final_approval",
+                    "remote_write_performed",
+                ),
+            ),
+        ),
+        NodeType(
+            "external.legacy_special_wool_qualitative_review",
+            1,
+            "旧系统-纸纤维特纤复核",
+            "连接器",
+            "复核文档型特纤原始记录并确认图片子记录数仍为零",
+            execution_kind="external_side_effect",
+            required_config=("credential_slot", "upload_node_id"),
+            config_schema=_object_schema(
+                {
+                    "credential_slot": {"type": "string", "minLength": 1},
+                    "upload_node_id": {"type": "string", "minLength": 1},
+                },
+                required=("credential_slot", "upload_node_id"),
+            ),
+            input_schema=_object_schema(
+                {"upload_result": {"type": "object"}},
+                required=("upload_result",),
+            ),
+            output_schema=_object_schema(
+                {
+                    "operation_id": {"type": "string"},
+                    "operation_key": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "payload_checksum": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "status": {"type": "string"},
+                    "requires_final_approval": {
+                        "type": "boolean",
+                        "const": True,
+                    },
+                    "remote_write_performed": {"type": "boolean"},
+                    "receipt": {"type": "object"},
+                },
+                required=(
+                    "operation_id",
+                    "operation_key",
+                    "payload_checksum",
+                    "status",
+                    "requires_final_approval",
+                    "remote_write_performed",
+                ),
+            ),
+        ),
+        NodeType(
+            "external.legacy_generic_check_record_entry",
+            1,
+            "旧系统-通用检验记录登记",
+            "连接器",
+            "将纸纤维 W32 结果登记为通用项目记录，不执行校对",
+            execution_kind="external_side_effect",
+            required_config=("credential_slot", "review_node_id"),
+            config_schema=_object_schema(
+                {
+                    "credential_slot": {"type": "string", "minLength": 1},
+                    "review_node_id": {"type": "string", "minLength": 1},
+                },
+                required=("credential_slot", "review_node_id"),
+            ),
+            input_schema=_object_schema(
+                {
+                    "selected_project_key": {
+                        "type": "string",
+                        "pattern": r"^task-project:[0-9a-f]{24}$",
+                    },
+                    "selected_project": {"type": "object"},
+                    "review_result": {"type": "object"},
+                },
+                required=(
+                    "selected_project_key",
+                    "selected_project",
+                    "review_result",
+                ),
+            ),
+            output_schema=_object_schema(
+                {
+                    "operation_id": {"type": "string"},
+                    "operation_key": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "payload_checksum": {
+                        "type": "string",
+                        "pattern": r"^[0-9a-f]{64}$",
+                    },
+                    "status": {"type": "string"},
+                    "requires_final_approval": {
+                        "type": "boolean",
+                        "const": True,
+                    },
+                    "remote_write_performed": {"type": "boolean"},
+                    "target_sample_number": {"type": "string"},
                     "receipt": {"type": "object"},
                 },
                 required=(

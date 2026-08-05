@@ -234,6 +234,17 @@ namespace LegacyFibreCheckFinalEntryWriter
                     {
                         throw Reconciliation("excel_readback_register_identity_mismatch");
                     }
+                    var expectedTemplatesByRecordId = new Dictionary<string, string>(
+                        snapshot.ExistingExcelRecordTemplates, StringComparer.Ordinal);
+                    if (expectedTemplatesByRecordId.Count
+                            != package.ExpectedExistingRegisterCount
+                        || expectedTemplatesByRecordId.ContainsKey(record.ID))
+                    {
+                        throw Reconciliation(
+                            "excel_readback_existing_template_state_mismatch");
+                    }
+                    expectedTemplatesByRecordId.Add(
+                        record.ID, package.ExcelRecord.TemplateName);
                     var remainingRecordIds = new HashSet<string>(
                         allowedRecordIds, StringComparer.Ordinal);
                     using (DataTable projectRegisters = db.Query(
@@ -245,9 +256,13 @@ namespace LegacyFibreCheckFinalEntryWriter
                         }
                         foreach (DataRow row in projectRegisters.Rows)
                         {
-                            if (!remainingRecordIds.Remove(Text(row, "ID"))
+                            string existingRecordId = Text(row, "ID");
+                            string expectedTemplate;
+                            if (!remainingRecordIds.Remove(existingRecordId)
+                                || !expectedTemplatesByRecordId.TryGetValue(
+                                    existingRecordId, out expectedTemplate)
                                 || !Same(Text(row, "TemplateFilename"),
-                                    package.ExcelRecord.TemplateName))
+                                    expectedTemplate))
                             {
                                 throw Reconciliation(
                                     "excel_readback_project_register_contract_mismatch");
@@ -270,23 +285,21 @@ namespace LegacyFibreCheckFinalEntryWriter
                         throw Reconciliation("excel_readback_project_proof_count_mismatch");
                     }
 
-                    var expectedIdentities = new HashSet<string>(
-                        snapshot.ExistingKeyIdentities, StringComparer.Ordinal);
-                    if (expectedIdentities.Count != package.ExpectedExistingRegisterCount)
+                    var expectedIdentitiesByRecordId =
+                        new Dictionary<string, string>(
+                            snapshot.ExistingKeyIdentityByRecordId,
+                            StringComparer.Ordinal);
+                    if (expectedIdentitiesByRecordId.Count
+                            != package.ExpectedExistingRegisterCount
+                        || expectedIdentitiesByRecordId.ContainsKey(record.ID)
+                        || package.ExcelRecord.ExpectedKeyIdentities.Count != 1)
                     {
                         throw Reconciliation("excel_readback_existing_key_identity_mismatch");
                     }
-                    foreach (string identity in package.ExcelRecord.ExpectedKeyIdentities)
-                    {
-                        if (!expectedIdentities.Add(identity))
-                        {
-                            throw Reconciliation("excel_readback_key_identity_mismatch");
-                        }
-                    }
+                    expectedIdentitiesByRecordId.Add(
+                        record.ID, package.ExcelRecord.ExpectedKeyIdentities[0]);
                     var remainingKeyRecordIds = new HashSet<string>(
                         allowedRecordIds, StringComparer.Ordinal);
-                    var remainingIdentities = new HashSet<string>(
-                        expectedIdentities, StringComparer.Ordinal);
                     using (DataTable projectKeys = db.Query(
                         ExcelProjectKeySql, ProjectScope(package, snapshot)))
                     {
@@ -296,19 +309,26 @@ namespace LegacyFibreCheckFinalEntryWriter
                         }
                         foreach (DataRow row in projectKeys.Rows)
                         {
-                            if (!remainingKeyRecordIds.Remove(Text(row, "OriginalRecordID"))
-                                || !remainingIdentities.Remove(Text(row, "SampleIdentity"))
+                            string keyRecordId = Text(row, "OriginalRecordID");
+                            string expectedIdentity;
+                            string expectedTemplate;
+                            if (!remainingKeyRecordIds.Remove(keyRecordId)
+                                || !expectedIdentitiesByRecordId.TryGetValue(
+                                    keyRecordId, out expectedIdentity)
+                                || !expectedTemplatesByRecordId.TryGetValue(
+                                    keyRecordId, out expectedTemplate)
+                                || !Same(Text(row, "SampleIdentity"), expectedIdentity)
                                 || !Same(Text(row, "SeqNum"), "1")
                                 || !Same(Text(row, "CheckItemName"), package.CheckItemName)
                                 || !Same(Text(row, "ExcelTemplateName"),
-                                    package.ExcelRecord.TemplateName))
+                                    expectedTemplate))
                             {
                                 throw Reconciliation(
                                     "excel_readback_key_result_contract_mismatch");
                             }
                         }
                     }
-                    if (remainingKeyRecordIds.Count != 0 || remainingIdentities.Count != 0
+                    if (remainingKeyRecordIds.Count != 0
                         || Count(db, ExcelKeyScopeMismatchCountSql,
                             ProjectScope(package, snapshot)) != 0)
                     {

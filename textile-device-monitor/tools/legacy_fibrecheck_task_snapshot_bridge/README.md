@@ -2,9 +2,11 @@
 
 这是执行系统与 FibreCheck 旧系统之间的独立、只读 Windows 进程。它从执
 行系统领取待刷新的样品编号，调用相邻目录中的
-`legacy_fibrecheck_probe/probe.py`，再把任务检测依据和项目列表提交到缓存。
+`legacy_fibrecheck_probe/probe.py`，再把任务检测依据、项目列表和特种毛编号族
+占用事实提交到缓存。
 Bridge 固定传入探针的 `--task-snapshot-only`，因此每次刷新只查询
-`Task`、`Task_Sample` 和 `Task_CheckItem`，不会为首页推荐重复执行完整旧系统对账查询。
+`Task`、`Task_Sample`、`Task_CheckItem` 和最小化的
+`SpecialWoolManage.SampleNo` 编号族，不会为首页推荐重复执行完整旧系统对账查询。
 
 它不会上传文件、修改 Oracle、操作 FibreCheck 界面，也不会复用任何旧系统
 写入工具。现有探针会先执行 `SET TRANSACTION READ ONLY`，所有查询完成后
@@ -49,11 +51,13 @@ Bridge 固定传入探针的 `--task-snapshot-only`，因此每次刷新只查�
 ## 协议和失败策略
 
 - `POST /task-snapshot-bridge/claim` 领取编号。
-- 探针必须确认真实连接和只读事务，且 `tasks`、`task_check_items` 查询均成功。
+- 探针必须确认真实连接和只读事务，且四项快照查询均成功。
 - 同编号没有 Task 时提交空项目快照；同编号存在多个 Task、编号错配或查询失
   败时调用 `.../fail`，不会用不确定数据覆盖缓存。
 - `Task_Sample` 只保留属于已确认 Task 的非空样品名称，并去重后返回。
 - `Task_CheckItem` 只保留属于已确认 Task 的项目。
+- 编号族只保留底单以及 `-1/-2...` 的真实占用编号，供图片上传预检稳定选择
+  首个空闲编号；Windows Writer 写入锁内仍会再次核对。
 - 成功调用 `.../{inspection_number}/complete`；请求都携带
   `X-Execution-Bridge-Key`。
 

@@ -1,6 +1,7 @@
 param(
     [string]$FibreCheckDir = "$PSScriptRoot\..\..\..\.tmp\FibreCheck",
     [string]$OdpEfDir = "$PSScriptRoot\..\..\..\.tmp\odp-ef\lib\net45",
+    [string]$Odac32Dir = "$PSScriptRoot\..\..\..\.tmp\odac32",
     [string]$RunnerSrc = "$PSScriptRoot\..\legacy_fibrecheck_runner\src",
     [string]$OutDir = "$PSScriptRoot\out"
 )
@@ -31,7 +32,11 @@ $sources = @(
     "$RunnerSrc\LegacyLoginFlow.cs",
     "$RunnerSrc\SystemDataConnection.cs",
     "$PSScriptRoot\src\WriterProgram.cs",
-    "$PSScriptRoot\src\UploadExecutor.cs"
+    "$PSScriptRoot\src\UploadExecutor.cs",
+    "$PSScriptRoot\src\SpecialWoolContracts.cs",
+    "$PSScriptRoot\src\LegacyXlsFileVerifier.cs",
+    "$PSScriptRoot\src\SpecialWoolWriteLock.cs",
+    "$PSScriptRoot\src\SpecialWoolExecutor.cs"
 )
 
 & $csc -nologo -target:exe -platform:x86 -utf8output -debug- -optimize+ `
@@ -44,9 +49,8 @@ Copy-Item "$PSScriptRoot\app.config" "$OutDir\FibreCheckWriter.exe.config" -Forc
 Copy-Item (Join-Path $OdpEfDir 'Oracle.ManagedDataAccess.EntityFramework.dll') $OutDir -Force
 
 # 32 位非托管 ODP.NET 运行时件（官方 DAL 路径需要 11.2 客户端）
-$odac32 = "$PSScriptRoot\..\..\..\.tmp\odac32"
-if (Test-Path "$odac32\odp4bin\OraOps11w.dll") {
-    Copy-Item "$odac32\odp4bin\OraOps11w.dll" $OutDir -Force
-    Copy-Item "$odac32\instantclient_11_2\*.dll" $OutDir -Force
+if (Test-Path "$Odac32Dir\odp4bin\OraOps11w.dll") {
+    Copy-Item "$Odac32Dir\odp4bin\OraOps11w.dll" $OutDir -Force
+    Copy-Item "$Odac32Dir\instantclient_11_2\*.dll" $OutDir -Force
 }
 Write-Host "构建完成: $OutDir\FibreCheckWriter.exe"

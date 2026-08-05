@@ -1,5 +1,5 @@
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -572,6 +572,198 @@ describe('ExecutionTaskInbox', () => {
     expect(submitted.mock.calls[0][0].data).not.toHaveProperty('relative_path');
   });
 
+  it('单个电镜结果文件夹自动选中并可立即选择图片', async () => {
+    const submitted = vi.fn();
+    const imageTask = {
+      ...openTask,
+      node_id: 'select-images',
+      title: '选择单目录微观形貌图片',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    const inputData = {
+      folder_selection_required: false,
+      selected_folder_ids: ['folder-single'],
+      task_validation_state: 'matched',
+      task_cache_state: 'ready',
+      folders: [{
+        id: 'folder-single',
+        name: '260111037',
+        relative_path: '260111037',
+      }],
+      images: [{
+        id: 'image-single',
+        folder_id: 'folder-single',
+        folder_name: '260111037',
+        name: '500x_q09.bmp',
+        relative_path: '260111037/500x_q09.bmp',
+        preview_url: '/preview/image-single',
+      }],
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [imageTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(imageTask),
+          node_run: { node_id: 'select-images', input_data: inputData },
+        })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({ ...imageTask, status: 'completed', revision: 3 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('选择单目录微观形貌图片'));
+    const folder = await screen.findByRole('checkbox', { name: /260111037 1 张图片/ });
+    await waitFor(() => expect(folder).toBeChecked());
+    expect(screen.getByText('500x_q09.bmp')).toBeInTheDocument();
+
+    await user.click(folder);
+    expect(folder).not.toBeChecked();
+    expect(screen.queryByText('500x_q09.bmp')).not.toBeInTheDocument();
+    await user.click(folder);
+    expect(folder).toBeChecked();
+    await user.click(await screen.findByRole('button', { name: '选择 500x_q09.bmp' }));
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toMatchObject({
+      selected_folder_ids: ['folder-single'],
+      selected_image_ids: ['image-single'],
+      primary_image_id: 'image-single',
+    });
+  });
+
+  it('同 revision 的节点候选稍后到达时完成初始化且普通刷新保留本地选图', async () => {
+    let detailRequests = 0;
+    const imageTask = {
+      ...openTask,
+      node_id: 'select-images',
+      title: '延迟返回的微观形貌图片',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    const inputData = {
+      folder_selection_required: false,
+      selected_folder_ids: ['folder-late'],
+      task_validation_state: 'matched',
+      task_cache_state: 'ready',
+      folders: [{
+        id: 'folder-late',
+        name: '260111037',
+        relative_path: '260111037',
+      }],
+      images: [{
+        id: 'image-late',
+        folder_id: 'folder-late',
+        folder_name: '260111037',
+        name: 'late.bmp',
+        relative_path: '260111037/late.bmp',
+        preview_url: '/preview/image-late',
+      }],
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [imageTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () => {
+        detailRequests += 1;
+        const payload = detailPayload(imageTask);
+        if (detailRequests === 1) {
+          delete payload.node_run;
+        } else {
+          payload.node_run = { node_id: 'select-images', input_data: inputData };
+        }
+        return HttpResponse.json(payload);
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('延迟返回的微观形貌图片'));
+    expect(await screen.findByText('任务上下文尚未返回')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /刷新/ }));
+
+    const folder = await screen.findByRole('checkbox', { name: /260111037 1 张图片/ });
+    expect(folder).toBeChecked();
+    const image = await screen.findByRole('button', { name: '选择 late.bmp' });
+    await user.click(image);
+    expect(image).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: /刷新/ }));
+    await waitFor(() => expect(detailRequests).toBeGreaterThanOrEqual(3));
+    expect(screen.getByRole('button', { name: '取消选择 late.bmp' }))
+      .toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('旧系统任务快照由 pending 更新为 ready 后移除非阻塞提示', async () => {
+    let releaseStatus;
+    let statusRequests = 0;
+    const statusGate = new Promise((resolve) => { releaseStatus = resolve; });
+    const imageTask = {
+      ...openTask,
+      node_id: 'select-images',
+      title: '等待任务快照的图片选择',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    const inputData = {
+      folder_selection_required: false,
+      selected_folder_ids: ['folder-pending'],
+      task_validation_state: 'pending',
+      task_cache_state: 'pending',
+      missing_conditions: ['task_item_name', 'test_method'],
+      folders: [{ id: 'folder-pending', name: '26X910095-1' }],
+      images: [{
+        id: 'image-pending',
+        folder_id: 'folder-pending',
+        name: 'pending.bmp',
+        relative_path: '26X910095-1/pending.bmp',
+      }],
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [imageTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(imageTask),
+          node_run: { node_id: 'select-images', input_data: inputData },
+        })),
+      http.get(
+        '/api/execution/v1/task-snapshots/26X910095-1/status',
+        async () => {
+          statusRequests += 1;
+          await statusGate;
+          return HttpResponse.json({
+            cache_state: 'ready',
+            refresh_status: 'succeeded',
+            snapshot_available: true,
+            matched_conditions: ['task_item_name', 'test_method'],
+            missing_conditions: [],
+            error_code: null,
+          });
+        },
+      ),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('等待任务快照的图片选择'));
+    expect(await screen.findByText('旧系统任务信息尚未就绪，不影响当前选图'))
+      .toBeInTheDocument();
+    await waitFor(() => expect(statusRequests).toBe(1));
+    await act(async () => { releaseStatus(); });
+    await waitFor(() => {
+      expect(screen.queryByText('旧系统任务信息尚未就绪，不影响当前选图'))
+        .not.toBeInTheDocument();
+    });
+  });
+
   it('微观形貌原始记录支持分词选择、手工修正和多值判定', async () => {
     const submitted = vi.fn();
     const recordTask = {
@@ -865,6 +1057,93 @@ describe('ExecutionTaskInbox', () => {
     expect(submitted.mock.calls[0][0].data).toEqual({
       printed: true,
       artifact_sha256: sha256,
+    });
+  });
+
+  it('纸类候选展示 W32 结果并明确限制为单选', async () => {
+    const submitted = vi.fn();
+    const paperTask = {
+      ...openTask,
+      title: '选择纸类原始记录',
+      description: '查看 Sheet1!W32 定性结果后选择一份原始记录。',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+      form_schema: { type: 'object', properties: {} },
+    };
+    const paperCandidates = [{
+      id: 'paper-file-1',
+      name: '26W006687-第一次.xls',
+      relative_path: '26W006687/26W006687-第一次.xls',
+      read_status: 'succeeded',
+      qualitative_result: '木浆 100',
+      result: {
+        worksheet: 'Sheet1',
+        cell: 'W32',
+        w32_value: '木浆 100',
+        qualitative_result: '木浆 100',
+        unit: '%',
+      },
+    }, {
+      id: 'paper-file-2',
+      name: '26W006687-复核.xls',
+      relative_path: '26W006687/26W006687-复核.xls',
+      read_status: 'succeeded',
+      qualitative_result: '草浆、木浆、竹浆',
+      result: {
+        worksheet: 'Sheet1',
+        cell: 'W32',
+        w32_value: '草浆、木浆、竹浆',
+        qualitative_result: '草浆、木浆、竹浆',
+        unit: '',
+      },
+    }];
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [paperTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(paperTask),
+          task: paperTask,
+          run: {
+            id: 'run-1',
+            inspection_number: '26W006687',
+            workflow_name: '纸、纸板和纸浆纤维鉴别分析 GB/T 4688-2020',
+          },
+          node_run: {
+            node_id: 'select',
+            node_type: 'human.file_selection',
+            input_data: { candidates: paperCandidates },
+          },
+        })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({ ...paperTask, status: 'completed', revision: 3 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('选择纸类原始记录'));
+    expect(await screen.findByText('纸类原始记录（2，单选）')).toBeInTheDocument();
+    expect(screen.getAllByText('Sheet1!W32')).toHaveLength(2);
+    expect(screen.getByText('木浆 100')).toBeInTheDocument();
+    expect(screen.getByText('草浆、木浆、竹浆')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: '需要' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /设为主单/ })).not.toBeInTheDocument();
+
+    const choices = screen.getAllByRole('radio', { name: /选择文件：/ });
+    await user.click(choices[0]);
+    expect(choices[0]).toBeChecked();
+    await user.click(choices[1]);
+    expect(choices[0]).not.toBeChecked();
+    expect(choices[1]).toBeChecked();
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toMatchObject({
+      selected_files: ['paper-file-2'],
+      primary_file_id: 'paper-file-2',
     });
   });
 });

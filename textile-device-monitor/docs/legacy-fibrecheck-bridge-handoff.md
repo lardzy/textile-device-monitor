@@ -1,9 +1,55 @@
 # FibreCheck 集中式 Windows Bridge 交接手册
 
-> 最后更新：2026-08-01
+> 最后更新：2026-08-05
 > 适用环境：Windows 11 ARM64（x64/x86 模拟层）及后续部门内常驻 Windows 主机
 > 当前状态：`260187115-1` 首次受控真实写入已完成并通过写后核验；代码复查后
 > 已暂停第二次真实写入，先完成副作用许可、取消、账号隔离与并发安全门禁
+
+2026-08-05 补充：图片类特种毛的 Writer/Bridge 离线实现已完成，但后端能力开关
+仍保持关闭，且本轮没有连接 Oracle、没有复制到真实文件服务器、没有执行任何真实
+上传或复核。具体边界如下：
+
+- Writer 为 `legacy_special_wool_image_upload` 创建独立执行路径：重查并绑定任务
+  项目的原始 `CheckItemID`，在 `Task_CheckItem` 协作锁内复算编号族，使用
+  `FileMode.CreateNew` 和 SHA-256 回读复制文件，再由官方
+  `SpecialWoolDAL.SaveSpecialWoolManage` 一次保存主记录和一条
+  `OriginalDataPictureFile`，最后回读两张表；
+- Writer 为 `legacy_special_wool_review` 创建独立路径：检查
+  `SpecialWoolCheckUI` 和配置存在时的 `btnCheck` 权限，只设置主记录
+  `ReviewUser/ReviewTime`，并证明主表其它列及图片子记录指纹不变；
+- Bridge 会广告三种分派，并为上传/复核使用不同的阶段与许可边界；复核不再要求
+  `--source-root`；
+- 服务端签发的 `execution_capability.available=false` 仍会被 Bridge 和 Writer
+  双重执行，因此这些代码不能被现有生产流程领取或触发；
+- 编号族锁内复算若与已签发的 `target_sample_number` 不同，Writer 失败并进入对账，
+  不会自动改为 `-1/-2` 后提交与服务端回执不一致的目标号。
+
+离线门禁已覆盖：Bridge Python 协议测试、C# 纯契约 SelfTest，以及在 Windows VM
+中引用冻结 FibreCheck DLL 的完整 Writer 编译。下一步仍是只读机器观察传输、受控
+测试号的最终变更清单和人工确认；不能根据“编译通过”直接打开后端能力开关。
+
+2026-08-05 FinalEntry 补充：集中式 Bridge 已支持按部署配置分派
+`legacy_microscopy_check_record_entry`，但本轮只完成离线协议验证，没有进行真实写入：
+
+- 只有同时配置 `--final-entry-writer` 和 `--final-entry-work-root` 才向服务端广告
+  FinalEntry 能力；源工作簿仍必须通过 `--source-root root_id=路径` 显式映射；
+- Bridge 写给 FinalEntry Writer 的临时 JSON 只包含服务端签发的
+  `operation.machine_payload`，不会把 claim、凭据或公开摘要混入 Writer 包；私有包内含完整
+  `task_project`（项目键、两个脱敏 ID、项目编号/名称、方法、顺序、`CheckCount=1`）；
+- Writer 的本地阶段会转换为服务端固定阶段，并在 `excel_write_ready` 后先由服务端
+  持久化 `excel_collection_started`，成功后才经 stdin 发出一次性副作用许可；
+- `completed` 不直接信任 stdout：Bridge 会先严格核对完整 raw receipt、Writer 从当前
+  Oracle 行实测返回的 `task_project`、工作簿哈希、远端文件回读、登记数和校对指纹，转换成
+  后端回执后才提交完成；转换时不会把公开 `request_summary.task_project` 回显成实测事实；
+- 广告并执行 FinalEntry Excel 能力的 Bridge 必须运行在已登录 Windows 用户的交互会话中
+  （`Environment.UserInteractive=true` 且 `SessionId>0`），例如任务计划选择“仅当用户登录时
+  运行”。不得由 Windows 服务、SYSTEM、Session 0 或“无论用户是否登录都运行”的后台任务
+  启动 FinalEntry Writer；不满足时 Writer 会在旧系统登录和 Oracle 预检前以
+  `excel_interactive_session_required` 拒绝，且不进入对账状态。通用 FinalEntry 操作不受影响；
+- 受控 1→2 测试必须同时满足任务包声明、Bridge CLI
+  `--allow-controlled-final-entry-test-override` 和预先存在且目标精确一致的
+  `FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO`。Bridge 不会根据任务包设置该环境变量，
+  普通任务即使 CLI 已打开也不会向 Writer 传递覆盖参数。
 
 ## 1. 首先必须知道的结论
 
@@ -300,14 +346,17 @@ legacy_special_wool_review
 
 - 图片上传固定为 `FibreSort=图片`、`CheckWay=''`、`CheckItem=图片`、`CheckCount=1`；
   检验员使用执行系统当前用户显示名。源文件必须是同一运行中生成、登记并重新
-  核对 SHA-256 的 `编号-图片-纤维微观形貌原始记录.xls`。
-- 旧客户端 `SpecialWoolAddUI.UploadFileToFileServer` 按上传文件名是否包含“图片”
-  决定 `FileType.图片`，因此生成文件名中的“图片”不能删除。
+  核对 SHA-256 的 `编号-39-8B-纤维形状截面定量试验-2026.xls`。服务器端文件名
+  必须按最终分配编号重新生成，例如 `260111037-1-39-8B-纤维形状截面定量试验-2026.xls`，
+  主记录 `FilePath`、图片子记录 `PictureFileName/OriginalDataFileName` 及回执均需
+  读回该名称。新回执会显式携带 `original_data_filename`；后端仍兼容本轮早期
+  已保存但缺少该字段的 v1 回执，字段一旦存在就必须等于最终目标文件名。
 - 复核使用独立阶段：`authenticated → permission_verified → remote_state_verified
   → review_save_ready → review_save_started → review_main_verified →
   review_children_verified → completed`；副作用边界是 `review_save_started`。
-- 当前后端预检声明 `execution_capability.available=false` 并拒绝批准；Bridge 不
-  声明这两种能力，Writer 也明确拒绝，不能回落到根数法写入实现。
+- 当前后端预检声明 `execution_capability.available=false` 并拒绝批准；Bridge
+  虽会广告独立分派，但领取到禁用能力时仍拒绝启动，Writer 也会再次核对该标志，
+  因而不能回落到根数法写入实现。
 - 2026-08-05 静态取证确认 `SpecialWoolAddUI` 创建一条
   `OriginalDataPictureFile`，其 `CheckItemID` 来自用户选中的任务项目；主记录与
   图片子记录由官方 DAL 在同一 `SaveChanges` 边界保存。已对
@@ -315,7 +364,8 @@ legacy_special_wool_review
   图片主/子记录作为真实样本。
 - `SpecialWoolCheckUI` 的图片类复核仅更新主记录
   `ReviewUser/ReviewTime`，不修改图片子记录；未来回执必须证明子记录数量、
-  外键、`CheckItemID` 和字段指纹在复核前后不变。
+  外键、`CheckItemID` 和字段指纹在复核前后不变。复核还必须绑定上传回执中的
+  脱敏主记录 ID；同号主记录被替换时，Writer 必须在副作用许可前拒绝。
 - 图片上传预检已绑定人工选中的脱敏 `Task_CheckItem/CheckItem`；
   Python 探针 `--special-wool-image-dry-run` 可以只读查询编号族、精确项目、
   图片主子记录、唯一索引和服务器时间，但始终输出 `ready_for_write=false`。
@@ -324,10 +374,11 @@ legacy_special_wool_review
   主记录，且没有 `SampleNo` 单列唯一索引。因此后续必须由 Bridge 全局串行
   执行“重查编号族 → 分配 → 保存 → 精确回读”，不能把查询后的编号当成并发唯一保障。
 
-Windows 下一轮必须先做只读/断点取证，不做真实保存：
+Windows 下一轮仍必须先做只读/断点取证，不做真实保存：
 
 1. 已证明目标编号远端精确/Contains 占用查询和 `SampleNo` 无唯一索引；
-   下一步把最终 `原号/-1/-2` 分配放到 Bridge 的全局串行写前预检中。
+   Writer 已在服务端全局单写容量之外，再以 `Task_CheckItem` 协作锁复算
+   `原号/-1/-2`，但仍需在受控环境做并发断点验证。
 2. 找到一条真实已有图片主/子记录，以零写入 dry-run 确认
    `OriginalDataPictureFile` 的实库回读结构。
 3. 在 Windows 实机只读验证 `SpecialWoolCheckUI` 功能权限与可能存在的
@@ -355,9 +406,12 @@ Windows 下一轮必须先做只读/断点取证，不做真实保存：
 - PostgreSQL 下两个 Bridge 并发领取的真实竞争验证（服务端容量目标为全局 1）；
 - UTF-8 编码修复后的第二次端到端验证；
 - Bridge 完成/失败响应中断时的本地持久回执与运维恢复流程。
-- 图片上传的远端编号最终分配、`OriginalDataPictureFile + CheckItemID` 子记录创建
-  与保存后回读证明；
-- 特纤复核对主记录、细度/定量/图片子记录的联动和事务边界证明。
+- ~~图片上传的远端编号锁内复算、`OriginalDataPictureFile + CheckItemID` 子记录创建
+  与保存后回读代码~~（离线实现和完整编译已完成）；仍缺一次受控真实写入后的实库
+  与文件服务器对账证明；
+- ~~特纤复核只更新主记录 `ReviewUser/ReviewTime` 且图片子记录指纹不变的代码~~
+  （离线实现和完整编译已完成）；仍缺真实 `SpecialWoolCheckUI/btnCheck` 权限及一次
+  受控复核的前后对账证明。
 
 上述安全门禁缺失或未验证时，只能运行只读登录、对账、dry-run 和无副作用的
 自动化测试；`EXECUTION_BRIDGE_ENABLED` 必须保持为 `false`。

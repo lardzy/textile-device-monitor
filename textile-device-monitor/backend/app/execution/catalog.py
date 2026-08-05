@@ -20,6 +20,11 @@ from app.execution.models import (
     ExecutionWorkflowVersion,
 )
 from app.execution.security import hash_password
+from app.execution.paper_fiber import (
+    PAPER_FIBER_NODE_TYPE,
+    PAPER_FIBER_ROOT_ID,
+    PAPER_FIBER_WORKFLOW_SLUG,
+)
 from app.execution.validation import (
     definition_checksum,
     runtime_definition,
@@ -33,6 +38,7 @@ DEFAULT_CATEGORIES = (
     ("regenerated_fiber", "再生纤", "再生纤维素纤维原始记录", 20),
     ("hemp_cotton", "麻棉", "麻棉类原始记录", 30),
     ("electron_microscopy", "电镜", "电镜图片与微观形貌项目", 40),
+    ("other", "其他", "纸类等其它检测项目", 50),
 )
 
 DEFAULT_PERMISSIONS = (
@@ -480,6 +486,230 @@ def _electron_microscopy_gbt36422_image_selection_definition() -> dict[str, Any]
     }
 
 
+def _paper_fiber_gbt4688_qualitative_readonly_definition() -> dict[str, Any]:
+    name = "纸、纸板和纸浆纤维鉴别分析 GB/T 4688-2020"
+    return {
+        "schema_version": "1.0",
+        "metadata": {
+            "slug": PAPER_FIBER_WORKFLOW_SLUG,
+            "name": name,
+            "category": "other",
+        },
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "inspection_number": {
+                    "type": "string",
+                    "title": "检验编号",
+                    "minLength": 1,
+                }
+            },
+            "required": ["inspection_number"],
+            "additionalProperties": False,
+        },
+        "global_schema": {"type": "object", "properties": {}},
+        "root_slots": [
+            {
+                "name": "source",
+                "root_id": PAPER_FIBER_ROOT_ID,
+                "access": "read",
+            }
+        ],
+        "credential_slots": [],
+        "nodes": [
+            {
+                "id": "start",
+                "type": "core.start",
+                "type_version": 1,
+                "name": "开始",
+                "config": {},
+                "input_mapping": {},
+                "ui": {"x": 40, "y": 180},
+            },
+            {
+                "id": "query",
+                "type": PAPER_FIBER_NODE_TYPE,
+                "type_version": 1,
+                "name": "读取纸类定性结果",
+                "config": {
+                    "root_id": PAPER_FIBER_ROOT_ID,
+                    "limit": 6,
+                    "require_full_task_match": False,
+                },
+                "input_mapping": {
+                    "inspection_number": "$.inputs.inspection_number"
+                },
+                "ui": {"x": 280, "y": 180},
+            },
+            {
+                "id": "select",
+                "type": "human.file_selection",
+                "type_version": 1,
+                "name": "选择原始记录",
+                "config": {
+                    "title": "请选择本次执行使用的纸类原始记录",
+                    "description": "查看 Sheet1!W32 定性结果后选择一份原始记录。",
+                    "allow_multiple": False,
+                    "allow_primary": False,
+                    "require_primary": True,
+                    "presentation": "qualitative_result",
+                },
+                "input_mapping": {
+                    "candidates": "$.nodes.query.output.candidates",
+                    "task": "$.nodes.query.output.task",
+                    "matched_task_project": (
+                        "$.nodes.query.output.matched_task_project"
+                    ),
+                    "task_validation_state": (
+                        "$.nodes.query.output.task_validation_state"
+                    ),
+                    "task_cache_state": "$.nodes.query.output.task_cache_state",
+                    "missing_conditions": (
+                        "$.nodes.query.output.missing_conditions"
+                    ),
+                },
+                "ui": {"x": 540, "y": 180},
+            },
+            {
+                "id": "end",
+                "type": "core.end",
+                "type_version": 1,
+                "name": "结束",
+                "config": {},
+                "input_mapping": {
+                    "selected_files": "$.nodes.select.output.selected_files",
+                    "primary_file_id": (
+                        "$.nodes.select.output.primary_file_id"
+                    ),
+                    "primary_file": "$.nodes.select.output.primary_file",
+                    "task": "$.nodes.query.output.task",
+                    "matched_task_project": (
+                        "$.nodes.query.output.matched_task_project"
+                    ),
+                },
+                "ui": {"x": 800, "y": 180},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "query"},
+            {"id": "e2", "source": "query", "target": "select"},
+            {"id": "e3", "source": "select", "target": "end"},
+        ],
+    }
+
+
+def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
+    """Full paper-fibre flow built on the reproducible read-only v1 DAG."""
+
+    definition = _paper_fiber_gbt4688_qualitative_readonly_definition()
+    start, query, select = deepcopy(definition["nodes"][:3])
+    definition["credential_slots"] = [
+        {
+            "name": "legacy_account",
+            "system_key": "legacy_inspection",
+            "required": True,
+        }
+    ]
+    definition["nodes"] = [
+        start,
+        query,
+        select,
+        {
+            "id": "upload-record",
+            "type": "external.legacy_special_wool_qualitative_upload",
+            "type_version": 1,
+            "name": "旧系统上传-特种毛-纸纤维定性",
+            "config": {
+                "credential_slot": "legacy_account",
+                "selection_node_id": "select",
+            },
+            "input_mapping": {
+                "selected_files": "$.nodes.select.output.selected_files",
+                "primary_file_id": (
+                    "$.nodes.select.output.primary_file_id"
+                ),
+                "primary_file": "$.nodes.select.output.primary_file",
+                "selected_project_key": (
+                    "$.nodes.query.output.matched_task_project.project_key"
+                ),
+                "selected_project": (
+                    "$.nodes.query.output.matched_task_project"
+                ),
+            },
+            "ui": {"x": 800, "y": 180},
+        },
+        {
+            "id": "review-record",
+            "type": "external.legacy_special_wool_qualitative_review",
+            "type_version": 1,
+            "name": "旧系统-特纤复核",
+            "config": {
+                "credential_slot": "legacy_account",
+                "upload_node_id": "upload-record",
+            },
+            "input_mapping": {
+                "upload_result": "$.nodes.upload-record.output"
+            },
+            "ui": {"x": 1040, "y": 180},
+        },
+        {
+            "id": "register-result",
+            "type": "external.legacy_generic_check_record_entry",
+            "type_version": 1,
+            "name": "旧系统-检验记录登记",
+            "config": {
+                "credential_slot": "legacy_account",
+                "review_node_id": "review-record",
+            },
+            "input_mapping": {
+                "review_result": "$.nodes.review-record.output",
+                "selected_project_key": (
+                    "$.nodes.query.output.matched_task_project.project_key"
+                ),
+                "selected_project": (
+                    "$.nodes.query.output.matched_task_project"
+                ),
+            },
+            "ui": {"x": 1280, "y": 180},
+        },
+        {
+            "id": "end",
+            "type": "core.end",
+            "type_version": 1,
+            "name": "结束",
+            "config": {},
+            "input_mapping": {
+                "selected_files": "$.nodes.select.output.selected_files",
+                "primary_file": "$.nodes.select.output.primary_file",
+                "qualitative_result": (
+                    "$.nodes.select.output.primary_file.result"
+                ),
+                "upload": "$.nodes.upload-record.output",
+                "review": "$.nodes.review-record.output",
+                "final_entry": "$.nodes.register-result.output",
+            },
+            "ui": {"x": 1520, "y": 180},
+        },
+    ]
+    definition["edges"] = [
+        {"id": "e1", "source": "start", "target": "query"},
+        {"id": "e2", "source": "query", "target": "select"},
+        {"id": "e3", "source": "select", "target": "upload-record"},
+        {
+            "id": "e4",
+            "source": "upload-record",
+            "target": "review-record",
+        },
+        {
+            "id": "e5",
+            "source": "review-record",
+            "target": "register-result",
+        },
+        {"id": "e6", "source": "register-result", "target": "end"},
+    ]
+    return definition
+
+
 def _electron_microscopy_image_selection_default_checksums() -> set[str]:
     """Recognize the two system-owned image-only definitions shipped in v1.
 
@@ -506,11 +736,18 @@ def _electron_microscopy_gbt36422_definition(
     legacy_print_contract: bool = False,
     legacy_print_choice_contract: bool = False,
     legacy_project_contract: bool = False,
+    legacy_task_source_contract: bool = False,
+    legacy_final_entry_contract: bool = False,
 ) -> dict[str, Any]:
     """Current full workflow; keep the image-only v1 reproducible above."""
 
     definition = _electron_microscopy_gbt36422_image_selection_definition()
     start, discover, select_images = deepcopy(definition["nodes"][:3])
+    task_output_path = (
+        "$.nodes.discover.output.task"
+        if legacy_task_source_contract
+        else "$.nodes.select-images.output.task"
+    )
     definition["root_slots"] = [
         {
             "name": "source",
@@ -530,6 +767,46 @@ def _electron_microscopy_gbt36422_definition(
             "required": True,
         }
     ]
+    if not legacy_final_entry_contract:
+        definition["input_schema"]["properties"][
+            "controlled_test_override"
+        ] = {
+            "type": "object",
+            "title": "受控测试覆盖",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "append_one_when_check_count_one",
+                },
+                "target_sample_number": {"type": "string"},
+                "expected_task_check_count": {
+                    "type": "integer",
+                    "const": 1,
+                },
+                "expected_existing_register_count": {
+                    "type": "integer",
+                    "const": 1,
+                },
+                "resulting_register_count": {
+                    "type": "integer",
+                    "const": 2,
+                },
+                "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                },
+            },
+            "required": [
+                "kind",
+                "target_sample_number",
+                "expected_task_check_count",
+                "expected_existing_register_count",
+                "resulting_register_count",
+                "reason",
+            ],
+            "additionalProperties": False,
+        }
     definition["nodes"] = [
         start,
         discover,
@@ -542,7 +819,7 @@ def _electron_microscopy_gbt36422_definition(
             "config": {},
             "input_mapping": {
                 "inspection_number": "$.inputs.inspection_number",
-                "task": "$.nodes.discover.output.task",
+                "task": task_output_path,
                 "selected_image_ids": (
                     "$.nodes.select-images.output.selected_image_ids"
                 ),
@@ -603,7 +880,7 @@ def _electron_microscopy_gbt36422_definition(
                 "selected_images": (
                     "$.nodes.select-images.output.selected_images"
                 ),
-                "task": "$.nodes.discover.output.task",
+                "task": task_output_path,
                 "sample_name": "$.nodes.record-input.output.sample_name",
                 "sample_identification": (
                     "$.nodes.record-input.output.sample_identity"
@@ -765,21 +1042,6 @@ def _electron_microscopy_gbt36422_definition(
             },
             "ui": {"x": 1980, "y": 180},
         },
-        {
-            "id": "end",
-            "type": "core.end",
-            "type_version": 1,
-            "name": "结束",
-            "config": {},
-            "input_mapping": {
-                "original_record": (
-                    "$.nodes.generate-record.output.original_record"
-                ),
-                "upload": "$.nodes.upload-record.output",
-                "review": "$.nodes.review-record.output",
-            },
-            "ui": {"x": 2220, "y": 180},
-        },
     ]
     definition["edges"] = [
         {"id": "e1", "source": "start", "target": "discover"},
@@ -790,8 +1052,140 @@ def _electron_microscopy_gbt36422_definition(
         {"id": "e6", "source": "generate-record", "target": "print-confirm"},
         {"id": "e7", "source": "print-confirm", "target": "upload-record"},
         {"id": "e8", "source": "upload-record", "target": "review-record"},
-        {"id": "e9", "source": "review-record", "target": "end"},
     ]
+    end_mapping = {
+        "original_record": "$.nodes.generate-record.output.original_record",
+        "upload": "$.nodes.upload-record.output",
+        "review": "$.nodes.review-record.output",
+    }
+    if legacy_final_entry_contract:
+        definition["edges"].append(
+            {"id": "e9", "source": "review-record", "target": "end"}
+        )
+        end_x = 2220
+    else:
+        definition["nodes"].extend(
+            [
+                {
+                    "id": "generate-check-record",
+                    "type": "workbook.microscopy_check_record",
+                    "type_version": 1,
+                    "name": "生成检验记录登记工作簿",
+                    "config": {"staging_root_id": "execution_staging"},
+                    "input_mapping": {
+                        "inspection_number": "$.inputs.inspection_number",
+                        "image_count": (
+                            "$.nodes.generate-record.output.image_count"
+                        ),
+                        "selected_image_ids": (
+                            "$.nodes.select-images.output.selected_image_ids"
+                        ),
+                        "template_binding": (
+                            "$.nodes.generate-record.output.template_binding"
+                        ),
+                        "selected_project": (
+                            "$.nodes.record-input.output.selected_project"
+                        ),
+                        "sample_identification": (
+                            "$.nodes.record-input.output.sample_identity"
+                        ),
+                        "test_method": (
+                            "$.nodes.record-input.output.selected_project."
+                            "check_method"
+                        ),
+                        "judgement_required": (
+                            "$.nodes.record-input.output.judgement_required"
+                        ),
+                        "judgement_basis": (
+                            "$.nodes.record-input.output.judge_basis"
+                        ),
+                        "indicator_requirement": (
+                            "$.nodes.record-input.output.selected_project."
+                            "indicator_requirement"
+                        ),
+                        "test_result": (
+                            "$.nodes.record-input.output.selected_project."
+                            "test_result"
+                        ),
+                        "remark": (
+                            "$.nodes.record-input.output.selected_project.remark"
+                        ),
+                        "judgement": (
+                            "$.nodes.record-input.output.judgement"
+                        ),
+                    },
+                    "ui": {"x": 2220, "y": 180},
+                },
+                {
+                    "id": "final-entry",
+                    "type": "external.legacy_microscopy_check_record_entry",
+                    "type_version": 1,
+                    "name": "旧系统-检验记录登记与校对",
+                    "config": {
+                        "credential_slot": "legacy_account",
+                        "generation_node_id": "generate-check-record",
+                        "review_node_id": "review-record",
+                    },
+                    "input_mapping": {
+                        "registration_workbook": (
+                            "$.nodes.generate-check-record.output."
+                            "legacy_registration_workbook"
+                        ),
+                        "template_binding": (
+                            "$.nodes.generate-check-record.output."
+                            "template_binding"
+                        ),
+                        "selected_project_key": (
+                            "$.nodes.record-input.output.selected_project_key"
+                        ),
+                        "selected_project": (
+                            "$.nodes.record-input.output.selected_project"
+                        ),
+                        "review_result": "$.nodes.review-record.output",
+                        "controlled_test_override": (
+                            "$.inputs.controlled_test_override"
+                        ),
+                    },
+                    "ui": {"x": 2460, "y": 180},
+                },
+            ]
+        )
+        definition["edges"].extend(
+            [
+                {
+                    "id": "e9",
+                    "source": "review-record",
+                    "target": "generate-check-record",
+                },
+                {
+                    "id": "e10",
+                    "source": "generate-check-record",
+                    "target": "final-entry",
+                },
+                {"id": "e11", "source": "final-entry", "target": "end"},
+            ]
+        )
+        end_mapping.update(
+            {
+                "registration_workbook": (
+                    "$.nodes.generate-check-record.output."
+                    "legacy_registration_workbook"
+                ),
+                "final_entry": "$.nodes.final-entry.output",
+            }
+        )
+        end_x = 2700
+    definition["nodes"].append(
+        {
+            "id": "end",
+            "type": "core.end",
+            "type_version": 1,
+            "name": "结束",
+            "config": {},
+            "input_mapping": end_mapping,
+            "ui": {"x": end_x, "y": 180},
+        }
+    )
     return definition
 
 
@@ -1073,6 +1467,106 @@ def ensure_default_catalog(db: Session) -> None:
         workflow.slug: workflow
         for workflow in db.query(ExecutionWorkflow).all()
     }
+    if PAPER_FIBER_WORKFLOW_SLUG not in workflows_by_slug:
+        definition = _paper_fiber_gbt4688_qualitative_definition()
+        capabilities = {
+            "read": True,
+            "write": True,
+            "external_write": True,
+        }
+        workflow = ExecutionWorkflow(
+            slug=PAPER_FIBER_WORKFLOW_SLUG,
+            category_id=categories_by_key["other"].id,
+            name="纸、纸板和纸浆纤维鉴别分析 GB/T 4688-2020",
+            description=(
+                "按编号文件夹与旧系统任务项目识别纸类定性分析原始记录，"
+                "读取 Sheet1!W32 后完成特种毛上传、复核和检验记录登记。"
+            ),
+            draft_definition=deepcopy(definition),
+            draft_revision=1,
+            published_version_number=1,
+            capabilities=deepcopy(capabilities),
+            required_input_count=1,
+            is_enabled=True,
+        )
+        db.add(workflow)
+        db.flush()
+        db.add(
+            ExecutionWorkflowVersion(
+                workflow_id=workflow.id,
+                version_number=1,
+                schema_version="1.0",
+                definition=deepcopy(definition),
+                checksum=definition_checksum(definition),
+                capabilities=deepcopy(capabilities),
+                contract_checksum=workflow_contract_checksum(
+                    definition,
+                    capabilities,
+                ),
+                release_note=(
+                    "纸类定性原始记录读取、特种毛上传复核及"
+                    "检验记录登记首版"
+                ),
+            )
+        )
+        workflows_by_slug[PAPER_FIBER_WORKFLOW_SLUG] = workflow
+    else:
+        existing_paper = workflows_by_slug[PAPER_FIBER_WORKFLOW_SLUG]
+        read_only_definition = (
+            _paper_fiber_gbt4688_qualitative_readonly_definition()
+        )
+        read_only_checksum = definition_checksum(read_only_definition)
+        version_one = next(
+            (
+                version
+                for version in existing_paper.versions
+                if version.version_number == 1
+            ),
+            None,
+        )
+        untouched_read_only = bool(
+            existing_paper.created_by_id is None
+            and existing_paper.updated_by_id is None
+            and existing_paper.draft_revision == 1
+            and existing_paper.published_version_number == 1
+            and len(existing_paper.versions) == 1
+            and version_one is not None
+            and definition_checksum(existing_paper.draft_definition)
+            == read_only_checksum
+            and version_one.checksum == read_only_checksum
+        )
+        if untouched_read_only:
+            definition = _paper_fiber_gbt4688_qualitative_definition()
+            capabilities = {
+                "read": True,
+                "write": True,
+                "external_write": True,
+            }
+            existing_paper.description = (
+                "按编号文件夹与旧系统任务项目识别纸类定性分析原始记录，"
+                "读取 Sheet1!W32 后完成特种毛上传、复核和检验记录登记。"
+            )
+            existing_paper.draft_definition = deepcopy(definition)
+            existing_paper.draft_revision = 2
+            existing_paper.published_version_number = 2
+            existing_paper.capabilities = deepcopy(capabilities)
+            existing_paper.required_input_count = 1
+            db.add(
+                ExecutionWorkflowVersion(
+                    workflow_id=existing_paper.id,
+                    version_number=2,
+                    schema_version="1.0",
+                    definition=deepcopy(definition),
+                    checksum=definition_checksum(definition),
+                    capabilities=deepcopy(capabilities),
+                    contract_checksum=workflow_contract_checksum(
+                        definition, capabilities
+                    ),
+                    release_note=(
+                        "增加特种毛定性上传、复核和检验记录登记"
+                    ),
+                )
+            )
     electron_slug, electron_name = ELECTRON_MICROSCOPY_WORKFLOW
     if electron_slug not in workflows_by_slug:
         definition = _electron_microscopy_gbt36422_definition()
@@ -1088,7 +1582,7 @@ def ensure_default_catalog(db: Session) -> None:
             description=(
                 "按编号目录与旧系统任务项目识别 GB/T 36422-2018 "
                 "纤维微观形貌流程，选图后生成可核对的原始记录，"
-                "再进入旧系统上传和特纤复核预检。"
+                "完成旧系统图片上传、特纤复核及检验记录登记校对。"
             ),
             draft_definition=deepcopy(definition),
             draft_revision=1,
@@ -1110,7 +1604,10 @@ def ensure_default_catalog(db: Session) -> None:
                 contract_checksum=workflow_contract_checksum(
                     definition, capabilities
                 ),
-                release_note="电镜微观形貌原始记录与旧系统预检首版",
+                release_note=(
+                    "电镜微观形貌原始记录、图片上传复核及"
+                    "检验记录登记校对首版"
+                ),
             )
         )
         workflows_by_slug[electron_slug] = workflow
@@ -1148,7 +1645,7 @@ def ensure_default_catalog(db: Session) -> None:
             existing_electron.description = (
                 "按编号目录与旧系统任务项目识别 GB/T 36422-2018 "
                 "纤维微观形貌流程，选图后生成可核对的原始记录，"
-                "再进入旧系统上传和特纤复核预检。"
+                "完成旧系统图片上传、特纤复核及检验记录登记校对。"
             )
             existing_electron.draft_definition = deepcopy(definition)
             existing_electron.draft_revision = 2
@@ -1176,12 +1673,14 @@ def ensure_default_catalog(db: Session) -> None:
             full_definition = _electron_microscopy_gbt36422_definition()
             full_checksum = definition_checksum(full_definition)
             legacy_full_definition = _electron_microscopy_gbt36422_definition(
-                legacy_print_contract=True
+                legacy_print_contract=True,
+                legacy_final_entry_contract=True,
             )
             legacy_full_checksum = definition_checksum(legacy_full_definition)
             legacy_print_choice_definition = (
                 _electron_microscopy_gbt36422_definition(
-                    legacy_print_choice_contract=True
+                    legacy_print_choice_contract=True,
+                    legacy_final_entry_contract=True,
                 )
             )
             legacy_print_choice_checksum = definition_checksum(
@@ -1189,7 +1688,8 @@ def ensure_default_catalog(db: Session) -> None:
             )
             legacy_project_definition = (
                 _electron_microscopy_gbt36422_definition(
-                    legacy_project_contract=True
+                    legacy_project_contract=True,
+                    legacy_final_entry_contract=True,
                 )
             )
             legacy_project_checksum = definition_checksum(
@@ -1198,17 +1698,46 @@ def ensure_default_catalog(db: Session) -> None:
             legacy_head_definition = _electron_microscopy_gbt36422_definition(
                 legacy_print_contract=True,
                 legacy_project_contract=True,
+                legacy_final_entry_contract=True,
             )
             legacy_head_checksum = definition_checksum(legacy_head_definition)
             legacy_print_choice_project_definition = (
                 _electron_microscopy_gbt36422_definition(
                     legacy_print_choice_contract=True,
                     legacy_project_contract=True,
+                    legacy_final_entry_contract=True,
                 )
             )
             legacy_print_choice_project_checksum = definition_checksum(
                 legacy_print_choice_project_definition
             )
+            # The previous full workflow read the frozen task snapshot from
+            # ``discover``.  Keep all shipped contract variants recognizable
+            # so untouched system workflows can be upgraded to bind the
+            # refreshed snapshot returned by ``select-images``.
+            legacy_task_source_checksums = {
+                definition_checksum(
+                    _electron_microscopy_gbt36422_definition(
+                        legacy_task_source_contract=True,
+                        legacy_final_entry_contract=True,
+                        **options,
+                    )
+                )
+                for options in (
+                    {},
+                    {"legacy_print_contract": True},
+                    {"legacy_print_choice_contract": True},
+                    {"legacy_project_contract": True},
+                    {
+                        "legacy_print_contract": True,
+                        "legacy_project_contract": True,
+                    },
+                    {
+                        "legacy_print_choice_contract": True,
+                        "legacy_project_contract": True,
+                    },
+                )
+            }
             compatible_full_checksums = {
                 full_checksum,
                 legacy_full_checksum,
@@ -1216,7 +1745,32 @@ def ensure_default_catalog(db: Session) -> None:
                 legacy_project_checksum,
                 legacy_head_checksum,
                 legacy_print_choice_project_checksum,
+            } | legacy_task_source_checksums
+            current_final_entry_variant_checksums = {
+                definition_checksum(
+                    _electron_microscopy_gbt36422_definition(**options)
+                )
+                for options in (
+                    {"legacy_print_contract": True},
+                    {"legacy_print_choice_contract": True},
+                    {"legacy_project_contract": True},
+                    {
+                        "legacy_print_contract": True,
+                        "legacy_project_contract": True,
+                    },
+                    {
+                        "legacy_print_choice_contract": True,
+                        "legacy_project_contract": True,
+                    },
+                )
             }
+            compatible_full_checksums |= current_final_entry_variant_checksums
+            legacy_current_contract_checksum = definition_checksum(
+                _electron_microscopy_gbt36422_definition(
+                    legacy_final_entry_contract=True
+                )
+            )
+            compatible_full_checksums.add(legacy_current_contract_checksum)
             version_two = next(
                 (
                     version
@@ -1316,7 +1870,10 @@ def ensure_default_catalog(db: Session) -> None:
                                 "打印确认改为可选的人工打印或暂不打印；"
                                 "选择打印时需确认已在 Excel 完成打印；"
                                 "两种选择均绑定生成制品校验和；图片上传预检"
-                                "绑定人工选择的任务项目"
+                                "绑定人工选择的任务项目；选图提交时重新绑定"
+                                "最新旧系统任务快照；特纤复核完成后生成按"
+                                "选图数量绑定的检验记录工作簿，并进入旧系统"
+                                "检验记录登记与校对"
                             ),
                         )
                     )

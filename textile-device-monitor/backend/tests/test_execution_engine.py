@@ -17,6 +17,8 @@ from app.execution.catalog import (
     publish_workflow,
 )
 from app.execution.engine import (
+    EXTERNAL_NODE_TYPES,
+    _node_input,
     _normalize_human_submission,
     claim_human_task,
     claim_next_node,
@@ -129,6 +131,89 @@ def parallel_definition(join_policy: str):
 
 
 class ExecutionEngineTests(unittest.TestCase):
+    def test_final_entry_node_uses_external_operation_dispatch(self):
+        self.assertIn(
+            "external.legacy_microscopy_check_record_entry",
+            EXTERNAL_NODE_TYPES,
+        )
+
+    def test_optional_declared_node_input_allows_missing_upstream_value(self):
+        run, _ = create_run(
+            self.db,
+            workflow=self.workflow,
+            actor=self.user,
+            inspection_number="260111037",
+            input_data={},
+            global_data={},
+            idempotency_key="optional-mapping-0001",
+        )
+        upstream = (
+            self.db.query(ExecutionNodeRun)
+            .filter(
+                ExecutionNodeRun.run_id == run.id,
+                ExecutionNodeRun.node_id == "input",
+            )
+            .one()
+        )
+        upstream.output_data = {"selected_project": {}}
+        self.db.flush()
+
+        resolved = _node_input(
+            self.db,
+            run,
+            {
+                "type": "workbook.microscopy_check_record",
+                "type_version": 1,
+                "input_mapping": {
+                    "inspection_number": "$.run.inspection_number",
+                    "indicator_requirement": (
+                        "$.nodes.input.output.selected_project."
+                        "indicator_requirement"
+                    ),
+                },
+            },
+        )
+
+        self.assertEqual(resolved["inspection_number"], "260111037")
+        self.assertIsNone(resolved["indicator_requirement"])
+
+    def test_required_declared_node_input_rejects_missing_upstream_value(self):
+        run, _ = create_run(
+            self.db,
+            workflow=self.workflow,
+            actor=self.user,
+            inspection_number="260111037",
+            input_data={},
+            global_data={},
+            idempotency_key="required-mapping-0001",
+        )
+        upstream = (
+            self.db.query(ExecutionNodeRun)
+            .filter(
+                ExecutionNodeRun.run_id == run.id,
+                ExecutionNodeRun.node_id == "input",
+            )
+            .one()
+        )
+        upstream.output_data = {}
+        self.db.flush()
+
+        with self.assertRaises(ExecutionApiError) as raised:
+            _node_input(
+                self.db,
+                run,
+                {
+                    "type": "workbook.microscopy_check_record",
+                    "type_version": 1,
+                    "input_mapping": {
+                        "inspection_number": "$.run.inspection_number",
+                        "image_count": "$.nodes.input.output.image_count",
+                    },
+                },
+            )
+
+        self.assertEqual(raised.exception.code, "mapping_value_missing")
+
     def setUp(self):
         self.engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(self.engine)

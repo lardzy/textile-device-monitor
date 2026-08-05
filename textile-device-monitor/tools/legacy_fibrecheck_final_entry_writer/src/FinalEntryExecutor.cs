@@ -77,6 +77,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 { "operation_type", package.OperationType },
                 { "expected_existing_register_count", package.ExpectedExistingRegisterCount },
                 { "target_filename", targetFilename },
+                { "controlled_test_override_applied",
+                    package.ControlledTestOverrideApplied },
             });
             if (awaitPermit == null || !awaitPermit())
             {
@@ -178,6 +180,8 @@ namespace LegacyFibreCheckFinalEntryWriter
             {
                 { "expected_result_count", snapshot.ExpectedResultCount },
                 { "existing_register_count", snapshot.ExistingRegisterCount },
+                { "controlled_test_override_applied",
+                    package.ControlledTestOverrideApplied },
             };
             if (package.OperationType == FinalEntryPackage.ExcelOperation)
             {
@@ -254,6 +258,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 {
                     { "detail_count", details.Count },
                     { "key_result_count", projectionCount },
+                    { "record_fingerprint", Redact.HashId(record.ID) },
                 });
             }
             catch (WriterFailureException)
@@ -317,6 +322,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 emit.Stage("excel_collection_started", null);
                 sideEffectStarted = true;
                 OriginalKeyDataSet firstData = CollectStandard(package, snapshot, record, stagingPath);
+                RestoreAuthoritativeRegisterFields(package, staff, record);
                 ValidateCollectedData(package, snapshot, staff, record, firstData);
 
                 emit.Stage("remote_file_copy_started", null);
@@ -350,6 +356,7 @@ namespace LegacyFibreCheckFinalEntryWriter
 
                 emit.Stage("excel_proof_save_started", null);
                 OriginalKeyDataSet proofData = CollectStandard(package, snapshot, record, stagingPath);
+                RestoreAuthoritativeRegisterFields(package, staff, record);
                 ValidateCollectedData(package, snapshot, staff, record, proofData);
                 // With a detached CRR the official DAL cannot derive CheckItem.No when
                 // deleting OtherData.  The workbook is unchanged, so preserve the rows
@@ -469,6 +476,31 @@ namespace LegacyFibreCheckFinalEntryWriter
                     "collected_sample_identity_mismatch",
                     Program.ExitReconciliationRequired, true);
             }
+        }
+
+        private static void RestoreAuthoritativeRegisterFields(
+            FinalEntryPackage package, LegacyLoginFlow.StaffContext staff,
+            CheckRecordRegister record)
+        {
+            // CollectOriginalDataService extracts register fields from the workbook and
+            // mutates the supplied entity.  The execution package is the authoritative
+            // source for these user-confirmed fields, while CheckUser must be the
+            // authenticated operator ID.  Re-apply them before validation and before
+            // either DAL save; workbook-derived key-result rows are still validated
+            // independently below.
+            ExcelRegisterFields expected = package.ExcelRecord.Register;
+            AuthoritativeRegisterFieldValues fields =
+                CollectedRegisterFieldAuthority.Resolve(
+                    expected.Level,
+                    expected.SampleIdentity,
+                    expected.EquipmentNo,
+                    expected.CheckBasis,
+                    staff.Id);
+            record.Level = fields.Level;
+            record.SampleIdentity = fields.SampleIdentity;
+            record.EquipmentNo = fields.EquipmentNo;
+            record.CheckBasis = fields.CheckBasis;
+            record.CheckUser = fields.CheckUser;
         }
 
         private static bool SameLegacyText(string left, string right)

@@ -410,7 +410,7 @@
   margin: -5px 0 14px;
   padding: 7px 9px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   color: #42516a;
   font-size: 12px;
@@ -424,11 +424,43 @@
   color: #5471d8;
 }
 
-.execution-workflow-card__file-preview span {
+.execution-workflow-card__file-preview-body {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.execution-workflow-card__file-preview-body > span {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.execution-workflow-card__file-preview-body small {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #5c6b84;
+}
+
+.execution-workflow-card__file-preview-body small > span {
+  min-width: 0;
+  overflow: hidden;
+  color: #1f3563;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.execution-workflow-card__file-preview-body small .ant-tag {
+  flex: 0 0 auto;
+  margin-inline-end: 0;
+  line-height: 18px;
 }
 
 .execution-workflow-card__meta .anticon {
@@ -618,6 +650,7 @@
   font-weight: 600;
 }
 
+.execution-flow-node__status.is-ready,
 .execution-flow-node__status.is-running { color: #315efb; }
 .execution-flow-node__status.is-waiting_human,
 .execution-flow-node__status.is-waiting_external,
@@ -626,6 +659,7 @@
 .execution-flow-node__status.is-succeeded { color: #21875a; }
 .execution-flow-node__status.is-failed { color: #c83b49; }
 
+.execution-flow-node--status-ready,
 .execution-flow-node--status-running {
   border-color: #7894fb;
   box-shadow: 0 0 0 3px rgba(49, 94, 251, 0.12);
@@ -1301,6 +1335,38 @@
   color: #244ebd;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.execution-result-file__qualitative {
+  margin: 10px 11px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #1d315b;
+  background: #f2f6ff;
+  border: 1px solid #cddafb;
+  border-radius: 8px;
+}
+
+.execution-result-file__qualitative > div {
+  min-width: 94px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.execution-result-file__qualitative > strong {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.execution-result-file__qualitative .ant-tag {
+  flex: 0 0 auto;
+  margin-inline-end: 0;
 }
 
 .execution-result-file__remarks {

@@ -21,6 +21,10 @@ namespace LegacyFibreCheckWriter
         private const string RegeneratedCountOperation = "legacy_regenerated_fiber_count_upload";
         private const string SpecialWoolImageOperation = "legacy_special_wool_image_upload";
         private const string SpecialWoolReviewOperation = "legacy_special_wool_review";
+        private const string SpecialWoolQualitativeUploadOperation =
+            "legacy_special_wool_qualitative_upload";
+        private const string SpecialWoolQualitativeReviewOperation =
+            "legacy_special_wool_qualitative_review";
         public const int ExitReconciliationRequired = 30;
         public const int ExitPackageError = 21;
         public const int ExitSourceMismatch = 22;
@@ -33,6 +37,10 @@ namespace LegacyFibreCheckWriter
             "file_copy_verified",
             "main_record_save_started",
             "main_record_verified",
+            "picture_child_verified",
+            "review_save_started",
+            "review_main_verified",
+            "review_children_verified",
             "completed",
         };
 
@@ -84,7 +92,8 @@ namespace LegacyFibreCheckWriter
                 return Finish(result, ExitPackageError, null, emit);
             }
 
-            var summary = GetMap(package, "operation") == null ? null : GetMap(GetMap(package, "operation"), "request_summary");
+            var operation = GetMap(package, "operation");
+            var summary = operation == null ? null : GetMap(operation, "request_summary");
             if (summary == null)
             {
                 result.Receipt["error"] = "package_missing_request_summary";
@@ -96,23 +105,36 @@ namespace LegacyFibreCheckWriter
                 // 兼容早期已批准的根数法任务包；新操作必须显式声明类型。
                 operationType = RegeneratedCountOperation;
             }
+            if (string.Equals(operationType, SpecialWoolImageOperation, StringComparison.Ordinal)
+                || string.Equals(operationType, SpecialWoolReviewOperation, StringComparison.Ordinal)
+                || string.Equals(
+                    operationType,
+                    SpecialWoolQualitativeUploadOperation,
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    operationType,
+                    SpecialWoolQualitativeReviewOperation,
+                    StringComparison.Ordinal))
+            {
+                return SpecialWoolExecutor.Execute(
+                    fibreCheckDir,
+                    account,
+                    password,
+                    sourceRoot,
+                    operation,
+                    summary,
+                    operationType,
+                    result,
+                    stage,
+                    emit,
+                    awaitSideEffectPermit);
+            }
             if (!string.Equals(operationType, RegeneratedCountOperation, StringComparison.Ordinal))
             {
                 result.Receipt["error"] = "writer_capability_unavailable";
                 result.Receipt["operation_type"] = operationType;
                 result.Receipt["remote_write_performed"] = false;
-                if (string.Equals(operationType, SpecialWoolImageOperation, StringComparison.Ordinal))
-                {
-                    result.Receipt["missing_proof"] = "OriginalDataPictureFile_CheckItemID_and_child_readback";
-                }
-                else if (string.Equals(operationType, SpecialWoolReviewOperation, StringComparison.Ordinal))
-                {
-                    result.Receipt["missing_proof"] = "review_main_and_children_atomic_readback";
-                }
-                else
-                {
-                    result.Receipt["missing_proof"] = "unknown_operation_profile";
-                }
+                result.Receipt["missing_proof"] = "unknown_operation_profile";
                 // 严禁让新节点落入根数法硬编码保存路径。
                 return Finish(result, ExitPackageError, null, emit);
             }
@@ -460,7 +482,75 @@ namespace LegacyFibreCheckWriter
             return Finish(result, 0, null, emit);
         }
 
-        private static int Finish(Result result, int exitCode, string failureStage, Action<object> emit)
+        public static int ReconcileSpecialWoolImage(
+            string fibreCheckDir,
+            string account,
+            string password,
+            string packagePath,
+            string sourceRoot,
+            Action<object> emit)
+        {
+            var result = new Result();
+            Action<string, object> stage = (name, detail) =>
+            {
+                var entry = new SortedDictionary<string, object>
+                {
+                    { "stage", name },
+                    { "at", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ") },
+                };
+                if (detail != null)
+                {
+                    entry["detail"] = detail;
+                }
+                result.Stages.Add(entry);
+                emit(entry);
+            };
+
+            Dictionary<string, object> package;
+            try
+            {
+                string json = File.ReadAllText(
+                    packagePath,
+                    System.Text.Encoding.UTF8);
+                var serializer =
+                    new System.Web.Script.Serialization.JavaScriptSerializer();
+                package = serializer.Deserialize<Dictionary<string, object>>(
+                    json);
+            }
+            catch (Exception ex)
+            {
+                result.Receipt["error"] =
+                    "package_read_failed: " + ex.GetType().Name;
+                return Finish(result, ExitPackageError, null, emit);
+            }
+
+            Dictionary<string, object> operation = GetMap(package, "operation");
+            Dictionary<string, object> summary = operation == null
+                ? null
+                : GetMap(operation, "request_summary");
+            if (summary == null
+                || !string.Equals(
+                    GetStr(summary, "operation_type"),
+                    SpecialWoolImageOperation,
+                    StringComparison.Ordinal))
+            {
+                result.Receipt["error"] =
+                    "reconciliation_requires_special_wool_image_package";
+                return Finish(result, ExitPackageError, null, emit);
+            }
+            return SpecialWoolExecutor.ReconcileExistingImageUpload(
+                fibreCheckDir,
+                account,
+                password,
+                sourceRoot,
+                operation,
+                summary,
+                result,
+                stage,
+                emit);
+        }
+
+        internal static int Finish(Result result, int exitCode, string failureStage, Action<object> emit)
         {
             result.ExitCode = exitCode;
             result.FailureStage = failureStage;
@@ -493,7 +583,7 @@ namespace LegacyFibreCheckWriter
             return false;
         }
 
-        private static string Sha256Hex(byte[] data)
+        internal static string Sha256Hex(byte[] data)
         {
             using (var sha = SHA256.Create())
             {
@@ -507,24 +597,24 @@ namespace LegacyFibreCheckWriter
             }
         }
 
-        private static Dictionary<string, object> GetMap(object value)
+        internal static Dictionary<string, object> GetMap(object value)
         {
             return value as Dictionary<string, object>;
         }
 
-        private static Dictionary<string, object> GetMap(Dictionary<string, object> map, string key)
+        internal static Dictionary<string, object> GetMap(Dictionary<string, object> map, string key)
         {
             object value;
             return map != null && map.TryGetValue(key, out value) ? value as Dictionary<string, object> : null;
         }
 
-        private static string GetStr(Dictionary<string, object> map, string key)
+        internal static string GetStr(Dictionary<string, object> map, string key)
         {
             object value;
             return map != null && map.TryGetValue(key, out value) && value != null ? value.ToString() : null;
         }
 
-        private static long GetLong(Dictionary<string, object> map, string key)
+        internal static long GetLong(Dictionary<string, object> map, string key)
         {
             object value;
             if (map == null || !map.TryGetValue(key, out value) || value == null)
@@ -535,7 +625,7 @@ namespace LegacyFibreCheckWriter
             return long.TryParse(value.ToString(), out parsed) ? parsed : -1;
         }
 
-        private static List<object> GetList(Dictionary<string, object> map, string key)
+        internal static List<object> GetList(Dictionary<string, object> map, string key)
         {
             object value;
             if (map == null || !map.TryGetValue(key, out value) || value == null)

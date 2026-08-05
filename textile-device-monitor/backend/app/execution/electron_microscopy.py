@@ -32,7 +32,7 @@ ELECTRON_IMAGE_SUFFIXES = frozenset(
     {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 )
 MAX_INDEXED_IMAGES = 2_000
-TASK_SNAPSHOT_SCHEMA_VERSION = 3
+TASK_SNAPSHOT_SCHEMA_VERSION = 4
 PUBLIC_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{16}$")
 
 
@@ -83,6 +83,11 @@ def _snapshot_contract_is_current(snapshot: object) -> bool:
         return False
     projects = snapshot.get("projects")
     if not isinstance(projects, list):
+        return False
+    occupied_numbers = snapshot.get("special_wool_occupied_numbers")
+    if not isinstance(occupied_numbers, list) or not all(
+        isinstance(value, str) for value in occupied_numbers
+    ):
         return False
     for project in projects:
         if not isinstance(project, dict):
@@ -161,10 +166,16 @@ def cached_task_snapshot(
 
     number = _task_cache_key(inspection_number)
     if not number:
-        return {"cache_state": "empty", "snapshot": None, "refresh_queued": False}
+        return {
+            "cache_state": "empty",
+            "refresh_status": "idle",
+            "snapshot": None,
+            "refresh_queued": False,
+        }
     if not _is_complete_inspection_number(number):
         return {
             "cache_state": "incomplete_number",
+            "refresh_status": "idle",
             "snapshot": None,
             "refresh_queued": False,
         }
@@ -213,6 +224,10 @@ def cached_task_snapshot(
         state = "pending"
     return {
         "cache_state": state,
+        # ``cache_state`` describes whether a usable snapshot is available;
+        # ``refresh_status`` describes the Bridge queue itself.  Keeping both
+        # prevents a queued request from being presented as actively reading.
+        "refresh_status": row.status,
         "snapshot": snapshot,
         "refresh_queued": queued,
         "revision": row.revision,
@@ -332,6 +347,30 @@ def _normalize_snapshot(
     )
     if explicit_sample_name and explicit_sample_name.casefold() not in seen_names:
         sample_names.insert(0, explicit_sample_name)
+    base_number = inspection_number.split("-", 1)[0]
+    family_pattern = re.compile(
+        re.escape(base_number) + r"(?:-([1-9][0-9]*))?$"
+    )
+    raw_occupied_numbers = snapshot.get("special_wool_occupied_numbers")
+    if not isinstance(raw_occupied_numbers, list):
+        raise ExecutionApiError(
+            422,
+            "task_snapshot_invalid",
+            "任务快照缺少特种毛编号族占用事实",
+        )
+    occupied_numbers: list[str] = []
+    seen_occupied: set[str] = set()
+    for raw_value in raw_occupied_numbers:
+        value = str(raw_value or "").strip().upper()
+        if not family_pattern.fullmatch(value):
+            raise ExecutionApiError(
+                422,
+                "task_snapshot_invalid",
+                "任务快照中的特种毛编号族格式无效",
+            )
+        if value not in seen_occupied:
+            occupied_numbers.append(value)
+            seen_occupied.add(value)
     return {
         "schema_version": TASK_SNAPSHOT_SCHEMA_VERSION,
         "inspection_number": inspection_number,
@@ -345,6 +384,7 @@ def _normalize_snapshot(
         "sample_names": sample_names,
         "check_basis": snapshot.get("check_basis"),
         "projects": normalized_projects,
+        "special_wool_occupied_numbers": occupied_numbers,
     }
 
 
@@ -602,6 +642,35 @@ def _task_project_conditions(snapshot: Optional[dict[str, Any]]) -> list[str]:
         if len(best) == 2:
             break
     return best
+
+
+def task_snapshot_status(
+    db: Session,
+    *,
+    inspection_number: str,
+) -> dict[str, Any]:
+    """Return a small, polling-safe status contract for the human task UI."""
+
+    cached = cached_task_snapshot(db, inspection_number=inspection_number)
+    matched = _task_project_conditions(cached.get("snapshot"))
+    missing = [
+        item
+        for item in ("task_item_name", "test_method")
+        if item not in matched
+    ]
+    return {
+        "inspection_number": _task_cache_key(inspection_number),
+        "cache_state": cached["cache_state"],
+        "refresh_status": cached.get("refresh_status", "idle"),
+        "snapshot_available": cached.get("snapshot") is not None,
+        "matched_conditions": matched,
+        "missing_conditions": missing,
+        "revision": cached.get("revision"),
+        "fetched_at": cached.get("fetched_at"),
+        "expires_at": cached.get("expires_at"),
+        "error_code": cached.get("error_code"),
+        "remote_write_performed": False,
+    }
 
 
 def electron_microscopy_match(

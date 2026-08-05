@@ -33,6 +33,7 @@ namespace LegacyFibreCheckWriter
             string packagePath = null;
             string sourceRoot = null;
             bool executeUpload = false;
+            bool reconcileExistingUpload = false;
             bool sideEffectPermitStdin = false;
             for (int i = 0; i < args.Length; i++)
             {
@@ -43,6 +44,7 @@ namespace LegacyFibreCheckWriter
                     case "--account": account = value; i++; break;
                     case "--probe-sample-no": probeSampleNo = value; i++; break;
                     case "--execute-upload": executeUpload = true; break;
+                    case "--reconcile-existing-upload": reconcileExistingUpload = true; break;
                     case "--side-effect-permit-stdin": sideEffectPermitStdin = true; break;
                     case "--package": packagePath = value; i++; break;
                     case "--source-root": sourceRoot = value; i++; break;
@@ -53,15 +55,26 @@ namespace LegacyFibreCheckWriter
             }
             if (string.IsNullOrWhiteSpace(fibreCheckDir) || string.IsNullOrWhiteSpace(account))
             {
-                Console.Error.WriteLine("用法: FibreCheckWriter.exe --fibrecheck-dir <目录> --account <账号> [--probe-sample-no <编号> | --execute-upload --side-effect-permit-stdin --package <任务包.json> --source-root <目录>]");
+                Console.Error.WriteLine("用法: FibreCheckWriter.exe --fibrecheck-dir <目录> --account <账号> [--probe-sample-no <编号> | --execute-upload --side-effect-permit-stdin --package <任务包.json> --source-root <目录> | --reconcile-existing-upload --package <任务包.json> --source-root <目录>]");
+                return 2;
+            }
+            if (executeUpload && reconcileExistingUpload)
+            {
+                Console.Error.WriteLine("写入模式与只读采用模式不能同时启用");
                 return 2;
             }
             if (executeUpload && (
                 string.IsNullOrWhiteSpace(packagePath)
-                || string.IsNullOrWhiteSpace(sourceRoot)
                 || !sideEffectPermitStdin))
             {
-                Console.Error.WriteLine("--execute-upload 模式必须提供任务包、源目录和 stdin 副作用许可协议");
+                Console.Error.WriteLine("--execute-upload 模式必须提供任务包和 stdin 副作用许可协议；文件上传操作还必须提供源目录");
+                return 2;
+            }
+            if (reconcileExistingUpload && (
+                string.IsNullOrWhiteSpace(packagePath)
+                || string.IsNullOrWhiteSpace(sourceRoot)))
+            {
+                Console.Error.WriteLine("--reconcile-existing-upload 模式必须提供任务包和源目录");
                 return 2;
             }
             string password = Environment.GetEnvironmentVariable("FIBRECHECK_RUNNER_PASSWORD");
@@ -76,6 +89,15 @@ namespace LegacyFibreCheckWriter
             if (executeUpload)
             {
                 return RunUpload(fibreCheckDir, account, password, packagePath, sourceRoot);
+            }
+            if (reconcileExistingUpload)
+            {
+                return RunReconcileExistingUpload(
+                    fibreCheckDir,
+                    account,
+                    password,
+                    packagePath,
+                    sourceRoot);
             }
             return RunIsolated(fibreCheckDir, account, probeSampleNo, password);
         }
@@ -115,6 +137,45 @@ namespace LegacyFibreCheckWriter
                     },
                 });
                 return UploadExecutor.ExitReconciliationRequired;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static int RunReconcileExistingUpload(
+            string fibreCheckDir,
+            string account,
+            string password,
+            string packagePath,
+            string sourceRoot)
+        {
+            Action<object> emit = entry =>
+                Console.Out.Write(MiniJson.Write(entry) + "\n");
+            try
+            {
+                return UploadExecutor.ReconcileSpecialWoolImage(
+                    fibreCheckDir,
+                    account,
+                    password,
+                    packagePath,
+                    sourceRoot,
+                    emit);
+            }
+            catch (Exception ex)
+            {
+                string message = (ex.Message ?? string.Empty).Replace(
+                    password,
+                    "***");
+                emit(new SortedDictionary<string, object>
+                {
+                    { "receipt", new SortedDictionary<string, object>
+                        {
+                            { "error", "reconciliation_probe_unhandled:" + ex.GetType().Name },
+                            { "error_detail", message },
+                            { "reconciliation_required", true },
+                        }
+                    },
+                });
+                return UploadExecutor.ExitSourceMismatch;
             }
         }
 

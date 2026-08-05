@@ -63,6 +63,13 @@ ROOT_LAYOUT = (
         "electron_microscopy",
         "read",
     ),
+    (
+        "paper_fiber_records",
+        "纸、纸板和纸浆纤维鉴别分析原始记录",
+        "08-其他/2022-纸、纸板和纸浆纤维鉴别分析",
+        "other",
+        "read",
+    ),
 )
 
 
@@ -434,11 +441,14 @@ def persist_scan(
         )
         metadata = dict(row.metadata_json or {}) if row is not None else {}
         if needs_metadata:
-            if root.root_id == "regenerated_fiber_records":
-                # This shared directory can contain many historical
-                # workbooks. The background scan remains metadata-only; the
-                # two regenerated-fiber nodes open only filename-matched
-                # candidates on demand.
+            if root.root_id in {
+                "regenerated_fiber_records",
+                "paper_fiber_records",
+            }:
+                # These shared directories can contain many historical
+                # workbooks. The background scan remains metadata-only;
+                # specialized nodes open only index-narrowed candidates on
+                # demand.
                 metadata = {
                     "metadata_version": METADATA_VERSION,
                     "expected_category": root.category_key,
@@ -787,7 +797,9 @@ def register_persistence_executors() -> None:
     from app.execution.electron_microscopy import (
         register_electron_microscopy_executors,
     )
+    from app.execution.paper_fiber import register_paper_fiber_executors
 
     register_regenerated_fiber_executors()
     register_electron_microscopy_executors()
+    register_paper_fiber_executors()
     _EXECUTORS_REGISTERED = True

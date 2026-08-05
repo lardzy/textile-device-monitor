@@ -37,7 +37,9 @@ NODE_ROOT_ACCESS_REQUIREMENTS = {
     "file.regenerated_fiber_area_method": {"root_id": {"read"}},
     "electron.group": {"root_id": {"read"}},
     "file.electron_microscopy_gbt36422": {"root_id": {"read"}},
+    "file.paper_fiber_gbt4688_qualitative": {"root_id": {"read"}},
     "workbook.microscopy_original_record": {"staging_root_id": {"write"}},
+    "workbook.microscopy_check_record": {"staging_root_id": {"write"}},
     "workbook.copy": {"staging_root_id": {"write"}},
     "artifact.publish": {"publish_root_id": {"publish"}},
 }
@@ -1218,6 +1220,96 @@ def validate_definition(
                     "legacy_special_wool_review_mapping_invalid",
                     "特纤复核只能使用所引用图片上传节点的完整回执",
                     f"$.nodes[{review_id}].input_mapping.upload_result",
+                )
+            )
+
+    final_entry_nodes = [
+        (node_id, node)
+        for node_id, node in node_by_id.items()
+        if node.get("type")
+        == "external.legacy_microscopy_check_record_entry"
+    ]
+    for entry_id, entry_node in final_entry_nodes:
+        config = entry_node.get("config") or {}
+        credential_slot = config.get("credential_slot")
+        if (
+            not isinstance(credential_slot, str)
+            or credential_system_by_name.get(credential_slot)
+            != "legacy_inspection"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_credential_slot_invalid",
+                    "检验记录登记节点必须引用 legacy_inspection 凭据槽位",
+                    f"$.nodes[{entry_id}].config.credential_slot",
+                )
+            )
+        generation_id = config.get("generation_node_id")
+        generation_node = node_by_id.get(generation_id)
+        if (
+            generation_node is None
+            or generation_node.get("type")
+            != "workbook.microscopy_check_record"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_final_entry_generation_node_invalid",
+                    "检验记录登记必须引用按选图数量生成的登记工作簿",
+                    f"$.nodes[{entry_id}].config.generation_node_id",
+                )
+            )
+        review_id = config.get("review_node_id")
+        review_node = node_by_id.get(review_id)
+        if (
+            review_node is None
+            or review_node.get("type")
+            != "external.legacy_special_wool_review"
+        ):
+            issues.append(
+                ValidationIssue(
+                    "legacy_final_entry_review_node_invalid",
+                    "检验记录登记必须衔接同一流程的已完成特纤复核",
+                    f"$.nodes[{entry_id}].config.review_node_id",
+                )
+            )
+        mapping = entry_node.get("input_mapping") or {}
+        expected_mappings = {
+            "registration_workbook": (
+                f"$.nodes.{generation_id}.output.legacy_registration_workbook"
+            ),
+            "template_binding": (
+                f"$.nodes.{generation_id}.output.template_binding"
+            ),
+            "review_result": f"$.nodes.{review_id}.output",
+            "selected_project_key": (
+                "$.nodes.record-input.output.selected_project_key"
+            ),
+            "selected_project": (
+                "$.nodes.record-input.output.selected_project"
+            ),
+        }
+        for key, expected in expected_mappings.items():
+            if mapping.get(key) != expected:
+                issues.append(
+                    ValidationIssue(
+                        f"legacy_final_entry_{key}_mapping_invalid",
+                        "检验记录登记节点的制品、模板、项目或复核来源映射不符合固定契约",
+                        f"$.nodes[{entry_id}].input_mapping.{key}",
+                    )
+                )
+        override_mapping = mapping.get("controlled_test_override")
+        if override_mapping not in {
+            None,
+            "$.inputs.controlled_test_override",
+        }:
+            issues.append(
+                ValidationIssue(
+                    "legacy_final_entry_controlled_override_mapping_invalid",
+                    "受控测试覆盖只能来自本次运行的显式输入",
+                    (
+                        f"$.nodes[{entry_id}].input_mapping."
+                        "controlled_test_override"
+                    ),
                 )
             )
 

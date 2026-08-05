@@ -77,6 +77,11 @@ export const getExecutionCatalogRecommendations = async (
   );
 };
 
+export const getExecutionTaskSnapshotStatus = inspectionNumber =>
+  executionClient.get(
+    `/task-snapshots/${encodeURIComponent(String(inspectionNumber || '').trim())}/status`,
+  );
+
 export const getExecutionWorkflow = workflowId =>
   executionClient.get(`/workflows/${workflowId}`);
 

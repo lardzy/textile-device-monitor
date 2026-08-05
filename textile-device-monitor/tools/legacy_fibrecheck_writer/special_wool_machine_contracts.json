@@ -2,6 +2,16 @@
   "schema_version": 1,
   "capability_available": false,
   "write_performed": false,
+  "writer_implementation": {
+    "dispatch_available": true,
+    "backend_execution_capability_available": false,
+    "remote_write_validated": false,
+    "offline_validation": [
+      "writer_contract_self_test",
+      "writer_full_compile",
+      "bridge_protocol_tests"
+    ]
+  },
   "operations": {
     "legacy_special_wool_image_upload": {
       "function_type": "Toone.FibreCheck.OriRecord.SpecialWool.SpecialWoolSearchUI",
@@ -14,12 +24,38 @@
         "special_wool_sample_number_unique",
         "special_wool_server_time"
       ],
+      "progress_stages": [
+        "authenticated",
+        "permission_verified",
+        "remote_state_verified",
+        "task_project_verified",
+        "file_copy_ready",
+        "file_copy_started",
+        "file_copy_verified",
+        "main_record_save_started",
+        "main_record_verified",
+        "picture_child_verified",
+        "completed"
+      ],
+      "side_effect_ready_stage": "file_copy_ready",
+      "side_effect_stage": "file_copy_started",
       "verified_stage": "picture_child_verified",
       "required_business_facts": {
         "project_names": ["纤维微观形貌", "膜平面形貌"],
         "check_method": "GB/T 36422-2018",
         "picture_child_table": "OriginalDataPictureFile",
-        "sample_number_policy": "base_then_first_free_positive_integer_suffix"
+        "sample_number_policy": "base_then_first_free_positive_integer_suffix",
+        "target_filename_policy": "final_target_sample_number + '-' + immutable_original_template_filename",
+        "original_template_filename": "39-8B-纤维形状截面定量试验-2026.xls",
+        "target_filename_must_match_main_picture_and_receipt_readback": true,
+        "original_data_filename_policy": "same_as_target_filename",
+        "new_receipts_include_original_data_filename_in_picture_and_readback": true,
+        "legacy_v1_receipts_without_original_data_filename_are_accepted": true,
+        "reconciliation_original_data_filename_uses_target_filename": true,
+        "allocation_must_still_equal_signed_summary_under_task_project_lock": true,
+        "target_file_mode": "CreateNew",
+        "target_file_sha256_readback": true,
+        "official_dal_save": "SpecialWoolDAL.SaveSpecialWoolManage"
       }
     },
     "legacy_special_wool_review": {
@@ -31,21 +67,104 @@
         "special_wool_picture_records",
         "special_wool_server_time"
       ],
+      "progress_stages": [
+        "authenticated",
+        "permission_verified",
+        "remote_state_verified",
+        "review_save_ready",
+        "review_save_started",
+        "review_main_verified",
+        "review_children_verified",
+        "completed"
+      ],
+      "side_effect_ready_stage": "review_save_ready",
+      "side_effect_stage": "review_save_started",
       "verified_stage": "review_children_verified",
       "verified_save_semantics": {
+        "source_upload_main_id_must_match_readonly_target_before_permit": true,
+        "source_upload_main_id_must_match_raw_and_backend_receipts": true,
         "main_updates": ["ReviewUser", "ReviewTime"],
         "picture_child_updates": [],
         "picture_children_must_remain_unchanged": true
       }
+    },
+    "legacy_special_wool_qualitative_upload": {
+      "function_type": "Toone.FibreCheck.OriRecord.SpecialWool.SpecialWoolSearchUI",
+      "observation_type": "legacy_special_wool_qualitative_upload_dry_run",
+      "receipt_type": "legacy_special_wool_qualitative_upload",
+      "readonly_query_keys": [
+        "special_wool_number_family",
+        "special_wool_task_project",
+        "special_wool_sample_number_unique",
+        "special_wool_server_time"
+      ],
+      "progress_stages": [
+        "authenticated",
+        "permission_verified",
+        "remote_state_verified",
+        "task_project_verified",
+        "file_copy_ready",
+        "file_copy_started",
+        "file_copy_verified",
+        "main_record_save_started",
+        "main_record_verified",
+        "completed"
+      ],
+      "side_effect_ready_stage": "file_copy_ready",
+      "side_effect_stage": "file_copy_started",
+      "verified_stage": "main_record_verified",
+      "required_business_facts": {
+        "fiber_category": "棉再生纤",
+        "inspection_method": "定量",
+        "inspection_item": "棉再生纤定性",
+        "review_item": "棉再生纤定性",
+        "copies": 1,
+        "sample_number_policy": "base_then_first_free_positive_integer_suffix",
+        "target_filename_policy": "final_target_sample_number + '-' + source_workbook_basename",
+        "picture_child_count": 0,
+        "target_file_mode": "CreateNew",
+        "target_file_sha256_readback": true,
+        "official_dal_save": "SpecialWoolDAL.SaveSpecialWoolManage"
+      }
+    },
+    "legacy_special_wool_qualitative_review": {
+      "function_type": "Toone.FibreCheck.OriRecord.SpecialWool.SpecialWoolCheckUI",
+      "control_permission": "btnCheck_if_configured",
+      "observation_type": "legacy_special_wool_qualitative_review_dry_run",
+      "receipt_type": "legacy_special_wool_qualitative_review",
+      "readonly_query_keys": [
+        "special_wool_server_time"
+      ],
+      "progress_stages": [
+        "authenticated",
+        "permission_verified",
+        "remote_state_verified",
+        "review_save_ready",
+        "review_save_started",
+        "review_main_verified",
+        "completed"
+      ],
+      "side_effect_ready_stage": "review_save_ready",
+      "side_effect_stage": "review_save_started",
+      "verified_stage": "review_main_verified",
+      "verified_save_semantics": {
+        "source_upload_main_id_must_match_readonly_target_before_permit": true,
+        "source_upload_main_id_must_match_raw_and_backend_receipts": true,
+        "main_updates": ["ReviewUser", "ReviewTime"],
+        "picture_child_count": 0
+      }
     }
   },
   "activation_gates": [
-    "Windows CheckUI function and btnCheck permission probe",
+    "backend execution_capability remains false until explicit activation change",
+    "Windows CheckUI function and btnCheck permission real-account probe",
     "SampleNo unique index discovery",
     "real existing and absent record readback",
     "file server destination and ACL verification",
     "typed observation accepted by backend",
     "typed receipt readback verification",
+    "controlled image upload and review reconciliation",
+    "controlled qualitative workbook upload and review reconciliation",
     "explicit final approval"
   ]
 }

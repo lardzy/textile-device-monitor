@@ -183,6 +183,13 @@ function WorkflowCard({
   const candidatePreview = recommendation?.candidate_preview;
   const candidatePreviewName = candidatePreview?.name
     || candidatePreview?.filename;
+  const candidatePreviewResult = candidatePreview?.qualitative_result
+    ?? candidatePreview?.result?.w32_value
+    ?? candidatePreview?.result?.qualitative_result;
+  const candidatePreviewCell = candidatePreview?.result?.worksheet
+    && candidatePreview?.result?.cell
+    ? `${candidatePreview.result.worksheet}!${candidatePreview.result.cell}`
+    : 'Sheet1!W32';
   const recommendationMeta = recommendationDisplay(
     recommendation,
     recommendationLoading,
@@ -261,7 +268,22 @@ function WorkflowCard({
         >
           <div className="execution-workflow-card__file-preview">
             <FileSearchOutlined />
-            <span>示例文件：{candidatePreviewName}</span>
+            <div className="execution-workflow-card__file-preview-body">
+              <span>
+                {candidatePreviewResult ? '候选文件' : '示例文件'}：{candidatePreviewName}
+              </span>
+              {candidatePreviewResult !== null
+                && candidatePreviewResult !== undefined
+                && String(candidatePreviewResult).trim() && (
+                <small>
+                  <b>{candidatePreviewCell}</b>
+                  <span>{String(candidatePreviewResult)}</span>
+                  {candidatePreview?.result?.unit && (
+                    <Tag color="blue">{candidatePreview.result.unit}</Tag>
+                  )}
+                </small>
+              )}
+            </div>
           </div>
         </Tooltip>
       )}

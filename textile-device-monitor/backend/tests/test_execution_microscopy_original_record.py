@@ -21,8 +21,10 @@ from app.execution.microscopy_original_record import (
     CANVAS_HEIGHT,
     CANVAS_WIDTH,
     MICROSCOPY_BIFF_EXCEL_X_SCALE,
+    MICROSCOPY_LEGACY_TEMPLATE_BINDINGS,
     MICROSCOPY_PRINT_AREA,
     MICROSCOPY_SHEET_NAME,
+    MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS,
     MICROSCOPY_TEMPLATE_SHA256,
     _cell_payload,
     _microscopy_record_context_executor,
@@ -36,6 +38,7 @@ from app.execution.microscopy_original_record import (
     _verify_generated_workbook,
     layout_images,
     prepare_original_record_choices,
+    resolve_microscopy_legacy_template_binding,
     sample_name_v1_candidates,
     split_judgement_basis_options,
     split_multi_value_options,
@@ -400,12 +403,85 @@ class MicroscopyOriginalRecordPureFunctionTests(unittest.TestCase):
     def test_versioned_template_has_expected_sha_and_layout(self):
         template = _template_path()
         self.assertEqual(_sha256(template), MICROSCOPY_TEMPLATE_SHA256)
+        self.assertEqual(
+            template.name,
+            "gbt36422-2018-microscopy-original-record-v1.xls",
+        )
         workbook = xlrd.open_workbook(str(template), formatting_info=True)
         self.assertIn("微观形貌", workbook.sheet_names())
         sheet = workbook.sheet_by_name("微观形貌")
         merged = set(sheet.merged_cells)
         self.assertIn((3, 32, 0, 6), merged)  # A4:F32
         self.assertIn((3, 32, 6, 12), merged)  # G4:L32
+
+    def test_legacy_template_bindings_match_versioned_assets(self):
+        expected = {
+            1: (
+                "微观形貌.xls",
+                "gbt36422-2018-microscopy-1-image-v1.xls",
+                "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e",
+            ),
+            2: (
+                "纤维微观形貌-GB T 36422-2018-2张图.xls",
+                "gbt36422-2018-microscopy-2-images-v1.xls",
+                "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23",
+            ),
+            3: (
+                "纤维微观形貌-GB T 36422-2018-3张图.xls",
+                "gbt36422-2018-microscopy-3-images-v1.xls",
+                "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268",
+            ),
+            5: (
+                "纤维微观形貌-GB T 36422-2018-5张图.xls",
+                "gbt36422-2018-microscopy-5-images-v1.xls",
+                "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d",
+            ),
+            6: (
+                "纤维微观形貌-GB T 36422-2018-6张图.xls",
+                "gbt36422-2018-microscopy-6-images-v1.xls",
+                "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304",
+            ),
+            7: (
+                "纤维微观形貌-GB T 36422-2018-7张图.xls",
+                "gbt36422-2018-microscopy-7-images-v1.xls",
+                "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01",
+            ),
+            10: (
+                "纤维微观形貌-GB T 36422-2018-10张图.xls",
+                "gbt36422-2018-microscopy-10-images-v1.xls",
+                "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74",
+            ),
+        }
+        self.assertEqual(
+            MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS,
+            tuple(expected),
+        )
+        for image_count, values in expected.items():
+            with self.subTest(image_count=image_count):
+                binding = resolve_microscopy_legacy_template_binding(
+                    image_count
+                )
+                self.assertEqual(binding["legacy_template_name"], values[0])
+                self.assertEqual(binding["local_asset_name"], values[1])
+                self.assertEqual(binding["mapping_config_sha256"], values[2])
+                asset = _template_path().parent / binding["local_asset_name"]
+                self.assertEqual(
+                    _sha256(asset), binding["local_asset_sha256"]
+                )
+                self.assertEqual(
+                    binding,
+                    MICROSCOPY_LEGACY_TEMPLATE_BINDINGS[image_count],
+                )
+
+    def test_legacy_template_binding_rejects_unsupported_counts(self):
+        for image_count in (4, 8, 9):
+            with self.subTest(image_count=image_count):
+                with self.assertRaises(ExecutionApiError) as raised:
+                    resolve_microscopy_legacy_template_binding(image_count)
+                self.assertEqual(
+                    raised.exception.code,
+                    "microscopy_template_image_count_unsupported",
+                )
 
 
 class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
@@ -554,13 +630,28 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         self.assertTrue(second["reused"])
         self.assertEqual(first["artifact_id"], second["artifact_id"])
         self.assertEqual(first["image_count"], 1)
+        self.assertEqual(
+            first["template_binding"], second["template_binding"]
+        )
+        self.assertEqual(
+            first["template_binding"]["legacy_template_name"],
+            "微观形貌.xls",
+        )
         self.assertTrue(first["verification"]["verified"])
         self.assertEqual(len(first["verification"]["images"]), 1)
         self.assertTrue(first["verification"]["print_area_verified"])
         self.assertEqual(first["print"]["print_area"], "$A$1:$L$37")
-        self.assertIn("-图片-", first["original_record"]["filename"])
+        self.assertEqual(
+            first["original_record"]["filename"],
+            "260061860-39-8B-纤维形状截面定量试验-2026.xls",
+        )
         artifact = self.db.get(ExecutionArtifact, first["artifact_id"])
         self.assertEqual(artifact.role, "working")
+        self.assertEqual(
+            artifact.metadata_json["template_binding"],
+            first["template_binding"],
+        )
+        self.assertEqual(len(artifact.metadata_json["request_digest"]), 64)
         output = self.staging_path / artifact.relative_path
         self.assertTrue(output.is_file())
         self.assertEqual(output.read_bytes()[:8], b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
@@ -571,6 +662,39 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         self.assertEqual(sheet.cell_value(2, 11), "正面")
         self.assertEqual(sheet.cell_value(32, 1), "GB/T 36422-2018")
         self.assertEqual(sheet.cell_value(33, 8), "符合")
+
+    def test_executor_rejects_forged_declared_template_binding(self):
+        context = self._context()
+        forged = resolve_microscopy_legacy_template_binding(1)
+        forged["legacy_template_name"] = "被篡改的模板.xls"
+        context.input_data["template_binding"] = forged
+        with self.assertRaises(ExecutionApiError) as raised:
+            _microscopy_original_record_executor(context)
+        self.assertEqual(
+            raised.exception.code,
+            "microscopy_template_binding_mismatch",
+        )
+
+    def test_executor_rechecks_actual_image_count_against_template_map(self):
+        entries = [self.entry]
+        entries.extend(
+            self._add_indexed_image(index, 160, 100)
+            for index in range(2, 5)
+        )
+        self.db.commit()
+        context = self._context()
+        context.input_data["selected_image_ids"] = [
+            entry.id for entry in entries
+        ]
+        context.input_data["selected_images"] = [
+            self._candidate_for(entry) for entry in entries
+        ]
+        with self.assertRaises(ExecutionApiError) as raised:
+            _microscopy_original_record_executor(context)
+        self.assertEqual(
+            raised.exception.code,
+            "microscopy_template_image_count_unsupported",
+        )
 
     def test_executor_preserves_source_identity_for_2_5_and_10_images(self):
         entries = [self.entry]
@@ -631,6 +755,55 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         self.assertEqual(len(result["projects"]), 1)
         self.assertEqual(result["projects"][0]["check_item_name"], "纤维微观形貌")
         self.assertEqual(result["projects"][0]["test_method"], "GB/T 36422-2018")
+        self.assertEqual(result["template_binding"]["image_count"], 1)
+        self.assertEqual(
+            result["template_binding"]["legacy_template_name"],
+            "微观形貌.xls",
+        )
+
+    def test_context_rejects_image_counts_without_legacy_template(self):
+        for image_count in (4, 8, 9):
+            context = self._context()
+            context.input_data["selected_image_ids"] = [
+                f"image-{index}" for index in range(image_count)
+            ]
+            with self.subTest(image_count=image_count):
+                with self.assertRaises(ExecutionApiError) as raised:
+                    _microscopy_record_context_executor(context)
+                self.assertEqual(
+                    raised.exception.code,
+                    "microscopy_template_image_count_unsupported",
+                )
+
+    def test_context_recovers_latest_snapshot_for_already_running_definition(self):
+        context = self._context()
+        expected = context.input_data.pop("task")
+        with patch(
+            "app.execution.microscopy_original_record.cached_task_snapshot",
+            return_value={"cache_state": "ready", "snapshot": expected},
+        ) as read_cache:
+            result = _microscopy_record_context_executor(context)
+
+        read_cache.assert_called_once_with(
+            self.db,
+            inspection_number="260061860",
+        )
+        self.assertEqual(result["projects"][0]["check_item_name"], "膜平面形貌")
+
+    def test_context_reports_task_snapshot_not_ready_instead_of_project_missing(self):
+        context = self._context()
+        context.input_data.pop("task")
+        with patch(
+            "app.execution.microscopy_original_record.cached_task_snapshot",
+            return_value={"cache_state": "pending", "snapshot": None},
+        ):
+            with self.assertRaises(ExecutionApiError) as raised:
+                _microscopy_record_context_executor(context)
+
+        self.assertEqual(
+            raised.exception.code,
+            "microscopy_task_snapshot_not_ready",
+        )
 
     def test_context_fails_when_no_exact_task_project_exists(self):
         context = self._context()

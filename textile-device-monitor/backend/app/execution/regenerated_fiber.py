@@ -549,6 +549,7 @@ def _specialized_node_type(
             in {
                 *REGENERATED_FIBER_RULES.keys(),
                 "file.electron_microscopy_gbt36422",
+                "file.paper_fiber_gbt4688_qualitative",
             }
         ):
             return str(node["type"])
@@ -710,7 +711,7 @@ def catalog_recommendations(
 
         node_type = _specialized_node_type(definition)
         candidate_count = 0
-        candidate_preview: Optional[dict[str, str]] = None
+        candidate_preview: Optional[dict[str, Any]] = None
         index_state = "ready"
         diagnostics: dict[str, int] = {
             "filename_match_count": 0,
@@ -727,7 +728,34 @@ def catalog_recommendations(
             )
         )
         task_cache_state: Optional[str] = None
-        if node_type == "file.electron_microscopy_gbt36422":
+        if node_type == "file.paper_fiber_gbt4688_qualitative":
+            from app.execution.paper_fiber import paper_fiber_match
+
+            if node_type not in match_cache:
+                match_cache[node_type] = paper_fiber_match(
+                    db,
+                    inspection_number=inspection_number,
+                )
+            match = match_cache[node_type]
+            any_cache_updated = any_cache_updated or bool(
+                match["cache_updated"]
+            )
+            index_state = str(match["index_state"])
+            query_state = str(match["query_state"])
+            for condition in match["matched_conditions"]:
+                if condition not in conditions:
+                    conditions.append(condition)
+                    score += 1
+            candidate_count = int(match["result_match_count"])
+            candidate_preview = match["candidate_preview"]
+            diagnostics = {
+                "filename_match_count": int(match["folder_match_count"]),
+                "worksheet_match_count": int(match["result_match_count"]),
+                "full_match_count": 1 if match["full_match"] else 0,
+            }
+            full_match = bool(match["full_match"])
+            task_cache_state = str(match["task_cache_state"])
+        elif node_type == "file.electron_microscopy_gbt36422":
             from app.execution.electron_microscopy import (
                 electron_microscopy_match,
             )

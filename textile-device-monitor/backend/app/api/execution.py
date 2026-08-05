@@ -122,6 +122,7 @@ from app.execution.electron_microscopy import (
     complete_task_snapshot_refresh,
     fail_task_snapshot_refresh,
     request_task_snapshot_refresh,
+    task_snapshot_status as read_task_snapshot_status,
 )
 from app.execution.schemas import (
     CredentialUpsert,
@@ -2366,6 +2367,22 @@ def refresh_task_snapshot(
         "revision": row.revision,
         "remote_write_performed": False,
     }
+
+
+@router.get("/task-snapshots/{inspection_number}/status")
+def get_task_snapshot_status(
+    inspection_number: str,
+    _auth: AuthContext = Depends(permission("workflow.read")),
+    db: Session = Depends(get_db),
+):
+    status = read_task_snapshot_status(
+        db,
+        inspection_number=inspection_number,
+    )
+    # Reading a previously unseen complete number intentionally queues one
+    # read-only Bridge request, so persist that enqueue before responding.
+    db.commit()
+    return status
 
 
 @router.post("/task-snapshot-bridge/claim")

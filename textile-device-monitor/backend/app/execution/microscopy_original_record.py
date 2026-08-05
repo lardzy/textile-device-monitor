@@ -24,6 +24,7 @@ from app.execution.electron_microscopy import (
     ELECTRON_PROJECT_NAME_ALIASES,
     ELECTRON_ROOT_ID,
     ELECTRON_TEST_METHOD,
+    cached_task_snapshot,
 )
 from app.execution.errors import ExecutionApiError
 from app.execution.models import (
@@ -44,8 +45,103 @@ from app.execution.storage import (
 MICROSCOPY_ORIGINAL_RECORD_NODE_TYPE = "workbook.microscopy_original_record"
 MICROSCOPY_RECORD_CONTEXT_NODE_TYPE = "data.microscopy_record_context"
 MICROSCOPY_TEMPLATE_VERSION = "gbt36422-2018-microscopy-original-record-v1"
+MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME = (
+    "39-8B-纤维形状截面定量试验-2026.xls"
+)
 MICROSCOPY_TEMPLATE_SHA256 = (
     "d2b70e114cb85c89e4961ba2acb1b0cb451656f7a12b5dd5bdbacba1d50f88ba"
+)
+MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION = (
+    "gbt36422-2018-legacy-template-binding-v1"
+)
+MICROSCOPY_LEGACY_TEMPLATE_BINDINGS: dict[int, dict[str, Any]] = {
+    1: {
+        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
+        "image_count": 1,
+        "legacy_template_name": "微观形貌.xls",
+        "local_asset_name": "gbt36422-2018-microscopy-1-image-v1.xls",
+        "local_asset_sha256": (
+            "b169fb5cf236004058f0666ee28979836266168311172efc01c7ec7d5906c6fe"
+        ),
+        "mapping_config_sha256": (
+            "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"
+        ),
+    },
+    2: {
+        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
+        "image_count": 2,
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-2张图.xls",
+        "local_asset_name": "gbt36422-2018-microscopy-2-images-v1.xls",
+        "local_asset_sha256": (
+            "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
+        ),
+        "mapping_config_sha256": (
+            "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23"
+        ),
+    },
+    3: {
+        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
+        "image_count": 3,
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-3张图.xls",
+        "local_asset_name": "gbt36422-2018-microscopy-3-images-v1.xls",
+        "local_asset_sha256": (
+            "4a4e7b69a5dba7684fe837779929b4d093fe509cbf398ae37114cd22071b70b4"
+        ),
+        "mapping_config_sha256": (
+            "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268"
+        ),
+    },
+    5: {
+        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
+        "image_count": 5,
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-5张图.xls",
+        "local_asset_name": "gbt36422-2018-microscopy-5-images-v1.xls",
+        "local_asset_sha256": (
+            "3b148fd8ccbb28b8fe8e60ceee0e4898c144c1fbe15b8a451ed44e0d2141d38d"
+        ),
+        "mapping_config_sha256": (
+            "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d"
+        ),
+    },
+    6: {
+        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
+        "image_count": 6,
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-6张图.xls",
+        "local_asset_name": "gbt36422-2018-microscopy-6-images-v1.xls",
+        "local_asset_sha256": (
+            "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
+        ),
+        "mapping_config_sha256": (
+            "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304"
+        ),
+    },
+    7: {
+        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
+        "image_count": 7,
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-7张图.xls",
+        "local_asset_name": "gbt36422-2018-microscopy-7-images-v1.xls",
+        "local_asset_sha256": (
+            "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
+        ),
+        "mapping_config_sha256": (
+            "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01"
+        ),
+    },
+    10: {
+        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
+        "image_count": 10,
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-10张图.xls",
+        "local_asset_name": "gbt36422-2018-microscopy-10-images-v1.xls",
+        "local_asset_sha256": (
+            "85627e8ca9824274fe61f13276b390a75288a119987053e3a244157ee0f46e8c"
+        ),
+        "mapping_config_sha256": (
+            "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
+        ),
+    },
+}
+MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS = tuple(
+    sorted(MICROSCOPY_LEGACY_TEMPLATE_BINDINGS)
 )
 MICROSCOPY_SHEET_NAME = "微观形貌"
 MICROSCOPY_PRINT_AREA = "$A$1:$L$37"
@@ -293,6 +389,29 @@ def prepare_original_record_choices(
     }
 
 
+def _current_task_snapshot(context, input_data: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a task snapshot for both current and already-running definitions."""
+
+    task_snapshot = input_data.get("task")
+    if isinstance(task_snapshot, dict) and task_snapshot:
+        return task_snapshot
+    cached = cached_task_snapshot(
+        context.db,
+        inspection_number=(
+            input_data.get("inspection_number") or context.run.inspection_number
+        ),
+    )
+    task_snapshot = cached.get("snapshot")
+    if not isinstance(task_snapshot, dict) or not task_snapshot:
+        raise ExecutionApiError(
+            409,
+            "microscopy_task_snapshot_not_ready",
+            "旧系统任务信息尚未读取完成，请检查 Windows 只读读取服务后重试",
+            details={"cache_state": cached.get("cache_state") or "pending"},
+        )
+    return task_snapshot
+
+
 def _microscopy_record_context_executor(context) -> dict[str, Any]:
     """Turn cached task facts and image-selection output into a UI contract."""
 
@@ -300,8 +419,7 @@ def _microscopy_record_context_executor(context) -> dict[str, Any]:
     inspection_number = _safe_inspection_number(
         input_data.get("inspection_number") or context.run.inspection_number
     )
-    task_snapshot = input_data.get("task")
-    task_snapshot = task_snapshot if isinstance(task_snapshot, dict) else {}
+    task_snapshot = _current_task_snapshot(context, input_data)
     choices = prepare_original_record_choices(task_snapshot)
     selected_ids = input_data.get("selected_image_ids")
     if not isinstance(selected_ids, list) or not 1 <= len(selected_ids) <= 10:
@@ -315,6 +433,9 @@ def _microscopy_record_context_executor(context) -> dict[str, Any]:
         raise ExecutionApiError(
             422, "selected_images_required", "请选择 1 至 10 张图片"
         )
+    template_binding = resolve_microscopy_legacy_template_binding(
+        len(selected_ids)
+    )
     projects = []
     for project in _matching_projects(task_snapshot):
         normalized_project = dict(project)
@@ -334,6 +455,7 @@ def _microscopy_record_context_executor(context) -> dict[str, Any]:
         "inspection_number": inspection_number,
         "selected_image_ids": selected_ids,
         "selected_images": input_data.get("selected_images") or [],
+        "template_binding": template_binding,
         "projects": projects,
         "sample_name_analysis": choices["sample_name"],
         "sample_identification_options": choices["sample_identification"][
@@ -700,6 +822,76 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _legacy_template_asset_path(binding: dict[str, Any]) -> Path:
+    return Path(__file__).resolve().parent / "templates" / str(
+        binding["local_asset_name"]
+    )
+
+
+def resolve_microscopy_legacy_template_binding(
+    image_count: object,
+    *,
+    declared_binding: object = None,
+) -> dict[str, Any]:
+    """Resolve and verify the old-system template selected by image count.
+
+    These assets describe which Sheet1 template the old system must select
+    during final registration.  They are deliberately separate from
+    ``_template_path()``, which remains the source for the generated printable
+    original record.
+    """
+
+    if isinstance(image_count, bool) or not isinstance(image_count, int):
+        binding = None
+    else:
+        binding = MICROSCOPY_LEGACY_TEMPLATE_BINDINGS.get(image_count)
+    if binding is None:
+        raise ExecutionApiError(
+            422,
+            "microscopy_template_image_count_unsupported",
+            "旧系统没有与当前选图数量对应的微观形貌 Excel 模板",
+            details={
+                "image_count": image_count,
+                "supported_image_counts": list(
+                    MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS
+                ),
+            },
+        )
+
+    resolved = dict(binding)
+    asset_path = _legacy_template_asset_path(resolved)
+    if (
+        not asset_path.is_file()
+        or _sha256(asset_path) != resolved["local_asset_sha256"]
+    ):
+        raise ExecutionApiError(
+            503,
+            "microscopy_legacy_template_asset_invalid",
+            "旧系统微观形貌模板资产缺失或版本校验失败",
+            details={
+                "image_count": image_count,
+                "local_asset_name": resolved["local_asset_name"],
+            },
+        )
+
+    if declared_binding is not None:
+        mismatch = not isinstance(declared_binding, dict) or any(
+            declared_binding.get(key) != expected
+            for key, expected in resolved.items()
+        )
+        if mismatch:
+            raise ExecutionApiError(
+                409,
+                "microscopy_template_binding_mismatch",
+                "微观形貌模板绑定已变化，请刷新流程后重试",
+                details={
+                    "image_count": image_count,
+                    "expected_binding": resolved,
+                },
+            )
+    return resolved
+
+
 def _safe_inspection_number(value: object) -> str:
     normalized = _normalized_text(value)
     if not _SAFE_INSPECTION_NUMBER.fullmatch(normalized):
@@ -1057,9 +1249,11 @@ def _request_digest(
     inspection_number: str,
     cells: dict[str, str],
     images: Sequence[tuple[ExecutionFileIndexEntry, Path]],
+    template_binding: dict[str, Any],
 ) -> str:
     payload = {
         "template_version": MICROSCOPY_TEMPLATE_VERSION,
+        "template_binding": template_binding,
         "biff_excel_x_scale": MICROSCOPY_BIFF_EXCEL_X_SCALE,
         "inspection_number": inspection_number,
         "cells": cells,
@@ -1135,8 +1329,7 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
     inspection_number = _safe_inspection_number(
         input_data.get("inspection_number") or context.run.inspection_number
     )
-    task_snapshot = input_data.get("task")
-    task_snapshot = task_snapshot if isinstance(task_snapshot, dict) else {}
+    task_snapshot = _current_task_snapshot(context, input_data)
     choices = prepare_original_record_choices(task_snapshot)
     submitted_judgement_flag = input_data.get("judgement_required")
     judgement_required = (
@@ -1161,12 +1354,17 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         selected_image_ids=input_data.get("selected_image_ids"),
         offered_images=input_data.get("selected_images"),
     )
+    template_binding = resolve_microscopy_legacy_template_binding(
+        len(selected),
+        declared_binding=input_data.get("template_binding"),
+    )
     request_digest = _request_digest(
         inspection_number=inspection_number,
         cells=cells,
         images=selected,
+        template_binding=template_binding,
     )
-    filename = f"{inspection_number}-图片-纤维微观形貌原始记录.xls"
+    filename = f"{inspection_number}-{MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME}"
     relative_path = (
         f"original-records/{context.run.id}/{context.node_run.id}/{filename}"
     )
@@ -1186,6 +1384,7 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
             "inspection_number": inspection_number,
             "selected_image_ids": [entry.id for entry, _path in selected],
             "image_count": len(selected),
+            "template_binding": template_binding,
             "verification": (existing.metadata_json or {}).get("verification") or {},
             "print": {
                 "sheet_name": MICROSCOPY_SHEET_NAME,
@@ -1276,6 +1475,10 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
             "request_digest": request_digest,
             "template_version": MICROSCOPY_TEMPLATE_VERSION,
             "template_sha256": MICROSCOPY_TEMPLATE_SHA256,
+            "template_original_filename": (
+                MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME
+            ),
+            "template_binding": template_binding,
             "biff_excel_x_scale": MICROSCOPY_BIFF_EXCEL_X_SCALE,
             "selected_image_ids": [entry.id for entry, _path in selected],
             "verification": verification,
@@ -1302,6 +1505,7 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         "inspection_number": inspection_number,
         "selected_image_ids": [entry.id for entry, _path in selected],
         "image_count": len(selected),
+        "template_binding": template_binding,
         "verification": verification,
         "print": {
             "sheet_name": MICROSCOPY_SHEET_NAME,

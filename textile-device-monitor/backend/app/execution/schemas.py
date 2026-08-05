@@ -203,6 +203,7 @@ class ExternalReconciliationCompletedEvidence(BaseModel):
     inspector_match: Literal[True]
     target_file_count: Literal[1]
     remote_file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    receipt: Optional[dict[str, Any]] = None
 
     @field_validator("remote_record_id")
     @classmethod
@@ -222,6 +223,92 @@ class ExternalReconciliationNoSideEffectEvidence(BaseModel):
     target_file_count: Literal[0]
 
 
+class ExternalReconciliationFinalEntryCompletedEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_contract: Literal["microscopy_final_entry_v1"]
+    checked_at: datetime
+    final_entry_summary_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_existing_register_count: int = Field(ge=0, strict=True)
+    resulting_register_count: int = Field(ge=1, strict=True)
+    actual_register_count: int = Field(ge=0, strict=True)
+    actual_file_reference_count: int = Field(ge=0, strict=True)
+    actual_key_result_count: int = Field(ge=0, strict=True)
+    actual_proofed_count: int = Field(ge=0, strict=True)
+    target_file_count: Literal[1]
+    writer_stage: str = Field(min_length=1, max_length=50)
+    remote_record_id: str = Field(min_length=1, max_length=200)
+
+    @field_validator("remote_record_id", "writer_stage")
+    @classmethod
+    def normalize_final_entry_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Final-entry reconciliation text cannot be empty")
+        return normalized
+
+
+class ExternalReconciliationFinalEntryNoSideEffectEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_contract: Literal["microscopy_final_entry_v1"]
+    checked_at: datetime
+    final_entry_summary_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_existing_register_count: int = Field(ge=0, strict=True)
+    actual_register_count: int = Field(ge=0, strict=True)
+    actual_file_reference_count: int = Field(ge=0, strict=True)
+    actual_key_result_count: int = Field(ge=0, strict=True)
+    actual_proofed_count: int = Field(ge=0, strict=True)
+    target_file_count: Literal[0]
+    writer_stage: str = Field(min_length=1, max_length=50)
+
+    @field_validator("writer_stage")
+    @classmethod
+    def normalize_final_entry_writer_stage(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Final-entry writer stage cannot be empty")
+        return normalized
+
+
+class ExternalReconciliationGenericEntryCompletedEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_contract: Literal["generic_check_record_entry_v1"]
+    checked_at: datetime
+    final_entry_summary_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_existing_register_count: int = Field(ge=0, strict=True)
+    resulting_register_count: int = Field(ge=1, strict=True)
+    actual_register_count: int = Field(ge=0, strict=True)
+    actual_detail_count: int = Field(ge=0, strict=True)
+    actual_key_result_count: int = Field(ge=0, strict=True)
+    actual_proofed_count: Literal[0]
+    writer_stage: str = Field(min_length=1, max_length=50)
+    remote_record_id: str = Field(min_length=1, max_length=200)
+
+    @field_validator("remote_record_id", "writer_stage")
+    @classmethod
+    def normalize_generic_entry_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Generic-entry reconciliation text cannot be empty")
+        return normalized
+
+
+class ExternalReconciliationGenericEntryNoSideEffectEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_contract: Literal["generic_check_record_entry_v1"]
+    checked_at: datetime
+    final_entry_summary_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_existing_register_count: int = Field(ge=0, strict=True)
+    actual_register_count: int = Field(ge=0, strict=True)
+    actual_detail_count: int = Field(ge=0, strict=True)
+    actual_key_result_count: int = Field(ge=0, strict=True)
+    actual_proofed_count: Literal[0]
+    writer_stage: str = Field(min_length=1, max_length=50)
+
+
 class ExternalOperationReconciliationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -233,6 +320,10 @@ class ExternalOperationReconciliationRequest(BaseModel):
     evidence: (
         ExternalReconciliationCompletedEvidence
         | ExternalReconciliationNoSideEffectEvidence
+        | ExternalReconciliationFinalEntryCompletedEvidence
+        | ExternalReconciliationFinalEntryNoSideEffectEvidence
+        | ExternalReconciliationGenericEntryCompletedEvidence
+        | ExternalReconciliationGenericEntryNoSideEffectEvidence
     )
 
     @field_validator("note")
@@ -249,7 +340,11 @@ class ExternalOperationReconciliationRequest(BaseModel):
             self.action == "confirm_completed"
             and not isinstance(
                 self.evidence,
-                ExternalReconciliationCompletedEvidence,
+                (
+                    ExternalReconciliationCompletedEvidence,
+                    ExternalReconciliationFinalEntryCompletedEvidence,
+                    ExternalReconciliationGenericEntryCompletedEvidence,
+                ),
             )
         ):
             raise ValueError("Completed action requires completed evidence")
@@ -257,7 +352,11 @@ class ExternalOperationReconciliationRequest(BaseModel):
             self.action == "confirm_no_side_effect"
             and not isinstance(
                 self.evidence,
-                ExternalReconciliationNoSideEffectEvidence,
+                (
+                    ExternalReconciliationNoSideEffectEvidence,
+                    ExternalReconciliationFinalEntryNoSideEffectEvidence,
+                    ExternalReconciliationGenericEntryNoSideEffectEvidence,
+                ),
             )
         ):
             raise ValueError(
@@ -280,6 +379,10 @@ class ExternalBridgeClaimRequest(BaseModel):
             "legacy_regenerated_fiber_count_upload",
             "legacy_special_wool_image_upload",
             "legacy_special_wool_review",
+            "legacy_microscopy_check_record_entry",
+            "legacy_special_wool_qualitative_upload",
+            "legacy_special_wool_qualitative_review",
+            "legacy_generic_check_record_entry",
         ]
     ] = Field(
         default_factory=lambda: [

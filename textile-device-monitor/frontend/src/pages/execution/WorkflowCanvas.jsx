@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Background,
   Controls,
@@ -17,6 +17,7 @@ import {
 
 const STATUS_META = {
   pending: { label: '等待', icon: <ClockCircleFilled /> },
+  ready: { label: '待执行', icon: <ClockCircleFilled /> },
   queued: { label: '已排队', icon: <ClockCircleFilled /> },
   running: { label: '执行中', icon: <LoadingOutlined spin /> },
   waiting_human: { label: '等待人工处理', icon: <PauseCircleFilled /> },
@@ -98,8 +99,38 @@ export default function WorkflowCanvas({
   onInit,
   defaultViewport,
   fitView = false,
+  focusNodeIds = [],
   children,
 }) {
+  const [flowInstance, setFlowInstance] = useState(null);
+  const focusNodeKey = useMemo(() => JSON.stringify(
+    [...new Set(
+      focusNodeIds
+        .filter(Boolean)
+        .map(String),
+    )].sort(),
+  ), [focusNodeIds]);
+  const handleInit = useCallback((instance) => {
+    setFlowInstance(instance);
+    onInit?.(instance);
+  }, [onInit]);
+
+  useEffect(() => {
+    if (!flowInstance) {
+      return;
+    }
+    const nodeIds = JSON.parse(focusNodeKey);
+    if (!nodeIds.length) {
+      return;
+    }
+    void flowInstance.fitView({
+      nodes: nodeIds.map(id => ({ id })),
+      padding: 0.35,
+      maxZoom: 1.2,
+      duration: 420,
+    });
+  }, [flowInstance, focusNodeKey]);
+
   return (
     <ReactFlow
       nodes={nodes}
@@ -113,7 +144,7 @@ export default function WorkflowCanvas({
       onPaneClick={onPaneClick}
       onDrop={readonly ? undefined : onDrop}
       onDragOver={readonly ? undefined : onDragOver}
-      onInit={onInit}
+      onInit={handleInit}
       defaultViewport={defaultViewport}
       nodesDraggable={!readonly}
       nodesConnectable={!readonly}

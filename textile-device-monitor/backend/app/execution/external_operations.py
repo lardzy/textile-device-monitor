@@ -21,6 +21,13 @@ from app.execution.events import append_audit_log, append_run_event
 from app.execution.electron_microscopy import (
     ELECTRON_PROJECT_NAME_ALIASES,
     ELECTRON_TEST_METHOD,
+    cached_task_snapshot,
+)
+from app.execution.microscopy_check_record import (
+    MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
+)
+from app.execution.microscopy_original_record import (
+    MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME,
 )
 from app.execution.models import (
     ExecutionCredential,
@@ -49,6 +56,18 @@ LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE = (
     "external.legacy_special_wool_image_upload"
 )
 LEGACY_SPECIAL_WOOL_REVIEW_NODE = "external.legacy_special_wool_review"
+LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE = (
+    "external.legacy_microscopy_check_record_entry"
+)
+LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE = (
+    "external.legacy_special_wool_qualitative_upload"
+)
+LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE = (
+    "external.legacy_special_wool_qualitative_review"
+)
+LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE = (
+    "external.legacy_generic_check_record_entry"
+)
 LEGACY_CONNECTOR_KEY = "legacy_fibrecheck"
 LEGACY_CREDENTIAL_SYSTEM = "legacy_inspection"
 LEGACY_REMOTE_MODULE = (
@@ -59,17 +78,49 @@ SPECIAL_WOOL_IMAGE_OPERATION_KEY_PREFIX = (
     "legacy-special-wool-image-upload:v1"
 )
 SPECIAL_WOOL_REVIEW_OPERATION_KEY_PREFIX = "legacy-special-wool-review:v1"
+MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION_KEY_PREFIX = (
+    "legacy-microscopy-check-record-entry:v1"
+)
+SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION_KEY_PREFIX = (
+    "legacy-special-wool-qualitative-upload:v1"
+)
+SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION_KEY_PREFIX = (
+    "legacy-special-wool-qualitative-review:v1"
+)
+GENERIC_CHECK_RECORD_ENTRY_OPERATION_KEY_PREFIX = (
+    "legacy-generic-check-record-entry:v1"
+)
 LEGACY_REGENERATED_COUNT_OPERATION = (
     "legacy_regenerated_fiber_count_upload"
 )
 LEGACY_SPECIAL_WOOL_IMAGE_OPERATION = "legacy_special_wool_image_upload"
 LEGACY_SPECIAL_WOOL_REVIEW_OPERATION = "legacy_special_wool_review"
+LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION = (
+    "legacy_microscopy_check_record_entry"
+)
+LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION = (
+    "legacy_special_wool_qualitative_upload"
+)
+LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION = (
+    "legacy_special_wool_qualitative_review"
+)
+LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION = (
+    "legacy_generic_check_record_entry"
+)
 ACTIVE_REMOTE_OPERATION_STATUSES = (
     "prepared",
     "approved",
     "in_progress",
     "cancel_pending",
     "reconciliation_required",
+)
+EXTERNAL_ATTEMPT_ACTIVE_STATUSES = frozenset({"claimed", "in_progress"})
+EXTERNAL_ATTEMPT_TERMINAL_STATUSES = frozenset({"failed", "completed"})
+EXTERNAL_OPERATION_EXPIRY_ERROR_CODES = frozenset(
+    {
+        "external_operation_preflight_expired",
+        "external_operation_approval_expired",
+    }
 )
 BRIDGE_LEASE_SECONDS = 120
 BRIDGE_STDOUT_LIMIT = 4000
@@ -119,6 +170,48 @@ SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES = (
     "review_children_verified",
     "completed",
 )
+MICROSCOPY_CHECK_RECORD_ENTRY_ATTEMPT_STAGES = (
+    "authenticated",
+    "permission_verified",
+    "remote_state_verified",
+    "excel_write_ready",
+    "excel_collection_started",
+    "remote_file_verified",
+    "excel_register_verified",
+    "excel_proof_verified",
+    "completed",
+)
+SPECIAL_WOOL_QUALITATIVE_UPLOAD_ATTEMPT_STAGES = (
+    "authenticated",
+    "permission_verified",
+    "remote_state_verified",
+    "task_project_verified",
+    "file_copy_ready",
+    "file_copy_started",
+    "file_copy_verified",
+    "main_record_save_started",
+    "main_record_verified",
+    "completed",
+)
+SPECIAL_WOOL_QUALITATIVE_REVIEW_ATTEMPT_STAGES = (
+    "authenticated",
+    "permission_verified",
+    "remote_state_verified",
+    "review_save_ready",
+    "review_save_started",
+    "review_main_verified",
+    "completed",
+)
+GENERIC_CHECK_RECORD_ENTRY_ATTEMPT_STAGES = (
+    "authenticated",
+    "permission_verified",
+    "remote_state_verified",
+    "generic_write_ready",
+    "generic_save_started",
+    "generic_rows_verified",
+    "generic_projection_verified",
+    "completed",
+)
 EXTERNAL_OPERATION_STAGE_PROFILES = {
     LEGACY_REGENERATED_COUNT_OPERATION: (
         EXTERNAL_ATTEMPT_STAGES,
@@ -135,23 +228,47 @@ EXTERNAL_OPERATION_STAGE_PROFILES = {
         "review_save_started",
         "review_children_verified",
     ),
+    LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION: (
+        MICROSCOPY_CHECK_RECORD_ENTRY_ATTEMPT_STAGES,
+        "excel_collection_started",
+        "excel_proof_verified",
+    ),
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION: (
+        SPECIAL_WOOL_QUALITATIVE_UPLOAD_ATTEMPT_STAGES,
+        "file_copy_started",
+        "main_record_verified",
+    ),
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION: (
+        SPECIAL_WOOL_QUALITATIVE_REVIEW_ATTEMPT_STAGES,
+        "review_save_started",
+        "review_main_verified",
+    ),
+    LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION: (
+        GENERIC_CHECK_RECORD_ENTRY_ATTEMPT_STAGES,
+        "generic_save_started",
+        "generic_projection_verified",
+    ),
 }
 SPECIAL_WOOL_EXECUTION_CAPABILITY = {
     LEGACY_SPECIAL_WOOL_IMAGE_OPERATION: {
         "available": False,
-        "code": "legacy_special_wool_image_write_unverified",
-        "message": (
-            "图片类特种毛记录的 OriginalDataPictureFile、CheckItemID 与保存后"
-            "子记录核对语义尚未完成实机证明，当前仅开放预检"
-        ),
+        "code": "legacy_special_wool_image_write_disabled",
+        "message": "图片类特种毛记录写入当前未在部署环境启用",
     },
     LEGACY_SPECIAL_WOOL_REVIEW_OPERATION: {
         "available": False,
-        "code": "legacy_special_wool_review_write_unverified",
-        "message": (
-            "特纤复核对主记录、细度/定量子记录及 CheckItemID 的联动保存语义"
-            "尚未完成实机证明，当前仅开放预检"
-        ),
+        "code": "legacy_special_wool_review_write_disabled",
+        "message": "特纤复核写入当前未在部署环境启用",
+    },
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION: {
+        "available": False,
+        "code": "legacy_special_wool_qualitative_write_disabled",
+        "message": "定性原始记录写入当前未在部署环境启用",
+    },
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION: {
+        "available": False,
+        "code": "legacy_special_wool_qualitative_review_disabled",
+        "message": "定性原始记录复核当前未在部署环境启用",
     },
 }
 _LEGACY_SAMPLE_NUMBER_RE = re.compile(
@@ -168,6 +285,39 @@ SPECIAL_WOOL_REVIEW_OBSERVATION_TYPE = (
 )
 SPECIAL_WOOL_IMAGE_RECEIPT_TYPE = "legacy_special_wool_image_upload"
 SPECIAL_WOOL_REVIEW_RECEIPT_TYPE = "legacy_special_wool_review"
+MICROSCOPY_CHECK_RECORD_ENTRY_RECEIPT_TYPE = (
+    "legacy_microscopy_check_record_entry"
+)
+SPECIAL_WOOL_QUALITATIVE_UPLOAD_RECEIPT_TYPE = (
+    "legacy_special_wool_qualitative_upload"
+)
+SPECIAL_WOOL_QUALITATIVE_REVIEW_RECEIPT_TYPE = (
+    "legacy_special_wool_qualitative_review"
+)
+GENERIC_CHECK_RECORD_ENTRY_RECEIPT_TYPE = (
+    "legacy_generic_check_record_entry"
+)
+MICROSCOPY_CHECK_ITEM_NO = "5103.5"
+MICROSCOPY_CHECK_ITEM_NAME = "纤维微观形貌"
+CONTROLLED_FINAL_ENTRY_OVERRIDE_KIND = (
+    "append_one_when_check_count_one"
+)
+FINAL_ENTRY_RECONCILIATION_EVIDENCE_CONTRACT = (
+    "microscopy_final_entry_v1"
+)
+GENERIC_ENTRY_RECONCILIATION_EVIDENCE_CONTRACT = (
+    "generic_check_record_entry_v1"
+)
+PAPER_FIBER_ROOT_ID = "paper_fiber_records"
+PAPER_FIBER_PROJECT_NAME = "纸、纸板和纸浆纤维鉴别分析"
+PAPER_FIBER_TEST_METHOD = "GB/T 4688-2020"
+PAPER_FIBER_SPECIAL_WOOL_ITEM = "棉再生纤定性"
+_PAPER_STANDALONE_100_RE = re.compile(
+    r"(?<![\w.])100(?:\.0+)?(?![\w.])"
+)
+_LEGACY_ORIGINAL_DATA_FILENAME_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.xls$"
+)
 
 
 def _canonical_checksum(value: dict[str, Any]) -> str:
@@ -231,6 +381,7 @@ def _validated_microscopy_project_binding(
     check_item_name = _normalized_business_text(
         selected.get("check_item_name")
     )
+    check_item_no = _normalized_business_text(selected.get("check_item_no"))
     check_method = _normalized_business_text(selected.get("check_method"))
     if check_item_name not in ELECTRON_PROJECT_NAME_ALIASES:
         raise ExecutionApiError(
@@ -246,14 +397,120 @@ def _validated_microscopy_project_binding(
             "图片上传仅支持测试方法 GB/T 36422-2018",
             details={"expected": ELECTRON_TEST_METHOD},
         )
+    seq_num = selected.get("seq_num")
+    check_count = selected.get("check_count")
+    if (
+        not isinstance(seq_num, int)
+        or isinstance(seq_num, bool)
+        or seq_num < 0
+        or not isinstance(check_count, int)
+        or isinstance(check_count, bool)
+        or check_count != 1
+    ):
+        raise ExecutionApiError(
+            422,
+            "legacy_special_wool_task_project_count_invalid",
+            "微观形貌任务项目的顺序或检验份数已变化；检验份数必须恰好为 1",
+        )
+    expected_project_key = "task-project:" + hashlib.sha256(
+        "\0".join(
+            (
+                task_check_item_id,
+                check_item_id,
+                check_item_no,
+                check_item_name,
+                check_method,
+                str(seq_num),
+            )
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    if selected_key != expected_project_key:
+        raise conflict(
+            "legacy_special_wool_task_project_changed",
+            "任务项目键与当前项目字段不一致，请刷新任务信息后重新选择",
+        )
     return {
         "project_key": selected_key,
         "task_check_item_id": task_check_item_id,
         "check_item_id": check_item_id,
-        "check_item_no": selected.get("check_item_no"),
+        "check_item_no": check_item_no,
         "check_item_name": check_item_name,
         "check_method": check_method,
-        "seq_num": selected.get("seq_num"),
+        "seq_num": seq_num,
+        "check_count": check_count,
+    }
+
+
+def _validated_paper_project_binding(
+    input_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate the exact cached task project selected by the paper reader."""
+
+    selected_key = str(input_data.get("selected_project_key") or "").strip()
+    selected = input_data.get("selected_project")
+    if not _TASK_PROJECT_KEY_RE.fullmatch(selected_key) or not isinstance(
+        selected, dict
+    ):
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_task_project_required",
+            "纸纤维流程缺少已匹配的旧系统任务项目，请刷新任务信息后重试",
+        )
+    task_check_item_id = str(
+        selected.get("task_check_item_id") or ""
+    ).strip()
+    check_item_id = str(selected.get("check_item_id") or "").strip()
+    check_item_no = _normalized_business_text(selected.get("check_item_no"))
+    check_item_name = _normalized_business_text(
+        selected.get("check_item_name")
+    )
+    check_method = _normalized_business_text(selected.get("check_method"))
+    seq_num = selected.get("seq_num")
+    check_count = selected.get("check_count")
+    if (
+        str(selected.get("project_key") or "").strip() != selected_key
+        or not _REDACTED_LEGACY_ID_RE.fullmatch(task_check_item_id)
+        or not _REDACTED_LEGACY_ID_RE.fullmatch(check_item_id)
+        or check_item_name != PAPER_FIBER_PROJECT_NAME
+        or check_method != PAPER_FIBER_TEST_METHOD
+        or not isinstance(seq_num, int)
+        or isinstance(seq_num, bool)
+        or seq_num < 0
+        or not isinstance(check_count, int)
+        or isinstance(check_count, bool)
+        or check_count != 1
+    ):
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_task_project_mismatch",
+            "任务项目必须是 GB/T 4688-2020 纸、纸板和纸浆纤维鉴别分析且份数为 1",
+        )
+    expected_project_key = "task-project:" + hashlib.sha256(
+        "\0".join(
+            (
+                task_check_item_id,
+                check_item_id,
+                check_item_no,
+                check_item_name,
+                check_method,
+                str(seq_num),
+            )
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    if selected_key != expected_project_key:
+        raise conflict(
+            "paper_fiber_task_project_changed",
+            "纸纤维任务项目键与当前项目字段不一致，请刷新后重试",
+        )
+    return {
+        "project_key": selected_key,
+        "task_check_item_id": task_check_item_id,
+        "check_item_id": check_item_id,
+        "check_item_no": check_item_no,
+        "check_item_name": check_item_name,
+        "check_method": check_method,
+        "seq_num": seq_num,
+        "check_count": check_count,
     }
 
 
@@ -312,6 +569,7 @@ def _validate_bound_project_document(
     expected: dict[str, Any],
     path: str,
     require_match_count: bool,
+    require_check_count: bool = False,
 ) -> dict[str, Any]:
     required = {
         "project_key",
@@ -324,7 +582,14 @@ def _validate_bound_project_document(
     }
     if require_match_count:
         required.add("match_count")
-    project = _strict_object(value, path=path, required=required)
+    if require_check_count:
+        required.add("check_count")
+    project = _strict_object(
+        value,
+        path=path,
+        required=required,
+        optional=(None if require_check_count else {"check_count"}),
+    )
     _required_text(
         project.get("project_key"),
         path=f"{path}.project_key",
@@ -346,6 +611,12 @@ def _validate_bound_project_document(
         raise _machine_document_error(
             f"{path}.match_count", "任务项目必须且只能匹配一条旧系统记录"
         )
+    if require_check_count and _required_count(
+        project.get("check_count"), path=f"{path}.check_count"
+    ) != 1:
+        raise _machine_document_error(
+            f"{path}.check_count", "任务项目检验份数必须恰好为 1"
+        )
     for key in (
         "project_key",
         "task_check_item_id",
@@ -358,6 +629,13 @@ def _validate_bound_project_document(
         if project.get(key) != expected.get(key):
             raise _machine_document_error(
                 f"{path}.{key}", "旧系统只读结果与流程预检绑定的任务项目不一致"
+            )
+    if "check_count" in project:
+        _required_count(project.get("check_count"), path=f"{path}.check_count")
+        if project.get("check_count") != expected.get("check_count"):
+            raise _machine_document_error(
+                f"{path}.check_count",
+                "旧系统只读结果与流程预检绑定的任务项目不一致",
             )
     return project
 
@@ -520,6 +798,8 @@ def validate_special_wool_machine_observation(
             "operation_id"
         ) or source_ref.get("receipt_checksum") != expected_source.get(
             "receipt_checksum"
+        ) or source_ref.get("main_id") != expected_source.get(
+            "main_id"
         ):
             raise _machine_document_error(
                 "$.source_upload", "复核观察引用的上传回执与预检单不一致"
@@ -614,6 +894,114 @@ def _receipt_stage_names(value: Any, *, path: str) -> list[str]:
     return result
 
 
+def _validate_special_wool_server_file_verification(
+    value: Any,
+    *,
+    source_artifact: dict[str, Any],
+    server_file: dict[str, Any],
+) -> dict[str, Any]:
+    path = "$.server_file.verification"
+    verification = _strict_object(
+        value,
+        path=path,
+        required={
+            "mode",
+            "source_size_bytes",
+            "source_content_sha256",
+            "remote_size_bytes",
+            "remote_content_sha256",
+            "stream_paths_equal",
+            "stream_sizes_equal",
+            "non_workbook_streams_equal",
+            "biff_record_boundaries_equal",
+            "changed_record_ids",
+            "changed_record_count",
+        },
+    )
+    mode = _required_text(
+        verification.get("mode"),
+        path=f"{path}.mode",
+    )
+    source_size = _required_count(
+        verification.get("source_size_bytes"),
+        path=f"{path}.source_size_bytes",
+    )
+    source_sha256 = _required_text(
+        verification.get("source_content_sha256"),
+        path=f"{path}.source_content_sha256",
+        pattern=_SHA256_RE,
+    )
+    remote_size = _required_count(
+        verification.get("remote_size_bytes"),
+        path=f"{path}.remote_size_bytes",
+    )
+    remote_sha256 = _required_text(
+        verification.get("remote_content_sha256"),
+        path=f"{path}.remote_content_sha256",
+        pattern=_SHA256_RE,
+    )
+    if (
+        source_size != source_artifact.get("size_bytes")
+        or source_sha256 != source_artifact.get("content_sha256")
+    ):
+        raise _machine_document_error(
+            path,
+            "服务器文件核验中的源文件标识与预检制品不一致",
+        )
+    if (
+        remote_size != server_file.get("size_bytes")
+        or remote_sha256 != server_file.get("content_sha256")
+    ):
+        raise _machine_document_error(
+            path,
+            "服务器文件核验中的远端文件标识与实际回执不一致",
+        )
+    for key in (
+        "stream_paths_equal",
+        "stream_sizes_equal",
+        "non_workbook_streams_equal",
+        "biff_record_boundaries_equal",
+    ):
+        if verification.get(key) is not True:
+            raise _machine_document_error(
+                f"{path}.{key}",
+                "服务器工作簿逻辑结构核验未通过",
+            )
+    changed_record_ids = verification.get("changed_record_ids")
+    changed_record_count = _required_count(
+        verification.get("changed_record_count"),
+        path=f"{path}.changed_record_count",
+    )
+    if mode == "exact_sha256":
+        if (
+            source_size != remote_size
+            or source_sha256 != remote_sha256
+            or changed_record_ids != []
+            or changed_record_count != 0
+        ):
+            raise _machine_document_error(
+                path,
+                "精确哈希核验回执与源文件、远端文件或"
+                "变更记录不一致",
+            )
+    elif mode == "cfb_biff_writeaccess_only":
+        if (
+            source_sha256 == remote_sha256
+            or changed_record_ids != ["0x005C"]
+            or changed_record_count < 1
+        ):
+            raise _machine_document_error(
+                path,
+                "CFB/BIFF 规范化只能包含 WRITEACCESS(0x005C) 记录变化",
+            )
+    else:
+        raise _machine_document_error(
+            f"{path}.mode",
+            "服务器文件核验模式不受支持",
+        )
+    return verification
+
+
 def validate_external_receipt(
     operation: ExecutionExternalOperation,
     receipt: dict[str, Any],
@@ -624,6 +1012,10 @@ def validate_external_receipt(
     if operation_type not in {
         LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
         LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
+        LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION,
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
+        LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION,
     }:
         if not isinstance(receipt, dict) or not receipt:
             raise ExecutionApiError(
@@ -646,6 +1038,7 @@ def validate_external_receipt(
             path="$",
             required=common
             | {
+                "target_filename",
                 "source_artifact",
                 "task_project",
                 "server_file",
@@ -655,14 +1048,59 @@ def validate_external_receipt(
             },
         )
         expected_type = SPECIAL_WOOL_IMAGE_RECEIPT_TYPE
-    else:
+    elif operation_type == LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION:
+        document = _strict_object(
+            receipt,
+            path="$",
+            required=common
+            | {
+                "target_filename",
+                "source_artifact",
+                "task_project",
+                "server_file",
+                "main_record",
+                "picture_count",
+                "readback",
+            },
+        )
+        expected_type = SPECIAL_WOOL_QUALITATIVE_UPLOAD_RECEIPT_TYPE
+    elif operation_type in {
+        LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
+    }:
         document = _strict_object(
             receipt,
             path="$",
             required=common
             | {"source_upload", "main_record", "children", "readback"},
         )
-        expected_type = SPECIAL_WOOL_REVIEW_RECEIPT_TYPE
+        expected_type = (
+            SPECIAL_WOOL_QUALITATIVE_REVIEW_RECEIPT_TYPE
+            if operation_type
+            == LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION
+            else SPECIAL_WOOL_REVIEW_RECEIPT_TYPE
+        )
+    elif operation_type == LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION:
+        document = _strict_object(
+            receipt,
+            path="$",
+            required=common
+            | {
+                "source_artifact",
+                "task_project",
+                "template_binding",
+                "final_entry",
+                "controlled_test_override",
+            },
+        )
+        expected_type = MICROSCOPY_CHECK_RECORD_ENTRY_RECEIPT_TYPE
+    else:
+        document = _strict_object(
+            receipt,
+            path="$",
+            required=common | {"task_project", "final_entry"},
+        )
+        expected_type = GENERIC_CHECK_RECORD_ENTRY_RECEIPT_TYPE
     if document.get("schema_version") != 1 or document.get(
         "receipt_type"
     ) != expected_type:
@@ -690,7 +1128,243 @@ def validate_external_receipt(
             "$.stages", "写入回执阶段必须有序、无重复且包含最终核验阶段"
         )
 
-    if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
+    if (
+        operation_type == LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
+        and stage_names
+        != list(SPECIAL_WOOL_QUALITATIVE_UPLOAD_ATTEMPT_STAGES)
+    ):
+        raise _machine_document_error(
+            "$.stages", "文档型特纤上传回执阶段不完整或顺序错误"
+        )
+    if (
+        operation_type == LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION
+        and stage_names
+        != list(SPECIAL_WOOL_QUALITATIVE_REVIEW_ATTEMPT_STAGES)
+    ):
+        raise _machine_document_error(
+            "$.stages", "文档型特纤复核回执阶段不完整或顺序错误"
+        )
+
+    if operation_type == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION:
+        if stage_names != list(GENERIC_CHECK_RECORD_ENTRY_ATTEMPT_STAGES):
+            raise _machine_document_error(
+                "$.stages",
+                "通用检验记录登记回执必须包含完整保存与读回阶段",
+            )
+        _validate_bound_project_document(
+            document.get("task_project"),
+            expected=dict(summary.get("task_project") or {}),
+            path="$.task_project",
+            require_match_count=False,
+            require_check_count=True,
+        )
+        package = summary.get("final_entry_package") or {}
+        expected_existing = _required_count(
+            package.get("expected_existing_register_count"),
+            path="$.request_summary.final_entry_package."
+            "expected_existing_register_count",
+        )
+        final_entry = _strict_object(
+            document.get("final_entry"),
+            path="$.final_entry",
+            required={
+                "package_schema_version",
+                "expected_existing_register_count",
+                "resulting_register_count",
+                "detail_count",
+                "key_result_count",
+                "record_id",
+                "proofed",
+            },
+        )
+        if (
+            final_entry.get("package_schema_version") != 2
+            or final_entry.get("expected_existing_register_count")
+            != expected_existing
+            or final_entry.get("resulting_register_count")
+            != expected_existing + 1
+            or final_entry.get("detail_count") != 1
+            or final_entry.get("key_result_count") != 1
+            or final_entry.get("proofed") is not False
+        ):
+            raise _machine_document_error(
+                "$.final_entry",
+                "通用登记、明细、结果投影或未校对状态读回不一致",
+            )
+        _required_text(
+            final_entry.get("record_id"),
+            path="$.final_entry.record_id",
+            pattern=_REDACTED_LEGACY_ID_RE,
+        )
+        return document
+
+    if operation_type == LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION:
+        if stage_names != list(MICROSCOPY_CHECK_RECORD_ENTRY_ATTEMPT_STAGES):
+            raise _machine_document_error(
+                "$.stages",
+                "检验记录登记回执必须包含从登录到校对核验的完整阶段",
+            )
+        expected_file = list(summary.get("files") or [{}])[0]
+        artifact = _strict_object(
+            document.get("source_artifact"),
+            path="$.source_artifact",
+            required={"artifact_id", "filename", "size_bytes", "content_sha256"},
+        )
+        for key in ("artifact_id", "filename", "size_bytes", "content_sha256"):
+            if artifact.get(key) != expected_file.get(key):
+                raise _machine_document_error(
+                    f"$.source_artifact.{key}",
+                    "校对回执的工作簿与预检单不一致",
+                )
+        _validate_bound_project_document(
+            document.get("task_project"),
+            expected=dict(summary.get("task_project") or {}),
+            path="$.task_project",
+            require_match_count=False,
+            require_check_count=True,
+        )
+        binding = _strict_object(
+            document.get("template_binding"),
+            path="$.template_binding",
+            required={
+                "binding_version",
+                "image_count",
+                "legacy_template_name",
+                "local_asset_name",
+                "local_asset_sha256",
+                "mapping_config_sha256",
+            },
+        )
+        _required_count(
+            binding.get("image_count"),
+            path="$.template_binding.image_count",
+        )
+        if binding != summary.get("template_binding"):
+            raise _machine_document_error(
+                "$.template_binding", "校对回执的模板绑定与预检单不一致"
+            )
+        expected_package = summary.get("final_entry_package") or {}
+        expected_existing = _required_count(
+            expected_package.get("expected_existing_register_count"),
+            path="$.request_summary.final_entry_package."
+            "expected_existing_register_count",
+        )
+        final_entry = _strict_object(
+            document.get("final_entry"),
+            path="$.final_entry",
+            required={
+                "package_schema_version",
+                "expected_existing_register_count",
+                "resulting_register_count",
+                "key_result_count",
+                "record_id",
+                "original_data_filename",
+                "content_sha256",
+                "proofed",
+            },
+        )
+        actual_expected_existing = _required_count(
+            final_entry.get("expected_existing_register_count"),
+            path="$.final_entry.expected_existing_register_count",
+        )
+        actual_resulting = _required_count(
+            final_entry.get("resulting_register_count"),
+            path="$.final_entry.resulting_register_count",
+        )
+        actual_key_count = _required_count(
+            final_entry.get("key_result_count"),
+            path="$.final_entry.key_result_count",
+        )
+        if (
+            final_entry.get("package_schema_version") != 2
+            or actual_expected_existing != expected_existing
+            or actual_resulting != expected_existing + 1
+            or actual_key_count != 1
+            or final_entry.get("content_sha256")
+            != artifact.get("content_sha256")
+            or final_entry.get("proofed") is not True
+        ):
+            raise _machine_document_error(
+                "$.final_entry", "新增、关键结果或校对读回计数未通过核对"
+            )
+        _required_text(
+            final_entry.get("record_id"),
+            path="$.final_entry.record_id",
+            pattern=_REDACTED_LEGACY_ID_RE,
+        )
+        _required_text(
+            final_entry.get("original_data_filename"),
+            path="$.final_entry.original_data_filename",
+            pattern=_LEGACY_ORIGINAL_DATA_FILENAME_RE,
+        )
+        expected_override = expected_package.get("controlled_test_override")
+        actual_override = document.get("controlled_test_override")
+        if expected_override is None:
+            if actual_override is not None:
+                raise _machine_document_error(
+                    "$.controlled_test_override", "普通业务回执不得声明受控测试覆盖"
+                )
+        else:
+            override = _strict_object(
+                actual_override,
+                path="$.controlled_test_override",
+                required={
+                    "active",
+                    "applied",
+                    "kind",
+                    "target_sample_number",
+                    "expected_task_check_count",
+                    "expected_existing_register_count",
+                    "resulting_register_count",
+                },
+            )
+            for key in (
+                "kind",
+                "target_sample_number",
+                "expected_task_check_count",
+                "expected_existing_register_count",
+                "resulting_register_count",
+            ):
+                if override.get(key) != expected_override.get(key):
+                    raise _machine_document_error(
+                        f"$.controlled_test_override.{key}",
+                        "受控测试回执与已批准的任务包不一致",
+                    )
+            if override.get("active") is not True or override.get(
+                "applied"
+            ) is not True:
+                raise _machine_document_error(
+                    "$.controlled_test_override.applied",
+                    "受控测试三重门禁未全部激活并通过远端预检",
+                )
+        return document
+
+    if operation_type in {
+        LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+    }:
+        qualitative_document = (
+            operation_type
+            == LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
+        )
+        if qualitative_document:
+            source_file = list(summary.get("files") or [{}])[0]
+            expected_target_filename = _paper_special_wool_target_filename(
+                str(summary.get("target_sample_number") or ""),
+                str(source_file.get("filename") or ""),
+            )
+        else:
+            expected_target_filename = _special_wool_target_filename(
+                str(summary.get("target_sample_number") or "")
+            )
+        if (
+            summary.get("target_filename") != expected_target_filename
+            or document.get("target_filename") != expected_target_filename
+        ):
+            raise _machine_document_error(
+                "$.target_filename",
+                "写入回执中的目标文件名与最终样品编号不一致",
+            )
         artifact = _strict_object(
             document.get("source_artifact"),
             path="$.source_artifact",
@@ -711,19 +1385,46 @@ def validate_external_receipt(
         server_file = _strict_object(
             document.get("server_file"),
             path="$.server_file",
-            required={"filename", "size_bytes", "content_sha256"},
+            required={
+                "filename",
+                "size_bytes",
+                "content_sha256",
+                "verification",
+            },
         )
-        if server_file.get("filename") != artifact.get("filename") or server_file.get(
-            "size_bytes"
-        ) != artifact.get("size_bytes") or server_file.get(
-            "content_sha256"
-        ) != artifact.get("content_sha256"):
-            raise _machine_document_error("$.server_file", "服务器文件与源制品核对不一致")
+        _required_count(
+            server_file.get("size_bytes"), path="$.server_file.size_bytes"
+        )
+        _required_text(
+            server_file.get("content_sha256"),
+            path="$.server_file.content_sha256",
+            pattern=_SHA256_RE,
+        )
+        if server_file.get("filename") != expected_target_filename:
+            raise _machine_document_error(
+                "$.server_file.filename", "服务器文件名与预检目标不一致"
+            )
+        _validate_special_wool_server_file_verification(
+            server_file.get("verification"),
+            source_artifact=artifact,
+            server_file=server_file,
+        )
         main = _strict_object(
             document.get("main_record"),
             path="$.main_record",
-            required={"id", "field_fingerprint", "create_user", "create_time"},
+            required={
+                "id",
+                "field_fingerprint",
+                "create_user",
+                "create_time",
+                "file_path",
+            },
         )
+        if main.get("file_path") != expected_target_filename:
+            raise _machine_document_error(
+                "$.main_record.file_path",
+                "主记录文件名与预检目标不一致",
+            )
         for key in ("id", "create_user"):
             _required_text(
                 main.get(key), path=f"$.main_record.{key}", pattern=_REDACTED_LEGACY_ID_RE
@@ -733,6 +1434,33 @@ def validate_external_receipt(
             path="$.main_record.field_fingerprint",
             pattern=_SHA256_RE,
         )
+        if qualitative_document:
+            if document.get("picture_count") != 0:
+                raise _machine_document_error(
+                    "$.picture_count", "文档型特纤上传不得生成图片子记录"
+                )
+            readback = _strict_object(
+                document.get("readback"),
+                path="$.readback",
+                required={
+                    "main_count",
+                    "picture_count",
+                    "mismatches",
+                    "verified_at",
+                    "target_filename",
+                },
+            )
+            if (
+                readback.get("main_count") != 1
+                or readback.get("picture_count") != 0
+                or readback.get("mismatches") != []
+                or readback.get("target_filename")
+                != expected_target_filename
+            ):
+                raise _machine_document_error(
+                    "$.readback", "文档型特纤上传读回核对未通过"
+                )
+            return document
         pictures = document.get("picture_records")
         if not isinstance(pictures, list) or len(pictures) != 1:
             raise _machine_document_error(
@@ -749,6 +1477,7 @@ def validate_external_receipt(
                 "filename",
                 "create_time",
             },
+            optional={"original_data_filename"},
         )
         for key in ("id", "main_id", "check_item_id"):
             _required_text(
@@ -765,18 +1494,35 @@ def validate_external_receipt(
             "check_item_id"
         ) != (summary.get("task_project") or {}).get(
             "check_item_id"
-        ) or picture.get("filename") != artifact.get("filename"):
+        ) or picture.get("filename") != expected_target_filename or (
+            "original_data_filename" in picture
+            and picture.get("original_data_filename")
+            != expected_target_filename
+        ):
             raise _machine_document_error(
                 "$.picture_records[0]", "图片子记录外键或项目标识与预检单不一致"
             )
         readback = _strict_object(
             document.get("readback"),
             path="$.readback",
-            required={"main_count", "picture_count", "mismatches", "verified_at"},
+            required={
+                "main_count",
+                "picture_count",
+                "mismatches",
+                "verified_at",
+                "target_filename",
+            },
+            optional={"original_data_filename"},
         )
         if _required_count(readback.get("main_count"), path="$.readback.main_count") != 1 or _required_count(
             readback.get("picture_count"), path="$.readback.picture_count"
-        ) != 1 or readback.get("mismatches") != []:
+        ) != 1 or readback.get("mismatches") != [] or readback.get(
+            "target_filename"
+        ) != expected_target_filename or (
+            "original_data_filename" in readback
+            and readback.get("original_data_filename")
+            != expected_target_filename
+        ):
             raise _machine_document_error("$.readback", "图片上传读回核对未通过")
     else:
         source_upload = _strict_object(
@@ -789,6 +1535,8 @@ def validate_external_receipt(
             "operation_id"
         ) or source_upload.get("receipt_checksum") != expected_source.get(
             "receipt_checksum"
+        ) or source_upload.get("main_id") != expected_source.get(
+            "main_id"
         ):
             raise _machine_document_error("$.source_upload", "复核回执引用了错误的上传回执")
         main = _strict_object(
@@ -832,6 +1580,15 @@ def validate_external_receipt(
         _required_count(
             children.get("picture_count"), path="$.children.picture_count"
         )
+        if (
+            operation_type
+            == LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION
+            and children.get("picture_count") != 0
+        ):
+            raise _machine_document_error(
+                "$.children.picture_count",
+                "文档型特纤复核必须确认不存在图片子记录",
+            )
         for key in ("before_fingerprint", "after_fingerprint"):
             _required_text(
                 children.get(key),
@@ -913,8 +1670,48 @@ def _operation_execution_capability(
     declared = (operation.request_summary or {}).get(
         "execution_capability"
     )
+    capability = dict(declared) if isinstance(declared, dict) else {
+        "available": True
+    }
+    if (
+        _operation_type(operation) in {
+            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION,
+            LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION,
+        }
+        and not settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED
+    ):
+        generic_entry = (
+            _operation_type(operation)
+            == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION
+        )
+        return {
+            "available": False,
+            "code": (
+                "legacy_generic_check_record_entry_disabled"
+                if generic_entry
+                else "legacy_microscopy_final_entry_disabled"
+            ),
+            "message": (
+                "通用检验记录登记写入当前未在部署环境启用"
+                if generic_entry
+                else "检验记录登记与校对写入当前未在部署环境启用"
+            ),
+        }
+    if _operation_type(operation) in {
+        LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
+        LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
+    }:
+        if not settings.EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED:
+            return dict(
+                SPECIAL_WOOL_EXECUTION_CAPABILITY[
+                    _operation_type(operation)
+                ]
+            )
+        return {"available": True}
     if isinstance(declared, dict):
-        return dict(declared)
+        return capability
     return {"available": True}
 
 
@@ -975,6 +1772,14 @@ def allocate_legacy_sample_number(
 
 
 def _locally_occupied_target_numbers(db: Session) -> set[str]:
+    """Return numbers allocated by SpecialWool upload operations.
+
+    Other legacy modules use the same source inspection number for different
+    business records.  Treating a completed CheckRecord registration or review
+    as a SpecialWool allocation would incorrectly force the next image upload
+    to skip a suffix.
+    """
+
     occupied: set[str] = set()
     rows = (
         db.query(ExecutionExternalOperation)
@@ -987,12 +1792,58 @@ def _locally_occupied_target_numbers(db: Session) -> set[str]:
         .all()
     )
     for row in rows:
+        if _operation_type(row) not in {
+            LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
+            LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+        }:
+            continue
         target = str(
             (row.request_summary or {}).get("target_sample_number") or ""
         ).strip()
         if target:
             occupied.add(target)
     return occupied
+
+
+def _legacy_special_wool_occupied_target_numbers(
+    db: Session,
+    *,
+    inspection_number: str,
+) -> set[str]:
+    """Combine read-only legacy occupancy with local durable reservations.
+
+    The task snapshot Bridge queries the existing SpecialWool number family in
+    the legacy database.  The local operation table closes the interval between
+    that snapshot and a completed remote write, so concurrent runs cannot pick
+    the same suffix.
+    """
+
+    cached = cached_task_snapshot(
+        db,
+        inspection_number=inspection_number,
+    )
+    snapshot = cached.get("snapshot")
+    if not isinstance(snapshot, dict):
+        raise conflict(
+            "special_wool_occupancy_snapshot_required",
+            "尚未取得旧系统特纤编号占用信息，请等待任务信息刷新后重试",
+            inspection_number=inspection_number,
+            cache_state=cached.get("cache_state"),
+            refresh_status=cached.get("refresh_status"),
+        )
+    remote = snapshot.get("special_wool_occupied_numbers")
+    if not isinstance(remote, list) or not all(
+        isinstance(value, str) and value.strip() for value in remote
+    ):
+        raise conflict(
+            "special_wool_occupancy_snapshot_invalid",
+            "旧系统任务快照缺少有效的特纤编号占用信息，请重新刷新后重试",
+            inspection_number=inspection_number,
+        )
+    return {
+        str(value).strip().upper()
+        for value in remote
+    } | _locally_occupied_target_numbers(db)
 
 
 def resolve_legacy_target_sample_number(run: "ExecutionRun") -> str:
@@ -1214,6 +2065,11 @@ def _generated_microscopy_artifact_rows(
         )
     artifact, root = row
     expected_media_type = "application/vnd.ms-excel"
+    expected_filename = (
+        f"{run.inspection_number.strip().upper()}-"
+        f"{MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME}"
+    )
+    artifact_metadata = artifact.metadata_json or {}
     if (
         artifact.run_id != run.id
         or artifact.role != "working"
@@ -1226,8 +2082,9 @@ def _generated_microscopy_artifact_rows(
         or str(declared.get("filename") or "") != artifact.filename
         or str(declared.get("content_sha256") or "")
         != artifact.content_sha256
-        or artifact.filename.casefold().endswith(".xls") is False
-        or "图片" not in artifact.filename
+        or artifact.filename != expected_filename
+        or artifact_metadata.get("template_original_filename")
+        != MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME
     ):
         raise conflict(
             "special_wool_original_record_stale",
@@ -1281,6 +2138,243 @@ def _generated_microscopy_artifact_rows(
     ], inspector
 
 
+def _special_wool_target_filename(target_sample_number: str) -> str:
+    target = str(target_sample_number or "").strip().upper()
+    if not _LEGACY_SAMPLE_NUMBER_RE.fullmatch(target):
+        raise ExecutionApiError(
+            422,
+            "external_target_sample_number_invalid",
+            "旧系统目标样品编号格式不正确",
+        )
+    filename = f"{target}-{MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME}"
+    if (
+        not filename
+        or filename in {".", ".."}
+        or "/" in filename
+        or "\\" in filename
+        or "\x00" in filename
+        or Path(filename).name != filename
+    ):
+        raise ExecutionApiError(
+            422,
+            "special_wool_target_filename_invalid",
+            "旧系统上传目标文件名不安全",
+        )
+    return filename
+
+
+def _generated_microscopy_check_record_artifact(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    input_data: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    """Bind final-entry preflight to one immutable generated Sheet1 workbook."""
+
+    declared = input_data.get("registration_workbook")
+    declared_binding = input_data.get("template_binding")
+    if not isinstance(declared, dict) or not isinstance(
+        declared_binding, dict
+    ):
+        raise ExecutionApiError(
+            422,
+            "microscopy_check_record_artifact_required",
+            "检验记录登记前必须先生成已绑定模板的工作簿",
+        )
+    artifact_id = str(declared.get("artifact_id") or "").strip()
+    row = (
+        db.query(ExecutionArtifact, ExecutionStorageRoot)
+        .join(
+            ExecutionStorageRoot,
+            ExecutionStorageRoot.id == ExecutionArtifact.storage_root_id,
+        )
+        .filter(ExecutionArtifact.id == artifact_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if row is None:
+        raise conflict(
+            "microscopy_check_record_artifact_stale",
+            "检验记录登记工作簿已不存在，请重新生成",
+            artifact_id=artifact_id,
+        )
+    artifact, root = row
+    metadata = artifact.metadata_json or {}
+    stored_binding = metadata.get("template_binding")
+    verification = metadata.get("verification")
+    cells = (
+        verification.get("cells")
+        if isinstance(verification, dict)
+        else None
+    )
+    source_number = run.inspection_number.strip().upper()
+    if (
+        artifact.run_id != run.id
+        or root.root_id != "execution_staging"
+        or root.access_mode != "write"
+        or artifact.role != "working"
+        or artifact.immutable is not True
+        or artifact.media_type != "application/vnd.ms-excel"
+        or not artifact.filename.casefold().endswith(".xls")
+        or metadata.get("generator_version")
+        != MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION
+        or not isinstance(stored_binding, dict)
+        or stored_binding != declared_binding
+        or not isinstance(cells, dict)
+        or _normalized_business_text(cells.get("AS4")).upper()
+        != source_number
+        or _normalized_business_text(cells.get("I8"))
+        != ELECTRON_TEST_METHOD
+        or str(declared.get("root_id") or "") != root.root_id
+        or str(declared.get("relative_path") or "")
+        != artifact.relative_path
+        or str(declared.get("filename") or "") != artifact.filename
+        or str(declared.get("content_sha256") or "")
+        != artifact.content_sha256
+        or declared.get("size_bytes") != artifact.size_bytes
+    ):
+        raise conflict(
+            "microscopy_check_record_artifact_stale",
+            "检验记录登记工作簿、模板绑定或生成核对结果已变化",
+            artifact_id=artifact_id,
+        )
+    binding_required = {
+        "binding_version",
+        "image_count",
+        "legacy_template_name",
+        "local_asset_name",
+        "local_asset_sha256",
+        "mapping_config_sha256",
+    }
+    if set(stored_binding) != binding_required or (
+        not isinstance(stored_binding.get("image_count"), int)
+        or isinstance(stored_binding.get("image_count"), bool)
+        or not _SHA256_RE.fullmatch(
+            str(stored_binding.get("local_asset_sha256") or "")
+        )
+        or not _SHA256_RE.fullmatch(
+            str(stored_binding.get("mapping_config_sha256") or "")
+        )
+    ):
+        raise conflict(
+            "microscopy_check_record_template_binding_invalid",
+            "检验记录登记工作簿的模板绑定不完整",
+            artifact_id=artifact_id,
+        )
+
+    gateway = build_file_gateway(db)
+    ref = ArtifactRef(root.root_id, artifact.relative_path)
+    try:
+        path = gateway.resolve(ref, expected_type="file")
+        fingerprint = gateway.fingerprint(ref)
+    except (StorageError, OSError, ValueError) as exc:
+        raise conflict(
+            "microscopy_check_record_artifact_unavailable",
+            "检验记录登记工作簿当前无法读取",
+            artifact_id=artifact_id,
+        ) from exc
+    if (
+        fingerprint.size != artifact.size_bytes
+        or fingerprint.sha256 != artifact.content_sha256
+        or detect_workbook_format(path) is not WorkbookFormat.OLE
+    ):
+        raise conflict(
+            "microscopy_check_record_artifact_changed",
+            "检验记录登记工作簿内容已变化，请重新生成",
+            artifact_id=artifact_id,
+        )
+    file_row = {
+        "artifact_id": artifact.id,
+        "root_id": root.root_id,
+        "relative_path": artifact.relative_path,
+        "filename": artifact.filename,
+        "size_bytes": artifact.size_bytes,
+        "content_sha256": artifact.content_sha256,
+    }
+    return file_row, dict(stored_binding), _normalized_business_text(
+        cells.get("Z7")
+    )
+
+
+def _completed_special_wool_review_source(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    input_data: dict[str, Any],
+) -> ExecutionExternalOperation:
+    review_result = input_data.get("review_result")
+    operation_id = (
+        str(review_result.get("operation_id") or "").strip()
+        if isinstance(review_result, dict)
+        else ""
+    )
+    source = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id == operation_id,
+            ExecutionExternalOperation.run_id == run.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if (
+        source is None
+        or source.status != "completed"
+        or _operation_type(source) != LEGACY_SPECIAL_WOOL_REVIEW_OPERATION
+        or not isinstance(source.receipt, dict)
+        or not source.receipt
+    ):
+        raise conflict(
+            "special_wool_review_not_completed",
+            "检验记录登记只能衔接本流程已完成且已核对的特纤复核",
+            operation_id=operation_id,
+        )
+    validate_external_receipt(source, source.receipt)
+    return source
+
+
+def _controlled_final_entry_override(
+    input_data: dict[str, Any],
+    *,
+    sample_number: str,
+) -> dict[str, Any] | None:
+    raw = input_data.get("controlled_test_override")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ExecutionApiError(
+            422,
+            "controlled_final_entry_override_invalid",
+            "受控测试覆盖必须是完整对象",
+        )
+    configured = str(
+        settings.EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO or ""
+    ).strip().upper()
+    expected = {
+        "kind": CONTROLLED_FINAL_ENTRY_OVERRIDE_KIND,
+        "target_sample_number": sample_number,
+        "expected_task_check_count": 1,
+        "expected_existing_register_count": 1,
+        "resulting_register_count": 2,
+    }
+    if configured != sample_number or any(
+        raw.get(key) != value for key, value in expected.items()
+    ):
+        raise ExecutionApiError(
+            403,
+            "controlled_final_entry_override_not_authorized",
+            "受控 1→2 测试覆盖未与部署环境的单一样品号授权绑定",
+        )
+    reason = _normalized_business_text(raw.get("reason"))
+    if not reason or len(reason) > 500:
+        raise ExecutionApiError(
+            422,
+            "controlled_final_entry_override_reason_required",
+            "受控测试覆盖必须记录不超过 500 字的原因",
+        )
+    return {**expected, "reason": reason}
+
+
 def _reverify_generated_artifact_source(
     db: Session,
     *,
@@ -1315,6 +2409,11 @@ def _reverify_generated_artifact_source(
             "批准前生成制品已不存在，请重新运行流程",
         )
     artifact, root = row
+    source_number = str(summary.get("source_inspection_number") or "").strip().upper()
+    expected_filename = (
+        f"{source_number}-{MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME}"
+    )
+    artifact_metadata = artifact.metadata_json or {}
     if (
         artifact.run_id != operation.run_id
         or root.root_id != expected.get("root_id")
@@ -1324,8 +2423,9 @@ def _reverify_generated_artifact_source(
         or artifact.size_bytes != expected.get("size_bytes")
         or artifact.role != "working"
         or artifact.media_type != "application/vnd.ms-excel"
-        or not artifact.filename.casefold().endswith(".xls")
-        or "图片" not in artifact.filename
+        or artifact.filename != expected_filename
+        or artifact_metadata.get("template_original_filename")
+        != MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME
     ):
         raise conflict(
             "special_wool_original_record_changed",
@@ -1347,6 +2447,254 @@ def _reverify_generated_artifact_source(
         raise conflict(
             "special_wool_original_record_changed",
             "批准前生成制品内容已变化，请重新运行流程",
+        )
+
+
+def _reverify_microscopy_final_entry_sources(
+    db: Session,
+    *,
+    operation: ExecutionExternalOperation,
+) -> None:
+    summary = operation.request_summary or {}
+    run = db.get(ExecutionRun, operation.run_id)
+    files = summary.get("files")
+    if (
+        run is None
+        or not isinstance(files, list)
+        or len(files) != 1
+        or not isinstance(files[0], dict)
+        or not isinstance(summary.get("template_binding"), dict)
+    ):
+        raise conflict(
+            "external_operation_preflight_invalid",
+            "检验记录登记预检单缺少制品或模板绑定",
+            operation_id=operation.id,
+        )
+    _generated_microscopy_check_record_artifact(
+        db,
+        run=run,
+        input_data={
+            "registration_workbook": dict(files[0]),
+            "template_binding": dict(summary["template_binding"]),
+        },
+    )
+
+    source_ref = summary.get("source_review_operation")
+    if not isinstance(source_ref, dict):
+        raise conflict(
+            "external_operation_preflight_invalid",
+            "检验记录登记预检单缺少特纤复核来源",
+            operation_id=operation.id,
+        )
+    source = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id
+            == str(source_ref.get("operation_id") or ""),
+            ExecutionExternalOperation.run_id == operation.run_id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if (
+        source is None
+        or source.status != "completed"
+        or _operation_type(source) != LEGACY_SPECIAL_WOOL_REVIEW_OPERATION
+        or source.payload_checksum != source_ref.get("payload_checksum")
+        or not isinstance(source.receipt, dict)
+        or _canonical_checksum(source.receipt)
+        != source_ref.get("receipt_checksum")
+        or str(
+            (source.request_summary or {}).get("target_sample_number") or ""
+        )
+        != source_ref.get("special_wool_target_sample_number")
+    ):
+        raise conflict(
+            "special_wool_review_result_changed",
+            "检验记录登记所引用的特纤复核结果已变化",
+            operation_id=operation.id,
+        )
+    validate_external_receipt(source, source.receipt)
+    package = summary.get("final_entry_package")
+    override = (
+        package.get("controlled_test_override")
+        if isinstance(package, dict)
+        else None
+    )
+    if override is not None:
+        _controlled_final_entry_override(
+            {"controlled_test_override": override},
+            sample_number=run.inspection_number.strip().upper(),
+        )
+
+
+def _reverify_paper_file_source(
+    db: Session,
+    *,
+    operation: ExecutionExternalOperation,
+) -> None:
+    summary = operation.request_summary or {}
+    files = summary.get("files")
+    if (
+        not isinstance(files, list)
+        or len(files) != 1
+        or not isinstance(files[0], dict)
+    ):
+        raise conflict(
+            "external_operation_preflight_invalid",
+            "纸纤维预检单缺少唯一源文件",
+            operation_id=operation.id,
+        )
+    expected = files[0]
+    row = (
+        db.query(ExecutionFileIndexEntry, ExecutionStorageRoot)
+        .join(
+            ExecutionStorageRoot,
+            ExecutionStorageRoot.id == ExecutionFileIndexEntry.storage_root_id,
+        )
+        .filter(
+            ExecutionFileIndexEntry.id == str(expected.get("id") or "")
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if row is None:
+        raise conflict(
+            "paper_fiber_source_file_changed",
+            "批准前纸纤维原始记录已不在索引中",
+        )
+    entry, root = row
+    if (
+        entry.missing_since is not None
+        or root.root_id != PAPER_FIBER_ROOT_ID
+        or root.root_id != expected.get("root_id")
+        or entry.relative_path != expected.get("relative_path")
+        or entry.filename != expected.get("filename")
+        or entry.fingerprint != expected.get("fingerprint")
+    ):
+        raise conflict(
+            "paper_fiber_source_file_changed",
+            "批准前纸纤维原始记录索引已变化",
+        )
+    gateway = build_file_gateway(db)
+    try:
+        fingerprint = gateway.fingerprint(
+            ArtifactRef(root.root_id, entry.relative_path)
+        )
+    except (StorageError, OSError, ValueError) as exc:
+        raise conflict(
+            "paper_fiber_source_file_unavailable",
+            "批准前无法重新读取纸纤维原始记录",
+        ) from exc
+    if (
+        fingerprint.size != expected.get("size_bytes")
+        or fingerprint.sha256 != expected.get("content_sha256")
+    ):
+        raise conflict(
+            "paper_fiber_source_file_changed",
+            "批准前纸纤维原始记录内容已变化",
+        )
+    run = db.get(ExecutionRun, operation.run_id)
+    operator = db.get(ExecutionUser, run.created_by_id) if run else None
+    if (
+        operator is None
+        or str(operator.display_name or "").strip()
+        != str(summary.get("inspector") or "").strip()
+    ):
+        raise conflict(
+            "paper_fiber_inspector_changed",
+            "批准前执行账号姓名已变化，请重新运行流程",
+        )
+
+
+def _reverify_paper_upload_source(
+    db: Session,
+    *,
+    operation: ExecutionExternalOperation,
+) -> None:
+    source_ref = (operation.request_summary or {}).get("source_operation")
+    if not isinstance(source_ref, dict):
+        raise conflict(
+            "external_operation_preflight_invalid",
+            "纸纤维复核预检单缺少上传来源",
+        )
+    source = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id
+            == str(source_ref.get("operation_id") or ""),
+            ExecutionExternalOperation.run_id == operation.run_id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if (
+        source is None
+        or source.status != "completed"
+        or _operation_type(source)
+        != LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
+        or source.payload_checksum != source_ref.get("payload_checksum")
+        or not isinstance(source.receipt, dict)
+        or _canonical_checksum(source.receipt)
+        != source_ref.get("receipt_checksum")
+        or _special_wool_upload_main_id(source)
+        != source_ref.get("main_id")
+    ):
+        raise conflict(
+            "paper_special_wool_upload_result_changed",
+            "纸纤维复核所引用的上传结果已变化",
+        )
+    validate_external_receipt(source, source.receipt)
+
+
+def _reverify_generic_entry_sources(
+    db: Session,
+    *,
+    operation: ExecutionExternalOperation,
+) -> None:
+    summary = operation.request_summary or {}
+    source_ref = summary.get("source_review_operation")
+    package = summary.get("final_entry_package")
+    if not isinstance(source_ref, dict) or not isinstance(package, dict):
+        raise conflict(
+            "external_operation_preflight_invalid",
+            "通用检验记录登记缺少纸纤维复核或机器载荷绑定",
+        )
+    source = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id
+            == str(source_ref.get("operation_id") or ""),
+            ExecutionExternalOperation.run_id == operation.run_id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if (
+        source is None
+        or source.status != "completed"
+        or _operation_type(source)
+        != LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION
+        or source.payload_checksum != source_ref.get("payload_checksum")
+        or not isinstance(source.receipt, dict)
+        or _canonical_checksum(source.receipt)
+        != source_ref.get("receipt_checksum")
+        or str((source.request_summary or {}).get("target_sample_number") or "")
+        != source_ref.get("special_wool_target_sample_number")
+    ):
+        raise conflict(
+            "paper_special_wool_review_result_changed",
+            "通用检验记录登记所引用的纸纤维复核结果已变化",
+        )
+    validate_external_receipt(source, source.receipt)
+    if (
+        package.get("task_project") != summary.get("task_project")
+        or package.get("sample_number")
+        != summary.get("target_sample_number")
+    ):
+        raise conflict(
+            "paper_fiber_final_entry_binding_changed",
+            "通用检验记录登记的任务项目或样品编号绑定已变化",
         )
 
 
@@ -1563,6 +2911,182 @@ def _selected_file_rows(
     return rows, primary_inspector
 
 
+def _paper_result_value(raw: dict[str, Any]) -> tuple[str, str]:
+    result = raw.get("result")
+    if not isinstance(result, dict):
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_result_required",
+            "所选纸纤维原始记录缺少 Sheet1!W32 读取结果",
+        )
+    if result.get("worksheet") != "Sheet1" or result.get("cell") != "W32":
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_result_contract_invalid",
+            "所选原始记录不是已核验的 Sheet1!W32 结果",
+        )
+    value = str(
+        result.get("w32_value")
+        if result.get("w32_value") is not None
+        else result.get("qualitative_result") or ""
+    ).strip()
+    if not value or len(value) > 2000:
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_result_value_invalid",
+            "Sheet1!W32 结果为空或过长，不能登记",
+        )
+    normalized_value = unicodedata.normalize("NFKC", value)
+    standalone_100 = _PAPER_STANDALONE_100_RE.search(
+        normalized_value
+    ) is not None
+    expected_unit = "%" if standalone_100 else ""
+    if bool(result.get("contains_standalone_100")) != standalone_100 or str(
+        result.get("unit") or ""
+    ) != expected_unit:
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_result_unit_invalid",
+            "Sheet1!W32 的 100 与百分号单位判断不一致，请重新读取",
+        )
+    return value, expected_unit
+
+
+def _selected_paper_file_row(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    input_data: dict[str, Any],
+) -> tuple[dict[str, Any], str, str, str]:
+    selected = input_data.get("selected_files")
+    if not isinstance(selected, list) or len(selected) != 1 or not isinstance(
+        selected[0], dict
+    ):
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_exactly_one_file_required",
+            "纸纤维原始记录必须且只能选择一份工作簿",
+        )
+    raw = selected[0]
+    candidate_id = str(raw.get("id") or "").strip()
+    primary_file_id = str(input_data.get("primary_file_id") or "").strip()
+    if not candidate_id or primary_file_id != candidate_id:
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_primary_file_required",
+            "所选纸纤维工作簿必须同时标记为主单",
+        )
+    row = (
+        db.query(ExecutionFileIndexEntry, ExecutionStorageRoot)
+        .join(
+            ExecutionStorageRoot,
+            ExecutionStorageRoot.id == ExecutionFileIndexEntry.storage_root_id,
+        )
+        .filter(ExecutionFileIndexEntry.id == candidate_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if row is None:
+        raise conflict(
+            "paper_fiber_selected_file_stale",
+            "所选纸纤维工作簿已不在索引中，请重新查询",
+            candidate_id=candidate_id,
+        )
+    entry, root = row
+    declared_roots = {
+        str(item.get("root_id"))
+        for item in (run.definition_snapshot or {}).get("root_slots", [])
+        if isinstance(item, dict) and item.get("access", "read") == "read"
+    }
+    if (
+        entry.missing_since is not None
+        or root.root_id != PAPER_FIBER_ROOT_ID
+        or root.root_id not in declared_roots
+        or raw.get("root_id") != root.root_id
+        or raw.get("relative_path") != entry.relative_path
+        or raw.get("fingerprint") != entry.fingerprint
+        or raw.get("read_status") != "succeeded"
+        or not entry.filename.casefold().endswith(".xls")
+    ):
+        raise conflict(
+            "paper_fiber_selected_file_stale",
+            "所选文件已变化或不属于纸纤维定性流程",
+            candidate_id=candidate_id,
+        )
+    result_value, unit = _paper_result_value(raw)
+    gateway = build_file_gateway(db)
+    ref = ArtifactRef(root.root_id, entry.relative_path)
+    try:
+        fingerprint = gateway.fingerprint(ref)
+        path = gateway.resolve(ref, expected_type="file")
+    except (StorageError, OSError, ValueError) as exc:
+        raise conflict(
+            "paper_fiber_selected_file_unavailable",
+            "所选纸纤维工作簿当前不可读取",
+            candidate_id=candidate_id,
+        ) from exc
+    if (
+        fingerprint.size <= 0
+        or not _SHA256_RE.fullmatch(str(fingerprint.sha256 or ""))
+        or path.name != entry.filename
+    ):
+        raise conflict(
+            "paper_fiber_selected_file_changed",
+            "所选纸纤维工作簿内容已变化，请重新查询",
+            candidate_id=candidate_id,
+        )
+    operator = db.get(ExecutionUser, run.created_by_id)
+    inspector = str(
+        operator.display_name if operator is not None else ""
+    ).strip()
+    if not inspector:
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_operator_display_name_missing",
+            "当前执行系统账号未配置姓名，不能生成旧系统预检单",
+        )
+    return (
+        {
+            "id": entry.id,
+            "artifact_id": entry.id,
+            "root_id": root.root_id,
+            "relative_path": entry.relative_path,
+            "filename": entry.filename,
+            "fingerprint": entry.fingerprint,
+            "content_sha256": fingerprint.sha256,
+            "size_bytes": fingerprint.size,
+            "is_primary": True,
+        },
+        inspector,
+        result_value,
+        unit,
+    )
+
+
+def _paper_special_wool_target_filename(
+    target_sample_number: str,
+    source_filename: str,
+) -> str:
+    target = str(target_sample_number or "").strip().upper()
+    source_name = str(source_filename or "").strip()
+    if (
+        not _LEGACY_SAMPLE_NUMBER_RE.fullmatch(target)
+        or not source_name
+        or Path(source_name).name != source_name
+        or source_name in {".", ".."}
+        or "/" in source_name
+        or "\\" in source_name
+        or "\x00" in source_name
+        or not source_name.casefold().endswith(".xls")
+    ):
+        raise ExecutionApiError(
+            422,
+            "paper_fiber_target_filename_invalid",
+            "纸纤维旧系统上传文件名无效",
+        )
+    return f"{target}-{source_name}"
+
+
 def _bound_credential_for_approval(
     db: Session,
     *,
@@ -1635,8 +3159,23 @@ def _reverify_operation_sources(
     if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
         _reverify_generated_artifact_source(db, operation=operation)
         return
-    if operation_type == LEGACY_SPECIAL_WOOL_REVIEW_OPERATION:
+    if operation_type in {
+        LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
+    }:
         _reverify_special_wool_review_source(db, operation=operation)
+        return
+    if operation_type == LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION:
+        _reverify_microscopy_final_entry_sources(db, operation=operation)
+        return
+    if operation_type == LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION:
+        _reverify_paper_file_source(db, operation=operation)
+        return
+    if operation_type == LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION:
+        _reverify_paper_upload_source(db, operation=operation)
+        return
+    if operation_type == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION:
+        _reverify_generic_entry_sources(db, operation=operation)
         return
     summary = operation.request_summary or {}
     files = summary.get("files")
@@ -1730,6 +3269,421 @@ def _reverify_operation_sources(
             )
 
 
+def _rearm_expired_external_operation(
+    db: Session,
+    *,
+    operation: ExecutionExternalOperation,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    prepared_at,
+    preflight_expires_at,
+) -> bool:
+    """Reuse an expired pre-side-effect fence after an explicit node retry.
+
+    The operation row is unique per node, so a retry must reuse the same fence.
+    Claims made before approval expiry are not by themselves remote writes:
+    rearming remains safe when *every* durable attempt ended before the
+    operation-specific write boundary.  Unknown/inconsistent history and any
+    completion or reconciliation evidence fail closed.
+    """
+
+    if operation.status != "expired":
+        return False
+
+    def reject(reason: str, **details: Any) -> None:
+        raise conflict(
+            "external_operation_not_rearmable",
+            (
+                "该外部操作存在执行痕迹，不能自动重新准备，"
+                "请先人工核对"
+            ),
+            operation_id=operation.id,
+            status=operation.status,
+            reason=reason,
+            **details,
+        )
+
+    # ``_prepare_external_operation_wait`` holds run -> node before this
+    # helper locks operation -> attempts.  Requiring a second running node
+    # attempt keeps this path exclusive to the explicit node-retry action.
+    if node_run.status != "running" or int(node_run.attempt_count or 0) < 2:
+        reject(
+            "explicit_node_retry_required",
+            node_status=node_run.status,
+            node_attempt_count=int(node_run.attempt_count or 0),
+        )
+
+    operation_type = _operation_type(operation)
+    stage_profile = EXTERNAL_OPERATION_STAGE_PROFILES.get(operation_type)
+    if stage_profile is None:
+        reject("unknown_operation_type", operation_type=operation_type)
+    attempt_stages, write_boundary, _verified_stage = stage_profile
+    boundary_index = attempt_stages.index(write_boundary)
+
+    if operation.error_code not in EXTERNAL_OPERATION_EXPIRY_ERROR_CODES:
+        reject(
+            "not_a_system_expiry",
+            operation_error_code=operation.error_code,
+        )
+    if operation.completed_at is None:
+        reject("expiry_completion_missing")
+    if operation.remote_record_id is not None:
+        reject("remote_record_present")
+    if operation.receipt not in (None, {}):
+        reject("receipt_present")
+    if operation.verification not in (None, {}):
+        reject("verification_present")
+    if (
+        operation.fence_token is not None
+        or operation.lease_owner is not None
+        or operation.lease_expires_at is not None
+    ):
+        reject("active_operation_claim_present")
+
+    output = (
+        node_run.output_data
+        if isinstance(node_run.output_data, dict)
+        else {}
+    )
+    if output.get("status") == "completed":
+        reject("node_completion_present")
+    if output.get("remote_write_performed") is True:
+        reject("node_remote_write_present")
+    if output.get("remote_record_id") is not None:
+        reject("node_remote_record_present")
+    if output.get("receipt") not in (None, {}):
+        reject("node_receipt_present")
+    if output.get("verification") not in (None, {}):
+        reject("node_verification_present")
+
+    attempts = (
+        db.query(ExecutionExternalAttempt)
+        .filter(ExecutionExternalAttempt.operation_id == operation.id)
+        .order_by(
+            ExecutionExternalAttempt.attempt_no.asc(),
+            ExecutionExternalAttempt.id.asc(),
+        )
+        .populate_existing()
+        .with_for_update()
+        .all()
+    )
+    if int(operation.attempt_count or 0) != len(attempts):
+        reject(
+            "attempt_history_incomplete",
+            operation_attempt_count=int(operation.attempt_count or 0),
+            durable_attempt_count=len(attempts),
+        )
+    if operation.started_at is not None and not attempts:
+        reject("started_without_attempt_history")
+
+    prior_attempts: list[dict[str, Any]] = []
+    for attempt in attempts:
+        if attempt.status in EXTERNAL_ATTEMPT_ACTIVE_STATUSES:
+            reject(
+                "active_attempt_present",
+                attempt_id=attempt.id,
+                attempt_status=attempt.status,
+            )
+        if attempt.status not in EXTERNAL_ATTEMPT_TERMINAL_STATUSES:
+            reject(
+                "unknown_attempt_status",
+                attempt_id=attempt.id,
+                attempt_status=attempt.status,
+            )
+        # A completed attempt or a zero exit code is itself durable evidence
+        # of a successful Writer path, even if a corrupted row claims an
+        # earlier stage.
+        if attempt.status == "completed" or attempt.exit_code == 0:
+            reject(
+                "attempt_completion_present",
+                attempt_id=attempt.id,
+                attempt_status=attempt.status,
+                exit_code=attempt.exit_code,
+            )
+        if attempt.finished_at is None or attempt.lease_expires_at is not None:
+            reject(
+                "attempt_not_fully_settled",
+                attempt_id=attempt.id,
+                attempt_status=attempt.status,
+            )
+        stage = attempt.current_stage
+        if stage not in attempt_stages:
+            reject(
+                "unknown_attempt_stage",
+                attempt_id=attempt.id,
+                current_stage=stage,
+            )
+        if attempt_stages.index(stage) >= boundary_index:
+            reject(
+                "write_boundary_reached",
+                attempt_id=attempt.id,
+                current_stage=stage,
+                write_boundary=write_boundary,
+            )
+
+        checkpoint_stages: list[str] = []
+        for checkpoint in attempt.checkpoints or []:
+            checkpoint_stage = (
+                checkpoint.get("stage")
+                if isinstance(checkpoint, dict)
+                else None
+            )
+            if checkpoint_stage not in attempt_stages:
+                reject(
+                    "unknown_checkpoint_stage",
+                    attempt_id=attempt.id,
+                    checkpoint_stage=checkpoint_stage,
+                )
+            if attempt_stages.index(checkpoint_stage) >= boundary_index:
+                reject(
+                    "write_boundary_checkpoint_present",
+                    attempt_id=attempt.id,
+                    checkpoint_stage=checkpoint_stage,
+                    write_boundary=write_boundary,
+                )
+            checkpoint_stages.append(checkpoint_stage)
+        prior_attempts.append(
+            {
+                "attempt_id": attempt.id,
+                "attempt_no": attempt.attempt_no,
+                "status": attempt.status,
+                "current_stage": stage,
+                "checkpoint_stages": checkpoint_stages,
+            }
+        )
+
+    blocker = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id != operation.id,
+            ExecutionExternalOperation.remote_business_key
+            == operation.remote_business_key,
+            ExecutionExternalOperation.status.in_(
+                ACTIVE_REMOTE_OPERATION_STATUSES
+            ),
+        )
+        .order_by(ExecutionExternalOperation.created_at.asc())
+        .with_for_update()
+        .first()
+    )
+    if blocker is not None:
+        raise conflict(
+            "external_remote_business_conflict",
+            "同一样品已有待处理的旧系统操作，请先处理或取消原流程",
+            operation_id=blocker.id,
+        )
+
+    previous_error_code = operation.error_code
+    previous_started_at = operation.started_at
+    previous_completed_at = operation.completed_at
+    operation.status = "prepared"
+    operation.preflight_expires_at = preflight_expires_at
+    operation.approved_by_id = None
+    operation.approved_at = None
+    operation.approval_expires_at = None
+    operation.approval_note = None
+    operation.fence_token = None
+    operation.lease_owner = None
+    operation.lease_expires_at = None
+    operation.remote_record_id = None
+    operation.receipt = {}
+    operation.verification = {}
+    operation.error_code = None
+    operation.error_message = None
+    operation.started_at = None
+    operation.completed_at = None
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type="external_operation.rearmed",
+        payload={
+            "operation_id": operation.id,
+            "node_id": node_run.node_id,
+            "previous_error_code": previous_error_code,
+            "prepared_at": prepared_at.isoformat(),
+            "preflight_expires_at": preflight_expires_at.isoformat(),
+            "operation_type": operation_type,
+            "write_boundary": write_boundary,
+            "prior_attempt_count": len(prior_attempts),
+            "prior_attempts": prior_attempts,
+            "remote_write_performed": False,
+        },
+    )
+    append_audit_log(
+        db,
+        action="external_operation.rearm",
+        resource_type="execution_external_operation",
+        resource_id=operation.id,
+        details={
+            "run_id": run.id,
+            "previous_error_code": previous_error_code,
+            "previous_started_at": (
+                previous_started_at.isoformat()
+                if previous_started_at is not None
+                else None
+            ),
+            "previous_completed_at": (
+                previous_completed_at.isoformat()
+                if previous_completed_at is not None
+                else None
+            ),
+            "operation_type": operation_type,
+            "write_boundary": write_boundary,
+            "prior_attempt_count": len(prior_attempts),
+            "prior_attempts": prior_attempts,
+            "remote_write_performed": False,
+        },
+    )
+    return True
+
+
+def _rearm_reconciled_no_side_effect_operation(
+    db: Session,
+    *,
+    operation: ExecutionExternalOperation,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    prepared_at,
+    preflight_expires_at,
+) -> bool:
+    """Reopen the same fence after an admin proved that no write occurred.
+
+    Reconciliation intentionally leaves the operation failed so the run does
+    not continue by itself.  A later explicit node retry may reuse that exact
+    idempotency fence, but only when the durable reconciliation conclusion is
+    ``confirm_no_side_effect`` and the referenced failed attempt is still the
+    latest attempt.  The full attestation remains in the append-only audit log;
+    the active operation verification is cleared for the next attempt.
+    """
+
+    if operation.status != "failed":
+        return False
+
+    def reject(reason: str, **details: Any) -> None:
+        raise conflict(
+            "external_operation_not_rearmable",
+            "该外部操作尚未确认无副作用，不能重新执行",
+            operation_id=operation.id,
+            status=operation.status,
+            reason=reason,
+            **details,
+        )
+
+    if node_run.status != "running" or int(node_run.attempt_count or 0) < 2:
+        reject(
+            "explicit_node_retry_required",
+            node_status=node_run.status,
+            node_attempt_count=int(node_run.attempt_count or 0),
+        )
+    if operation.error_code != "external_reconciliation_no_side_effect":
+        reject("reconciliation_error_code_missing")
+    if operation.remote_record_id is not None or operation.receipt not in (
+        None,
+        {},
+    ):
+        reject("remote_result_present")
+    if (
+        operation.fence_token is not None
+        or operation.lease_owner is not None
+        or operation.lease_expires_at is not None
+    ):
+        reject("active_operation_claim_present")
+
+    reconciliation = dict(operation.verification or {}).get("reconciliation")
+    if (
+        not isinstance(reconciliation, dict)
+        or reconciliation.get("action") != "confirm_no_side_effect"
+        or reconciliation.get("remote_write_performed") is not False
+        or not str(reconciliation.get("evidence_checksum") or "").strip()
+    ):
+        reject("no_side_effect_attestation_missing")
+
+    attempts = (
+        db.query(ExecutionExternalAttempt)
+        .filter(ExecutionExternalAttempt.operation_id == operation.id)
+        .order_by(
+            ExecutionExternalAttempt.attempt_no.asc(),
+            ExecutionExternalAttempt.id.asc(),
+        )
+        .populate_existing()
+        .with_for_update()
+        .all()
+    )
+    if not attempts or int(operation.attempt_count or 0) != len(attempts):
+        reject(
+            "attempt_history_incomplete",
+            operation_attempt_count=int(operation.attempt_count or 0),
+            durable_attempt_count=len(attempts),
+        )
+    latest = attempts[-1]
+    if (
+        latest.id != reconciliation.get("attempt_id")
+        or latest.status != "failed"
+        or latest.finished_at is None
+        or latest.lease_expires_at is not None
+    ):
+        reject(
+            "reconciled_attempt_changed",
+            latest_attempt_id=latest.id,
+            reconciled_attempt_id=reconciliation.get("attempt_id"),
+            latest_attempt_status=latest.status,
+        )
+
+    prior_reconciliation = dict(reconciliation)
+    previous_completed_at = operation.completed_at
+    operation.status = "prepared"
+    operation.preflight_expires_at = preflight_expires_at
+    operation.approved_by_id = None
+    operation.approved_at = None
+    operation.approval_expires_at = None
+    operation.approval_note = None
+    operation.fence_token = None
+    operation.lease_owner = None
+    operation.lease_expires_at = None
+    operation.remote_record_id = None
+    operation.receipt = {}
+    operation.verification = {}
+    operation.error_code = None
+    operation.error_message = None
+    operation.started_at = None
+    operation.completed_at = None
+
+    event_details = {
+        "operation_id": operation.id,
+        "node_id": node_run.node_id,
+        "prepared_at": prepared_at.isoformat(),
+        "preflight_expires_at": preflight_expires_at.isoformat(),
+        "prior_attempt_count": len(attempts),
+        "reconciled_attempt_id": latest.id,
+        "reconciliation_evidence_checksum": prior_reconciliation.get(
+            "evidence_checksum"
+        ),
+        "remote_write_performed": False,
+    }
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type="external_operation.rearmed_after_no_side_effect",
+        payload=event_details,
+    )
+    append_audit_log(
+        db,
+        action="external_operation.rearm_after_no_side_effect",
+        resource_type="execution_external_operation",
+        resource_id=operation.id,
+        details={
+            **event_details,
+            "run_id": run.id,
+            "previous_completed_at": (
+                previous_completed_at.isoformat()
+                if previous_completed_at is not None
+                else None
+            ),
+        },
+    )
+    return True
+
+
 def _create_prepared_external_operation(
     db: Session,
     *,
@@ -1792,6 +3746,23 @@ def _create_prepared_external_operation(
                 "external_operation_idempotency_conflict",
                 "该外部操作幂等键已绑定另一份预检内容",
                 operation_id=existing.id,
+            )
+        rearmed = _rearm_expired_external_operation(
+            db,
+            operation=existing,
+            run=run,
+            node_run=node_run,
+            prepared_at=prepared_at,
+            preflight_expires_at=preflight_expires_at,
+        )
+        if not rearmed:
+            _rearm_reconciled_no_side_effect_operation(
+                db,
+                operation=existing,
+                run=run,
+                node_run=node_run,
+                prepared_at=prepared_at,
+                preflight_expires_at=preflight_expires_at,
             )
         return existing, True
 
@@ -1975,7 +3946,10 @@ def prepare_legacy_special_wool_image_operation(
     else:
         target_number = allocate_legacy_sample_number(
             requested_base,
-            _locally_occupied_target_numbers(db),
+            _legacy_special_wool_occupied_target_numbers(
+                db,
+                inspection_number=source_number,
+            ),
         )
     remote_business_key = lock_legacy_remote_business_scope(
         db,
@@ -1993,11 +3967,14 @@ def prepare_legacy_special_wool_image_operation(
         "profile": "special_wool_image_v1",
         "source_inspection_number": source_number,
         "target_sample_number": target_number,
+        "target_filename": _special_wool_target_filename(target_number),
         "target_allocation": {
             "base_number": requested_base,
             "candidate_number": target_number,
             "suffix_policy": "base_then_numeric_suffix",
-            "occupancy_scope": "execution_operation_fences_only",
+            "occupancy_scope": (
+                "legacy_task_snapshot_and_execution_operation_fences"
+            ),
             "legacy_readonly_verification_required": True,
         },
         "business_fields": {
@@ -2011,10 +3988,14 @@ def prepare_legacy_special_wool_image_operation(
         "task_project": task_project,
         "inspector": inspector_name,
         "files": files,
-        "execution_capability": dict(
-            SPECIAL_WOOL_EXECUTION_CAPABILITY[
-                LEGACY_SPECIAL_WOOL_IMAGE_OPERATION
-            ]
+        "execution_capability": (
+            {"available": True}
+            if settings.EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED
+            else dict(
+                SPECIAL_WOOL_EXECUTION_CAPABILITY[
+                    LEGACY_SPECIAL_WOOL_IMAGE_OPERATION
+                ]
+            )
         ),
         "safety": {
             "remote_write_performed": False,
@@ -2054,6 +4035,16 @@ def _special_wool_upload_source_operation(
         if isinstance(upload_result, dict)
         else ""
     )
+    if not operation_id and isinstance(upload_result, dict):
+        # 早期人工对账完成路径没有把 operation_id 从节点预检输出带回
+        # 顶层，但完整机器回执本身已与操作、运行和 payload checksum
+        # 严格绑定。兼容读取该回执中的 ID，后续仍会查询同一 run 并再次
+        # 执行 validate_external_receipt，不能按样品号猜测记录。
+        nested_receipt = upload_result.get("receipt")
+        if isinstance(nested_receipt, dict):
+            operation_id = str(
+                nested_receipt.get("operation_id") or ""
+            ).strip()
     if not operation_id:
         raise ExecutionApiError(
             422,
@@ -2085,6 +4076,38 @@ def _special_wool_upload_source_operation(
     return source
 
 
+def _special_wool_upload_main_id(
+    source: ExecutionExternalOperation,
+) -> str:
+    """Return the immutable, redacted main-row identity proved by upload.
+
+    The target sample number is not an identity: a legacy row can be replaced
+    under the same number.  Review therefore carries the upload readback's
+    main-row id all the way to the Windows writer.
+    """
+
+    receipt = source.receipt if isinstance(source.receipt, dict) else {}
+    main_record = receipt.get("main_record")
+    if not isinstance(main_record, dict):
+        raise conflict(
+            "special_wool_upload_receipt_invalid",
+            "图片上传回执缺少已核验的主记录标识，不能进入复核",
+            operation_id=source.id,
+        )
+    try:
+        return _required_text(
+            main_record.get("id"),
+            path="$.source_upload.main_record.id",
+            pattern=_REDACTED_LEGACY_ID_RE,
+        )
+    except ExecutionApiError as exc:
+        raise conflict(
+            "special_wool_upload_receipt_invalid",
+            "图片上传回执中的主记录标识无效，不能进入复核",
+            operation_id=source.id,
+        ) from exc
+
+
 def prepare_legacy_special_wool_review_operation(
     db: Session,
     *,
@@ -2111,6 +4134,7 @@ def prepare_legacy_special_wool_review_operation(
         input_data=input_data,
     )
     source_summary = source.request_summary or {}
+    source_main_id = _special_wool_upload_main_id(source)
     target_number = str(
         source_summary.get("target_sample_number") or ""
     ).strip()
@@ -2133,6 +4157,7 @@ def prepare_legacy_special_wool_review_operation(
             "operation_id": source.id,
             "payload_checksum": source.payload_checksum,
             "receipt_checksum": _canonical_checksum(source.receipt),
+            "main_id": source_main_id,
         },
         "business_fields": {
             "fiber_category": "图片",
@@ -2142,10 +4167,14 @@ def prepare_legacy_special_wool_review_operation(
         },
         "task_project": dict(source_summary.get("task_project") or {}),
         "files": list(source_summary.get("files") or []),
-        "execution_capability": dict(
-            SPECIAL_WOOL_EXECUTION_CAPABILITY[
-                LEGACY_SPECIAL_WOOL_REVIEW_OPERATION
-            ]
+        "execution_capability": (
+            {"available": True}
+            if settings.EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED
+            else dict(
+                SPECIAL_WOOL_EXECUTION_CAPABILITY[
+                    LEGACY_SPECIAL_WOOL_REVIEW_OPERATION
+                ]
+            )
         ),
         "safety": {
             "remote_write_performed": False,
@@ -2169,6 +4198,629 @@ def prepare_legacy_special_wool_review_operation(
         remote_business_key=remote_business_key,
         request_summary=request_summary,
         operation_key_prefix=SPECIAL_WOOL_REVIEW_OPERATION_KEY_PREFIX,
+    )
+
+
+def prepare_legacy_microscopy_check_record_entry_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    node: dict[str, Any],
+    input_data: dict[str, Any],
+) -> tuple[ExecutionExternalOperation, bool]:
+    """Prepare one FibreCheck CheckRecord save-and-proof operation.
+
+    CheckRecord is keyed by ``Task.ReportNo`` and must therefore always use the
+    source inspection number.  The independently allocated SpecialWool
+    ``base-N`` number is retained only as source-review audit evidence.
+    """
+
+    if node_run.node_type != LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE:
+        raise ValueError("unsupported_external_node")
+    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+        raise ExecutionApiError(
+            403,
+            "workflow_external_write_capability_required",
+            "当前流程未声明外部系统写入能力",
+        )
+    credential = _credential_for_node(db, run=run, node=node)
+    account_scope_key = _account_scope_key(credential.account_name or "")
+    source_number = run.inspection_number.strip().upper()
+    if not _LEGACY_SAMPLE_NUMBER_RE.fullmatch(source_number):
+        raise ExecutionApiError(
+            422,
+            "external_target_sample_number_invalid",
+            "检验记录登记的源检验编号格式无效",
+        )
+    declared_target = str(
+        (run.input_data or {}).get("target_sample_number") or ""
+    ).strip().upper()
+    if declared_target and declared_target != source_number:
+        raise ExecutionApiError(
+            422,
+            "microscopy_final_entry_target_override_forbidden",
+            "检验记录登记必须使用任务单原编号，不能使用特纤后缀号",
+        )
+    remote_business_key = lock_legacy_remote_business_scope(
+        db, sample_number=source_number
+    )
+    project = _validated_microscopy_project_binding(input_data)
+    if (
+        _normalized_business_text(project.get("check_item_no"))
+        != MICROSCOPY_CHECK_ITEM_NO
+        or project.get("check_item_name") != MICROSCOPY_CHECK_ITEM_NAME
+    ):
+        raise ExecutionApiError(
+            422,
+            "microscopy_final_entry_project_mismatch",
+            "检验记录登记节点仅支持 5103.5 / 纤维微观形貌",
+        )
+    source_review = _completed_special_wool_review_source(
+        db, run=run, input_data=input_data
+    )
+    source_review_summary = source_review.request_summary or {}
+    file_row, template_binding, key_identity = (
+        _generated_microscopy_check_record_artifact(
+            db, run=run, input_data=input_data
+        )
+    )
+    override = _controlled_final_entry_override(
+        input_data, sample_number=source_number
+    )
+    expected_existing = 1 if override is not None else 0
+    final_entry_package: dict[str, Any] = {
+        "schema_version": 2,
+        "operation_type": "excel_check_record",
+        "sample_number": source_number,
+        "check_item_no": MICROSCOPY_CHECK_ITEM_NO,
+        "check_item_name": MICROSCOPY_CHECK_ITEM_NAME,
+        # The Writer re-queries the current Task_CheckItem row and recomputes
+        # these one-way identifiers plus project_key before any side effect.
+        "task_project": dict(project),
+        "expected_existing_register_count": expected_existing,
+        "excel_record": {
+            "template_name": template_binding["legacy_template_name"],
+            "collection_mode": "standard",
+            "expected_mapping_config_sha256": template_binding[
+                "mapping_config_sha256"
+            ],
+            "key_result_count": 1,
+            "expected_key_identities": [key_identity],
+            "register": {
+                "level": "",
+                "sample_identity": "",
+                "equipment_no": "",
+                "check_basis": "",
+            },
+            "workbook": {
+                key: file_row[key]
+                for key in (
+                    "relative_path",
+                    "filename",
+                    "size_bytes",
+                    "content_sha256",
+                )
+            },
+        },
+    }
+    if override is not None:
+        final_entry_package["controlled_test_override"] = override
+    request_summary = {
+        "schema_version": 1,
+        "operation_type": LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION,
+        "profile": "microscopy_check_record_entry_v1",
+        "source_inspection_number": source_number,
+        "target_sample_number": source_number,
+        "task_project": project,
+        "source_review_operation": {
+            "operation_id": source_review.id,
+            "payload_checksum": source_review.payload_checksum,
+            "receipt_checksum": _canonical_checksum(source_review.receipt),
+            "special_wool_target_sample_number": str(
+                source_review_summary.get("target_sample_number") or ""
+            ),
+        },
+        "files": [file_row],
+        "template_binding": template_binding,
+        "final_entry_package": final_entry_package,
+        "final_entry_summary": {
+            "source_review_target_sample_number": str(
+                source_review_summary.get("target_sample_number") or ""
+            ),
+            "image_count": template_binding["image_count"],
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": expected_existing,
+            "resulting_register_count": expected_existing + 1,
+            "controlled_test": override is not None,
+            "controlled_test_reason": (
+                override.get("reason") if override is not None else None
+            ),
+        },
+        "business_fields": {
+            "inspection_item": MICROSCOPY_CHECK_ITEM_NAME,
+            "inspection_method": ELECTRON_TEST_METHOD,
+            "inspection_copies": 1,
+        },
+        "execution_capability": {
+            "available": bool(
+                settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED
+            ),
+            "code": (
+                None
+                if settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED
+                else "legacy_microscopy_final_entry_disabled"
+            ),
+            "message": (
+                None
+                if settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED
+                else "检验记录登记与校对写入当前未在部署环境启用"
+            ),
+        },
+        "safety": {
+            "remote_write_performed": False,
+            "requires_final_approval": True,
+            "requires_source_reverification": True,
+            "overwrite_allowed": False,
+        },
+        "machine_contract": {
+            "receipt_type": MICROSCOPY_CHECK_RECORD_ENTRY_RECEIPT_TYPE,
+            "schema_version": 1,
+        },
+    }
+    return _create_prepared_external_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        credential=credential,
+        account_scope_key=account_scope_key,
+        remote_business_key=remote_business_key,
+        request_summary=request_summary,
+        operation_key_prefix=(
+            MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION_KEY_PREFIX
+        ),
+    )
+
+
+def prepare_legacy_special_wool_qualitative_upload_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    node: dict[str, Any],
+    input_data: dict[str, Any],
+) -> tuple[ExecutionExternalOperation, bool]:
+    """Prepare one document-only SpecialWool qualitative upload."""
+
+    if node_run.node_type != LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE:
+        raise ValueError("unsupported_external_node")
+    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+        raise ExecutionApiError(
+            403,
+            "workflow_external_write_capability_required",
+            "当前流程未声明外部系统写入能力",
+        )
+    credential = _credential_for_node(db, run=run, node=node)
+    account_scope_key = _account_scope_key(credential.account_name or "")
+    source_number = run.inspection_number.strip().upper()
+    requested_base = resolve_legacy_target_sample_number(run).upper()
+    lock_legacy_remote_business_scope(db, sample_number=requested_base)
+    existing = (
+        db.query(ExecutionExternalOperation)
+        .filter(ExecutionExternalOperation.node_run_id == node_run.id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if existing is not None:
+        target_number = str(
+            (existing.request_summary or {}).get("target_sample_number") or ""
+        ).strip()
+        if (
+            _operation_type(existing)
+            != LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
+            or not target_number
+        ):
+            raise conflict(
+                "external_operation_idempotency_conflict",
+                "该节点已绑定另一份外部操作预检单",
+                operation_id=existing.id,
+            )
+    else:
+        target_number = allocate_legacy_sample_number(
+            requested_base,
+            _legacy_special_wool_occupied_target_numbers(
+                db, inspection_number=source_number
+            ),
+        )
+    remote_business_key = lock_legacy_remote_business_scope(
+        db, sample_number=target_number
+    )
+    project = _validated_paper_project_binding(input_data)
+    file_row, inspector, result_value, unit = _selected_paper_file_row(
+        db, run=run, input_data=input_data
+    )
+    target_filename = _paper_special_wool_target_filename(
+        target_number, file_row["filename"]
+    )
+    request_summary = {
+        "schema_version": 1,
+        "operation_type": LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+        "profile": "special_wool_qualitative_upload_v1",
+        "source_inspection_number": source_number,
+        "target_sample_number": target_number,
+        "target_filename": target_filename,
+        "target_allocation": {
+            "base_number": requested_base,
+            "candidate_number": target_number,
+            "suffix_policy": "base_then_numeric_suffix",
+            "occupancy_scope": (
+                "legacy_task_snapshot_and_execution_operation_fences"
+            ),
+            "legacy_readonly_verification_required": True,
+        },
+        "business_fields": {
+            "fiber_category": "棉再生纤",
+            "inspection_method": "定量",
+            "inspection_item": PAPER_FIBER_SPECIAL_WOOL_ITEM,
+            "inspection_copies": 1,
+            "review_item": PAPER_FIBER_SPECIAL_WOOL_ITEM,
+            "review_copies": 1,
+        },
+        "task_project": project,
+        "inspector": inspector,
+        "files": [file_row],
+        "result_contract": {
+            "worksheet": "Sheet1",
+            "cell": "W32",
+            "value": result_value,
+            "unit": unit,
+        },
+        "execution_capability": (
+            {"available": True}
+            if settings.EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED
+            else dict(
+                SPECIAL_WOOL_EXECUTION_CAPABILITY[
+                    LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
+                ]
+            )
+        ),
+        "safety": {
+            "remote_write_performed": False,
+            "requires_final_approval": True,
+            "requires_source_reverification": True,
+            "overwrite_allowed": False,
+            "expected_picture_count": 0,
+        },
+        "machine_contract": {
+            "observation_type": (
+                "legacy_special_wool_qualitative_upload_dry_run"
+            ),
+            "receipt_type": SPECIAL_WOOL_QUALITATIVE_UPLOAD_RECEIPT_TYPE,
+            "schema_version": 1,
+            "picture_count": 0,
+            "read_only_probe_required": True,
+        },
+    }
+    return _create_prepared_external_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        credential=credential,
+        account_scope_key=account_scope_key,
+        remote_business_key=remote_business_key,
+        request_summary=request_summary,
+        operation_key_prefix=(
+            SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION_KEY_PREFIX
+        ),
+    )
+
+
+def _paper_upload_source_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    input_data: dict[str, Any],
+) -> ExecutionExternalOperation:
+    upload_result = input_data.get("upload_result")
+    operation_id = (
+        str(upload_result.get("operation_id") or "").strip()
+        if isinstance(upload_result, dict)
+        else ""
+    )
+    source = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id == operation_id,
+            ExecutionExternalOperation.run_id == run.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if (
+        source is None
+        or source.status != "completed"
+        or _operation_type(source)
+        != LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
+        or not isinstance(source.receipt, dict)
+        or not source.receipt
+    ):
+        raise conflict(
+            "paper_special_wool_upload_not_completed",
+            "纸纤维复核只能衔接本流程已完成且已核对的原始记录上传",
+            operation_id=operation_id,
+        )
+    validate_external_receipt(source, source.receipt)
+    return source
+
+
+def prepare_legacy_special_wool_qualitative_review_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    node: dict[str, Any],
+    input_data: dict[str, Any],
+) -> tuple[ExecutionExternalOperation, bool]:
+    if node_run.node_type != LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE:
+        raise ValueError("unsupported_external_node")
+    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+        raise ExecutionApiError(
+            403,
+            "workflow_external_write_capability_required",
+            "当前流程未声明外部系统写入能力",
+        )
+    credential = _credential_for_node(db, run=run, node=node)
+    account_scope_key = _account_scope_key(credential.account_name or "")
+    source = _paper_upload_source_operation(db, run=run, input_data=input_data)
+    source_summary = source.request_summary or {}
+    target_number = str(source_summary.get("target_sample_number") or "").strip()
+    source_main_id = _special_wool_upload_main_id(source)
+    remote_business_key = lock_legacy_remote_business_scope(
+        db, sample_number=target_number
+    )
+    request_summary = {
+        "schema_version": 1,
+        "operation_type": LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
+        "profile": "special_wool_qualitative_review_v1",
+        "source_inspection_number": run.inspection_number.strip().upper(),
+        "target_sample_number": target_number,
+        "source_operation": {
+            "operation_id": source.id,
+            "payload_checksum": source.payload_checksum,
+            "receipt_checksum": _canonical_checksum(source.receipt),
+            "main_id": source_main_id,
+        },
+        "business_fields": {
+            "fiber_category": "棉再生纤",
+            "review_action": "特纤复核",
+            "review_item": PAPER_FIBER_SPECIAL_WOOL_ITEM,
+            "review_copies": 1,
+        },
+        "task_project": dict(source_summary.get("task_project") or {}),
+        "files": list(source_summary.get("files") or []),
+        "result_contract": dict(source_summary.get("result_contract") or {}),
+        "execution_capability": (
+            {"available": True}
+            if settings.EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED
+            else dict(
+                SPECIAL_WOOL_EXECUTION_CAPABILITY[
+                    LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION
+                ]
+            )
+        ),
+        "safety": {
+            "remote_write_performed": False,
+            "requires_final_approval": True,
+            "requires_source_reverification": True,
+            "overwrite_allowed": False,
+            "expected_picture_count": 0,
+        },
+        "machine_contract": {
+            "observation_type": (
+                "legacy_special_wool_qualitative_review_dry_run"
+            ),
+            "receipt_type": SPECIAL_WOOL_QUALITATIVE_REVIEW_RECEIPT_TYPE,
+            "schema_version": 1,
+            "picture_count": 0,
+            "read_only_probe_required": True,
+        },
+    }
+    return _create_prepared_external_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        credential=credential,
+        account_scope_key=account_scope_key,
+        remote_business_key=remote_business_key,
+        request_summary=request_summary,
+        operation_key_prefix=(
+            SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION_KEY_PREFIX
+        ),
+    )
+
+
+def _completed_paper_review_source(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    input_data: dict[str, Any],
+) -> ExecutionExternalOperation:
+    review_result = input_data.get("review_result")
+    operation_id = (
+        str(review_result.get("operation_id") or "").strip()
+        if isinstance(review_result, dict)
+        else ""
+    )
+    source = (
+        db.query(ExecutionExternalOperation)
+        .filter(
+            ExecutionExternalOperation.id == operation_id,
+            ExecutionExternalOperation.run_id == run.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if (
+        source is None
+        or source.status != "completed"
+        or _operation_type(source)
+        != LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION
+        or not isinstance(source.receipt, dict)
+        or not source.receipt
+    ):
+        raise conflict(
+            "paper_special_wool_review_not_completed",
+            "检验记录登记只能衔接本流程已完成且已核对的纸纤维复核",
+            operation_id=operation_id,
+        )
+    validate_external_receipt(source, source.receipt)
+    return source
+
+
+def prepare_legacy_generic_check_record_entry_operation(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    node: dict[str, Any],
+    input_data: dict[str, Any],
+) -> tuple[ExecutionExternalOperation, bool]:
+    if node_run.node_type != LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE:
+        raise ValueError("unsupported_external_node")
+    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+        raise ExecutionApiError(
+            403,
+            "workflow_external_write_capability_required",
+            "当前流程未声明外部系统写入能力",
+        )
+    credential = _credential_for_node(db, run=run, node=node)
+    account_scope_key = _account_scope_key(credential.account_name or "")
+    source_number = run.inspection_number.strip().upper()
+    if not _LEGACY_SAMPLE_NUMBER_RE.fullmatch(source_number):
+        raise ExecutionApiError(
+            422,
+            "external_target_sample_number_invalid",
+            "检验记录登记的源检验编号格式无效",
+        )
+    remote_business_key = lock_legacy_remote_business_scope(
+        db, sample_number=source_number
+    )
+    project = _validated_paper_project_binding(input_data)
+    source_review = _completed_paper_review_source(
+        db, run=run, input_data=input_data
+    )
+    source_review_summary = source_review.request_summary or {}
+    result_contract = source_review_summary.get("result_contract")
+    if not isinstance(result_contract, dict):
+        raise conflict(
+            "paper_fiber_result_contract_changed",
+            "纸纤维复核来源缺少已绑定的 W32 结果",
+        )
+    result_value = str(result_contract.get("value") or "").strip()
+    unit = str(result_contract.get("unit") or "")
+    if not result_value or unit not in {"", "%"}:
+        raise conflict(
+            "paper_fiber_result_contract_changed",
+            "纸纤维 W32 结果或单位绑定无效",
+        )
+    final_entry_package = {
+        "schema_version": 2,
+        "operation_type": "generic_item_record",
+        "sample_number": source_number,
+        "check_item_no": project["check_item_no"],
+        "check_item_name": project["check_item_name"],
+        "task_project": dict(project),
+        "expected_existing_register_count": 0,
+        "generic_record": {
+            "header": {
+                "grade": "",
+                "unit": unit,
+                "judge_basis": "",
+                "test_method": PAPER_FIBER_TEST_METHOD,
+                "sample_description": "",
+                "standard_type": "",
+                "report_check_item_name": "",
+                "attach_info": "",
+                "remark": "",
+                "total_judge": "",
+            },
+            "details": [
+                {
+                    "standard_location": "",
+                    "standard_value": "",
+                    "real_location": "",
+                    "real_value": result_value,
+                }
+            ],
+        },
+    }
+    request_summary = {
+        "schema_version": 1,
+        "operation_type": LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION,
+        "profile": "generic_check_record_entry_v1",
+        "source_inspection_number": source_number,
+        "target_sample_number": source_number,
+        "task_project": project,
+        "source_review_operation": {
+            "operation_id": source_review.id,
+            "payload_checksum": source_review.payload_checksum,
+            "receipt_checksum": _canonical_checksum(source_review.receipt),
+            "special_wool_target_sample_number": str(
+                source_review_summary.get("target_sample_number") or ""
+            ),
+        },
+        "result_contract": dict(result_contract),
+        "final_entry_package": final_entry_package,
+        "final_entry_summary": {
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": 0,
+            "resulting_register_count": 1,
+            "detail_count": 1,
+            "expected_proofed_count": 0,
+        },
+        "business_fields": {
+            "inspection_item": project["check_item_name"],
+            "inspection_method": project["check_method"],
+            "inspection_copies": 1,
+        },
+        "execution_capability": {
+            "available": bool(
+                settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED
+            ),
+            "code": (
+                None
+                if settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED
+                else "legacy_generic_check_record_entry_disabled"
+            ),
+            "message": (
+                None
+                if settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED
+                else "通用检验记录登记写入当前未在部署环境启用"
+            ),
+        },
+        "safety": {
+            "remote_write_performed": False,
+            "requires_final_approval": True,
+            "requires_source_reverification": True,
+            "overwrite_allowed": False,
+            "proof_required": False,
+        },
+        "machine_contract": {
+            "receipt_type": GENERIC_CHECK_RECORD_ENTRY_RECEIPT_TYPE,
+            "schema_version": 1,
+            "proof_required": False,
+        },
+    }
+    return _create_prepared_external_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        credential=credential,
+        account_scope_key=account_scope_key,
+        remote_business_key=remote_business_key,
+        request_summary=request_summary,
+        operation_key_prefix=GENERIC_CHECK_RECORD_ENTRY_OPERATION_KEY_PREFIX,
     )
 
 
@@ -2197,6 +4849,7 @@ def _reverify_special_wool_review_source(
     target = str(
         (operation.request_summary or {}).get("target_sample_number") or ""
     )
+    expected_main_id = str(source_ref.get("main_id") or "")
     if (
         source is None
         or source.status != "completed"
@@ -2216,6 +4869,12 @@ def _reverify_special_wool_review_source(
             operation_id=operation.id,
         )
     validate_external_receipt(source, source.receipt)
+    if _special_wool_upload_main_id(source) != expected_main_id:
+        raise conflict(
+            "special_wool_upload_result_changed",
+            "复核所引用的上传主记录已变化，请重新运行流程",
+            operation_id=operation.id,
+        )
 
 
 def approve_prepared_external_operation(
@@ -2363,7 +5022,7 @@ def public_external_operation(
     files = summary.get("files")
     public_files = [
         {
-            key: item.get(key)
+            key: item[key]
             for key in (
                 "id",
                 "artifact_id",
@@ -2375,6 +5034,7 @@ def public_external_operation(
                 "size_bytes",
                 "is_primary",
             )
+            if key in item
         }
         for item in files
         if isinstance(item, dict)
@@ -2388,6 +5048,7 @@ def public_external_operation(
             or summary.get("target_sample_number")
         ),
         "target_sample_number": summary.get("target_sample_number"),
+        "target_filename": summary.get("target_filename"),
         "business_fields": {
             key: business_fields.get(key)
             for key in (
@@ -2415,6 +5076,11 @@ def public_external_operation(
         "task_project": (
             dict(summary.get("task_project"))
             if isinstance(summary.get("task_project"), dict)
+            else None
+        ),
+        "final_entry_summary": (
+            dict(summary.get("final_entry_summary"))
+            if isinstance(summary.get("final_entry_summary"), dict)
             else None
         ),
         "machine_contract": (
@@ -2505,6 +5171,142 @@ def _latest_external_attempt(
     return max(attempts, key=lambda item: int(item.attempt_no or 0))
 
 
+def _final_entry_reconciliation_expectations(
+    operation: ExecutionExternalOperation,
+) -> dict[str, Any]:
+    summary = operation.request_summary or {}
+    final_entry_summary = summary.get("final_entry_summary")
+    if not isinstance(final_entry_summary, dict):
+        raise ExecutionApiError(
+            422,
+            "external_reconciliation_final_entry_summary_invalid",
+            "检验记录登记预检摘要缺失，不能执行人工对账",
+        )
+    expected_existing = final_entry_summary.get(
+        "expected_existing_register_count"
+    )
+    resulting = final_entry_summary.get("resulting_register_count")
+    expected_task_count = final_entry_summary.get(
+        "expected_task_check_count"
+    )
+    if (
+        not isinstance(expected_existing, int)
+        or isinstance(expected_existing, bool)
+        or expected_existing < 0
+        or not isinstance(resulting, int)
+        or isinstance(resulting, bool)
+        or resulting != expected_existing + 1
+        or expected_task_count != 1
+    ):
+        raise ExecutionApiError(
+            422,
+            "external_reconciliation_final_entry_summary_invalid",
+            "检验记录登记预检计数摘要无效，不能执行人工对账",
+        )
+    return {
+        "summary": dict(final_entry_summary),
+        "summary_checksum": _canonical_checksum(final_entry_summary),
+        "expected_existing_register_count": expected_existing,
+        "resulting_register_count": resulting,
+    }
+
+
+def _final_entry_expected_reconciliation_evidence(
+    operation: ExecutionExternalOperation,
+    *,
+    attempt: ExecutionExternalAttempt,
+) -> dict[str, Any]:
+    expected = _final_entry_reconciliation_expectations(operation)
+    attempt_stages, write_boundary, _verified_stage = (
+        _operation_stage_profile(operation)
+    )
+    boundary_index = attempt_stages.index(write_boundary)
+    existing = expected["expected_existing_register_count"]
+    resulting = expected["resulting_register_count"]
+    common = {
+        "evidence_contract": FINAL_ENTRY_RECONCILIATION_EVIDENCE_CONTRACT,
+        "final_entry_summary": expected["summary"],
+        "final_entry_summary_checksum": expected["summary_checksum"],
+        "expected_existing_register_count": existing,
+        "writer_stage": attempt.current_stage,
+    }
+    return {
+        **common,
+        "confirm_completed": {
+            "expected_existing_register_count": existing,
+            "resulting_register_count": resulting,
+            "actual_register_count": resulting,
+            "actual_file_reference_count": resulting,
+            "actual_key_result_count": resulting,
+            "actual_proofed_count": resulting,
+            "target_file_count": 1,
+            "writer_stage": attempt.current_stage,
+            "allowed_writer_stages": list(
+                attempt_stages[boundary_index:]
+            ),
+        },
+        "confirm_no_side_effect": {
+            "expected_existing_register_count": existing,
+            "actual_register_count": existing,
+            "actual_file_reference_count": existing,
+            "actual_key_result_count": existing,
+            "actual_proofed_count": existing,
+            "target_file_count": 0,
+            "writer_stage": attempt.current_stage,
+            "latest_allowed_writer_stage": write_boundary,
+            "allowed_writer_stages": list(
+                attempt_stages[: boundary_index + 1]
+            ),
+        },
+    }
+
+
+def _generic_entry_expected_reconciliation_evidence(
+    operation: ExecutionExternalOperation,
+    *,
+    attempt: ExecutionExternalAttempt,
+) -> dict[str, Any]:
+    expected = _final_entry_reconciliation_expectations(operation)
+    attempt_stages, write_boundary, _verified_stage = (
+        _operation_stage_profile(operation)
+    )
+    boundary_index = attempt_stages.index(write_boundary)
+    existing = expected["expected_existing_register_count"]
+    resulting = expected["resulting_register_count"]
+    common = {
+        "evidence_contract": GENERIC_ENTRY_RECONCILIATION_EVIDENCE_CONTRACT,
+        "final_entry_summary": expected["summary"],
+        "final_entry_summary_checksum": expected["summary_checksum"],
+        "expected_existing_register_count": existing,
+        "writer_stage": attempt.current_stage,
+    }
+    return {
+        **common,
+        "confirm_completed": {
+            "expected_existing_register_count": existing,
+            "resulting_register_count": resulting,
+            "actual_register_count": resulting,
+            "actual_detail_count": resulting,
+            "actual_key_result_count": resulting,
+            "actual_proofed_count": 0,
+            "writer_stage": attempt.current_stage,
+            "allowed_writer_stages": list(attempt_stages[boundary_index:]),
+        },
+        "confirm_no_side_effect": {
+            "expected_existing_register_count": existing,
+            "actual_register_count": existing,
+            "actual_detail_count": existing,
+            "actual_key_result_count": existing,
+            "actual_proofed_count": 0,
+            "writer_stage": attempt.current_stage,
+            "latest_allowed_writer_stage": write_boundary,
+            "allowed_writer_stages": list(
+                attempt_stages[: boundary_index + 1]
+            ),
+        },
+    }
+
+
 def public_external_reconciliation_context(
     operation: ExecutionExternalOperation,
 ) -> dict[str, Any]:
@@ -2549,6 +5351,44 @@ def public_external_reconciliation_context(
         and isinstance(files[0], dict)
         else {}
     )
+    expected_evidence = {
+        "target_sample_number": summary.get("target_sample_number"),
+        "payload_checksum": operation.payload_checksum,
+        "source_file_sha256": source_file.get("content_sha256"),
+        "confirm_completed": {
+            "exact_record_count": 1,
+            "target_file_count": 1,
+            "business_fields_match": True,
+            "inspector_match": True,
+        },
+        "confirm_no_side_effect": {
+            "exact_record_count": 0,
+            "contains_record_count": 0,
+            "target_file_count": 0,
+        },
+    }
+    if (
+        _operation_type(operation)
+        == LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION
+    ):
+        expected_evidence = {
+            "target_sample_number": summary.get("target_sample_number"),
+            "payload_checksum": operation.payload_checksum,
+            "source_file_sha256": source_file.get("content_sha256"),
+            **_final_entry_expected_reconciliation_evidence(
+                operation,
+                attempt=attempt,
+            ),
+        }
+    elif _operation_type(operation) == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION:
+        expected_evidence = {
+            "target_sample_number": summary.get("target_sample_number"),
+            "payload_checksum": operation.payload_checksum,
+            **_generic_entry_expected_reconciliation_evidence(
+                operation,
+                attempt=attempt,
+            ),
+        }
     return {
         "evidence_kind": "admin_attestation_v1",
         "attestation_notice": (
@@ -2581,22 +5421,7 @@ def public_external_reconciliation_context(
             "started_at": _isoformat(attempt.started_at),
             "finished_at": _isoformat(attempt.finished_at),
         },
-        "expected_evidence": {
-            "target_sample_number": summary.get("target_sample_number"),
-            "payload_checksum": operation.payload_checksum,
-            "source_file_sha256": source_file.get("content_sha256"),
-            "confirm_completed": {
-                "exact_record_count": 1,
-                "target_file_count": 1,
-                "business_fields_match": True,
-                "inspector_match": True,
-            },
-            "confirm_no_side_effect": {
-                "exact_record_count": 0,
-                "contains_record_count": 0,
-                "target_file_count": 0,
-            },
-        },
+        "expected_evidence": expected_evidence,
     }
 
 
@@ -2642,13 +5467,257 @@ def _reconciliation_checked_at(
     return _aware_utc(value)
 
 
+def _validate_final_entry_reconciliation_evidence(
+    operation: ExecutionExternalOperation,
+    *,
+    attempt: ExecutionExternalAttempt,
+    action: str,
+    evidence: dict[str, Any],
+) -> dict[str, Any] | None:
+    expected = _final_entry_reconciliation_expectations(operation)
+    attempt_stages, write_boundary, _verified_stage = (
+        _operation_stage_profile(operation)
+    )
+    boundary_index = attempt_stages.index(write_boundary)
+
+    def reject(reason: str, **details: Any) -> None:
+        raise ExecutionApiError(
+            422,
+            "external_reconciliation_evidence_incomplete",
+            (
+                "检验记录登记对账证据不能证明所选结论，"
+                "操作仍保持锁定"
+            ),
+            details={"reason": reason, **details},
+        )
+
+    common_keys = {
+        "evidence_contract",
+        "checked_at",
+        "final_entry_summary_checksum",
+        "expected_existing_register_count",
+        "actual_register_count",
+        "actual_file_reference_count",
+        "actual_key_result_count",
+        "actual_proofed_count",
+        "target_file_count",
+        "writer_stage",
+    }
+    required_keys = set(common_keys)
+    if action == "confirm_completed":
+        required_keys.update({"resulting_register_count", "remote_record_id"})
+    elif action != "confirm_no_side_effect":
+        reject("unsupported_action", action=action)
+    if set(evidence) != required_keys:
+        reject(
+            "evidence_shape_mismatch",
+            missing=sorted(required_keys - set(evidence)),
+            unexpected=sorted(set(evidence) - required_keys),
+        )
+    if (
+        evidence.get("evidence_contract")
+        != FINAL_ENTRY_RECONCILIATION_EVIDENCE_CONTRACT
+    ):
+        reject("evidence_contract_mismatch")
+    if (
+        evidence.get("final_entry_summary_checksum")
+        != expected["summary_checksum"]
+    ):
+        reject("final_entry_summary_checksum_mismatch")
+    existing = expected["expected_existing_register_count"]
+    resulting = expected["resulting_register_count"]
+    if evidence.get("expected_existing_register_count") != existing:
+        reject(
+            "expected_existing_register_count_mismatch",
+            expected=existing,
+            actual=evidence.get("expected_existing_register_count"),
+        )
+
+    writer_stage = str(evidence.get("writer_stage") or "").strip()
+    if writer_stage not in attempt_stages:
+        reject("writer_stage_unknown", writer_stage=writer_stage)
+    if writer_stage != attempt.current_stage:
+        reject(
+            "writer_stage_attempt_mismatch",
+            writer_stage=writer_stage,
+            attempt_stage=attempt.current_stage,
+        )
+    writer_stage_index = attempt_stages.index(writer_stage)
+
+    if action == "confirm_no_side_effect":
+        valid = (
+            writer_stage_index <= boundary_index
+            and evidence.get("actual_register_count") == existing
+            and evidence.get("actual_file_reference_count") == existing
+            and evidence.get("actual_key_result_count") == existing
+            and evidence.get("actual_proofed_count") == existing
+            and evidence.get("target_file_count") == 0
+        )
+        if not valid:
+            reject(
+                "no_side_effect_counts_or_stage_mismatch",
+                latest_allowed_writer_stage=write_boundary,
+                expected_existing_register_count=existing,
+            )
+        return None
+
+    remote_record_id = str(
+        evidence.get("remote_record_id") or ""
+    ).strip()
+    valid = (
+        writer_stage_index >= boundary_index
+        and evidence.get("resulting_register_count") == resulting
+        and evidence.get("actual_register_count") == resulting
+        and evidence.get("actual_file_reference_count") == resulting
+        and evidence.get("actual_key_result_count") == resulting
+        and evidence.get("actual_proofed_count") == resulting
+        and evidence.get("target_file_count") == 1
+        and bool(remote_record_id)
+    )
+    if not valid:
+        reject(
+            "completed_counts_file_or_proof_mismatch",
+            resulting_register_count=resulting,
+            earliest_writer_stage=write_boundary,
+        )
+    summary = operation.request_summary or {}
+    return {
+        "schema_version": 1,
+        "receipt_type": (
+            "legacy_microscopy_check_record_entry_manual_reconciliation"
+        ),
+        "source": "manual_reconciliation",
+        "operation_id": operation.id,
+        "target_sample_number": summary.get("target_sample_number"),
+        "remote_record_id": remote_record_id,
+        "final_entry_summary_checksum": expected["summary_checksum"],
+        "final_entry": {
+            "expected_existing_register_count": existing,
+            "resulting_register_count": resulting,
+            "actual_register_count": evidence["actual_register_count"],
+            "actual_file_reference_count": evidence[
+                "actual_file_reference_count"
+            ],
+            "actual_key_result_count": evidence[
+                "actual_key_result_count"
+            ],
+            "actual_proofed_count": evidence["actual_proofed_count"],
+            "target_file_count": evidence["target_file_count"],
+            "writer_stage": writer_stage,
+            "proofed": True,
+        },
+    }
+
+
+def _validate_generic_entry_reconciliation_evidence(
+    operation: ExecutionExternalOperation,
+    *,
+    attempt: ExecutionExternalAttempt,
+    action: str,
+    evidence: dict[str, Any],
+) -> dict[str, Any] | None:
+    expected = _final_entry_reconciliation_expectations(operation)
+    attempt_stages, write_boundary, _verified_stage = (
+        _operation_stage_profile(operation)
+    )
+    boundary_index = attempt_stages.index(write_boundary)
+
+    def reject(reason: str, **details: Any) -> None:
+        raise ExecutionApiError(
+            422,
+            "external_reconciliation_evidence_incomplete",
+            "通用检验记录登记对账证据不能证明所选结论，操作仍保持锁定",
+            details={"reason": reason, **details},
+        )
+
+    common_keys = {
+        "evidence_contract",
+        "checked_at",
+        "final_entry_summary_checksum",
+        "expected_existing_register_count",
+        "actual_register_count",
+        "actual_detail_count",
+        "actual_key_result_count",
+        "actual_proofed_count",
+        "writer_stage",
+    }
+    required_keys = set(common_keys)
+    if action == "confirm_completed":
+        required_keys.update({"resulting_register_count", "remote_record_id"})
+    elif action != "confirm_no_side_effect":
+        reject("unsupported_action", action=action)
+    if set(evidence) != required_keys:
+        reject(
+            "evidence_shape_mismatch",
+            missing=sorted(required_keys - set(evidence)),
+            unexpected=sorted(set(evidence) - required_keys),
+        )
+    if (
+        evidence.get("evidence_contract")
+        != GENERIC_ENTRY_RECONCILIATION_EVIDENCE_CONTRACT
+        or evidence.get("final_entry_summary_checksum")
+        != expected["summary_checksum"]
+    ):
+        reject("evidence_contract_or_checksum_mismatch")
+    existing = expected["expected_existing_register_count"]
+    resulting = expected["resulting_register_count"]
+    if evidence.get("expected_existing_register_count") != existing:
+        reject("expected_existing_register_count_mismatch")
+    writer_stage = str(evidence.get("writer_stage") or "").strip()
+    if writer_stage not in attempt_stages or writer_stage != attempt.current_stage:
+        reject("writer_stage_mismatch", writer_stage=writer_stage)
+    stage_index = attempt_stages.index(writer_stage)
+    if action == "confirm_no_side_effect":
+        if not (
+            stage_index <= boundary_index
+            and evidence.get("actual_register_count") == existing
+            and evidence.get("actual_detail_count") == existing
+            and evidence.get("actual_key_result_count") == existing
+            and evidence.get("actual_proofed_count") == 0
+        ):
+            reject("no_side_effect_counts_or_stage_mismatch")
+        return None
+    remote_record_id = str(evidence.get("remote_record_id") or "").strip()
+    if not (
+        stage_index >= boundary_index
+        and evidence.get("resulting_register_count") == resulting
+        and evidence.get("actual_register_count") == resulting
+        and evidence.get("actual_detail_count") == resulting
+        and evidence.get("actual_key_result_count") == resulting
+        and evidence.get("actual_proofed_count") == 0
+        and remote_record_id
+    ):
+        reject("completed_counts_or_stage_mismatch")
+    summary = operation.request_summary or {}
+    return {
+        "schema_version": 1,
+        "receipt_type": "legacy_generic_check_record_entry_manual_reconciliation",
+        "source": "manual_reconciliation",
+        "operation_id": operation.id,
+        "target_sample_number": summary.get("target_sample_number"),
+        "remote_record_id": remote_record_id,
+        "final_entry_summary_checksum": expected["summary_checksum"],
+        "final_entry": {
+            "expected_existing_register_count": existing,
+            "resulting_register_count": resulting,
+            "actual_register_count": evidence["actual_register_count"],
+            "actual_detail_count": evidence["actual_detail_count"],
+            "actual_key_result_count": evidence["actual_key_result_count"],
+            "actual_proofed_count": 0,
+            "writer_stage": writer_stage,
+            "proofed": False,
+        },
+    }
+
+
 def _validate_manual_reconciliation_evidence(
     operation: ExecutionExternalOperation,
     *,
+    attempt: ExecutionExternalAttempt,
     action: str,
     evidence: dict[str, Any],
     now: datetime,
-) -> None:
+) -> dict[str, Any] | None:
     """Validate an admin attestation's shape; no remote probe runs here."""
     checked_at = _reconciliation_checked_at(evidence)
     oldest_allowed = _aware_utc(now) - timedelta(
@@ -2662,9 +5731,31 @@ def _validate_manual_reconciliation_evidence(
             checked_at=checked_at.isoformat(),
         )
 
+    if (
+        _operation_type(operation)
+        == LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION
+    ):
+        return _validate_final_entry_reconciliation_evidence(
+            operation,
+            attempt=attempt,
+            action=action,
+            evidence=evidence,
+        )
+    if _operation_type(operation) == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION:
+        return _validate_generic_entry_reconciliation_evidence(
+            operation,
+            attempt=attempt,
+            action=action,
+            evidence=evidence,
+        )
+
     if action == "confirm_completed":
         summary = operation.request_summary or {}
         files = summary.get("files")
+        special_wool_image = _operation_type(operation) in {
+            LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
+            LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+        }
         expected_sha256 = (
             files[0].get("content_sha256")
             if isinstance(files, list)
@@ -2679,7 +5770,23 @@ def _validate_manual_reconciliation_evidence(
             and evidence.get("inspector_match") is True
             and evidence.get("target_file_count") == 1
             and isinstance(expected_sha256, str)
-            and evidence.get("remote_file_sha256") == expected_sha256
+            and (
+                (
+                    special_wool_image
+                    and isinstance(
+                        evidence.get("remote_file_sha256"), str
+                    )
+                    and _SHA256_RE.fullmatch(
+                        evidence["remote_file_sha256"]
+                    )
+                    is not None
+                )
+                or (
+                    not special_wool_image
+                    and evidence.get("remote_file_sha256")
+                    == expected_sha256
+                )
+            )
         )
     elif action == "confirm_no_side_effect":
         valid = (
@@ -2695,6 +5802,45 @@ def _validate_manual_reconciliation_evidence(
             "external_reconciliation_evidence_incomplete",
             "对账证据不能证明所选结论，操作仍保持锁定",
         )
+    if (
+        action == "confirm_completed"
+        and _operation_type(operation) in {
+            LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
+            LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+        }
+    ):
+        raw_receipt = evidence.get("receipt")
+        if not isinstance(raw_receipt, dict) or not raw_receipt:
+            raise ExecutionApiError(
+                422,
+                "external_reconciliation_receipt_required",
+                "特纤图片上传确认完成时必须提交完整机器回执",
+            )
+        receipt = validate_external_receipt(operation, raw_receipt)
+        main_record = receipt.get("main_record")
+        server_file = receipt.get("server_file")
+        receipt_record_id = (
+            str(main_record.get("id") or "").strip()
+            if isinstance(main_record, dict)
+            else ""
+        )
+        receipt_file_sha256 = (
+            server_file.get("content_sha256")
+            if isinstance(server_file, dict)
+            else None
+        )
+        if (
+            evidence.get("remote_record_id") != receipt_record_id
+            or evidence.get("remote_file_sha256")
+            != receipt_file_sha256
+        ):
+            raise ExecutionApiError(
+                422,
+                "external_reconciliation_receipt_mismatch",
+                "人工对账声明与特纤图片上传机器回执不一致",
+            )
+        return receipt
+    return None
 
 
 def reconcile_external_operation(
@@ -2858,8 +6004,9 @@ def reconcile_external_operation(
             "该外部操作已由另一份对账结论处置",
             operation_id=operation.id,
         )
-    _validate_manual_reconciliation_evidence(
+    reconciled_receipt = _validate_manual_reconciliation_evidence(
         operation,
+        attempt=latest_attempt,
         action=action,
         evidence=normalized_evidence,
         now=current_time,
@@ -2930,25 +6077,29 @@ def reconcile_external_operation(
         remote_record_id = str(
             normalized_evidence.get("remote_record_id") or ""
         ).strip()
-        receipt = {
-            "schema_version": 1,
-            "source": "manual_reconciliation",
-            "remote_record_id": remote_record_id,
-            "target_sample_number": target_sample_number,
-            "remote_file_sha256": normalized_evidence.get(
-                "remote_file_sha256"
-            ),
-            "evidence_checksum": evidence_checksum,
-        }
+        receipt = (
+            reconciled_receipt
+            if reconciled_receipt is not None
+            else {
+                "schema_version": 1,
+                "source": "manual_reconciliation",
+                "remote_record_id": remote_record_id,
+                "target_sample_number": target_sample_number,
+                "remote_file_sha256": normalized_evidence.get(
+                    "remote_file_sha256"
+                ),
+                "evidence_checksum": evidence_checksum,
+            }
+        )
         operation.status = "completed"
         operation.remote_record_id = remote_record_id
         operation.receipt = receipt
         operation.error_code = None
         operation.error_message = None
-        complete_external_node(
-            db,
-            node_run_id=node_run.id,
-            output_data={
+        node_output = dict(node_run.output_data or {})
+        node_output.update(
+            {
+                "operation_id": operation.id,
                 "status": "completed",
                 "receipt": receipt,
                 "attempt_id": latest_attempt.id,
@@ -2957,7 +6108,12 @@ def reconcile_external_operation(
                     "action": action,
                     "evidence_checksum": evidence_checksum,
                 },
-            },
+            }
+        )
+        complete_external_node(
+            db,
+            node_run_id=node_run.id,
+            output_data=node_output,
         )
     else:
         operation.remote_record_id = None
@@ -3182,6 +6338,51 @@ def bridge_external_operation(
             credential.account_name if credential is not None else None
         ),
     }
+    operation_type = _operation_type(operation)
+    if operation_type in {
+        LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
+    }:
+        summary = operation.request_summary or {}
+        # This duplicate is intentional: the authenticated Bridge channel and
+        # Windows Writer both verify it against request_summary before starting
+        # any remote side effect. Public operation views never receive it.
+        view["machine_payload"] = {
+            "schema_version": 1,
+            "operation_type": operation_type,
+            "target_sample_number": summary.get("target_sample_number"),
+            "source_upload": dict(summary.get("source_operation") or {}),
+        }
+    if operation_type == (
+        LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION
+    ):
+        summary = operation.request_summary or {}
+        bridge_summary = view.get("request_summary")
+        if isinstance(bridge_summary, dict):
+            bridge_summary["template_binding"] = dict(
+                summary.get("template_binding") or {}
+            )
+            bridge_summary["source_review_operation"] = dict(
+                summary.get("source_review_operation") or {}
+            )
+        # The flat writer package is returned only through the authenticated
+        # Bridge claim endpoint; public operation views deliberately omit it.
+        view["machine_payload"] = dict(
+            summary.get("final_entry_package") or {}
+        )
+    if operation_type == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION:
+        summary = operation.request_summary or {}
+        bridge_summary = view.get("request_summary")
+        if isinstance(bridge_summary, dict):
+            bridge_summary["source_review_operation"] = dict(
+                summary.get("source_review_operation") or {}
+            )
+            bridge_summary["result_contract"] = dict(
+                summary.get("result_contract") or {}
+            )
+        view["machine_payload"] = dict(
+            summary.get("final_entry_package") or {}
+        )
     return view
 
 
@@ -3645,6 +6846,7 @@ def complete_external_attempt(
     operation.completed_at = current_time
 
     output = dict(node_run.output_data or {})
+    output["operation_id"] = operation.id
     output["status"] = "completed"
     output["receipt"] = receipt
     output["attempt_id"] = attempt.id

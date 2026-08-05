@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,7 +11,8 @@ namespace LegacyFibreCheckFinalEntryWriter
 {
     internal sealed class PreflightSnapshot
     {
-        // All legacy identifiers remain process-internal.  They must never be placed in output.
+        // Raw legacy identifiers remain process-internal.  Only TaskProject's
+        // one-way sha256 identifiers may be placed in a receipt.
         public string TaskId;
         public string CheckItemId;
         public string CheckItemPositionId;
@@ -30,8 +32,13 @@ namespace LegacyFibreCheckFinalEntryWriter
         public int ExistingKeyLinkedRecordCount;
         public int ExistingKeyResultCount;
         public string ExistingKeyIdentitySha256;
+        public TaskProjectPayload TaskProject;
         public readonly List<string> ExistingExcelRecordIds = new List<string>();
         public readonly List<string> ExistingKeyIdentities = new List<string>();
+        public readonly Dictionary<string, string> ExistingExcelRecordTemplates =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+        public readonly Dictionary<string, string> ExistingKeyIdentityByRecordId =
+            new Dictionary<string, string>(StringComparer.Ordinal);
         public string TemplateDocumentId;
         public string MappingDataTableName;
         public string MappingConfigSha256;
@@ -50,9 +57,15 @@ namespace LegacyFibreCheckFinalEntryWriter
         private const string ResolveItemSql =
             "SELECT t.ID \"TaskID\", t.\"CheckBasis\" \"TaskCheckBasis\", " +
             "t.\"DelegateOrgName\" \"DelegateOrgName\", t.\"SampleReceiveTime\" \"SampleReceiveTime\", " +
+            "tci.ID \"TaskCheckItemID\", " +
+            "tci.\"CheckItemID\" \"TaskCheckItemCatalogID\", " +
+            "tci.\"CheckItemNo\" \"TaskCheckItemNo\", " +
+            "tci.\"CheckItemName\" \"TaskCheckItemName\", " +
             "tci.\"CheckMethod\" \"TaskCheckMethod\", tci.\"CheckCount\" \"CheckCount\", " +
+            "tci.\"SeqNum\" \"TaskSeqNum\", " +
             "tci.\"GiveJudgement\" \"GiveJudgement\", " +
             "ci.ID \"CheckItemID\", ci.\"PositionID\" \"CheckItemPositionID\", " +
+            "ci.\"No\" \"CatalogCheckItemNo\", ci.\"ItemName\" \"CatalogCheckItemName\", " +
             "ci.\"OriginalDataInputUIClassName\" \"OriginalDataInputUIClassName\" " +
             "FROM \"Task\" t " +
             "JOIN \"Task_CheckItem\" tci ON t.ID=tci.\"TaskID\" " +
@@ -163,6 +176,10 @@ namespace LegacyFibreCheckFinalEntryWriter
 
         public static PreflightSnapshot Resolve(string connectionString, FinalEntryPackage package)
         {
+            if (package.SchemaVersion == 2)
+            {
+                package.MeasuredTaskProject = null;
+            }
             var snapshot = new PreflightSnapshot();
             using (ILegacyDb db = new OdpNetDb(connectionString))
             {
@@ -192,6 +209,12 @@ namespace LegacyFibreCheckFinalEntryWriter
                         snapshot.SampleReceiveTime = Date(row, "SampleReceiveTime");
                         snapshot.ExpectedResultCount = NonNegativeInt(row, "CheckCount");
                         snapshot.GiveJudgement = NonNegativeInt(row, "GiveJudgement");
+                        if (package.SchemaVersion == 2)
+                        {
+                            snapshot.TaskProject = ResolveTaskProject(row);
+                            VerifyTaskProject(package.TaskProject, snapshot.TaskProject);
+                            package.MeasuredTaskProject = snapshot.TaskProject;
+                        }
                     }
 
                     using (DataTable context = db.Query(ReportContextSql, new List<DbParam>
@@ -207,10 +230,24 @@ namespace LegacyFibreCheckFinalEntryWriter
                         snapshot.SampleCategory = Text(context.Rows[0], "SampleCategory");
                     }
 
-                    if (snapshot.ExpectedResultCount < 1
-                        || package.ExpectedExistingRegisterCount >= snapshot.ExpectedResultCount)
+                    if (snapshot.ExpectedResultCount < 1)
                     {
                         throw new PackageValidationException("task_check_count_would_be_exceeded");
+                    }
+                    if (package.ControlledTestOverrideActive)
+                    {
+                        if (!package.AllowsOneAdditionalRegistration(
+                            snapshot.ExpectedResultCount))
+                        {
+                            throw new PackageValidationException(
+                                "controlled_test_override_remote_scope_mismatch");
+                        }
+                    }
+                    else if (package.ExpectedExistingRegisterCount
+                        >= snapshot.ExpectedResultCount)
+                    {
+                        throw new PackageValidationException(
+                            "task_check_count_would_be_exceeded");
                     }
 
                     if (package.OperationType == FinalEntryPackage.GenericOperation)
@@ -254,6 +291,13 @@ namespace LegacyFibreCheckFinalEntryWriter
                     {
                         throw new PackageValidationException("original_data_file_config_unavailable");
                     }
+                    if (package.ControlledTestOverrideActive)
+                    {
+                        // Mark the override as applied only after the complete read-only
+                        // project/count/template/key/file-configuration preflight passes.
+                        // Failed preflight receipts must not imply that an exception was used.
+                        package.ControlledTestOverrideApplied = true;
+                    }
                 }
                 finally
                 {
@@ -266,9 +310,13 @@ namespace LegacyFibreCheckFinalEntryWriter
         private static void ResolveExcel(
             ILegacyDb db, FinalEntryPackage package, PreflightSnapshot snapshot)
         {
+            bool templateSupported = package.SchemaVersion == 1
+                ? package.ExcelRecord.TemplateName == "微观形貌.xls"
+                : FinalEntryPackage.SupportedMicroscopyTemplates.ContainsKey(
+                    package.ExcelRecord.TemplateName);
             if (package.CheckItemNo != "5103.5" || package.CheckItemName != "纤维微观形貌"
                 || !string.IsNullOrWhiteSpace(snapshot.OriginalDataInputUiClassName)
-                || package.ExcelRecord.TemplateName != "微观形貌.xls")
+                || !templateSupported)
             {
                 throw new PackageValidationException("excel_route_not_supported_in_v1");
             }
@@ -301,14 +349,20 @@ namespace LegacyFibreCheckFinalEntryWriter
                 foreach (DataRow row in registers.Rows)
                 {
                     string recordId = Text(row, "ID");
+                    string templateName = Text(row, "TemplateFilename");
+                    bool supportedTemplate = package.SchemaVersion == 1
+                        ? string.Equals(templateName,
+                            package.ExcelRecord.TemplateName, StringComparison.Ordinal)
+                        : FinalEntryPackage.SupportedMicroscopyTemplates.ContainsKey(
+                            templateName);
                     if (string.IsNullOrWhiteSpace(recordId) || !recordIds.Add(recordId)
-                        || !string.Equals(Text(row, "TemplateFilename"),
-                            package.ExcelRecord.TemplateName, StringComparison.Ordinal))
+                        || !supportedTemplate)
                     {
                         throw new PackageValidationException(
                             "existing_excel_register_template_or_identity_invalid");
                     }
                     snapshot.ExistingExcelRecordIds.Add(recordId);
+                    snapshot.ExistingExcelRecordTemplates.Add(recordId, templateName);
                 }
             }
             if (snapshot.ExistingRegisterCount != package.ExpectedExistingRegisterCount)
@@ -339,19 +393,26 @@ namespace LegacyFibreCheckFinalEntryWriter
                 {
                     string recordId = Text(row, "OriginalRecordID");
                     string identity = Text(row, "SampleIdentity");
+                    string registeredTemplate;
+                    bool identityInvalid = package.SchemaVersion == 1
+                        && identity != "纵面" && identity != "横截面";
+                    bool identityDuplicate = package.SchemaVersion == 1
+                        && !existingIdentities.Add(identity);
                     if (!recordIds.Contains(recordId) || !linkedRecordIds.Add(recordId)
-                        || (identity != "纵面" && identity != "横截面")
-                        || !existingIdentities.Add(identity)
+                        || !snapshot.ExistingExcelRecordTemplates.TryGetValue(
+                            recordId, out registeredTemplate)
+                        || identityInvalid || identityDuplicate
                         || Text(row, "SeqNum") != "1"
                         || !string.Equals(Text(row, "CheckItemName"),
                             package.CheckItemName, StringComparison.Ordinal)
                         || !string.Equals(Text(row, "ExcelTemplateName"),
-                            package.ExcelRecord.TemplateName, StringComparison.Ordinal))
+                            registeredTemplate, StringComparison.Ordinal))
                     {
                         throw new PackageValidationException(
                             "existing_excel_key_contract_invalid");
                     }
                     snapshot.ExistingKeyIdentities.Add(identity);
+                    snapshot.ExistingKeyIdentityByRecordId.Add(recordId, identity);
                     AppendCanonical(identityCanonical, recordId);
                     AppendCanonical(identityCanonical, identity);
                     AppendCanonical(identityCanonical, Text(row, "SeqNum"));
@@ -380,7 +441,8 @@ namespace LegacyFibreCheckFinalEntryWriter
 
             foreach (string expectedIdentity in package.ExcelRecord.ExpectedKeyIdentities)
             {
-                if (existingIdentities.Contains(expectedIdentity))
+                if (package.SchemaVersion == 1
+                    && existingIdentities.Contains(expectedIdentity))
                 {
                     throw new PackageValidationException("key_identity_already_exists");
                 }
@@ -477,6 +539,94 @@ namespace LegacyFibreCheckFinalEntryWriter
                 parameters.Add(new DbParam("template_name", templateName));
             }
             return Convert.ToInt32(db.Scalar(sql, parameters));
+        }
+
+        private static TaskProjectPayload ResolveTaskProject(DataRow row)
+        {
+            string rawTaskCheckItemId = Text(row, "TaskCheckItemID");
+            string rawTaskCheckItemCatalogId = Text(
+                row, "TaskCheckItemCatalogID");
+            string rawCatalogCheckItemId = Text(row, "CheckItemID");
+            string taskCheckItemNo = CompactText(Text(row, "TaskCheckItemNo"));
+            string taskCheckItemName = CompactText(
+                Text(row, "TaskCheckItemName"));
+            string checkMethod = CompactText(Text(row, "TaskCheckMethod"));
+            string catalogCheckItemNo = CompactText(
+                Text(row, "CatalogCheckItemNo"));
+            string catalogCheckItemName = CompactText(
+                Text(row, "CatalogCheckItemName"));
+            int seqNum = NonNegativeInt(row, "TaskSeqNum");
+            int checkCount = NonNegativeInt(row, "CheckCount");
+            if (string.IsNullOrWhiteSpace(rawTaskCheckItemId)
+                || string.IsNullOrWhiteSpace(rawTaskCheckItemCatalogId)
+                || !string.Equals(
+                    rawTaskCheckItemCatalogId,
+                    rawCatalogCheckItemId,
+                    StringComparison.Ordinal)
+                || !string.Equals(
+                    taskCheckItemNo, catalogCheckItemNo, StringComparison.Ordinal)
+                || !string.Equals(
+                    taskCheckItemName, catalogCheckItemName, StringComparison.Ordinal))
+            {
+                throw new PackageValidationException(
+                    "task_project_catalog_binding_changed");
+            }
+
+            string taskCheckItemId = Redact.HashId(rawTaskCheckItemId);
+            string checkItemId = Redact.HashId(rawTaskCheckItemCatalogId);
+            string identity = string.Join("\0", new string[]
+            {
+                CompactText(taskCheckItemId),
+                CompactText(checkItemId),
+                taskCheckItemNo,
+                taskCheckItemName,
+                checkMethod,
+                CompactText(seqNum.ToString(CultureInfo.InvariantCulture)),
+            });
+            return new TaskProjectPayload
+            {
+                ProjectKey = "task-project:"
+                    + FinalEntryPackage.Sha256Text(identity).Substring(0, 24),
+                TaskCheckItemId = taskCheckItemId,
+                CheckItemId = checkItemId,
+                CheckItemNo = taskCheckItemNo,
+                CheckItemName = taskCheckItemName,
+                CheckMethod = checkMethod,
+                SeqNum = seqNum,
+                CheckCount = checkCount,
+            };
+        }
+
+        private static void VerifyTaskProject(
+            TaskProjectPayload expected, TaskProjectPayload actual)
+        {
+            if (expected == null || actual == null
+                || !string.Equals(
+                    actual.ProjectKey, expected.ProjectKey, StringComparison.Ordinal)
+                || !string.Equals(
+                    actual.TaskCheckItemId,
+                    expected.TaskCheckItemId,
+                    StringComparison.Ordinal)
+                || !string.Equals(
+                    actual.CheckItemId, expected.CheckItemId, StringComparison.Ordinal)
+                || !string.Equals(
+                    actual.CheckItemNo, expected.CheckItemNo, StringComparison.Ordinal)
+                || !string.Equals(
+                    actual.CheckItemName, expected.CheckItemName, StringComparison.Ordinal)
+                || !string.Equals(
+                    actual.CheckMethod, expected.CheckMethod, StringComparison.Ordinal)
+                || actual.SeqNum != expected.SeqNum
+                || actual.CheckCount != expected.CheckCount
+                || actual.CheckCount != 1)
+            {
+                throw new PackageValidationException(
+                    "task_project_binding_changed");
+            }
+        }
+
+        private static string CompactText(string value)
+        {
+            return Regex.Replace((value ?? string.Empty).Trim(), @"\s+", " ");
         }
 
         private static void AppendCanonical(StringBuilder builder, string value)

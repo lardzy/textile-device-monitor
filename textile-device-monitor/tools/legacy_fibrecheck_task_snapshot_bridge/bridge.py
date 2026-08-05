@@ -27,9 +27,45 @@ DEFAULT_POLL_SECONDS = 15.0
 # 后端默认领取租约为 180 秒；探针必须更早超时，才能给完成回传和
 # 短暂网络抖动保留足够余量。
 DEFAULT_PROBE_TIMEOUT_SECONDS = 90.0
-TASK_SNAPSHOT_SCHEMA_VERSION = 3
+TASK_SNAPSHOT_SCHEMA_VERSION = 4
 MICROSCOPY_PROJECT_NAMES = frozenset({"纤维微观形貌", "膜平面形貌"})
 PUBLIC_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{16}$")
+
+
+def _special_wool_occupied_numbers(
+    rows: list[dict[str, Any]], inspection_number: str
+) -> list[str]:
+    base_number = inspection_number.split("-", 1)[0]
+    family_pattern = re.compile(
+        re.escape(base_number) + r"(?:-([1-9][0-9]*))?$"
+    )
+    occupied: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        sample_number = str(row.get("SampleNo") or "").strip().upper()
+        raw_count = row.get("RecordCount")
+        try:
+            record_count = int(raw_count)
+        except (TypeError, ValueError):
+            record_count = -1
+        if (
+            isinstance(raw_count, bool)
+            or record_count < 0
+            or str(raw_count).strip() != str(record_count)
+        ):
+            raise SnapshotBridgeError(
+                "probe_special_wool_family_invalid",
+                "特种毛编号族查询返回了无效记录数",
+            )
+        if not family_pattern.fullmatch(sample_number):
+            raise SnapshotBridgeError(
+                "probe_special_wool_family_invalid",
+                "特种毛编号族查询返回了当前任务以外的编号",
+            )
+        if record_count > 0 and sample_number not in seen:
+            occupied.append(sample_number)
+            seen.add(sample_number)
+    return occupied
 
 
 class SnapshotBridgeError(Exception):
@@ -182,6 +218,10 @@ def build_snapshot(
     tasks = _query_rows(results, "tasks")
     task_samples = _query_rows(results, "task_samples")
     task_items = _query_rows(results, "task_check_items")
+    occupied_numbers = _special_wool_occupied_numbers(
+        _query_rows(results, "task_special_wool_family"),
+        inspection_number,
+    )
 
     # 旧系统中不存在对应 Task 是可缓存的正常事实，避免后端不断重复查询。
     if not tasks:
@@ -196,6 +236,7 @@ def build_snapshot(
             "sample_names": [],
             "check_basis": None,
             "projects": [],
+            "special_wool_occupied_numbers": occupied_numbers,
         }
     if len(tasks) != 1:
         raise SnapshotBridgeError(
@@ -267,6 +308,7 @@ def build_snapshot(
         "sample_names": sample_names,
         "check_basis": task.get("CheckBasis"),
         "projects": projects,
+        "special_wool_occupied_numbers": occupied_numbers,
     }
 
 

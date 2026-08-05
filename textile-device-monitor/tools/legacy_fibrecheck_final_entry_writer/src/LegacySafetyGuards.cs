@@ -36,6 +36,14 @@ namespace LegacyFibreCheckFinalEntryWriter
                     string branchFingerprint;
                     if (package.OperationType == FinalEntryPackage.GenericOperation)
                     {
+                        if (!string.Equals(
+                            snapshot.TaskCheckMethod,
+                            package.GenericRecord.Header.TestMethod,
+                            StringComparison.Ordinal))
+                        {
+                            throw new PackageValidationException(
+                                "generic_task_method_changed");
+                        }
                         if (snapshot.GiveJudgement != 0 && snapshot.GiveJudgement != 1)
                         {
                             throw new PackageValidationException("give_judgement_invalid");
@@ -233,11 +241,27 @@ namespace LegacyFibreCheckFinalEntryWriter
             string branchFingerprint)
         {
             var canonical = new StringBuilder();
+            AppendCanonical(canonical, package.SchemaVersion.ToString());
             AppendCanonical(canonical, package.OperationType);
             AppendCanonical(canonical, package.SampleNumber);
             AppendCanonical(canonical, package.CheckItemNo);
             AppendCanonical(canonical, package.CheckItemName);
             AppendCanonical(canonical, package.ExpectedExistingRegisterCount.ToString());
+            AppendCanonical(canonical, package.ControlledTestOverrideActive.ToString());
+            AppendCanonical(canonical, package.ControlledTestOverrideApplied.ToString());
+            if (package.ControlledTestOverride != null)
+            {
+                AppendCanonical(canonical, package.ControlledTestOverride.Kind);
+                AppendCanonical(canonical,
+                    package.ControlledTestOverride.TargetSampleNumber);
+                AppendCanonical(canonical,
+                    package.ControlledTestOverride.ExpectedTaskCheckCount.ToString());
+                AppendCanonical(canonical,
+                    package.ControlledTestOverride.ExpectedExistingRegisterCount.ToString());
+                AppendCanonical(canonical,
+                    package.ControlledTestOverride.ResultingRegisterCount.ToString());
+                AppendCanonical(canonical, package.ControlledTestOverride.Reason);
+            }
             AppendCanonical(canonical, snapshot.TaskId);
             AppendCanonical(canonical, snapshot.CheckItemId);
             AppendCanonical(canonical, snapshot.CheckItemPositionId);
@@ -353,10 +377,6 @@ namespace LegacyFibreCheckFinalEntryWriter
                 new DbParam("item_id", snapshot.CheckItemId),
                 new DbParam("language", "CnEn"),
             }));
-            if (fixedCount > 1)
-            {
-                throw new PackageValidationException("fixed_attachment_template_not_unique");
-            }
 
             DateTime received = snapshot.SampleReceiveTime.Value;
             string org = snapshot.DelegateOrgName;
@@ -370,34 +390,22 @@ namespace LegacyFibreCheckFinalEntryWriter
                 throw new PackageValidationException(
                     "signature_requirement_not_supported_in_v1");
             }
-            string branch;
-            if (language == "CnEn"
+            bool gap = language == "CnEn"
                 && (org.Contains("盖璞") || org == "盖璞（上海）商业有限公司")
-                && received >= new DateTime(2014, 9, 9))
-            {
-                branch = "gap";
-            }
-            else
-            {
-                bool newCnEn = chinaEnglish && chinaEnglishStart.HasValue
-                    && received >= chinaEnglishStart.Value
-                    && (!onlyChinaEnglish || language == "CnEn");
-                bool fila = language == "CnEn" && IsFilaOrg(org, received);
-                if (fixedCount == 0 && (newCnEn || fila))
-                {
-                    branch = "new_cnen";
-                }
-                else if (language == "En"
-                    && (org.Contains("PD CLOTHING & TEXTILES (ZHONG SHAN). LTD")
-                        || org.Contains("Toray Sakai Weaving&Dyeing (Nantong) Co.,LTD")))
-                {
-                    branch = "clothing";
-                }
-                else
-                {
-                    branch = "standard";
-                }
-            }
+                && received >= new DateTime(2014, 9, 9);
+            bool newCnEn = chinaEnglish && chinaEnglishStart.HasValue
+                && received >= chinaEnglishStart.Value
+                && (!onlyChinaEnglish || language == "CnEn");
+            bool fila = language == "CnEn" && IsFilaOrg(org, received);
+            bool clothing = language == "En"
+                && (org.Contains("PD CLOTHING & TEXTILES (ZHONG SHAN). LTD")
+                    || org.Contains("Toray Sakai Weaving&Dyeing (Nantong) Co.,LTD"));
+            string branch = LegacyExcelBranchRules.ResolveBranch(
+                fixedCount,
+                gap,
+                newCnEn,
+                fila,
+                clothing);
             if (branch != "standard")
             {
                 throw new PackageValidationException("excel_collection_branch_not_supported_" + branch);
@@ -411,6 +419,10 @@ namespace LegacyFibreCheckFinalEntryWriter
                 .Append(received.ToString("O")).Append('|')
                 .Append(chinaEnglish).Append('|').Append(chinaEnglishStart).Append('|')
                 .Append(onlyChinaEnglish).Append('|').Append(showAllTarget).Append('|')
+                // Keep the exact count fenced in the safety fingerprint even
+                // though FirstOrDefault makes positive counts equivalent to
+                // one another at the fixed-template existence test. A concurrent
+                // row-count change is still detected before the write boundary.
                 .Append(fixedCount).Append('|').Append(branch);
             return FinalEntryPackage.Sha256Text(canonical.ToString());
         }

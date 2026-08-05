@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "operation_type": "excel_check_record",
+  "sample_number": "00A000001",
+  "check_item_no": "5103.5",
+  "check_item_name": "纤维微观形貌",
+  "task_project": {
+    "project_key": "task-project:0dddba88e0b93ac2a58ace0a",
+    "task_check_item_id": "sha256:1111111111111111",
+    "check_item_id": "sha256:2222222222222222",
+    "check_item_no": "5103.5",
+    "check_item_name": "纤维微观形貌",
+    "check_method": "GB/T 36422-2018",
+    "seq_num": 7,
+    "check_count": 1
+  },
+  "expected_existing_register_count": 1,
+  "controlled_test_override": {
+    "kind": "append_one_when_check_count_one",
+    "target_sample_number": "00A000001",
+    "expected_task_check_count": 1,
+    "expected_existing_register_count": 1,
+    "resulting_register_count": 2,
+    "reason": "填写本次受控测试的审批或工单说明"
+  },
+  "excel_record": {
+    "template_name": "微观形貌.xls",
+    "collection_mode": "standard",
+    "expected_mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e",
+    "key_result_count": 1,
+    "expected_key_identities": [
+      ""
+    ],
+    "register": {
+      "level": "",
+      "sample_identity": "",
+      "equipment_no": "",
+      "check_basis": ""
+    },
+    "workbook": {
+      "relative_path": "payload/microscopy.xls",
+      "filename": "microscopy.xls",
+      "size_bytes": 0,
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}

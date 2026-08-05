@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -24,19 +25,72 @@ namespace LegacyFibreCheckFinalEntryWriter
     {
         internal const string GenericOperation = "generic_item_record";
         internal const string ExcelOperation = "excel_check_record";
+        internal const string ControlledTestOverrideEnvironment =
+            "FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO";
+        internal const string ControlledTestOverrideKind =
+            "append_one_when_check_count_one";
+        internal const string PaperCheckItemNo = "51.113K";
+        internal const string PaperCheckItemName =
+            "纸、纸板和纸浆纤维鉴别分析";
+        internal const string PaperCheckMethod = "GB/T 4688-2020";
+
+        internal static readonly Dictionary<string, string> SupportedMicroscopyTemplates =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                {
+                    "微观形貌.xls",
+                    "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"
+                },
+                {
+                    "纤维微观形貌-GB T 36422-2018-2张图.xls",
+                    "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23"
+                },
+                {
+                    "纤维微观形貌-GB T 36422-2018-3张图.xls",
+                    "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268"
+                },
+                {
+                    "纤维微观形貌-GB T 36422-2018-5张图.xls",
+                    "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d"
+                },
+                {
+                    "纤维微观形貌-GB T 36422-2018-6张图.xls",
+                    "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304"
+                },
+                {
+                    "纤维微观形貌-GB T 36422-2018-7张图.xls",
+                    "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01"
+                },
+                {
+                    "纤维微观形貌-GB T 36422-2018-10张图.xls",
+                    "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
+                },
+            };
 
         private static readonly Regex SampleNoPattern =
             new Regex(@"^[0-9A-Z]{9,20}(?:-[0-9A-Z]{1,8})?$", RegexOptions.CultureInvariant);
         private static readonly Regex ShaPattern =
             new Regex(@"^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant);
+        private static readonly Regex ProjectKeyPattern =
+            new Regex(@"^task-project:[0-9a-f]{24}$", RegexOptions.CultureInvariant);
+        private static readonly Regex RedactedIdPattern =
+            new Regex(@"^sha256:[0-9a-f]{16}$", RegexOptions.CultureInvariant);
 
+        public int SchemaVersion;
         public string OperationType;
         public string SampleNumber;
         public string CheckItemNo;
         public string CheckItemName;
+        public TaskProjectPayload TaskProject;
+        // This is populated only from a successful read-only Oracle rebind.  It
+        // is safe to return because both legacy IDs are one-way hashes.
+        public TaskProjectPayload MeasuredTaskProject;
         public int ExpectedExistingRegisterCount;
         public GenericRecordPayload GenericRecord;
         public ExcelRecordPayload ExcelRecord;
+        public ControlledTestOverridePayload ControlledTestOverride;
+        public bool ControlledTestOverrideActive;
+        public bool ControlledTestOverrideApplied;
 
         public static FinalEntryPackage Load(string path)
         {
@@ -64,15 +118,27 @@ namespace LegacyFibreCheckFinalEntryWriter
                 throw new PackageValidationException("package_root_invalid");
             }
 
-            RequireOnly(root, "schema_version", "operation_type", "sample_number",
-                "check_item_no", "check_item_name", "expected_existing_register_count",
-                "generic_record", "excel_record");
-            if (RequireInt(root, "schema_version") != 1)
+            int schemaVersion = RequireInt(root, "schema_version");
+            if (schemaVersion != 1 && schemaVersion != 2)
             {
                 throw new PackageValidationException("schema_version_unsupported");
             }
+            if (schemaVersion == 1)
+            {
+                RequireOnly(root, "schema_version", "operation_type", "sample_number",
+                    "check_item_no", "check_item_name", "expected_existing_register_count",
+                    "generic_record", "excel_record");
+            }
+            else
+            {
+                RequireOnly(root, "schema_version", "operation_type", "sample_number",
+                    "check_item_no", "check_item_name", "expected_existing_register_count",
+                    "generic_record", "excel_record", "controlled_test_override",
+                    "task_project");
+            }
 
             var package = new FinalEntryPackage();
+            package.SchemaVersion = schemaVersion;
             package.OperationType = RequireString(root, "operation_type", false, 64, false);
             if (package.OperationType != GenericOperation && package.OperationType != ExcelOperation)
             {
@@ -105,14 +171,208 @@ namespace LegacyFibreCheckFinalEntryWriter
                 {
                     throw new PackageValidationException("excel_package_contains_generic_record");
                 }
-                package.ExcelRecord = ParseExcel(RequireMap(root, "excel_record"));
+                package.ExcelRecord = ParseExcel(
+                    RequireMap(root, "excel_record"), schemaVersion);
                 if (package.CheckItemNo != "5103.5"
                     || package.CheckItemName != "纤维微观形貌")
                 {
                     throw new PackageValidationException("excel_project_not_supported_in_v1");
                 }
             }
+            if (schemaVersion == 2)
+            {
+                package.TaskProject = ParseTaskProject(
+                    RequireMap(root, "task_project"), package);
+                if (package.OperationType == GenericOperation)
+                {
+                    ValidatePaperGenericScope(package);
+                }
+            }
+            if (root.ContainsKey("controlled_test_override"))
+            {
+                if (schemaVersion != 2 || package.OperationType != ExcelOperation)
+                {
+                    throw new PackageValidationException(
+                        "controlled_test_override_requires_excel_schema_v2");
+                }
+                package.ControlledTestOverride = ParseControlledTestOverride(
+                    RequireMap(root, "controlled_test_override"), package);
+            }
             return package;
+        }
+
+        private static TaskProjectPayload ParseTaskProject(
+            Dictionary<string, object> map, FinalEntryPackage package)
+        {
+            RequireOnly(map, "project_key", "task_check_item_id", "check_item_id",
+                "check_item_no", "check_item_name", "check_method", "seq_num",
+                "check_count");
+            var result = new TaskProjectPayload
+            {
+                ProjectKey = RequireString(map, "project_key", false, 100, false),
+                TaskCheckItemId = RequireString(
+                    map, "task_check_item_id", false, 80, false),
+                CheckItemId = RequireString(map, "check_item_id", false, 80, false),
+                CheckItemNo = RequireString(map, "check_item_no", false, 128, true),
+                CheckItemName = RequireString(
+                    map, "check_item_name", false, 512, true),
+                CheckMethod = RequireString(
+                    map, "check_method", false, 512, true),
+                SeqNum = RequireInt(map, "seq_num"),
+                CheckCount = RequireInt(map, "check_count"),
+            };
+            bool supportedProject = package.OperationType == ExcelOperation
+                ? result.CheckItemNo == "5103.5"
+                    && result.CheckItemName == "纤维微观形貌"
+                    && result.CheckMethod == "GB/T 36422-2018"
+                : result.CheckItemNo == PaperCheckItemNo
+                    && result.CheckItemName == PaperCheckItemName
+                    && result.CheckMethod == PaperCheckMethod;
+            if (!ProjectKeyPattern.IsMatch(result.ProjectKey)
+                || !RedactedIdPattern.IsMatch(result.TaskCheckItemId)
+                || !RedactedIdPattern.IsMatch(result.CheckItemId)
+                || result.CheckItemNo != package.CheckItemNo
+                || result.CheckItemName != package.CheckItemName
+                || !supportedProject
+                || result.SeqNum < 0
+                || result.CheckCount != 1
+                || result.ProjectKey != BuildTaskProjectKey(result))
+            {
+                throw new PackageValidationException(
+                    "task_project_binding_invalid");
+            }
+            return result;
+        }
+
+        private static void ValidatePaperGenericScope(FinalEntryPackage package)
+        {
+            if (package.CheckItemNo != PaperCheckItemNo
+                || package.CheckItemName != PaperCheckItemName
+                || package.GenericRecord == null
+                || package.GenericRecord.Header == null
+                || package.GenericRecord.Details == null
+                || package.GenericRecord.Details.Count != 1)
+            {
+                throw new PackageValidationException(
+                    "generic_schema_v2_scope_not_supported");
+            }
+            GenericHeader header = package.GenericRecord.Header;
+            GenericDetail detail = package.GenericRecord.Details[0];
+            string normalizedResult = (detail.RealValue ?? string.Empty)
+                .Normalize(NormalizationForm.FormKC);
+            bool containsOneHundred = Regex.IsMatch(
+                normalizedResult,
+                @"(?<![\p{L}\p{N}_.])100(?:\.0+)?(?![\p{L}\p{N}_.])",
+                RegexOptions.CultureInvariant);
+            if (string.IsNullOrWhiteSpace(detail.RealValue)
+                || !string.IsNullOrEmpty(detail.StandardLocation)
+                || !string.IsNullOrEmpty(detail.StandardValue)
+                || !string.IsNullOrEmpty(detail.RealLocation)
+                || header.TestMethod != PaperCheckMethod
+                || header.Unit != (containsOneHundred ? "%" : string.Empty)
+                || !string.IsNullOrEmpty(header.Grade)
+                || !string.IsNullOrEmpty(header.JudgeBasis)
+                || !string.IsNullOrEmpty(header.SampleDescription)
+                || !string.IsNullOrEmpty(header.StandardType)
+                || !string.IsNullOrEmpty(header.ReportCheckItemName)
+                || !string.IsNullOrEmpty(header.AttachInfo)
+                || !string.IsNullOrEmpty(header.Remark)
+                || !string.IsNullOrEmpty(header.TotalJudge))
+            {
+                throw new PackageValidationException(
+                    "paper_generic_record_contract_invalid");
+            }
+        }
+
+        private static string BuildTaskProjectKey(TaskProjectPayload project)
+        {
+            string identity = string.Join("\0", new string[]
+            {
+                CompactText(project.TaskCheckItemId),
+                CompactText(project.CheckItemId),
+                CompactText(project.CheckItemNo),
+                CompactText(project.CheckItemName),
+                CompactText(project.CheckMethod),
+                CompactText(project.SeqNum.ToString(CultureInfo.InvariantCulture)),
+            });
+            return "task-project:" + Sha256Text(identity).Substring(0, 24);
+        }
+
+        private static string CompactText(string value)
+        {
+            return Regex.Replace((value ?? string.Empty).Trim(), @"\s+", " ");
+        }
+
+        internal void BindControlledTestOverride(bool cliEnabled, string environmentTarget)
+        {
+            if (ControlledTestOverride == null)
+            {
+                if (cliEnabled)
+                {
+                    throw new PackageValidationException(
+                        "controlled_test_override_package_required");
+                }
+                ControlledTestOverrideActive = false;
+                return;
+            }
+            if (!cliEnabled)
+            {
+                throw new PackageValidationException(
+                    "controlled_test_override_cli_flag_required");
+            }
+            string target = (environmentTarget ?? string.Empty).Trim().ToUpperInvariant();
+            if (!SampleNoPattern.IsMatch(target)
+                || !string.Equals(target, SampleNumber, StringComparison.Ordinal)
+                || !string.Equals(
+                    target,
+                    ControlledTestOverride.TargetSampleNumber,
+                    StringComparison.Ordinal))
+            {
+                throw new PackageValidationException(
+                    "controlled_test_override_environment_target_mismatch");
+            }
+            ControlledTestOverrideActive = true;
+        }
+
+        internal bool AllowsOneAdditionalRegistration(int taskCheckCount)
+        {
+            return ControlledTestOverrideActive
+                && ControlledTestOverride != null
+                && taskCheckCount == ControlledTestOverride.ExpectedTaskCheckCount
+                && ExpectedExistingRegisterCount
+                    == ControlledTestOverride.ExpectedExistingRegisterCount
+                && ExpectedExistingRegisterCount + 1
+                    == ControlledTestOverride.ResultingRegisterCount;
+        }
+
+        private static ControlledTestOverridePayload ParseControlledTestOverride(
+            Dictionary<string, object> map, FinalEntryPackage package)
+        {
+            RequireOnly(map, "kind", "target_sample_number",
+                "expected_task_check_count", "expected_existing_register_count",
+                "resulting_register_count", "reason");
+            var result = new ControlledTestOverridePayload
+            {
+                Kind = RequireString(map, "kind", false, 64, false),
+                TargetSampleNumber = RequireString(
+                    map, "target_sample_number", false, 32, false).ToUpperInvariant(),
+                ExpectedTaskCheckCount = RequireInt(map, "expected_task_check_count"),
+                ExpectedExistingRegisterCount = RequireInt(
+                    map, "expected_existing_register_count"),
+                ResultingRegisterCount = RequireInt(map, "resulting_register_count"),
+                Reason = RequireString(map, "reason", false, 500, true),
+            };
+            if (result.Kind != ControlledTestOverrideKind
+                || result.TargetSampleNumber != package.SampleNumber
+                || result.ExpectedTaskCheckCount != 1
+                || result.ExpectedExistingRegisterCount != 1
+                || result.ResultingRegisterCount != 2
+                || package.ExpectedExistingRegisterCount != 1)
+            {
+                throw new PackageValidationException(
+                    "controlled_test_override_scope_invalid");
+            }
+            return result;
         }
 
         private static GenericRecordPayload ParseGeneric(Dictionary<string, object> map)
@@ -165,7 +425,8 @@ namespace LegacyFibreCheckFinalEntryWriter
             return new GenericRecordPayload { Header = header, Details = details };
         }
 
-        private static ExcelRecordPayload ParseExcel(Dictionary<string, object> map)
+        private static ExcelRecordPayload ParseExcel(
+            Dictionary<string, object> map, int schemaVersion)
         {
             RequireOnly(map, "template_name", "collection_mode", "expected_mapping_config_sha256",
                 "key_result_count", "expected_key_identities", "register", "workbook");
@@ -200,7 +461,8 @@ namespace LegacyFibreCheckFinalEntryWriter
             foreach (object raw in identityValues)
             {
                 string identity = raw as string;
-                if (string.IsNullOrWhiteSpace(identity) || identity.Length > 512
+                if (identity == null || (schemaVersion == 1 && string.IsNullOrWhiteSpace(identity))
+                    || identity.Length > 512
                     || identity.IndexOf('\0') >= 0 || identity.IndexOf('\'') >= 0)
                 {
                     throw new PackageValidationException("expected_key_identity_invalid");
@@ -228,26 +490,47 @@ namespace LegacyFibreCheckFinalEntryWriter
                 ContentSha256 = RequireString(workbook, "content_sha256", false, 64, false).ToLowerInvariant(),
             };
             ValidateWorkbook(result.Workbook);
-            ValidateExcelV1Scope(result);
+            ValidateExcelScope(result, schemaVersion);
             return result;
         }
 
-        private static void ValidateExcelV1Scope(ExcelRecordPayload result)
+        private static void ValidateExcelScope(
+            ExcelRecordPayload result, int schemaVersion)
         {
             // v1 intentionally implements only the exact Excel route proven against
             // 26A045793. Other template-selection branches have additional desktop-only
             // business rules and must remain fail-closed until separately modelled.
-            if (result.TemplateName != "微观形貌.xls" || result.KeyResultCount != 1
-                || result.ExpectedKeyIdentities.Count != 1
-                || (result.ExpectedKeyIdentities[0] != "纵面"
-                    && result.ExpectedKeyIdentities[0] != "横截面")
+            bool identityInvalid = schemaVersion == 1
+                && result.ExpectedKeyIdentities.Count == 1
+                && result.ExpectedKeyIdentities[0] != "纵面"
+                && result.ExpectedKeyIdentities[0] != "横截面";
+            bool templateInvalid;
+            if (schemaVersion == 1)
+            {
+                templateInvalid = result.TemplateName != "微观形貌.xls";
+            }
+            else
+            {
+                string expectedMapping;
+                templateInvalid = !SupportedMicroscopyTemplates.TryGetValue(
+                        result.TemplateName, out expectedMapping)
+                    || !string.Equals(
+                        expectedMapping,
+                        result.ExpectedMappingConfigSha256,
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            if (templateInvalid || result.KeyResultCount != 1
+                || result.ExpectedKeyIdentities.Count != 1 || identityInvalid
                 || !string.IsNullOrEmpty(result.Register.Level)
                 || !string.IsNullOrEmpty(result.Register.SampleIdentity)
                 || !string.IsNullOrEmpty(result.Register.EquipmentNo)
                 || !string.IsNullOrEmpty(result.Register.CheckBasis)
                 || Path.GetExtension(result.Workbook.Filename).ToLowerInvariant() != ".xls")
             {
-                throw new PackageValidationException("excel_scope_not_supported_in_v1");
+                throw new PackageValidationException(
+                    schemaVersion == 1
+                        ? "excel_scope_not_supported_in_v1"
+                        : "excel_scope_not_supported_in_v2");
             }
         }
 
@@ -467,5 +750,42 @@ namespace LegacyFibreCheckFinalEntryWriter
         public string Filename;
         public long SizeBytes;
         public string ContentSha256;
+    }
+
+    internal sealed class TaskProjectPayload
+    {
+        public string ProjectKey;
+        public string TaskCheckItemId;
+        public string CheckItemId;
+        public string CheckItemNo;
+        public string CheckItemName;
+        public string CheckMethod;
+        public int SeqNum;
+        public int CheckCount;
+
+        public SortedDictionary<string, object> ToReceiptMap()
+        {
+            return new SortedDictionary<string, object>
+            {
+                { "project_key", ProjectKey },
+                { "task_check_item_id", TaskCheckItemId },
+                { "check_item_id", CheckItemId },
+                { "check_item_no", CheckItemNo },
+                { "check_item_name", CheckItemName },
+                { "check_method", CheckMethod },
+                { "seq_num", SeqNum },
+                { "check_count", CheckCount },
+            };
+        }
+    }
+
+    internal sealed class ControlledTestOverridePayload
+    {
+        public string Kind;
+        public string TargetSampleNumber;
+        public int ExpectedTaskCheckCount;
+        public int ExpectedExistingRegisterCount;
+        public int ResultingRegisterCount;
+        public string Reason;
     }
 }

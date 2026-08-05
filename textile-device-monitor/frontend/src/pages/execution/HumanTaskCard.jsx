@@ -18,6 +18,7 @@ import {
 import {
   claimHumanTask,
   getExecutionRunMutation,
+  getExecutionTaskSnapshotStatus,
   rejectHumanTask,
   saveHumanTaskDraft,
   submitHumanTask,
@@ -27,7 +28,10 @@ import ExecutionImageSelector, {
   imageSelectionFolderId,
   imageSelectionImageId,
 } from './ExecutionImageSelector';
-import ExecutionResultFiles, { resultFileId } from './ExecutionResultFiles';
+import ExecutionResultFiles, {
+  isPaperQualitativeResultFile,
+  resultFileId,
+} from './ExecutionResultFiles';
 import MicroscopyRecordHumanTask, {
   microscopyTaskKind,
 } from './MicroscopyRecordHumanTask';
@@ -58,18 +62,30 @@ const taskConditionLabels = {
   test_method: '测试方法',
 };
 
-export default function HumanTaskCard({ task, nodeRun, onChanged }) {
+const TASK_SNAPSHOT_POLL_INTERVAL_MS = 3000;
+
+export default function HumanTaskCard({
+  task,
+  nodeRun,
+  onChanged,
+  inspectionNumber,
+  taskSnapshotStatus: taskSnapshotStatusProp,
+}) {
   const { user } = useExecutionAuth();
   const [form] = Form.useForm();
   const selectedFiles = Form.useWatch('selected_files', form) || [];
   const primaryFileId = Form.useWatch('primary_file_id', form) || null;
-  const selectedFolderIds = Form.useWatch('selected_folder_ids', form) || [];
+  const selectedFolderIds = Form.useWatch(
+    'selected_folder_ids',
+    { form, preserve: true },
+  ) || [];
   const selectedImageIds = Form.useWatch('selected_image_ids', form) || [];
   const [working, setWorking] = useState(false);
   const [approvalMutation, setApprovalMutation] = useState(null);
   const [approvalMutationError, setApprovalMutationError] = useState(null);
   const [approvalMutationLoading, setApprovalMutationLoading] = useState(false);
   const [approvalMutationReloadKey, setApprovalMutationReloadKey] = useState(0);
+  const [polledTaskSnapshotStatus, setPolledTaskSnapshotStatus] = useState(null);
   const formSyncRef = useRef(null);
   const claimedById = task.claimed_by_id || task.claimed_by?.id || task.assignee?.id;
   const isClaimed = Boolean(claimedById || task.status === 'claimed');
@@ -131,10 +147,30 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
     : [];
   const folderSelectionRequired = Boolean(candidatePayload.folder_selection_required);
   const imageListTruncated = Boolean(candidatePayload.truncated);
-  const taskValidationState = candidatePayload.task_validation_state;
-  const missingTaskConditions = Array.isArray(candidatePayload.missing_conditions)
-    ? candidatePayload.missing_conditions.filter(value => taskConditionLabels[value])
+  const taskSnapshotStatus = taskSnapshotStatusProp || polledTaskSnapshotStatus;
+  const taskRefreshStatus = taskSnapshotStatus?.refresh_status;
+  const taskSnapshotAvailable = taskSnapshotStatus?.snapshot_available === true;
+  const taskValidationState = taskSnapshotStatus
+    ? (taskSnapshotAvailable
+      ? ((taskSnapshotStatus.missing_conditions || []).length > 0 ? 'warning' : 'matched')
+      : (taskRefreshStatus === 'failed' ? 'warning' : 'pending'))
+    : candidatePayload.task_validation_state;
+  const rawMissingTaskConditions = taskSnapshotStatus?.missing_conditions
+    ?? candidatePayload.missing_conditions;
+  const missingTaskConditions = Array.isArray(rawMissingTaskConditions)
+    ? rawMissingTaskConditions.filter(value => taskConditionLabels[value])
     : [];
+  const normalizedInspectionNumber = String(
+    inspectionNumber
+    || task.inspection_number
+    || nodeRun?.input_data?.inspection_number
+    || '',
+  ).trim();
+  const candidateContextReady = Boolean(
+    nodeRun
+    && nodeRun.input_data
+    && Object.keys(nodeRun.input_data).length > 0
+  );
   const ignoredCandidateCount = allCandidates.length - candidates.length;
   const hasResultDetails = candidates.some(candidate => (
     candidate?.result
@@ -143,6 +179,8 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
     || Array.isArray(candidate?.images)
     || candidate?.read_status
   ));
+  const isPaperQualitativeSelection = candidates.length > 0
+    && candidates.every(isPaperQualitativeResultFile);
   const approvalContext = nodeRun?.input_data?.approval_context;
   const approvalMutationId = approvalContext?.mutation_id;
 
@@ -207,12 +245,14 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
     const syncIdentity = {
       taskId: String(task.id),
       revision: task.revision ?? null,
+      contextReady: candidateContextReady,
     };
     const previous = formSyncRef.current;
     if (
       previous
       && previous.taskId === syncIdentity.taskId
       && previous.revision === syncIdentity.revision
+      && (previous.contextReady || !syncIdentity.contextReady)
     ) {
       // SSE 重连和普通快照刷新会创建新的 task 对象。只要服务端
       // revision 没有变化，就保留尚未保存的本地选单和主单。
@@ -241,7 +281,9 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
         ? values.selected_folder_ids.map(imageSelectionFolderId).filter(Boolean).map(String)
         : (Array.isArray(candidatePayload.selected_folder_ids)
           ? candidatePayload.selected_folder_ids
-          : imageFolders.filter(folder => folder.selected))
+          : (imageFolders.length === 1
+            ? imageFolders
+            : imageFolders.filter(folder => folder.selected)))
           .map(imageSelectionFolderId)
           .filter(Boolean)
           .map(String),
@@ -257,7 +299,66 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
         || undefined,
     });
     formSyncRef.current = syncIdentity;
-  }, [form, task]);
+  }, [candidateContextReady, form, task]);
+
+  useEffect(() => {
+    setPolledTaskSnapshotStatus(null);
+    if (
+      taskSnapshotStatusProp
+      || !hasImageSelection
+      || !normalizedInspectionNumber
+      || isClosed
+      || !isClaimedByMe
+    ) {
+      return undefined;
+    }
+
+    const initialState = String(
+      candidatePayload.task_cache_state
+      || candidatePayload.task_validation_state
+      || '',
+    );
+    if (!['empty', 'pending', 'queued', 'running', 'failed'].includes(initialState)) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timerId;
+    const poll = async () => {
+      try {
+        const status = await getExecutionTaskSnapshotStatus(normalizedInspectionNumber);
+        if (cancelled) {
+          return;
+        }
+        setPolledTaskSnapshotStatus(status);
+        const shouldContinue = status?.snapshot_available !== true
+          && status?.refresh_status !== 'failed';
+        if (shouldContinue) {
+          timerId = window.setTimeout(poll, TASK_SNAPSHOT_POLL_INTERVAL_MS);
+        }
+      } catch (_error) {
+        if (!cancelled) {
+          timerId = window.setTimeout(poll, TASK_SNAPSHOT_POLL_INTERVAL_MS);
+        }
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timerId) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, [
+    candidatePayload.task_cache_state,
+    candidatePayload.task_validation_state,
+    hasImageSelection,
+    isClaimedByMe,
+    isClosed,
+    normalizedInspectionNumber,
+    task.id,
+    taskSnapshotStatusProp,
+  ]);
 
   useEffect(() => {
     if (!approvalMutationId || !task.run_id || !isClaimedByMe || isClosed) {
@@ -494,12 +595,27 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
                 <Alert
                   showIcon
                   type="info"
-                  message="旧系统任务信息正在后台刷新"
-                  description="当前可先根据编号文件夹选择图片；刷新完成后，流程推荐会自动更新。"
+                  message="旧系统任务信息尚未就绪，不影响当前选图"
+                  description={taskRefreshStatus === 'running'
+                    ? '只读读取服务正在核对任务单；完成后本页会自动更新。'
+                    : '可先选择结果图片；只读读取服务领取任务后，本页会自动更新。'}
                   style={{ marginBottom: 12 }}
                 />
               )}
-              {taskValidationState === 'warning' && missingTaskConditions.length > 0 && (
+              {taskRefreshStatus === 'failed' && (
+                <Alert
+                  showIcon
+                  type="warning"
+                  message="旧系统任务信息暂时不可用"
+                  description={taskSnapshotStatus?.error_code
+                    ? `读取失败：${taskSnapshotStatus.error_code}。图片选择不受影响。`
+                    : '图片选择不受影响；请确认旧系统只读读取服务已运行后重试。'}
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              {taskValidationState === 'warning'
+                && taskRefreshStatus !== 'failed'
+                && missingTaskConditions.length > 0 && (
                 <Alert
                   showIcon
                   type="warning"
@@ -510,21 +626,20 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
                   style={{ marginBottom: 12 }}
                 />
               )}
-              {folderSelectionRequired && (
-                <Form.Item
-                  name="selected_folder_ids"
-                  noStyle
-                  rules={[{
-                    validator: (_, value) => (
-                      Array.isArray(value) && value.length > 0
-                        ? Promise.resolve()
-                        : Promise.reject(new Error('请至少选择一个结果文件夹'))
-                    ),
-                  }]}
-                >
-                  <SilentFormField />
-                </Form.Item>
-              )}
+              <Form.Item
+                name="selected_folder_ids"
+                noStyle
+                rules={[{
+                  validator: (_, value) => (
+                    !(folderSelectionRequired || imageFolders.length > 0)
+                    || (Array.isArray(value) && value.length > 0)
+                      ? Promise.resolve()
+                      : Promise.reject(new Error('请至少选择一个结果文件夹'))
+                  ),
+                }]}
+              >
+                <SilentFormField />
+              </Form.Item>
               <Form.Item
                 name="selected_image_ids"
                 noStyle
@@ -579,7 +694,12 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
             </Form.Item>
           )}
           {!hasImageSelection && candidates.length > 0 && (hasResultDetails ? (
-            <Form.Item label={`文件读取结果（${candidates.length}）`} required>
+            <Form.Item
+              label={isPaperQualitativeSelection
+                ? `纸类原始记录（${candidates.length}，单选）`
+                : `文件读取结果（${candidates.length}）`}
+              required
+            >
               <Form.Item
                 name="selected_files"
                 noStyle
@@ -587,7 +707,11 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
                   validator: (_, value) => (
                     Array.isArray(value) && value.length
                       ? Promise.resolve()
-                      : Promise.reject(new Error('请至少选择一项需要的文件'))
+                      : Promise.reject(new Error(
+                        isPaperQualitativeSelection
+                          ? '请选择一份纸类原始记录'
+                          : '请至少选择一项需要的文件',
+                      ))
                   ),
                 }]}
               >
@@ -612,6 +736,8 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
                 files={candidates}
                 selectable
                 disabled={working}
+                selectionMode={isPaperQualitativeSelection ? 'single' : 'multiple'}
+                showPrimary={!isPaperQualitativeSelection}
                 selectedIds={Array.isArray(selectedFiles) ? selectedFiles : []}
                 primaryId={primaryFileId}
                 onSelectedIdsChange={(value) => {

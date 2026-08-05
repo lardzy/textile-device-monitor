@@ -100,7 +100,8 @@ class Settings(BaseSettings):
     EXECUTION_PUBLISH_ROOT: str = "/data/execution-publish"
     EXECUTION_INDEX_INTERVAL_SECONDS: int = 300
     EXECUTION_AUTO_INDEX_ROOT_IDS: str = (
-        "regenerated_fiber_records,electron_microscopy_records"
+        "regenerated_fiber_records,electron_microscopy_records,"
+        "paper_fiber_records"
     )
     # Contract-review changes are normally visible within this window. A stale
     # value may still rank the catalog while one background refresh is queued;
@@ -122,6 +123,17 @@ class Settings(BaseSettings):
     # Both must be configured before any Bridge endpoint is available.
     EXECUTION_BRIDGE_ENABLED: bool = False
     EXECUTION_BRIDGE_TOKEN: str = ""
+    # SpecialWool image upload/review remains an independent deployment
+    # capability.  Keeping this separate from the Bridge master switch lets a
+    # site validate the read-only task snapshot and writer before enabling the
+    # two business mutations.
+    EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED: bool = False
+    # Keep the final CheckRecord save/proof connector independently disabled
+    # until the Windows Bridge and writer for the deployment have been
+    # validated.  A controlled 1 -> 2 test additionally requires the exact
+    # sample number below; an empty value disables that exception package.
+    EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED: bool = False
+    EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -265,3 +265,58 @@ export const mergeNodeRunStatuses = (nodes, nodeRuns = []) => {
       : node;
   });
 };
+
+const ACTIVE_EXECUTION_NODE_STATUSES = new Set([
+  'ready',
+  'running',
+  'waiting_human',
+  'waiting_external',
+]);
+
+const nodeRunId = node => node?.node_id || node?.nodeId || node?.id;
+
+const uniqueNodeIds = nodeRuns => [...new Set(
+  nodeRuns
+    .map(nodeRunId)
+    .filter(Boolean)
+    .map(String),
+)];
+
+export const resolveExecutionFocusNodeIds = (
+  nodeRuns = [],
+  definitionNodes = [],
+  runStatus = '',
+) => {
+  const activeNodeIds = uniqueNodeIds(
+    nodeRuns.filter(node => ACTIVE_EXECUTION_NODE_STATUSES.has(node?.status)),
+  );
+  if (activeNodeIds.length) {
+    return activeNodeIds;
+  }
+
+  const failedNodeIds = uniqueNodeIds(
+    nodeRuns.filter(node => node?.status === 'failed'),
+  );
+  if (failedNodeIds.length) {
+    return failedNodeIds;
+  }
+
+  if (!['completed', 'succeeded'].includes(runStatus)) {
+    return [];
+  }
+
+  const endNodeIds = new Set(
+    definitionNodes
+      .filter(node => (
+        node?.data?.nodeType || node?.node_type || node?.type
+      ) === 'core.end')
+      .map(node => String(node.id)),
+  );
+  return uniqueNodeIds(nodeRuns.filter(node => (
+    ['completed', 'succeeded'].includes(node?.status)
+    && (
+      node?.node_type === 'core.end'
+      || endNodeIds.has(String(nodeRunId(node)))
+    )
+  )));
+};

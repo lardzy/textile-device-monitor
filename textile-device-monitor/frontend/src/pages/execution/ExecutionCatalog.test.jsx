@@ -548,4 +548,62 @@ describe('ExecutionCatalog', () => {
     ).toHaveTextContent('特种毛');
     expect(screen.getAllByRole('button', { name: /开始执行/ })[0]).toBeEnabled();
   });
+
+  it('纸类流程卡片同时展示候选文件和 Sheet1!W32 读取结果', async () => {
+    installHandlers();
+    server.use(
+      http.get('/api/execution/v1/categories', () => HttpResponse.json({
+        items: [{ id: 'other', key: 'other', name: '其他' }],
+      })),
+      http.get('/api/execution/v1/workflows', () => HttpResponse.json({
+        items: [{
+          id: 'wf-paper',
+          name: '纸、纸板和纸浆纤维鉴别分析 GB/T 4688-2020',
+          category: { id: 'other', key: 'other', name: '其他' },
+          published_version: 1,
+          runnable: true,
+          capabilities: ['read', 'external_write'],
+        }],
+      })),
+      http.get('/api/execution/v1/catalog/recommendations', () => HttpResponse.json({
+        items: [{
+          workflow_id: 'wf-paper',
+          state: 'full_match',
+          score: 4,
+          max_score: 5,
+          full_match: true,
+          candidate_count: 1,
+          matched_conditions: [
+            'source_root',
+            'folder',
+            'task_item_name',
+            'test_method',
+          ],
+          index_state: 'ready',
+          rank: 0,
+          candidate_preview: {
+            name: '26W006687-纸浆纤维鉴别.xls',
+            relative_path: '26W006687/26W006687-纸浆纤维鉴别.xls',
+            suffix: '.xls',
+            qualitative_result: '木浆 100',
+            result: {
+              worksheet: 'Sheet1',
+              cell: 'W32',
+              w32_value: '木浆 100',
+              unit: '%',
+            },
+          },
+        }],
+      })),
+    );
+
+    renderCatalog('/execution?number=26W006687');
+
+    expect(await screen.findByText('找到 1 个符合文件')).toBeInTheDocument();
+    expect(screen.getByText('候选文件：26W006687-纸浆纤维鉴别.xls'))
+      .toBeInTheDocument();
+    expect(screen.getByText('Sheet1!W32')).toBeInTheDocument();
+    expect(screen.getByText('木浆 100')).toBeInTheDocument();
+    expect(screen.getByText('%')).toBeInTheDocument();
+  });
 });

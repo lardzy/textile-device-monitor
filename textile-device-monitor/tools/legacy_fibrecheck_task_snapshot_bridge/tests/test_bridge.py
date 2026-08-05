@@ -16,7 +16,7 @@ import bridge  # noqa: E402
 INSPECTION_NUMBER = "26A029794"
 
 
-def probe_document(*, tasks=None, samples=None, items=None):
+def probe_document(*, tasks=None, samples=None, items=None, family=None):
     task_rows = (
         [
             {
@@ -52,6 +52,11 @@ def probe_document(*, tasks=None, samples=None, items=None):
         if samples is None
         else samples
     )
+    family_rows = (
+        [{"SampleNo": INSPECTION_NUMBER, "RecordCount": 1}]
+        if family is None
+        else family
+    )
     return {
         "schema_version": 1,
         "mode": "probe",
@@ -69,6 +74,11 @@ def probe_document(*, tasks=None, samples=None, items=None):
                 "status": "ok",
                 "row_count": len(item_rows),
                 "rows": item_rows,
+            },
+            "task_special_wool_family": {
+                "status": "ok",
+                "row_count": len(family_rows),
+                "rows": family_rows,
             },
         },
     }
@@ -116,7 +126,7 @@ class SnapshotMappingTests(unittest.TestCase):
         self.assertEqual(
             snapshot,
             {
-                "schema_version": 3,
+                "schema_version": 4,
                 "sample_name": "Surgicel-Fibrillar",
                 "sample_names": ["Surgicel-Fibrillar"],
                 "check_basis": "---",
@@ -135,6 +145,7 @@ class SnapshotMappingTests(unittest.TestCase):
                         "give_judgement": 0,
                     }
                 ],
+                "special_wool_occupied_numbers": [INSPECTION_NUMBER],
             },
         )
 
@@ -146,11 +157,12 @@ class SnapshotMappingTests(unittest.TestCase):
         self.assertEqual(
             snapshot,
             {
-                "schema_version": 3,
+                "schema_version": 4,
                 "sample_name": None,
                 "sample_names": [],
                 "check_basis": None,
                 "projects": [],
+                "special_wool_occupied_numbers": [INSPECTION_NUMBER],
             },
         )
 
@@ -168,6 +180,34 @@ class SnapshotMappingTests(unittest.TestCase):
         )
         self.assertIsNone(snapshot["sample_name"])
         self.assertEqual(snapshot["sample_names"], ["样品 A", "样品 B"])
+
+    def test_special_wool_family_is_kept_for_deterministic_suffix_allocation(self):
+        snapshot = bridge.build_snapshot(
+            probe_document(
+                family=[
+                    {"SampleNo": INSPECTION_NUMBER, "RecordCount": 1},
+                    {"SampleNo": INSPECTION_NUMBER + "-1", "RecordCount": "1"},
+                    {"SampleNo": INSPECTION_NUMBER + "-2", "RecordCount": 0},
+                ]
+            ),
+            INSPECTION_NUMBER,
+        )
+        self.assertEqual(
+            snapshot["special_wool_occupied_numbers"],
+            [INSPECTION_NUMBER, INSPECTION_NUMBER + "-1"],
+        )
+
+    def test_special_wool_family_rejects_unrelated_or_invalid_rows(self):
+        for family in (
+            [{"SampleNo": "26A029795", "RecordCount": 1}],
+            [{"SampleNo": INSPECTION_NUMBER, "RecordCount": -1}],
+            [{"SampleNo": INSPECTION_NUMBER, "RecordCount": True}],
+        ):
+            with self.subTest(family=family):
+                with self.assertRaises(bridge.SnapshotBridgeError):
+                    bridge.build_snapshot(
+                        probe_document(family=family), INSPECTION_NUMBER
+                    )
 
     def test_microscopy_project_without_public_task_item_id_is_rejected(self):
         item = dict(probe_document()["results"]["task_check_items"]["rows"][0])
@@ -189,7 +229,7 @@ class SnapshotMappingTests(unittest.TestCase):
         snapshot = bridge.build_snapshot(
             probe_document(items=[item]), INSPECTION_NUMBER
         )
-        self.assertEqual(snapshot["schema_version"], 3)
+        self.assertEqual(snapshot["schema_version"], 4)
         self.assertIsNone(snapshot["projects"][0]["task_check_item_id"])
         self.assertIsNone(snapshot["projects"][0]["check_item_id"])
 

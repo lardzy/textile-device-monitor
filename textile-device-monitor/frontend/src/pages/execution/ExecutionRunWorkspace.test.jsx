@@ -1,5 +1,5 @@
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
@@ -54,6 +54,109 @@ const completedRun = {
 };
 
 describe('ExecutionRunWorkspace', () => {
+  it('确认取消后关闭弹窗、仅提交一次并刷新终态', async () => {
+    let runStatus = 'running';
+    let cancelRequests = 0;
+    server.use(
+      http.get('/api/execution/v1/auth/me', () => HttpResponse.json({
+        user: {
+          id: 'u-1',
+          username: 'operator',
+          display_name: '检验员',
+          role: 'user',
+          permissions: ['workflow.read', 'workflow.run'],
+        },
+      })),
+      http.get('/api/execution/v1/auth/csrf', () =>
+        HttpResponse.json({ csrf_token: 'csrf-cancel' })),
+      http.get('/api/execution/v1/runs/run-1', () => HttpResponse.json({
+        ...completedRun,
+        status: runStatus,
+      })),
+      http.post('/api/execution/v1/runs/run-1/cancel', () => {
+        cancelRequests += 1;
+        runStatus = 'cancelled';
+        return HttpResponse.json({
+          duplicate: false,
+          run: { ...completedRun, status: runStatus },
+        });
+      }),
+    );
+
+    render(
+      <MemoryRouter
+        initialEntries={['/execution/runs/run-1']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <ExecutionAuthProvider>
+          <Routes>
+            <Route path="/execution/runs/:runId" element={<ExecutionRunWorkspace />} />
+          </Routes>
+        </ExecutionAuthProvider>
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /^取\s*消$/ }));
+    const confirmDialog = await screen.findByRole('dialog');
+    expect(within(confirmDialog).getAllByText('取消本次执行？')).not.toHaveLength(0);
+    await user.click(within(confirmDialog).getByRole('button', { name: '确认取消' }));
+
+    await waitFor(() => expect(cancelRequests).toBe(1));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(await screen.findByText('已取消')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^取\s*消$/ })).not.toBeInTheDocument();
+  });
+
+  it('返回时关闭取消弹窗且不提交请求', async () => {
+    let cancelRequests = 0;
+    server.use(
+      http.get('/api/execution/v1/auth/me', () => HttpResponse.json({
+        user: {
+          id: 'u-1',
+          username: 'operator',
+          display_name: '检验员',
+          role: 'user',
+          permissions: ['workflow.read', 'workflow.run'],
+        },
+      })),
+      http.get('/api/execution/v1/runs/run-1', () => HttpResponse.json({
+        ...completedRun,
+        status: 'running',
+      })),
+      http.post('/api/execution/v1/runs/run-1/cancel', () => {
+        cancelRequests += 1;
+        return HttpResponse.json({});
+      }),
+    );
+
+    render(
+      <MemoryRouter
+        initialEntries={['/execution/runs/run-1']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <ExecutionAuthProvider>
+          <Routes>
+            <Route path="/execution/runs/:runId" element={<ExecutionRunWorkspace />} />
+          </Routes>
+        </ExecutionAuthProvider>
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /^取\s*消$/ }));
+    const confirmDialog = await screen.findByRole('dialog');
+    await user.click(within(confirmDialog).getByRole('button', { name: /^返\s*回$/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(cancelRequests).toBe(0);
+    expect(screen.getByRole('button', { name: /^取\s*消$/ })).toBeInTheDocument();
+  });
+
   it('只读展示创建运行时已提交的输入和全局变量', async () => {
     server.use(
       http.get('/api/execution/v1/auth/me', () => HttpResponse.json({

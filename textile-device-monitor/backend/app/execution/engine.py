@@ -12,13 +12,25 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.execution.errors import ExecutionApiError, conflict, not_found
+from app.execution.electron_microscopy import (
+    _task_project_conditions,
+    cached_task_snapshot,
+)
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
+    LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
+    LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE,
     LEGACY_REGENERATED_COUNT_NODE,
     LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE,
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE,
     LEGACY_SPECIAL_WOOL_REVIEW_NODE,
+    prepare_legacy_generic_check_record_entry_operation,
+    prepare_legacy_microscopy_check_record_entry_operation,
     prepare_legacy_regenerated_count_operation,
     prepare_legacy_special_wool_image_operation,
+    prepare_legacy_special_wool_qualitative_review_operation,
+    prepare_legacy_special_wool_qualitative_upload_operation,
     prepare_legacy_special_wool_review_operation,
     settle_external_attempt_failure,
 )
@@ -60,6 +72,15 @@ HUMAN_NODE_TYPES = {
     "human.image_selection",
     "human.input",
     "human.confirm",
+}
+EXTERNAL_NODE_TYPES = {
+    LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE,
+    LEGACY_REGENERATED_COUNT_NODE,
+    LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE,
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE,
+    LEGACY_SPECIAL_WOOL_REVIEW_NODE,
+    LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
 }
 UNSETTLED_EXTERNAL_OPERATION_STATUSES = {
     "in_progress",
@@ -314,7 +335,37 @@ def _node_input(
     node: dict[str, Any],
 ) -> dict[str, Any]:
     mapping = node.get("input_mapping") or {}
-    resolved = _resolve_value(mapping, _run_context(db, run))
+    context = _run_context(db, run)
+    node_type = node_registry.get(
+        str(node.get("type") or ""),
+        int(node.get("type_version") or 1),
+    )
+    input_schema = node_type.input_schema if node_type is not None else {}
+    declared_properties = input_schema.get("properties") or {}
+    required_properties = set(input_schema.get("required") or [])
+
+    # A missing upstream path is still an error by default.  Only a top-level
+    # input explicitly declared as optional by the versioned node contract may
+    # resolve to None.  This keeps immutable, already-published runs compatible
+    # when an upstream business object legitimately omits an optional field
+    # (for example a task without judgement requirements), without weakening
+    # required artifact and identity bindings.
+    if isinstance(mapping, dict):
+        resolved = {}
+        for key, value in mapping.items():
+            try:
+                resolved[key] = _resolve_value(value, context)
+            except ExecutionApiError as exc:
+                is_declared_optional = (
+                    exc.code == "mapping_value_missing"
+                    and key in declared_properties
+                    and key not in required_properties
+                )
+                if not is_declared_optional:
+                    raise
+                resolved[key] = None
+    else:
+        resolved = _resolve_value(mapping, context)
     return resolved if isinstance(resolved, dict) else {"value": resolved}
 
 
@@ -567,6 +618,40 @@ def _normalize_human_submission(
                 "primary_image_not_selected",
                 "主图必须是本次已选择的图片之一",
             )
+        task_context: dict[str, Any] = {}
+        if "task_validation_state" in (node_run.input_data or {}):
+            task_snapshot = node_run.input_data.get("task")
+            cache_state = node_run.input_data.get("task_cache_state")
+            if not isinstance(task_snapshot, dict) or not task_snapshot:
+                cached = cached_task_snapshot(
+                    db,
+                    inspection_number=run.inspection_number,
+                )
+                task_snapshot = cached.get("snapshot")
+                cache_state = cached.get("cache_state")
+            if not isinstance(task_snapshot, dict) or not task_snapshot:
+                raise conflict(
+                    "microscopy_task_snapshot_not_ready",
+                    (
+                        "旧系统任务信息尚未读取完成；图片选择会保留在当前页面，"
+                        "请启动或检查 Windows 只读读取服务后重试提交"
+                    ),
+                    cache_state=cache_state or "pending",
+                )
+            matched_task_conditions = _task_project_conditions(task_snapshot)
+            missing_task_conditions = [
+                item
+                for item in ("task_item_name", "test_method")
+                if item not in matched_task_conditions
+            ]
+            task_context = {
+                "task": task_snapshot,
+                "task_cache_state": cache_state or "ready",
+                "task_validation_state": (
+                    "matched" if not missing_task_conditions else "warning"
+                ),
+                "missing_conditions": missing_task_conditions,
+            }
         return {
             **data,
             "selected_folder_ids": selected_folder_ids,
@@ -574,6 +659,7 @@ def _normalize_human_submission(
             "selected_images": normalized_images,
             "primary_image_id": primary_image_id,
             "primary_image": primary_image,
+            **task_context,
         }
     task_kind = str(
         node_run.input_data.get("task_kind")
@@ -822,6 +908,12 @@ def _normalize_human_submission(
 
     node = _definition_node_map(run).get(node_run.node_id) or {}
     config = node.get("config") or {}
+    if config.get("allow_multiple") is False and len(normalized) > 1:
+        raise ExecutionApiError(
+            422,
+            "file_selection_multiple_not_allowed",
+            "当前步骤只能选择一份文件",
+        )
     require_primary = bool(config.get("require_primary"))
     primary_file_id = data.get("primary_file_id")
     if primary_file_id is not None:
@@ -2523,11 +2615,23 @@ def _prepare_external_operation_wait(
     context.run = run
     context.node_run = node_run
     preparers = {
+        LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE: (
+            prepare_legacy_generic_check_record_entry_operation
+        ),
+        LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE: (
+            prepare_legacy_microscopy_check_record_entry_operation
+        ),
         LEGACY_REGENERATED_COUNT_NODE: (
             prepare_legacy_regenerated_count_operation
         ),
         LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE: (
             prepare_legacy_special_wool_image_operation
+        ),
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE: (
+            prepare_legacy_special_wool_qualitative_upload_operation
+        ),
+        LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE: (
+            prepare_legacy_special_wool_qualitative_review_operation
         ),
         LEGACY_SPECIAL_WOOL_REVIEW_NODE: (
             prepare_legacy_special_wool_review_operation
@@ -2544,6 +2648,13 @@ def _prepare_external_operation_wait(
         node=context.node,
         input_data=context.input_data,
     )
+    if operation.status not in {"prepared", "approved"}:
+        raise conflict(
+            "external_operation_not_waitable",
+            "外部操作当前不处于可等待状态，请刷新后重新处理",
+            operation_id=operation.id,
+            status=operation.status,
+        )
     output = {
         "operation_id": operation.id,
         "operation_key": operation.operation_key,
@@ -3215,11 +3326,7 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
         if node_run.node_type in HUMAN_NODE_TYPES:
             _create_human_task(db, context)
             return
-        if node_run.node_type in {
-            LEGACY_REGENERATED_COUNT_NODE,
-            LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
-            LEGACY_SPECIAL_WOOL_REVIEW_NODE,
-        }:
+        if node_run.node_type in EXTERNAL_NODE_TYPES:
             _prepare_external_operation_wait(db, context)
             return
         executor = node_registry.executor(

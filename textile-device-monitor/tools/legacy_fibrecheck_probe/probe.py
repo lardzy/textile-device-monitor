@@ -374,6 +374,19 @@ QUERIES: tuple[QueryDefinition, ...] = (
         """,
     ),
     QueryDefinition(
+        key="task_special_wool_family",
+        purpose="读取任务编号对应的特种毛底单及数字后缀占用事实",
+        sql="""
+            SELECT sw."SampleNo", COUNT(*) AS "RecordCount"
+            FROM "SpecialWoolManage" sw
+            WHERE sw."SampleNo" = :sample_no
+               OR sw."SampleNo" LIKE :sample_suffix_prefix ESCAPE '\\'
+            GROUP BY sw."SampleNo"
+            ORDER BY sw."SampleNo"
+        """,
+        parameter_names=("sample_no", "sample_suffix_prefix"),
+    ),
+    QueryDefinition(
         key="task_entry_routes",
         purpose="按任务项目读取 CheckItem 配置的实际原始记录入口类",
         sql="""
@@ -451,7 +464,12 @@ QUERIES: tuple[QueryDefinition, ...] = (
 # 高频推荐刷新只需要任务主表、样品名称和任务项目。保持 QUERIES 及
 # 默认探针模式完全不变；仅当 CLI 显式传入
 # --task-snapshot-only 时采用这个严格白名单。
-TASK_SNAPSHOT_QUERY_KEYS = ("tasks", "task_samples", "task_check_items")
+TASK_SNAPSHOT_QUERY_KEYS = (
+    "tasks",
+    "task_samples",
+    "task_check_items",
+    "task_special_wool_family",
+)
 TASK_SNAPSHOT_QUERIES: tuple[QueryDefinition, ...] = tuple(
     query for query in QUERIES if query.key in TASK_SNAPSHOT_QUERY_KEYS
 )
@@ -834,6 +852,7 @@ def query_parameters(
         # 带后缀的测试号也必须同时看见同一九位底单及其它后缀，避免
         # “260187115-1 不存在”掩盖 “260187115 已存在”。
         "sample_prefix": f"{base_sample_no}%",
+        "sample_suffix_prefix": f"{base_sample_no}-%",
         "target_sample_no": target,
         "target_base": target_base,
         "target_suffix_prefix": f"{target_base}-%",

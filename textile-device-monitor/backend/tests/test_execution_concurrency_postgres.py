@@ -58,6 +58,8 @@ from app.execution.engine import (
 )
 from app.execution.errors import ExecutionApiError
 from app.execution.external_operations import (
+    LEGACY_REGENERATED_COUNT_OPERATION,
+    _rearm_expired_external_operation,
     lock_external_bridge_claim_capacity,
     lock_legacy_remote_business_scope,
 )
@@ -67,6 +69,8 @@ from app.execution.models import (
     ExecutionAuditLog,
     ExecutionCategory,
     ExecutionEvent,
+    ExecutionExternalAttempt,
+    ExecutionExternalOperation,
     ExecutionFileMutation,
     ExecutionHumanTask,
     ExecutionIndexJob,
@@ -190,6 +194,213 @@ def test_external_bridge_capacity_check_uses_one_transaction_lock():
         contender.close()
         holder.rollback()
         holder.close()
+
+
+def test_postgres_rearms_same_fence_after_two_prewrite_failures():
+    """PostgreSQL preserves attempt history while rearming the locked fence."""
+
+    setup = SessionLocal()
+    ids: dict[str, str] = {}
+    now = utcnow()
+    try:
+        user = ExecutionUser(
+            username=_unique("pg-rearm-user"),
+            display_name="PostgreSQL 安全重臂测试",
+            password_hash="not-used-by-this-test",
+            role="user",
+        )
+        category = ExecutionCategory(
+            key=_unique("pg-rearm-category"),
+            name="PostgreSQL 安全重臂测试",
+        )
+        setup.add_all([user, category])
+        setup.flush()
+        workflow = ExecutionWorkflow(
+            slug=_unique("pg-rearm-workflow"),
+            category_id=category.id,
+            name="PostgreSQL 安全重臂测试",
+            draft_definition={"schema_version": "1.0", "nodes": [], "edges": []},
+            capabilities={"external_write": True},
+            created_by_id=user.id,
+            updated_by_id=user.id,
+        )
+        setup.add(workflow)
+        setup.flush()
+        run = ExecutionRun(
+            workflow_id=workflow.id,
+            created_by_id=user.id,
+            idempotency_key=_unique("pg-rearm-run"),
+            inspection_number="PG-REARM-TEST",
+            status="running",
+            definition_snapshot={"schema_version": "1.0", "nodes": [], "edges": []},
+            definition_checksum="1" * 64,
+            capabilities_snapshot={"external_write": True},
+            contract_checksum="2" * 64,
+        )
+        setup.add(run)
+        setup.flush()
+        node = ExecutionNodeRun(
+            run_id=run.id,
+            node_id="external",
+            node_type="external.test",
+            node_type_version=1,
+            node_name="PostgreSQL 安全重臂测试",
+            status="running",
+            attempt_count=2,
+            output_data={"status": "in_progress"},
+        )
+        setup.add(node)
+        setup.flush()
+        remote_key = uuid4().hex + uuid4().hex
+        operation = ExecutionExternalOperation(
+            operation_key=uuid4().hex + uuid4().hex,
+            run_id=run.id,
+            node_run_id=node.id,
+            connector_key="legacy_fibrecheck",
+            credential_revision=1,
+            account_scope_key=uuid4().hex + uuid4().hex,
+            remote_business_key=remote_key,
+            status="expired",
+            payload_checksum=uuid4().hex + uuid4().hex,
+            request_summary={
+                "operation_type": LEGACY_REGENERATED_COUNT_OPERATION,
+            },
+            preflight_expires_at=now - timedelta(minutes=1),
+            attempt_count=2,
+            error_code="external_operation_approval_expired",
+            error_message="测试批准已过期",
+            started_at=now - timedelta(minutes=3),
+            completed_at=now - timedelta(minutes=1),
+        )
+        setup.add(operation)
+        setup.flush()
+        for attempt_no, stage in enumerate(
+            ["authenticated", "permission_verified"],
+            start=1,
+        ):
+            setup.add(
+                ExecutionExternalAttempt(
+                    operation_id=operation.id,
+                    attempt_no=attempt_no,
+                    bridge_id=f"pg-rearm-bridge-{attempt_no}",
+                    status="failed",
+                    current_stage=stage,
+                    checkpoints=[{"stage": stage, "at": now.isoformat()}],
+                    exit_code=1,
+                    error_code="controlled_prewrite_failure",
+                    error_message="受控写入前失败",
+                    started_at=now - timedelta(minutes=2),
+                    finished_at=now - timedelta(minutes=1),
+                )
+            )
+        setup.commit()
+        ids = {
+            "user_id": user.id,
+            "category_id": category.id,
+            "workflow_id": workflow.id,
+            "run_id": run.id,
+            "node_id": node.id,
+            "operation_id": operation.id,
+        }
+    finally:
+        setup.close()
+
+    try:
+        db = SessionLocal()
+        try:
+            # Match the production lock order: run -> node -> operation;
+            # the helper then locks every historical attempt.
+            run = (
+                db.query(ExecutionRun)
+                .filter_by(id=ids["run_id"])
+                .with_for_update()
+                .one()
+            )
+            node = (
+                db.query(ExecutionNodeRun)
+                .filter_by(id=ids["node_id"], run_id=run.id)
+                .with_for_update()
+                .one()
+            )
+            operation = (
+                db.query(ExecutionExternalOperation)
+                .filter_by(id=ids["operation_id"], run_id=run.id)
+                .with_for_update()
+                .one()
+            )
+            assert _rearm_expired_external_operation(
+                db,
+                operation=operation,
+                run=run,
+                node_run=node,
+                prepared_at=now,
+                preflight_expires_at=now + timedelta(minutes=15),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        verification = SessionLocal()
+        try:
+            operation = verification.get(
+                ExecutionExternalOperation,
+                ids["operation_id"],
+            )
+            assert operation is not None
+            assert operation.status == "prepared"
+            assert operation.attempt_count == 2
+            assert operation.started_at is None
+            assert operation.completed_at is None
+            attempts = (
+                verification.query(ExecutionExternalAttempt)
+                .filter_by(operation_id=operation.id)
+                .order_by(ExecutionExternalAttempt.attempt_no.asc())
+                .all()
+            )
+            assert [item.status for item in attempts] == ["failed", "failed"]
+            assert [item.current_stage for item in attempts] == [
+                "authenticated",
+                "permission_verified",
+            ]
+            audit = (
+                verification.query(ExecutionAuditLog)
+                .filter_by(
+                    action="external_operation.rearm",
+                    resource_id=operation.id,
+                )
+                .one()
+            )
+            assert audit.details["prior_attempt_count"] == 2
+        finally:
+            verification.close()
+    finally:
+        cleanup = SessionLocal()
+        try:
+            if ids:
+                cleanup.query(ExecutionOutbox).filter_by(
+                    aggregate_id=ids["run_id"]
+                ).delete(synchronize_session=False)
+                cleanup.query(ExecutionAuditLog).filter_by(
+                    resource_id=ids["operation_id"]
+                ).delete(synchronize_session=False)
+                cleanup.query(ExecutionRun).filter_by(
+                    id=ids["run_id"]
+                ).delete(synchronize_session=False)
+                cleanup.query(ExecutionWorkflow).filter_by(
+                    id=ids["workflow_id"]
+                ).delete(synchronize_session=False)
+                cleanup.query(ExecutionCategory).filter_by(
+                    id=ids["category_id"]
+                ).delete(synchronize_session=False)
+                cleanup.query(ExecutionUser).filter_by(
+                    id=ids["user_id"]
+                ).delete(synchronize_session=False)
+                cleanup.commit()
+        except Exception:
+            cleanup.rollback()
+            raise
+        finally:
+            cleanup.close()
 
 
 @pytest.fixture

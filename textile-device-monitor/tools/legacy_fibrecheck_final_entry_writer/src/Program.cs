@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using LegacyFibreCheckRunner;
@@ -16,6 +17,7 @@ namespace LegacyFibreCheckFinalEntryWriter
         public bool Execute;
         public bool SideEffectPermitStdin;
         public bool OfflineValidate;
+        public bool AllowControlledTestOverride;
 
         public static CommandLine Parse(string[] args)
         {
@@ -33,6 +35,9 @@ namespace LegacyFibreCheckFinalEntryWriter
                     case "--execute": options.Execute = true; break;
                     case "--side-effect-permit-stdin": options.SideEffectPermitStdin = true; break;
                     case "--offline-validate": options.OfflineValidate = true; break;
+                    case "--allow-controlled-test-override":
+                        options.AllowControlledTestOverride = true;
+                        break;
                     default: throw new PackageValidationException("unknown_cli_argument");
                 }
             }
@@ -98,9 +103,38 @@ namespace LegacyFibreCheckFinalEntryWriter
             };
             if (package != null)
             {
+                receipt["package_schema_version"] = package.SchemaVersion;
                 receipt["sample_number"] = package.SampleNumber;
                 receipt["check_item_no"] = package.CheckItemNo;
                 receipt["check_item_name"] = package.CheckItemName;
+                if (package.MeasuredTaskProject != null)
+                {
+                    // This value is derived from the current read-only Oracle row,
+                    // never copied from the signed package.  The Bridge and backend
+                    // use it to prove that contract-review edits did not retarget the
+                    // final-entry side effect.
+                    receipt["task_project"] =
+                        package.MeasuredTaskProject.ToReceiptMap();
+                }
+                if (package.ControlledTestOverride != null)
+                {
+                    receipt["controlled_test_override"] =
+                        new SortedDictionary<string, object>
+                        {
+                            { "active", package.ControlledTestOverrideActive },
+                            { "applied", package.ControlledTestOverrideApplied },
+                            { "kind", package.ControlledTestOverride.Kind },
+                            { "target_sample_number",
+                                package.ControlledTestOverride.TargetSampleNumber },
+                            { "expected_task_check_count",
+                                package.ControlledTestOverride.ExpectedTaskCheckCount },
+                            { "expected_existing_register_count",
+                                package.ControlledTestOverride.ExpectedExistingRegisterCount },
+                            { "resulting_register_count",
+                                package.ControlledTestOverride.ResultingRegisterCount },
+                            { "reason", package.ControlledTestOverride.Reason },
+                        };
+                }
             }
             if (!string.IsNullOrWhiteSpace(errorCode))
             {
@@ -152,10 +186,17 @@ namespace LegacyFibreCheckFinalEntryWriter
             {
                 CommandLine options = CommandLine.Parse(args);
                 package = FinalEntryPackage.Load(options.PackagePath);
+                package.BindControlledTestOverride(
+                    options.AllowControlledTestOverride,
+                    Environment.GetEnvironmentVariable(
+                        FinalEntryPackage.ControlledTestOverrideEnvironment));
                 emit.Stage("package_validated", new SortedDictionary<string, object>
                 {
+                    { "schema_version", package.SchemaVersion },
                     { "operation_type", package.OperationType },
                     { "expected_existing_register_count", package.ExpectedExistingRegisterCount },
+                    { "controlled_test_override_active",
+                        package.ControlledTestOverrideActive },
                 });
                 if (package.OperationType == FinalEntryPackage.GenericOperation)
                 {
@@ -164,6 +205,26 @@ namespace LegacyFibreCheckFinalEntryWriter
                     {
                         { "row_count", package.GenericRecord.Details.Count },
                     });
+                }
+
+                int currentSessionId = 0;
+                bool onlineOperation = !options.OfflineValidate;
+                if (package.OperationType == FinalEntryPackage.ExcelOperation
+                    && onlineOperation)
+                {
+                    using (Process currentProcess = Process.GetCurrentProcess())
+                    {
+                        currentSessionId = currentProcess.SessionId;
+                    }
+                }
+                if (!ExcelInteractiveSessionRules.IsOperationAllowed(
+                    package.OperationType == FinalEntryPackage.ExcelOperation,
+                    onlineOperation,
+                    Environment.UserInteractive,
+                    currentSessionId))
+                {
+                    throw new PackageValidationException(
+                        "excel_interactive_session_required");
                 }
 
                 string workbookPath = package.ResolveAndVerifyWorkbook(options.SourceRoot);

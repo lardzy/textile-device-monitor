@@ -235,6 +235,8 @@ export default function ExecutionTaskInbox() {
               <HumanTaskCard
                 task={selectedTask}
                 nodeRun={selectedNodeRun}
+                inspectionNumber={detail?.run?.inspection_number
+                  || selectedTask.inspection_number}
                 onChanged={refreshAll}
               />
               {!selectedNodeRun && selectedTask.status !== 'completed' && (

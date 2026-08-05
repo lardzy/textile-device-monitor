@@ -32,6 +32,25 @@ const resultOf = file => (
   file?.result && typeof file.result === 'object' ? file.result : file || {}
 );
 
+export const qualitativeResultOf = (file) => {
+  const result = resultOf(file);
+  const value = result.qualitative_result
+    ?? result.w32_value
+    ?? file?.qualitative_result;
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalized = String(value).trim();
+  return normalized || null;
+};
+
+export const isPaperQualitativeResultFile = (file) => {
+  const result = resultOf(file);
+  return qualitativeResultOf(file) !== null
+    && String(result.worksheet || file?.worksheet || '') === 'Sheet1'
+    && String(result.cell || file?.result_cell || '') === 'W32';
+};
+
 const partName = part => (
   part?.name
   ?? part?.part_name
@@ -273,6 +292,8 @@ export default function ExecutionResultFiles({
   onSelectedIdsChange,
   onPrimaryIdChange,
   disabled = false,
+  selectionMode = 'multiple',
+  showPrimary = true,
 }) {
   const [imageFile, setImageFile] = useState(null);
   const normalizedFiles = normalizeResultFiles(files);
@@ -301,6 +322,12 @@ export default function ExecutionResultFiles({
     onPrimaryIdChange?.(id);
   };
 
+  const selectOnly = (fileId) => {
+    const id = String(fileId);
+    onSelectedIdsChange?.([id]);
+    onPrimaryIdChange?.(id);
+  };
+
   if (!normalizedFiles.length) {
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可展示的文件结果" />;
   }
@@ -312,6 +339,9 @@ export default function ExecutionResultFiles({
           const id = resultFileId(file);
           const stringId = id ? String(id) : `result-file-${index}`;
           const result = resultOf(file);
+          const qualitativeResult = qualitativeResultOf(file);
+          const isQualitativeResult = isPaperQualitativeResultFile(file);
+          const qualitativeUnit = String(result.unit || file?.unit || '');
           const parts = Array.isArray(result.parts) ? result.parts : [];
           const remarks = Array.isArray(result.remarks)
             ? result.remarks.map(remarkTextOf).filter(Boolean)
@@ -348,7 +378,14 @@ export default function ExecutionResultFiles({
                   </div>
                 </div>
                 <Space size={4} wrap>
-                  {isPrimary && <Tag color="gold" icon={<StarFilled />}>主单</Tag>}
+                  {isPrimary && (
+                    <Tag
+                      color={isQualitativeResult ? 'blue' : 'gold'}
+                      icon={isQualitativeResult ? undefined : <StarFilled />}
+                    >
+                      {isQualitativeResult ? '已选文件' : '主单'}
+                    </Tag>
+                  )}
                   {inspectorName && <Tag>检验员：{inspectorName}</Tag>}
                   {file.read_status && (
                     <Tag color={readFailed ? 'error' : 'success'}>
@@ -364,25 +401,41 @@ export default function ExecutionResultFiles({
                 </div>
               ) : (
                 <>
-                  <div className="execution-result-file__parts">
-                    {parts.length ? parts.map((part, partIndex) => (
-                      <section key={`${partName(part) || 'default'}-${partIndex}`}>
-                        <Text type="secondary">
-                          {partName(part) || (parts.length === 1 ? '检测结果' : `结果 ${partIndex + 1}`)}
+                  {isQualitativeResult && (
+                    <section className="execution-result-file__qualitative">
+                      <div>
+                        <Text type="secondary">读取单元格</Text>
+                        <Text code>
+                          {result.worksheet || 'Sheet1'}!{result.cell || 'W32'}
                         </Text>
-                        <div className="execution-result-file__components">
-                          {componentsOf(part).map((component, componentIndex) => (
-                            <span key={`${componentName(component)}-${componentIndex}`}>
-                              <strong>{componentName(component)}</strong>
-                              <b>{componentContent(component)}</b>
-                            </span>
-                          ))}
-                        </div>
-                      </section>
-                    )) : (
-                      <Text type="secondary">未读取到成分结果</Text>
-                    )}
-                  </div>
+                      </div>
+                      <strong>{qualitativeResult}</strong>
+                      {qualitativeUnit && <Tag color="blue">单位：{qualitativeUnit}</Tag>}
+                    </section>
+                  )}
+                  {!isQualitativeResult && (
+                    <div className="execution-result-file__parts">
+                      {parts.length ? parts.map((part, partIndex) => (
+                        <section key={`${partName(part) || 'default'}-${partIndex}`}>
+                          <Text type="secondary">
+                            {partName(part) || (parts.length === 1
+                              ? '检测结果'
+                              : `结果 ${partIndex + 1}`)}
+                          </Text>
+                          <div className="execution-result-file__components">
+                            {componentsOf(part).map((component, componentIndex) => (
+                              <span key={`${componentName(component)}-${componentIndex}`}>
+                                <strong>{componentName(component)}</strong>
+                                <b>{componentContent(component)}</b>
+                              </span>
+                            ))}
+                          </div>
+                        </section>
+                      )) : (
+                        <Text type="secondary">未读取到成分结果</Text>
+                      )}
+                    </div>
+                  )}
 
                   {remarks.length > 0 && (
                     <div className="execution-result-file__remarks">
@@ -428,7 +481,7 @@ export default function ExecutionResultFiles({
                       查看图片（{images.length}）
                     </Button>
                   )}
-                  {!readFailed && images.length === 0 && (
+                  {!readFailed && !isQualitativeResult && images.length === 0 && (
                     <Text
                       className={[
                         'execution-result-file__image-state',
@@ -438,7 +491,17 @@ export default function ExecutionResultFiles({
                       {hasImageWarning ? '图片读取异常' : '未读取到表格插图'}
                     </Text>
                   )}
-                  {selectable && id && (
+                  {selectable && id && selectionMode === 'single' && (
+                    <Radio
+                      aria-label={`选择文件：${fileNameOf(file)}`}
+                      checked={selectedSet.has(stringId)}
+                      disabled={disabled || readFailed}
+                      onChange={() => selectOnly(stringId)}
+                    >
+                      选择此文件
+                    </Radio>
+                  )}
+                  {selectable && id && selectionMode !== 'single' && (
                     <>
                       <Checkbox
                         checked={selectedSet.has(stringId)}
@@ -447,13 +510,15 @@ export default function ExecutionResultFiles({
                       >
                         需要
                       </Checkbox>
-                      <Radio
-                        checked={normalizedPrimary === stringId}
-                        disabled={disabled || !selectedSet.has(stringId)}
-                        onClick={() => selectPrimary(stringId)}
-                      >
-                        <StarOutlined /> 设为主单
-                      </Radio>
+                      {showPrimary && (
+                        <Radio
+                          checked={normalizedPrimary === stringId}
+                          disabled={disabled || !selectedSet.has(stringId)}
+                          onClick={() => selectPrimary(stringId)}
+                        >
+                          <StarOutlined /> 设为主单
+                        </Radio>
+                      )}
                     </>
                   )}
                 </Space>

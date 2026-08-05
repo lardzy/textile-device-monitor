@@ -21,6 +21,7 @@ from app.execution.persistence import (
     renew_index_job_lease,
 )
 from app.execution.mutation_runtime import register_mutation_executors
+from app.execution.registry import node_registry
 from app.execution.outbox import (
     claim_outbox_record,
     cleanup_outbox,
@@ -30,6 +31,10 @@ from app.execution.outbox import (
 from app.execution.excel_runtime import register_excel_executors
 from app.execution.microscopy_original_record import (
     register_microscopy_original_record_executor,
+)
+from app.execution.microscopy_check_record import (
+    MICROSCOPY_CHECK_RECORD_NODE_TYPE,
+    microscopy_check_record_executor,
 )
 from app.execution.worker_state import (
     default_worker_id,
@@ -143,6 +148,11 @@ class ExecutionWorker:
         register_mutation_executors()
         register_excel_executors()
         register_microscopy_original_record_executor()
+        node_registry.set_executor(
+            MICROSCOPY_CHECK_RECORD_NODE_TYPE,
+            1,
+            microscopy_check_record_executor,
+        )
         self.worker_id = worker_id or default_worker_id()
         self._stopping = False
         self._next_outbox_cleanup_at = 0.0
@@ -257,6 +267,11 @@ def main() -> None:
     register_mutation_executors()
     register_excel_executors()
     register_microscopy_original_record_executor()
+    node_registry.set_executor(
+        MICROSCOPY_CHECK_RECORD_NODE_TYPE,
+        1,
+        microscopy_check_record_executor,
+    )
     ExecutionWorker().run_forever()
 
 

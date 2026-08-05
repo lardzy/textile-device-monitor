@@ -4,6 +4,7 @@ import {
   createWorkflowNode,
   definitionFromCanvas,
   normalizeWorkflowDefinition,
+  resolveExecutionFocusNodeIds,
   validateWorkflowDefinition,
 } from './executionWorkflow';
 
@@ -137,5 +138,34 @@ describe('execution workflow definition', () => {
     );
     expect(serialized.nodes.find(node => node.id === parked.id).disabled).toBe(true);
     expect(normalized.nodes.find(node => node.id === parked.id).data.disabled).toBe(true);
+  });
+
+  it('聚焦全部并行活动节点并忽略尚未到达的节点', () => {
+    expect(resolveExecutionFocusNodeIds([
+      { node_id: 'done', status: 'succeeded' },
+      { node_id: 'running-a', status: 'running' },
+      { node_id: 'waiting-human', status: 'waiting_human' },
+      { node_id: 'ready-b', status: 'ready' },
+      { node_id: 'future', status: 'pending' },
+    ])).toEqual(['running-a', 'waiting-human', 'ready-b']);
+  });
+
+  it('没有活动节点时回落到失败节点或已完成的结束节点', () => {
+    expect(resolveExecutionFocusNodeIds([
+      { node_id: 'failed-a', status: 'failed' },
+      { node_id: 'future', status: 'pending' },
+    ], [], 'failed')).toEqual(['failed-a']);
+
+    expect(resolveExecutionFocusNodeIds([
+      { node_id: 'work', status: 'succeeded' },
+      { node_id: 'end', status: 'succeeded' },
+    ], [
+      { id: 'work', data: { nodeType: 'result.aggregate' } },
+      { id: 'end', data: { nodeType: 'core.end' } },
+    ], 'completed')).toEqual(['end']);
+
+    expect(resolveExecutionFocusNodeIds([
+      { node_id: 'future', status: 'pending' },
+    ], [], 'running')).toEqual([]);
   });
 });

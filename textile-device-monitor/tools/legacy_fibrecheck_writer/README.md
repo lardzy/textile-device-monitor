@@ -3,12 +3,11 @@
 x86 .NET Framework 4.x 控制台程序，由集中式 Bridge 以“一任务一进程”方式调用，
 完成旧检务系统“特纤管理—检验”上传的受控写入。
 
-> 当前真实写入白名单仅包含 `legacy_regenerated_fiber_count_upload`。
-> `legacy_special_wool_image_upload` 与 `legacy_special_wool_review` 已有执行系统
-> 节点契约、预检单和独立阶段协议，但 Writer 会在登录/文件复制/DAL 保存之前返回
-> `writer_capability_unavailable`。在 `OriginalDataPictureFile + CheckItemID` 子记录保存、
-> 保存后回读，以及复核对子记录的联动更新完成实机证明前，严禁把这两个类型转入
-> 现有根数法硬编码写入路径。
+> Writer 已分别实现 `legacy_special_wool_image_upload` 与
+> `legacy_special_wool_review` 的独立分派、阶段和回读代码，但这只是离线实现完成，
+> **不是生产能力已开放**。后端仍签发
+> `execution_capability.available=false`，Bridge 和 Writer 都会在副作用前拒绝这种
+> 任务包；只有完成受控实机对账并显式修改后端门禁后才可能真实执行。
 
 ## 两种模式
 
@@ -22,7 +21,7 @@ x86 .NET Framework 4.x 控制台程序，由集中式 Bridge 以“一任务一�
 ```text
 FibreCheckWriter.exe ^
   --fibrecheck-dir C:\path\to\FibreCheck ^
-  --account lisy ^
+  --account <旧系统账号> ^
   --execute-upload ^
   --side-effect-permit-stdin ^
   --package C:\path\to\bridge-package.json ^
@@ -37,6 +36,23 @@ file_copy_ready →（等待 stdin 许可）→ file_copy_started → file_copy_
 main_record_save_started → main_record_verified → completed
 ```
 
+图片上传使用独立阶段：
+
+```text
+authenticated → permission_verified → remote_state_verified →
+task_project_verified → file_copy_ready →（等待 stdin 许可）→
+file_copy_started → file_copy_verified → main_record_save_started →
+main_record_verified → picture_child_verified → completed
+```
+
+复核不读取或复制源文件，使用另一条独立阶段：
+
+```text
+authenticated → permission_verified → remote_state_verified →
+review_save_ready →（等待 stdin 许可）→ review_save_started →
+review_main_verified → review_children_verified → completed
+```
+
 - `file_copy_ready` 之后 Writer 会阻塞，只有 Bridge 已把 `file_copy_started`
   持久化到服务端且从 stdin 写入精确的 `PERMIT_REMOTE_WRITE` 后才会继续；
   60 秒内没有许可即在副作用前安全退出。
@@ -47,6 +63,29 @@ main_record_save_started → main_record_verified → completed
   ReviewUserNumber1/FilePath/FileType/CreateUser）。
 - 主记录保存调用官方 `SpecialWoolDAL.SaveSpecialWoolManage`（空明细列表场景下等价于
   单行 INSERT），CreateUser/CreateTime/ID 由 DAL 按旧客户端语义写入。
+
+图片上传的离线实现还固定执行以下核验：
+
+- 根据源任务号重查 `Task_CheckItem`，由原始 ID 和项目字段重新计算脱敏项目键，
+  严格绑定 `OriginalDataPictureFile.CheckItemID`；
+- 在 `Task_CheckItem` 的 `SELECT ... FOR UPDATE` 协作锁内重新计算
+  `原号、-1、-2...` 的 first-free 编号，且结果必须仍与服务端签发的
+  `target_sample_number` 完全相同；Writer 不会擅自改号绕过回执契约；
+- 目标文件使用 `FileMode.CreateNew`，写后重新读取大小和 SHA-256；
+- 服务器目标文件名不沿用工作副本的基础编号，而是严格使用
+  `最终 target_sample_number-39-8B-纤维形状截面定量试验-2026.xls`；主记录
+  `FilePath`、图片子记录 `PictureFileName/OriginalDataFileName` 和机器回执必须
+  全部读回为该名称；新回执会在图片记录与 readback 中同时返回
+  `original_data_filename`，后端仍兼容缺少该字段的本轮早期 v1 回执；
+- 官方 DAL 在一次保存中创建一条 `SpecialWoolManage` 与一条
+  `OriginalDataPictureFile`，随后逐字段回读主记录和图片子记录。
+
+复核实现通过 `SpecialWoolCheckUI` 功能权限及可选 `btnCheck` 控件权限核验后，只设置
+主记录的 `ReviewUser` 与 Oracle `SYSDATE` 得到的 `ReviewTime`。上传成功回执中的
+脱敏 `main_record.id` 会同时写入后端复核预检和 Bridge 私有任务包；Writer 在只读
+查询阶段把实际主键重新散列并精确比对，若同一样品号下的主记录已被替换，会在请求
+副作用许可前拒绝。保存前后还会对主表除上述两个字段外的全部列和所有图片子记录做
+确定性指纹；任何其它变化均转入人工对账。
 
 ## 环境依赖
 
@@ -90,10 +129,11 @@ Instant Client 运行时件（来源：部门共享 ODAC 11.2.0.2.50 xcopy 包�
 - 执行系统只接受同一次运行中由服务端签发的 `.xls` 微观形貌制品，并在批准前
   重新核对制品行、路径、大小和 SHA-256；目标号按 `原号、-1、-2...` 对本系统
   围栏做暂定分配，仍必须由 Windows 只读探针核对旧库占用后才能批准。
-- 图片上传还需证明旧客户端创建 `OriginalDataPictureFile` 时的 `CheckItemID` 来源及
-  主记录/子记录回读；特纤复核还需证明 `ReviewUser/ReviewTime` 与细度、定量子记录
-  的完整联动。当前两者的 `execution_capability.available=false`，不能批准、领取或
-  获得 stdin 副作用许可。
+- 静态反编译和离线实现已经覆盖 `OriginalDataPictureFile.CheckItemID` 来源、官方
+  DAL 主子记录保存、保存后回读，以及复核仅修改 `ReviewUser/ReviewTime`、图片子表
+  不变的约束。当前仍缺少受控真实账号/真实文件服务器上的写后对账证据，因此两者的
+  `execution_capability.available=false` 继续保持，不能批准、领取或获得 stdin
+  副作用许可。
 
 当前已提供的禁写实现包括：
 
@@ -107,6 +147,8 @@ Instant Client 运行时件（来源：部门共享 ODAC 11.2.0.2.50 xcopy 包�
 - 图片上传和复核的 observation/receipt 契约、阶段及未开放门禁记录在
   `special_wool_machine_contracts.json`。后端会对未来机器回执进行操作类型、
   operation/payload/目标编号、项目、文件哈希、主子记录和阶段顺序的严格校验。
-- 复核已静态确认只修改主记录 `ReviewUser/ReviewTime`，图片子记录必须在复核
-  前后保持不变；`SpecialWoolCheckUI` 与 `btnCheck` 权限仍需 Windows 实机只读
-  探测，因此 Writer 继续拒绝两种真实写入类型。
+- Bridge 已能广告三种 Writer 分派，但会继续根据任务包中的后端能力标志拒绝两种
+  图片类任务；复核不会要求或传入 `--source-root`。
+- `test.ps1` 可在没有 Oracle、旧系统账号或共享目录的条件下单独编译运行 C# 契约
+  SelfTest；Bridge Python 测试覆盖图片和复核的独立阶段、副作用许可及 source-root
+  差异。完整 Writer 仍需在 Windows 上引用冻结的 FibreCheck DLL 进行编译。

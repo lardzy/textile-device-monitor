@@ -76,8 +76,9 @@ py -3 -m venv .venv
 
 凭据始终只从配置文件中读取，不通过命令行传递，也不会写入输出 JSON。
 
-执行系统的任务推荐缓存只需要 `Task`、`Task_Sample` 和
-`Task_CheckItem`。其独立 Windows
+执行系统的任务推荐缓存只需要 `Task`、`Task_Sample`、
+`Task_CheckItem`，以及 `SpecialWoolManage` 中同一底单编号族的占用列表。
+编号族只用于在图片上传前确定 `原号、-1、-2...` 的候选号。其独立 Windows
 Bridge 会显式使用下面的轻量模式；默认探针行为和完整查询范围不变：
 
 ```powershell
@@ -89,7 +90,7 @@ Bridge 会显式使用下面的轻量模式；默认探针行为和完整查询�
 ```
 
 轻量模式仍以 `SET TRANSACTION READ ONLY` 开始并始终 `rollback()`，但只执行
-上述两条查询，不生成 `final_entry_view`。输出会带有
+上述四条查询，不生成 `final_entry_view`。输出会带有
 `query_scope: task_snapshot`，供调用方确认查询范围。
 
 图片类特种毛上传可使用独立的零写入观察模式。参数必须来自执行系统预检单；

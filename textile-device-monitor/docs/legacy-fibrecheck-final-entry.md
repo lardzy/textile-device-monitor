@@ -114,6 +114,31 @@ CheckRecordRegister.ID
 
 dry-run 不得构造该服务，也不得调用会创建目录的 `FileDirectoryUtility`。
 
+### v2 多模板与空身份契约
+
+最终写入器的 schema v2 为 `5103.5 / 纤维微观形貌` 固定登记了七个模板名及各自的
+映射配置 SHA-256，模板与指纹必须成对精确命中。详细清单见
+`tools/legacy_fibrecheck_final_entry_writer/README.md`。同一项目的既有登记可以分别使用七个
+受支持模板中的任意一个；核对时以 `CheckRecordRegister.ID` 为主键，将每条
+`OriginalKeyData_CheckItem.ExcelTemplateName` 与它自己的登记模板比较，不再要求所有历史
+记录与本次新登记使用同一模板。
+
+schema v2 的 `SampleIdentity` 可以为空或重复，因此不再承担唯一性约束。登记 ID、关键结果
+关联、项目范围、行数和登记计数仍必须完全一致。schema v1 的 `微观形貌.xls` 及“纵面/横截面”
+身份规则保持不变。
+
+schema v2 同时把任务快照中的完整 `task_project` 放入 Bridge 私有包：两个旧系统 ID 只保留
+`sha256:` 单向摘要，并连同 `project_key`、项目编号/名称、测试方法、`seq_num` 和
+`check_count=1` 一起签发。Writer 每次执行都会只读查询当前 `Task_CheckItem`，对原始 ID 使用
+与 Python 探针相同的摘要和项目键算法后逐字段比较；合同评审导致的方法、ID、顺序或份数变化
+会在构造旧系统写服务前拒绝。成功 raw receipt 返回 Writer 实测绑定，Bridge 不从公开摘要回显。
+
+为单一样品的受控联调保留一个显式覆盖：任务包必须是 schema v2，并包含固定结构的
+`controlled_test_override`；调用方还必须同时提供 `--allow-controlled-test-override`，且环境变量
+`FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO` 与包内目标样品号完全一致。只有远端任务
+`CheckCount=1`、已有登记数为 1、预期追加后为 2 时才可继续。回执记录覆盖是否激活以及联网
+预检是否实际应用；该机制不得作为普通超份数写入入口。
+
 ### 样本 26A045793
 
 目标项目为 `5103.5 / 纤维微观形貌`，任务要求 2 个结果。在线只读结果：
@@ -157,11 +182,15 @@ Excel 模板的配置指纹已成功生成，配置行数为 9，`mapped_table_e
 2. 命令行显式提供 `--side-effect-permit-stdin`；
 3. 所有只读预检完成并输出 ready 阶段后，标准输入精确收到一次 `PERMIT_REMOTE_WRITE`。
 
-任务包只接受样品号、项目编号和精确项目名，不接受调用方提供的旧系统内部 ID。Excel 操作每包只允许一个工作簿，并固定相对路径、文件名、长度和 SHA-256；正式写入使用 GUID 文件名隔离目标，预检必须确认不存在冲突。
+任务包只接受样品号、项目编号、精确项目名及由只读探针生成的旧系统 ID 单向摘要，不接受原始
+内部 ID。Excel 操作每包只允许一个工作簿，并固定相对路径、文件名、长度和 SHA-256；正式写入
+使用 GUID 文件名隔离目标，预检必须确认不存在冲突。
 
 许可令牌之前只能执行登录、权限校验、参数化只读解析、计数对账、模板/映射检查和源文件哈希检查。越过副作用边界后发生的异常统一返回 `reconciliation_required=true`，禁止自动重试；后续只能使用读取模块核对远端登记、文件引用、关键结果、保存人与校对人。
 
 当前模块尚未接到未完成的前置流程节点，也尚未执行首次真实写入。Probe 离线测试
-22 项通过，x86 writer 离线测试 12 项通过；下一阶段应使用一份尚未录入的新任务和用户
+22 项通过；x86 writer 离线测试 26 项通过，覆盖 v1 兼容、七模板精确映射、v2 空身份与受控
+覆盖三重绑定。
+下一阶段应使用一份尚未录入的新任务和用户
 确认的工作簿执行 dry-run，再进行一次受控实写验证。当前 Windows 11 ARM64 虚拟机已用
 32 位调用进程实际完成 Excel 16.0 COM 激活与退出冒烟测试，Excel 位数不再是当前阻塞项。
