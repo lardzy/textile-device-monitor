@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
@@ -31,6 +32,8 @@ ELECTRON_IMAGE_SUFFIXES = frozenset(
     {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 )
 MAX_INDEXED_IMAGES = 2_000
+TASK_SNAPSHOT_SCHEMA_VERSION = 3
+PUBLIC_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{16}$")
 
 
 def _aware(value: Optional[datetime]) -> Optional[datetime]:
@@ -58,6 +61,38 @@ def _escaped_contains(value: str) -> str:
     return "%" + value.replace("\\", "\\\\").replace("%", "\\%").replace(
         "_", "\\_"
     ) + "%"
+
+
+def _is_microscopy_project(value: dict[str, Any]) -> bool:
+    return _normalized_fact(value.get("check_item_name")) in {
+        _normalized_fact(alias) for alias in ELECTRON_PROJECT_NAME_ALIASES
+    }
+
+
+def _public_identifier(value: object) -> Optional[str]:
+    normalized = str(value or "").strip()
+    return normalized if PUBLIC_ID_PATTERN.fullmatch(normalized) else None
+
+
+def _snapshot_contract_is_current(snapshot: object) -> bool:
+    """Only expose snapshots that satisfy the current public identity contract."""
+
+    if not isinstance(snapshot, dict):
+        return False
+    if snapshot.get("schema_version") != TASK_SNAPSHOT_SCHEMA_VERSION:
+        return False
+    projects = snapshot.get("projects")
+    if not isinstance(projects, list):
+        return False
+    for project in projects:
+        if not isinstance(project, dict):
+            return False
+        if _is_microscopy_project(project) and not all(
+            _public_identifier(project.get(key))
+            for key in ("task_check_item_id", "check_item_id")
+        ):
+            return False
+    return True
 
 
 def request_task_snapshot_refresh(
@@ -140,12 +175,24 @@ def cached_task_snapshot(
             db, inspection_number=number
         )
     now = utcnow()
-    snapshot = dict(row.snapshot or {}) or None
+    stored_snapshot = dict(row.snapshot or {}) or None
+    snapshot = (
+        stored_snapshot
+        if _snapshot_contract_is_current(stored_snapshot)
+        else None
+    )
     expires_at = _aware(row.expires_at)
     retry_at = _aware(row.updated_at or row.refresh_requested_at) + timedelta(
         seconds=max(10, int(settings.EXECUTION_TASK_SNAPSHOT_RETRY_SECONDS))
     )
     retry_ready = retry_at <= now
+    contract_refresh_required = stored_snapshot is not None and snapshot is None
+    if contract_refresh_required and row.status not in {"queued", "running"} and (
+        row.status != "failed" or retry_ready
+    ):
+        row, queued = request_task_snapshot_refresh(
+            db, inspection_number=number, force=True
+        )
     if snapshot is not None and expires_at is not None and expires_at > now:
         state = "ready"
     elif snapshot is not None:
@@ -245,13 +292,26 @@ def _normalize_snapshot(
                 "task-project:"
                 + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
             )
+        task_check_item_id = _public_identifier(value.get("task_check_item_id"))
+        check_item_id = _public_identifier(value.get("check_item_id"))
+        if _is_microscopy_project(value) and not (
+            task_check_item_id and check_item_id
+        ):
+            raise ExecutionApiError(
+                422,
+                "task_snapshot_project_identity_missing",
+                "纤维微观形貌任务项目缺少完整的脱敏项目标识，请刷新旧系统任务信息",
+            )
         normalized_projects.append(
             {
                 "project_key": project_key[:100],
+                "task_check_item_id": task_check_item_id,
+                "check_item_id": check_item_id,
                 "check_item_no": check_item_no,
                 "check_item_name": check_item_name,
                 "check_method": check_method,
                 "check_count": value.get("check_count"),
+                "seq_num": value.get("seq_num"),
                 "sample_identify": value.get("sample_identify"),
                 "remark": value.get("remark"),
                 "give_judgement": value.get("give_judgement"),
@@ -273,7 +333,7 @@ def _normalize_snapshot(
     if explicit_sample_name and explicit_sample_name.casefold() not in seen_names:
         sample_names.insert(0, explicit_sample_name)
     return {
-        "schema_version": 2,
+        "schema_version": TASK_SNAPSHOT_SCHEMA_VERSION,
         "inspection_number": inspection_number,
         "sample_name": (
             explicit_sample_name

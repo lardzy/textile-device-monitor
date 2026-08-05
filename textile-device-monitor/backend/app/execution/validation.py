@@ -1151,6 +1151,29 @@ def validate_definition(
                     f"$.nodes[{external_id}].input_mapping.original_record",
                 )
             )
+        expected_project_key = (
+            "$.nodes.record-input.output.selected_project_key"
+        )
+        expected_project = "$.nodes.record-input.output.selected_project"
+        if mapping.get("selected_project_key") != expected_project_key:
+            issues.append(
+                ValidationIssue(
+                    "legacy_special_wool_project_key_mapping_invalid",
+                    "特种毛图片上传必须使用人工确认节点签发的项目键",
+                    (
+                        f"$.nodes[{external_id}].input_mapping."
+                        "selected_project_key"
+                    ),
+                )
+            )
+        if mapping.get("selected_project") != expected_project:
+            issues.append(
+                ValidationIssue(
+                    "legacy_special_wool_project_mapping_invalid",
+                    "特种毛图片上传必须使用人工确认节点签发的任务项目快照",
+                    f"$.nodes[{external_id}].input_mapping.selected_project",
+                )
+            )
 
     special_wool_review_nodes = [
         (node_id, node)

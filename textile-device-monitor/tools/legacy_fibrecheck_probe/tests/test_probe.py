@@ -164,6 +164,11 @@ class ProbeTests(unittest.TestCase):
         for query in probe.QUERIES:
             probe.assert_read_only_sql(query.sql)
             self.assertTrue(probe.compact_sql(query.sql).upper().startswith("SELECT "))
+        for query in probe.SPECIAL_WOOL_DRY_RUN_QUERIES:
+            probe.assert_read_only_sql(query.sql)
+            self.assertTrue(
+                probe.compact_sql(query.sql).upper().startswith("SELECT ")
+            )
         for unsafe in (
             'DELETE FROM "Task"',
             'SELECT 1 FROM "Task"; DELETE FROM "Task"',
@@ -172,6 +177,81 @@ class ProbeTests(unittest.TestCase):
             with self.subTest(unsafe=unsafe):
                 with self.assertRaises(probe.ProbeError):
                     probe.assert_read_only_sql(unsafe)
+
+    def test_special_wool_image_observation_binds_exact_project_and_remote_facts(self) -> None:
+        task_check_item_id = "sha256:1111111111111111"
+        check_item_id = "sha256:2222222222222222"
+        project_row = {
+            "TaskCheckItemID": task_check_item_id,
+            "CheckItemID": check_item_id,
+            "CheckItemNo": "5103.5",
+            "CheckItemName": "膜平面形貌",
+            "CheckMethod": "GB/T 36422-2018",
+            "SeqNum": 1,
+        }
+        project_key = probe._special_wool_project_key(project_row)
+        results = {
+            "special_wool_number_family": ok_result(
+                [
+                    {"SampleNo": "260061860", "RecordCount": 1},
+                    {"SampleNo": "260061860-1", "RecordCount": 1},
+                    {"SampleNo": "260061860-01", "RecordCount": 1},
+                ]
+            ),
+            "special_wool_task_project": ok_result([project_row]),
+            "special_wool_picture_records": ok_result([]),
+            "special_wool_sample_number_unique": ok_result(
+                [
+                    {
+                        "IndexName": "UQ_SAMPLE_NO",
+                        "Uniqueness": "UNIQUE",
+                        "ColumnCount": 1,
+                        "ColumnName": "SampleNo",
+                    }
+                ]
+            ),
+            "special_wool_server_time": ok_result(
+                [{"ServerTime": "2026-08-05T08:00:00"}]
+            ),
+        }
+        observation = probe.build_special_wool_image_observation(
+            results=results,
+            source_inspection_number="260061860",
+            target_sample_number="260061860-2",
+            selected_project_key=project_key,
+            operation_id="operation-1",
+            payload_checksum="a" * 64,
+            generated_at="2026-08-05T08:00:00+00:00",
+        )
+        self.assertEqual(
+            observation["observation_type"],
+            "legacy_special_wool_image_upload_dry_run",
+        )
+        self.assertEqual(
+            observation["target_family"]["occupied_numbers"],
+            ["260061860", "260061860-1"],
+        )
+        self.assertEqual(
+            observation["target_family"]["ignored_numbers"],
+            ["260061860-01"],
+        )
+        self.assertEqual(
+            observation["task_project"]["task_check_item_id"],
+            task_check_item_id,
+        )
+        self.assertFalse(observation["write_performed"])
+        self.assertFalse(observation["ready_for_write"])
+
+        with self.assertRaisesRegex(probe.ProbeError, "不存在或不唯一"):
+            probe.build_special_wool_image_observation(
+                results=results,
+                source_inspection_number="260061860",
+                target_sample_number="260061860-2",
+                selected_project_key="task-project:" + "f" * 24,
+                operation_id="operation-1",
+                payload_checksum="a" * 64,
+                generated_at="2026-08-05T08:00:00+00:00",
+            )
 
     def test_final_entry_paths_are_covered_by_probe_manifest(self) -> None:
         queries = {query.key: probe.compact_sql(query.sql) for query in probe.QUERIES}

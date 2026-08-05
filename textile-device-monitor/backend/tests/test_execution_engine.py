@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from copy import deepcopy
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -16,6 +17,7 @@ from app.execution.catalog import (
     publish_workflow,
 )
 from app.execution.engine import (
+    _normalize_human_submission,
     claim_human_task,
     claim_next_node,
     complete_node,
@@ -1103,6 +1105,128 @@ class ExecutionEngineTests(unittest.TestCase):
                         actor=self.user,
                     )
                 self.assertEqual(rejected.exception.code, "run_not_retryable")
+
+    def test_microscopy_print_decision_allows_print_and_skip_with_sha_binding(self):
+        sha256 = "a" * 64
+        node_run = SimpleNamespace(
+            node_type="human.confirm",
+            input_data={
+                "task_kind": "microscopy_print_confirmation",
+                "artifact": {
+                    "artifact_id": "artifact-1",
+                    "content_sha256": sha256,
+                },
+            },
+        )
+        for decision, printed in (("print", True), ("skip", False)):
+            normalized = _normalize_human_submission(
+                self.db,
+                run=SimpleNamespace(),
+                node_run=node_run,
+                data={
+                    "print_decision": decision,
+                    **(
+                        {"print_completed": True}
+                        if decision == "print"
+                        else {}
+                    ),
+                    "artifact_sha256": sha256,
+                },
+            )
+            self.assertEqual(normalized["print_decision"], decision)
+            self.assertIs(normalized["print_requested"], decision == "print")
+            self.assertIs(normalized["print_completed"], printed)
+            self.assertIs(normalized["printed"], printed)
+            self.assertEqual(normalized["artifact_sha256"], sha256)
+
+        with self.assertRaises(ExecutionApiError) as raised:
+            _normalize_human_submission(
+                self.db,
+                run=SimpleNamespace(),
+                node_run=node_run,
+                data={
+                    "print_decision": "skip",
+                    "artifact_sha256": "b" * 64,
+                },
+            )
+        self.assertEqual(
+            raised.exception.code,
+            "microscopy_print_artifact_changed",
+        )
+
+    def test_microscopy_print_requires_explicit_completion_confirmation(self):
+        sha256 = "d" * 64
+        node_run = SimpleNamespace(
+            node_type="human.confirm",
+            input_data={
+                "task_kind": "microscopy_print_confirmation",
+                "artifact": {"content_sha256": sha256},
+            },
+        )
+        for data in (
+            {
+                "print_decision": "print",
+                "artifact_sha256": sha256,
+            },
+            {
+                "print_decision": "print",
+                "print_completed": False,
+                "artifact_sha256": sha256,
+            },
+        ):
+            with self.subTest(data=data):
+                with self.assertRaises(ExecutionApiError) as raised:
+                    _normalize_human_submission(
+                        self.db,
+                        run=SimpleNamespace(),
+                        node_run=node_run,
+                        data=data,
+                    )
+                self.assertEqual(
+                    raised.exception.code,
+                    "microscopy_print_not_completed",
+                )
+
+    def test_microscopy_skip_ignores_spoofed_completion_flag(self):
+        sha256 = "e" * 64
+        normalized = _normalize_human_submission(
+            self.db,
+            run=SimpleNamespace(),
+            node_run=SimpleNamespace(
+                node_type="human.confirm",
+                input_data={
+                    "task_kind": "microscopy_print_confirmation",
+                    "artifact": {"content_sha256": sha256},
+                },
+            ),
+            data={
+                "print_decision": "skip",
+                "print_completed": True,
+                "artifact_sha256": sha256,
+            },
+        )
+        self.assertFalse(normalized["print_requested"])
+        self.assertFalse(normalized["print_completed"])
+        self.assertFalse(normalized["printed"])
+
+    def test_microscopy_print_keeps_legacy_printed_true_compatibility(self):
+        sha256 = "c" * 64
+        normalized = _normalize_human_submission(
+            self.db,
+            run=SimpleNamespace(),
+            node_run=SimpleNamespace(
+                node_type="human.confirm",
+                input_data={
+                    "task_kind": "microscopy_print_confirmation",
+                    "artifact": {"content_sha256": sha256},
+                },
+            ),
+            data={"printed": True, "artifact_sha256": sha256},
+        )
+        self.assertEqual(normalized["print_decision"], "print")
+        self.assertTrue(normalized["print_requested"])
+        self.assertTrue(normalized["print_completed"])
+        self.assertTrue(normalized["printed"])
 
     def test_published_version_is_immutable_snapshot(self):
         version = self.db.query(ExecutionWorkflowVersion).one()

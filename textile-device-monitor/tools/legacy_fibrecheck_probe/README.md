@@ -92,6 +92,26 @@ Bridge 会显式使用下面的轻量模式；默认探针行为和完整查询�
 上述两条查询，不生成 `final_entry_view`。输出会带有
 `query_scope: task_snapshot`，供调用方确认查询范围。
 
+图片类特种毛上传可使用独立的零写入观察模式。参数必须来自执行系统预检单；
+该模式只生成事实文档，不会开放 Writer capability：
+
+```powershell
+.\.venv\Scripts\python.exe probe.py `
+  --fibrecheck-dir "C:\FibreCheck" `
+  --sample-no 260061860 `
+  --target-sample-no 260061860-2 `
+  --selected-project-key "task-project:<24位十六进制>" `
+  --operation-id "<执行系统操作ID>" `
+  --payload-checksum "<64位SHA-256>" `
+  --special-wool-image-dry-run `
+  --output ".\special-wool-image-observation.json"
+```
+
+查询范围固定为编号族、精确任务项目、`OriginalDataPictureFile` 主子表读回、
+`SampleNo` 单列唯一索引和 Oracle 服务器时间。输出 observation 固定包含
+`write_performed=false`、`ready_for_write=false`；目标冲突也会如实记录，不会
+自动改号或把观察文档当成写入许可。
+
 `--fibrecheck-dir` 中必须存在主配置文件 `Toone.FibreCheck.Entites.dll.config`。工具只读取其中名为 `FibreCheckEntities` 的 Oracle 配置，不会自动尝试 HD 或其它区域配置。配置中的数据库账号仅在进程内用于连接，不会写入 JSON。
 
 ## 查询范围

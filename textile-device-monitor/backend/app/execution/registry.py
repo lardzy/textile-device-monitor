@@ -793,9 +793,44 @@ def _register_builtins() -> None:
                             "filename",
                             "content_sha256",
                         ),
-                    )
+                    ),
+                    "selected_project_key": {
+                        "type": "string",
+                        "pattern": r"^task-project:[0-9a-f]{24}$",
+                    },
+                    "selected_project": _object_schema(
+                        {
+                            "project_key": {
+                                "type": "string",
+                                "pattern": r"^task-project:[0-9a-f]{24}$",
+                            },
+                            "task_check_item_id": {
+                                "type": "string",
+                                "pattern": r"^sha256:[0-9a-f]{16}$",
+                            },
+                            "check_item_id": {
+                                "type": "string",
+                                "pattern": r"^sha256:[0-9a-f]{16}$",
+                            },
+                            "check_item_no": {"type": ["string", "null"]},
+                            "check_item_name": {"type": "string"},
+                            "check_method": {"type": "string"},
+                            "seq_num": {"type": ["integer", "string", "null"]},
+                        },
+                        required=(
+                            "project_key",
+                            "task_check_item_id",
+                            "check_item_id",
+                            "check_item_name",
+                            "check_method",
+                        ),
+                    ),
                 },
-                required=("original_record",),
+                required=(
+                    "original_record",
+                    "selected_project_key",
+                    "selected_project",
+                ),
             ),
             output_schema=_object_schema(
                 {

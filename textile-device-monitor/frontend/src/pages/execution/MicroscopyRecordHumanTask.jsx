@@ -351,13 +351,20 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
   );
 };
 
-const MicroscopyPrintConfirmation = ({ form, inputData, disabled }) => {
+const MicroscopyPrintConfirmation = ({
+  form,
+  inputData,
+  disabled,
+  legacyPrintContract,
+}) => {
   const input = inputData?.print_context || inputData || {};
   const artifact = input.artifact || {};
   const downloadUrl = artifact.download_url || artifact.preview_url;
   const previewUrl = artifact.preview_url || downloadUrl;
   const sha256 = String(artifact.sha256 || artifact.content_sha256 || '').trim();
   const fileName = artifact.name || artifact.filename || '纤维微观形貌原始记录';
+  const printDecision = Form.useWatch('print_decision', form);
+  const effectivePrintDecision = legacyPrintContract ? 'print' : printDecision;
 
   useEffect(() => {
     if (sha256 && form.getFieldValue('artifact_sha256') !== sha256) {
@@ -365,7 +372,16 @@ const MicroscopyPrintConfirmation = ({ form, inputData, disabled }) => {
     }
   }, [form, sha256]);
 
-  const openPrintFile = () => {
+  useEffect(() => {
+    if (
+      effectivePrintDecision !== 'print'
+      && form.getFieldValue('print_completed') !== undefined
+    ) {
+      form.setFieldValue('print_completed', undefined);
+    }
+  }, [effectivePrintDecision, form]);
+
+  const openWorkbook = () => {
     if (previewUrl) {
       window.open(previewUrl, '_blank', 'noopener,noreferrer');
     }
@@ -387,51 +403,108 @@ const MicroscopyPrintConfirmation = ({ form, inputData, disabled }) => {
           </Descriptions.Item>
         </Descriptions>
       ) : (
-        <Alert showIcon type="error" message="文件缺少 SHA-256，暂不能确认打印" />
+        <Alert showIcon type="error" message="文件缺少 SHA-256，暂不能继续" />
       )}
-      <Space wrap>
-        {downloadUrl && (
-          <Button
-            icon={<DownloadOutlined />}
-            href={downloadUrl}
-            target="_blank"
-            rel="noreferrer"
-            disabled={disabled}
-          >
-            下载工作簿
-          </Button>
-        )}
-        <Button
-          type="primary"
-          icon={<PrinterOutlined />}
-          disabled={disabled || !previewUrl || !sha256}
-          onClick={openPrintFile}
+      {legacyPrintContract ? (
+        <Alert
+          showIcon
+          type="warning"
+          message="此任务由旧版本流程创建"
+          description="旧任务仅支持完成打印后确认；新创建的任务可以选择暂不打印。"
+        />
+      ) : (
+        <Form.Item
+          name="print_decision"
+          label="是否打印原始记录"
+          rules={[{ required: true, message: '请选择打印原始记录或暂不打印' }]}
         >
-          打开并打印
-        </Button>
-      </Space>
-      <Paragraph type="secondary" className="execution-microscopy-print__hint">
-        请在 Excel 中打开工作表“微观形貌”，按模板默认打印区域打印。
-      </Paragraph>
-      <Form.Item name="artifact_sha256" hidden>
-        <Input />
-      </Form.Item>
+          <Radio.Group
+            disabled={disabled || !sha256}
+            className="execution-microscopy-print__decisions"
+          >
+            <Radio value="print">
+              <span>
+                <strong>打印</strong>
+                <Text type="secondary">
+                  下载或打开工作簿后，在 Excel 中手动打印“微观形貌”工作表的模板默认打印区域
+                </Text>
+              </span>
+            </Radio>
+            <Radio value="skip">
+              <span>
+                <strong>暂不打印</strong>
+                <Text type="secondary">保留生成的工作簿并继续后续流程</Text>
+              </span>
+            </Radio>
+          </Radio.Group>
+        </Form.Item>
+      )}
+      {effectivePrintDecision === 'print' && (
+        <div className="execution-microscopy-print__manual-actions">
+          <Alert
+            showIcon
+            type="info"
+            message="打印需要在 Excel 中手动完成"
+            description="网页不会自动打印。请打开工作簿，切换到“微观形貌”工作表，并使用模板中已经设置好的默认打印区域。"
+          />
+          <Space wrap>
+            {downloadUrl && (
+              <Button
+                icon={<DownloadOutlined />}
+                href={downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                disabled={disabled}
+              >
+                下载工作簿
+              </Button>
+            )}
+            <Button
+              type="primary"
+              icon={<PrinterOutlined />}
+              disabled={disabled || !previewUrl || !sha256}
+              onClick={openWorkbook}
+            >
+              打开工作簿（手动打印）
+            </Button>
+          </Space>
+          <Paragraph type="secondary" className="execution-microscopy-print__hint">
+            打开或下载工作簿不会被系统自动记为已打印；请在实际打印完成后手动确认。
+          </Paragraph>
+          <Form.Item
+            name="print_completed"
+            valuePropName="checked"
+            rules={[{
+              validator: (_, value) => (
+                value === true && Boolean(sha256)
+                  ? Promise.resolve()
+                  : Promise.reject(new Error('请确认已在 Excel 中完成打印'))
+              ),
+            }]}
+          >
+            <Checkbox disabled={disabled || !sha256}>
+              我确认已在 Excel 中完成打印
+            </Checkbox>
+          </Form.Item>
+        </div>
+      )}
+      {effectivePrintDecision === 'skip' && (
+        <Alert
+          showIcon
+          type="success"
+          message="本次暂不打印"
+          description="提交后将直接继续后续流程；生成的工作簿仍可下载。"
+        />
+      )}
       <Form.Item
-        name="printed"
-        valuePropName="checked"
-        rules={[{
-          validator: (_, value) => (
-            value === true && Boolean(sha256)
-              ? Promise.resolve()
-              : Promise.reject(new Error('请完成打印并确认文件校验和'))
-          ),
-        }]}
+        name="artifact_sha256"
+        hidden
+        rules={[
+          { required: true, message: '生成文件缺少校验和' },
+          { pattern: /^[0-9a-f]{64}$/i, message: '生成文件校验和格式无效' },
+        ]}
       >
-        <Checkbox disabled={disabled || !sha256}>
-          已完成打印，并确认文件校验和
-          {sha256 ? ` ${sha256.slice(0, 12)}…` : ''}
-          未变化
-        </Checkbox>
+        <Input />
       </Form.Item>
     </section>
   );
@@ -441,6 +514,7 @@ export default function MicroscopyRecordHumanTask({
   taskKind,
   form,
   inputData,
+  legacyPrintContract = false,
   disabled = false,
 }) {
   if (taskKind === 'microscopy_record_input') {
@@ -448,7 +522,12 @@ export default function MicroscopyRecordHumanTask({
   }
   if (taskKind === 'microscopy_print_confirmation') {
     return (
-      <MicroscopyPrintConfirmation form={form} inputData={inputData} disabled={disabled} />
+      <MicroscopyPrintConfirmation
+        form={form}
+        inputData={inputData}
+        disabled={disabled}
+        legacyPrintContract={legacyPrintContract}
+      />
     );
   }
   return null;

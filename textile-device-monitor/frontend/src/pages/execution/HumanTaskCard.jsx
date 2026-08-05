@@ -98,6 +98,8 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
       delete properties.judge_basis;
       delete properties.judgement;
       delete properties.artifact_sha256;
+      delete properties.print_decision;
+      delete properties.print_completed;
       delete properties.printed;
     }
     return { ...schema, properties };
@@ -146,6 +148,33 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
 
   const valuesForSubmit = () => {
     const values = form.getFieldsValue();
+    if (taskKind === 'microscopy_print_confirmation') {
+      const artifact = nodeRun?.input_data?.artifact
+        || nodeRun?.input_data?.print_context?.artifact
+        || {};
+      const legacyPrintContract = Boolean(
+        schema.properties?.printed && !schema.properties?.print_decision,
+      );
+      const {
+        print_completed: printCompleted,
+        print_decision: printDecision,
+        ...otherValues
+      } = values;
+      return {
+        ...otherValues,
+        ...(legacyPrintContract
+          ? { printed: printCompleted === true }
+          : {
+            print_decision: printDecision,
+            ...(printDecision === 'print'
+              ? { print_completed: printCompleted === true }
+              : {}),
+          }),
+        artifact_sha256: String(
+          artifact.sha256 || artifact.content_sha256 || '',
+        ).trim(),
+      };
+    }
     if (hasImageSelection) {
       const normalizedImageIds = Array.isArray(values.selected_image_ids)
         ? values.selected_image_ids.map(value => String(value))
@@ -655,6 +684,9 @@ export default function HumanTaskCard({ task, nodeRun, onChanged }) {
               taskKind={taskKind}
               form={form}
               inputData={candidatePayload}
+              legacyPrintContract={Boolean(
+                schema.properties?.printed && !schema.properties?.print_decision,
+              )}
               disabled={working}
             />
           )}

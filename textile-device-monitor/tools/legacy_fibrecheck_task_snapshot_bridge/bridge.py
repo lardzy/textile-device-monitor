@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,9 @@ DEFAULT_POLL_SECONDS = 15.0
 # 后端默认领取租约为 180 秒；探针必须更早超时，才能给完成回传和
 # 短暂网络抖动保留足够余量。
 DEFAULT_PROBE_TIMEOUT_SECONDS = 90.0
+TASK_SNAPSHOT_SCHEMA_VERSION = 3
+MICROSCOPY_PROJECT_NAMES = frozenset({"纤维微观形貌", "膜平面形貌"})
+PUBLIC_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{16}$")
 
 
 class SnapshotBridgeError(Exception):
@@ -139,6 +143,15 @@ def _project_key(item: Mapping[str, Any]) -> str:
     return "task-project:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
 
+def _is_microscopy_project(item: Mapping[str, Any]) -> bool:
+    return _compact_text(item.get("CheckItemName")) in MICROSCOPY_PROJECT_NAMES
+
+
+def _public_identifier(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if PUBLIC_ID_PATTERN.fullmatch(normalized) else None
+
+
 def build_snapshot(
     document: Mapping[str, Any],
     inspection_number: str,
@@ -178,7 +191,7 @@ def build_snapshot(
                 "任务不存在但返回了样品或任务项目",
             )
         return {
-            "schema_version": 2,
+            "schema_version": TASK_SNAPSHOT_SCHEMA_VERSION,
             "sample_name": None,
             "sample_names": [],
             "check_basis": None,
@@ -218,13 +231,28 @@ def build_snapshot(
         item_task_id = item.get("TaskID")
         if not _same_identifier(item_task_id, task_id):
             continue
+        task_check_item_id = _public_identifier(item.get("ID"))
+        check_item_id = _public_identifier(item.get("CheckItemID"))
+        if _is_microscopy_project(item) and not (
+            task_check_item_id and check_item_id
+        ):
+            raise SnapshotBridgeError(
+                "probe_project_identity_missing",
+                "纤维微观形貌任务项目缺少完整的脱敏项目标识",
+            )
         projects.append(
             {
                 "project_key": _project_key(item),
+                # 探针已对数据库内部 ID 做 sha256 脱敏。保留这两个稳定引用，
+                # 让后续图片上传预检能证明“用户选择的项目”和 Windows 端
+                # 再次只读解析到的 Task_CheckItem 是同一行，而不暴露原始 ID。
+                "task_check_item_id": task_check_item_id,
+                "check_item_id": check_item_id,
                 "check_item_no": item.get("CheckItemNo"),
                 "check_item_name": item.get("CheckItemName"),
                 "check_method": item.get("CheckMethod"),
                 "check_count": item.get("CheckCount"),
+                "seq_num": item.get("SeqNum"),
                 "sample_identify": item.get("SampleIdentify"),
                 "remark": item.get("Remark"),
                 "give_judgement": item.get("GiveJudgement"),
@@ -232,7 +260,7 @@ def build_snapshot(
         )
 
     return {
-        "schema_version": 2,
+        "schema_version": TASK_SNAPSHOT_SCHEMA_VERSION,
         # 只有唯一非空名称时给出无歧义快捷值；全量选项保留在
         # sample_names，供后续人工确认节点处理一任务多样品情况。
         "sample_name": sample_names[0] if len(sample_names) == 1 else None,

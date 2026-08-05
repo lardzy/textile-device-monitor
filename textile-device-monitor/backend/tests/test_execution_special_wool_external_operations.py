@@ -20,6 +20,8 @@ from app.execution.external_operations import (
     approve_prepared_external_operation,
     prepare_legacy_special_wool_image_operation,
     prepare_legacy_special_wool_review_operation,
+    validate_external_receipt,
+    validate_special_wool_machine_observation,
 )
 from app.execution.models import (
     ExecutionArtifact,
@@ -144,6 +146,86 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         self.db.flush()
         return row
 
+    def _project_input(self, *, name: str = "纤维微观形貌") -> dict:
+        project = {
+            "project_key": "task-project:" + "a" * 24,
+            "task_check_item_id": "sha256:" + "1" * 16,
+            "check_item_id": "sha256:" + "2" * 16,
+            "check_item_no": "5103.5",
+            "check_item_name": name,
+            "check_method": "GB/T 36422-2018",
+            "seq_num": 1,
+        }
+        return {
+            "selected_project_key": project["project_key"],
+            "selected_project": project,
+        }
+
+    def _image_receipt(self, operation) -> dict:
+        source = operation.request_summary["files"][0]
+        main_id = "sha256:" + "3" * 16
+        return {
+            "schema_version": 1,
+            "receipt_type": "legacy_special_wool_image_upload",
+            "operation_id": operation.id,
+            "payload_checksum": operation.payload_checksum,
+            "target_sample_number": operation.request_summary[
+                "target_sample_number"
+            ],
+            "source_artifact": {
+                key: source[key]
+                for key in (
+                    "artifact_id",
+                    "filename",
+                    "size_bytes",
+                    "content_sha256",
+                )
+            },
+            "task_project": dict(operation.request_summary["task_project"]),
+            "server_file": {
+                "filename": source["filename"],
+                "size_bytes": source["size_bytes"],
+                "content_sha256": source["content_sha256"],
+            },
+            "main_record": {
+                "id": main_id,
+                "field_fingerprint": "4" * 64,
+                "create_user": "sha256:" + "5" * 16,
+                "create_time": "2026-08-05T08:00:00",
+            },
+            "picture_records": [
+                {
+                    "id": "sha256:" + "6" * 16,
+                    "main_id": main_id,
+                    "check_item_id": operation.request_summary[
+                        "task_project"
+                    ]["check_item_id"],
+                    "field_fingerprint": "7" * 64,
+                    "filename": source["filename"],
+                    "create_time": "2026-08-05T08:00:00",
+                }
+            ],
+            "readback": {
+                "main_count": 1,
+                "picture_count": 1,
+                "mismatches": [],
+                "verified_at": "2026-08-05T08:00:01Z",
+            },
+            "stages": [
+                "authenticated",
+                "permission_verified",
+                "remote_state_verified",
+                "task_project_verified",
+                "file_copy_ready",
+                "file_copy_started",
+                "file_copy_verified",
+                "main_record_save_started",
+                "main_record_verified",
+                "picture_child_verified",
+            ],
+            "reconciliation_required": False,
+        }
+
     def test_suffix_allocation_is_deterministic(self):
         self.assertEqual(
             allocate_legacy_sample_number(
@@ -170,7 +252,10 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             run=self.run,
             node_run=node_run,
             node={"config": {"credential_slot": "legacy_account"}},
-            input_data={"original_record": original_record},
+            input_data={
+                "original_record": original_record,
+                **self._project_input(),
+            },
         )
         self.assertFalse(reused)
         summary = operation.request_summary
@@ -188,6 +273,10 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             "review_copies": 1,
         })
         self.assertEqual(summary["files"][0]["artifact_id"], artifact.id)
+        self.assertEqual(
+            summary["task_project"]["task_check_item_id"],
+            "sha256:" + "1" * 16,
+        )
         self.assertFalse(summary["execution_capability"]["available"])
         self.assertTrue(
             summary["target_allocation"][
@@ -199,7 +288,10 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             run=self.run,
             node_run=node_run,
             node={"config": {"credential_slot": "legacy_account"}},
-            input_data={"original_record": original_record},
+            input_data={
+                "original_record": original_record,
+                **self._project_input(),
+            },
         )
         self.assertTrue(reused)
         self.assertEqual(duplicate.id, operation.id)
@@ -223,6 +315,121 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         )
         self.assertEqual(operation.status, "prepared")
 
+    def test_image_preflight_rejects_missing_or_wrong_task_project(self):
+        _artifact, original_record = self._artifact()
+        node_run = self._node_run(
+            LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+            "upload-invalid-project",
+        )
+        with self.assertRaises(ExecutionApiError) as missing:
+            prepare_legacy_special_wool_image_operation(
+                self.db,
+                run=self.run,
+                node_run=node_run,
+                node={"config": {"credential_slot": "legacy_account"}},
+                input_data={"original_record": original_record},
+            )
+        self.assertEqual(
+            missing.exception.code,
+            "legacy_special_wool_task_project_required",
+        )
+        wrong = self._project_input()
+        wrong["selected_project"] = {
+            **wrong["selected_project"],
+            "check_method": "按客户要求",
+        }
+        with self.assertRaises(ExecutionApiError) as mismatch:
+            prepare_legacy_special_wool_image_operation(
+                self.db,
+                run=self.run,
+                node_run=node_run,
+                node={"config": {"credential_slot": "legacy_account"}},
+                input_data={"original_record": original_record, **wrong},
+            )
+        self.assertEqual(
+            mismatch.exception.code,
+            "legacy_special_wool_task_project_method_mismatch",
+        )
+
+    def test_machine_observation_and_receipt_are_strict_and_bound(self):
+        _artifact, original_record = self._artifact()
+        node_run = self._node_run(
+            LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+            "upload-machine-contract",
+        )
+        operation, _ = prepare_legacy_special_wool_image_operation(
+            self.db,
+            run=self.run,
+            node_run=node_run,
+            node={"config": {"credential_slot": "legacy_account"}},
+            input_data={
+                "original_record": original_record,
+                **self._project_input(),
+            },
+        )
+        project = {
+            **operation.request_summary["task_project"],
+            "match_count": 1,
+        }
+        observation = {
+            "schema_version": 1,
+            "observation_type": (
+                "legacy_special_wool_image_upload_dry_run"
+            ),
+            "mode": "read_only",
+            "operation_id": operation.id,
+            "payload_checksum": operation.payload_checksum,
+            "generated_at": "2026-08-05T08:00:00Z",
+            "observation_checksum": "8" * 64,
+            "source_inspection_number": self.run.inspection_number,
+            "target_sample_number": operation.request_summary[
+                "target_sample_number"
+            ],
+            "target_family": {
+                "base_number": self.run.inspection_number,
+                "occupied_numbers": [],
+                "ignored_numbers": [],
+                "candidate_number": self.run.inspection_number,
+                "candidate_exact_count": 0,
+                "unique_sample_number_constraint": None,
+            },
+            "task_project": project,
+            "picture_readback": {
+                "main_count": 0,
+                "picture_count": 0,
+                "records": [],
+            },
+            "write_performed": False,
+            "ready_for_write": False,
+        }
+        self.assertIs(
+            validate_special_wool_machine_observation(
+                operation, observation
+            ),
+            observation,
+        )
+        invalid_observation = {**observation, "unexpected": True}
+        with self.assertRaises(ExecutionApiError) as invalid:
+            validate_special_wool_machine_observation(
+                operation, invalid_observation
+            )
+        self.assertEqual(
+            invalid.exception.code,
+            "legacy_special_wool_machine_document_invalid",
+        )
+
+        receipt = self._image_receipt(operation)
+        self.assertIs(validate_external_receipt(operation, receipt), receipt)
+        changed = {
+            **receipt,
+            "task_project": {
+                **receipt["task_project"],
+                "check_method": "OTHER",
+            },
+        }
+        with self.assertRaises(ExecutionApiError):
+            validate_external_receipt(operation, changed)
+
     def test_review_uses_independent_stage_profile_and_completed_upload(self):
         _artifact, original_record = self._artifact()
         upload_node = self._node_run(
@@ -234,15 +441,13 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             run=self.run,
             node_run=upload_node,
             node={"config": {"credential_slot": "legacy_account"}},
-            input_data={"original_record": original_record},
+            input_data={
+                "original_record": original_record,
+                **self._project_input(name="膜平面形貌"),
+            },
         )
         upload.status = "completed"
-        upload.receipt = {
-            "target_sample_number": upload.request_summary[
-                "target_sample_number"
-            ],
-            "remote_record_id": "sha256:test",
-        }
+        upload.receipt = self._image_receipt(upload)
         review_node = self._node_run(
             LEGACY_SPECIAL_WOOL_REVIEW_NODE,
             "review",

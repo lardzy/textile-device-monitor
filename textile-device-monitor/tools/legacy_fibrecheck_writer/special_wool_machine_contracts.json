@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "capability_available": false,
+  "write_performed": false,
+  "operations": {
+    "legacy_special_wool_image_upload": {
+      "function_type": "Toone.FibreCheck.OriRecord.SpecialWool.SpecialWoolSearchUI",
+      "observation_type": "legacy_special_wool_image_upload_dry_run",
+      "receipt_type": "legacy_special_wool_image_upload",
+      "readonly_query_keys": [
+        "special_wool_number_family",
+        "special_wool_task_project",
+        "special_wool_picture_records",
+        "special_wool_sample_number_unique",
+        "special_wool_server_time"
+      ],
+      "verified_stage": "picture_child_verified",
+      "required_business_facts": {
+        "project_names": ["纤维微观形貌", "膜平面形貌"],
+        "check_method": "GB/T 36422-2018",
+        "picture_child_table": "OriginalDataPictureFile",
+        "sample_number_policy": "base_then_first_free_positive_integer_suffix"
+      }
+    },
+    "legacy_special_wool_review": {
+      "function_type": "Toone.FibreCheck.OriRecord.SpecialWool.SpecialWoolCheckUI",
+      "control_permission": "btnCheck_if_configured",
+      "observation_type": "legacy_special_wool_review_dry_run",
+      "receipt_type": "legacy_special_wool_review",
+      "readonly_query_keys": [
+        "special_wool_picture_records",
+        "special_wool_server_time"
+      ],
+      "verified_stage": "review_children_verified",
+      "verified_save_semantics": {
+        "main_updates": ["ReviewUser", "ReviewTime"],
+        "picture_child_updates": [],
+        "picture_children_must_remain_unchanged": true
+      }
+    }
+  },
+  "activation_gates": [
+    "Windows CheckUI function and btnCheck permission probe",
+    "SampleNo unique index discovery",
+    "real existing and absent record readback",
+    "file server destination and ACL verification",
+    "typed observation accepted by backend",
+    "typed receipt readback verification",
+    "explicit final approval"
+  ]
+}

@@ -94,3 +94,19 @@ Instant Client 运行时件（来源：部门共享 ODAC 11.2.0.2.50 xcopy 包�
   主记录/子记录回读；特纤复核还需证明 `ReviewUser/ReviewTime` 与细度、定量子记录
   的完整联动。当前两者的 `execution_capability.available=false`，不能批准、领取或
   获得 stdin 副作用许可。
+
+当前已提供的禁写实现包括：
+
+- 默认流程把人工确认的 `selected_project_key` 与脱敏项目快照传给上传预检；
+  后端仅接受“纤维微观形貌/膜平面形貌 + GB/T 36422-2018”，并绑定
+  `Task_CheckItem`、`CheckItem` 的脱敏标识。
+- Python 只读探针新增 `--special-wool-image-dry-run`，只查询远端编号族、任务
+  项目、`OriginalDataPictureFile`、`SampleNo` 唯一索引和 Oracle 服务器时间，
+  生成 `legacy_special_wool_image_upload_dry_run` 类型观察文档；始终声明
+  `write_performed=false`、`ready_for_write=false`。
+- 图片上传和复核的 observation/receipt 契约、阶段及未开放门禁记录在
+  `special_wool_machine_contracts.json`。后端会对未来机器回执进行操作类型、
+  operation/payload/目标编号、项目、文件哈希、主子记录和阶段顺序的严格校验。
+- 复核已静态确认只修改主记录 `ReviewUser/ReviewTime`，图片子记录必须在复核
+  前后保持不变；`SpecialWoolCheckUI` 与 `btnCheck` 权限仍需 Windows 实机只读
+  探测，因此 Writer 继续拒绝两种真实写入类型。

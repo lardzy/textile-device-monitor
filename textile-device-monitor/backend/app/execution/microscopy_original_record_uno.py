@@ -80,6 +80,15 @@ def _graphic_shapes(draw_page):
 
 
 def _set_print_area(sheet, range_name):
+    # The approved legacy template contains a worksheet-scoped, ordinary
+    # ``Print_Area`` name.  LibreOffice otherwise preserves that name and also
+    # emits Excel's built-in print-area name, leaving two conflicting names in
+    # the generated .xls file.  Remove only the ordinary worksheet-level name
+    # before setting the built-in print area through XPrintAreas.
+    named_ranges = sheet.NamedRanges
+    for name in tuple(named_ranges.ElementNames):
+        if str(name).casefold() == "print_area":
+            named_ranges.removeByName(name)
     target = sheet.getCellRangeByName(range_name).RangeAddress
     sheet.setPrintAreas((target,))
 
@@ -97,6 +106,32 @@ def _print_area_matches(sheet, range_name):
         and int(current.EndColumn) == int(expected.EndColumn)
         and int(current.EndRow) == int(expected.EndRow)
     )
+
+
+def _ordinary_print_area_removed(sheet):
+    return all(
+        str(name).casefold() != "print_area"
+        for name in tuple(sheet.NamedRanges.ElementNames)
+    )
+
+
+def _shape_image_index(shape):
+    prefix = "microscopy_image_"
+    name = str(getattr(shape, "Name", "") or "")
+    if not name.startswith(prefix):
+        return None
+    try:
+        return int(name[len(prefix) :])
+    except ValueError:
+        return None
+
+
+def _encode_horizontal(value, document_scale, biff_excel_x_scale):
+    return round(int(value) * float(document_scale) * float(biff_excel_x_scale))
+
+
+def _decode_horizontal(value, biff_excel_x_scale):
+    return round(int(value) / float(biff_excel_x_scale))
 
 
 def _write(payload):
@@ -157,6 +192,9 @@ def _write(payload):
             )
             offset_x = (width - int(canvas["max_width"] * scale)) // 2
             offset_y = (height - int(canvas["max_height"] * scale)) // 2
+            biff_excel_x_scale = float(canvas["biff_excel_x_scale"])
+            if biff_excel_x_scale <= 0:
+                raise RuntimeError("invalid_biff_excel_x_scale")
             draw_page = sheet.DrawPage
             provider = service_manager.createInstanceWithContext(
                 "com.sun.star.graphic.GraphicProvider", context
@@ -171,16 +209,32 @@ def _write(payload):
                     "com.sun.star.drawing.GraphicObjectShape"
                 )
                 shape.Graphic = graphic
+                draw_page.add(shape)
+                shape.Name = "microscopy_image_%d" % int(image["index"])
+                shape.Anchor = sheet.getCellRangeByName("A4")
+                shape.ResizeWithCell = False
                 point = uno.createUnoStruct("com.sun.star.awt.Point")
-                point.X = origin_x + offset_x + round(int(image["x"]) * scale)
+                point.X = (
+                    origin_x
+                    + offset_x
+                    + _encode_horizontal(
+                        image["x"], scale, biff_excel_x_scale
+                    )
+                )
                 point.Y = origin_y + offset_y + round(int(image["y"]) * scale)
                 size = uno.createUnoStruct("com.sun.star.awt.Size")
-                size.Width = max(1, round(int(image["width"]) * scale))
+                size.Width = max(
+                    1,
+                    _encode_horizontal(
+                        image["width"], scale, biff_excel_x_scale
+                    ),
+                )
                 size.Height = max(1, round(int(image["height"]) * scale))
                 shape.Position = point
+                # Size must be the last geometry operation. GraphicObjectShape
+                # starts at 100x100, and adding/anchoring it may restore that
+                # default in some LibreOffice/Excel compatibility paths.
                 shape.Size = size
-                draw_page.add(shape)
-                shape.Anchor = sheet.getCellRangeByName("A4")
             document.store()
             document.close(True)
             document = None
@@ -199,6 +253,7 @@ def _write(payload):
             print_area_verified = _print_area_matches(
                 sheet, payload["print_area"]
             )
+            ordinary_print_area_removed = _ordinary_print_area_removed(sheet)
             actual_cells = {
                 cell: sheet.getCellRangeByName(cell).String
                 for cell in payload["cells"]
@@ -206,14 +261,61 @@ def _write(payload):
             origin_x, origin_y, width, height = _canvas_geometry(
                 sheet, canvas["max_width"], canvas["max_height"]
             )
+            logical_scale = min(
+                1.0,
+                width / float(canvas["max_width"]),
+                height / float(canvas["max_height"]),
+            )
+            logical_offset_x = (
+                width - int(canvas["max_width"] * logical_scale)
+            ) // 2
+            expected_images = {
+                int(image["index"]): image for image in payload["images"]
+            }
             images = []
             for shape in _graphic_shapes(sheet.DrawPage):
+                image_index = _shape_image_index(shape)
+                expected = expected_images.get(image_index)
+                encoded_x = int(shape.Position.X) - origin_x
+                encoded_y = int(shape.Position.Y) - origin_y
+                encoded_width = int(shape.Size.Width)
+                encoded_height = int(shape.Size.Height)
+                logical = {
+                    "x": logical_offset_x
+                    + _decode_horizontal(
+                        encoded_x - logical_offset_x,
+                        biff_excel_x_scale,
+                    ),
+                    "y": encoded_y,
+                    "width": max(
+                        1,
+                        _decode_horizontal(
+                            encoded_width, biff_excel_x_scale
+                        ),
+                    ),
+                    "height": encoded_height,
+                }
+                encoded = {
+                    "x": encoded_x,
+                    "y": encoded_y,
+                    "width": encoded_width,
+                    "height": encoded_height,
+                }
                 images.append(
                     {
-                        "x": int(shape.Position.X) - origin_x,
-                        "y": int(shape.Position.Y) - origin_y,
-                        "width": int(shape.Size.Width),
-                        "height": int(shape.Size.Height),
+                        "index": image_index,
+                        "source_id": (
+                            str(expected.get("source_id") or "")
+                            if expected is not None
+                            else None
+                        ),
+                        # Keep the established top-level fields as logical
+                        # coordinates while also making both representations
+                        # explicit for audit and Windows Excel reconciliation.
+                        **logical,
+                        "logical": logical,
+                        "encoded": encoded,
+                        "resize_with_cell": bool(shape.ResizeWithCell),
                     }
                 )
             expected_cells = {
@@ -223,15 +325,23 @@ def _write(payload):
                 actual_cells == expected_cells
                 and len(images) == len(payload["images"])
                 and print_area_verified
+                and ordinary_print_area_removed
+                and all(image["index"] in expected_images for image in images)
+                and len({image["index"] for image in images}) == len(images)
             )
             return {
                 "verified": verified,
                 "cells": actual_cells,
                 "image_count": len(images),
                 "images": images,
-                "canvas": {"width": width, "height": height},
+                "canvas": {
+                    "width": width,
+                    "height": height,
+                    "biff_excel_x_scale": biff_excel_x_scale,
+                },
                 "print_area": payload["print_area"],
                 "print_area_verified": print_area_verified,
+                "ordinary_print_area_removed": ordinary_print_area_removed,
                 "reopened": True,
             }
         finally:

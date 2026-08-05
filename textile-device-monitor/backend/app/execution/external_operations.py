@@ -18,6 +18,10 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
+from app.execution.electron_microscopy import (
+    ELECTRON_PROJECT_NAME_ALIASES,
+    ELECTRON_TEST_METHOD,
+)
 from app.execution.models import (
     ExecutionCredential,
     ExecutionArtifact,
@@ -92,6 +96,19 @@ EXTERNAL_ATTEMPT_STAGES = (
     "main_record_verified",
     "completed",
 )
+SPECIAL_WOOL_IMAGE_ATTEMPT_STAGES = (
+    "authenticated",
+    "permission_verified",
+    "remote_state_verified",
+    "task_project_verified",
+    "file_copy_ready",
+    "file_copy_started",
+    "file_copy_verified",
+    "main_record_save_started",
+    "main_record_verified",
+    "picture_child_verified",
+    "completed",
+)
 SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES = (
     "authenticated",
     "permission_verified",
@@ -109,9 +126,9 @@ EXTERNAL_OPERATION_STAGE_PROFILES = {
         "main_record_verified",
     ),
     LEGACY_SPECIAL_WOOL_IMAGE_OPERATION: (
-        EXTERNAL_ATTEMPT_STAGES,
+        SPECIAL_WOOL_IMAGE_ATTEMPT_STAGES,
         EXTERNAL_REMOTE_WRITE_STAGE,
-        "main_record_verified",
+        "picture_child_verified",
     ),
     LEGACY_SPECIAL_WOOL_REVIEW_OPERATION: (
         SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES,
@@ -140,6 +157,17 @@ SPECIAL_WOOL_EXECUTION_CAPABILITY = {
 _LEGACY_SAMPLE_NUMBER_RE = re.compile(
     r"^[0-9A-Z]{9,20}(?:-[0-9A-Z]{1,8})?$"
 )
+_TASK_PROJECT_KEY_RE = re.compile(r"^task-project:[0-9a-f]{24}$")
+_REDACTED_LEGACY_ID_RE = re.compile(r"^sha256:[0-9a-f]{16}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SPECIAL_WOOL_IMAGE_OBSERVATION_TYPE = (
+    "legacy_special_wool_image_upload_dry_run"
+)
+SPECIAL_WOOL_REVIEW_OBSERVATION_TYPE = (
+    "legacy_special_wool_review_dry_run"
+)
+SPECIAL_WOOL_IMAGE_RECEIPT_TYPE = "legacy_special_wool_image_upload"
+SPECIAL_WOOL_REVIEW_RECEIPT_TYPE = "legacy_special_wool_review"
 
 
 def _canonical_checksum(value: dict[str, Any]) -> str:
@@ -154,6 +182,672 @@ def _canonical_checksum(value: dict[str, Any]) -> str:
 
 def _normalized_identity(value: str) -> str:
     return unicodedata.normalize("NFKC", value).strip().casefold()
+
+
+def _normalized_business_text(value: Any) -> str:
+    return " ".join(
+        unicodedata.normalize("NFKC", str(value or "")).strip().split()
+    )
+
+
+def _validated_microscopy_project_binding(
+    input_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind preflight to the exact task project selected by the human task.
+
+    IDs in the task snapshot are already one-way hashes emitted by the
+    read-only Windows probe.  The future Writer must re-query raw IDs and
+    recompute the same project key; the backend never accepts or exposes a raw
+    FibreCheck identifier here.
+    """
+
+    selected_key = str(input_data.get("selected_project_key") or "").strip()
+    selected = input_data.get("selected_project")
+    if not _TASK_PROJECT_KEY_RE.fullmatch(selected_key) or not isinstance(
+        selected, dict
+    ):
+        raise ExecutionApiError(
+            422,
+            "legacy_special_wool_task_project_required",
+            "图片上传预检缺少人工确认的任务项目，请刷新任务信息后重试",
+        )
+    if str(selected.get("project_key") or "").strip() != selected_key:
+        raise conflict(
+            "legacy_special_wool_task_project_changed",
+            "人工确认的任务项目键与项目快照不一致，请重新选择",
+        )
+    task_check_item_id = str(
+        selected.get("task_check_item_id") or ""
+    ).strip()
+    check_item_id = str(selected.get("check_item_id") or "").strip()
+    if not _REDACTED_LEGACY_ID_RE.fullmatch(
+        task_check_item_id
+    ) or not _REDACTED_LEGACY_ID_RE.fullmatch(check_item_id):
+        raise ExecutionApiError(
+            422,
+            "legacy_special_wool_task_project_id_missing",
+            "任务项目快照缺少只读探针签发的项目标识，请刷新任务信息后重试",
+        )
+    check_item_name = _normalized_business_text(
+        selected.get("check_item_name")
+    )
+    check_method = _normalized_business_text(selected.get("check_method"))
+    if check_item_name not in ELECTRON_PROJECT_NAME_ALIASES:
+        raise ExecutionApiError(
+            422,
+            "legacy_special_wool_task_project_name_mismatch",
+            "图片上传仅支持“纤维微观形貌”或“膜平面形貌”任务项目",
+            details={"expected": sorted(ELECTRON_PROJECT_NAME_ALIASES)},
+        )
+    if check_method != ELECTRON_TEST_METHOD:
+        raise ExecutionApiError(
+            422,
+            "legacy_special_wool_task_project_method_mismatch",
+            "图片上传仅支持测试方法 GB/T 36422-2018",
+            details={"expected": ELECTRON_TEST_METHOD},
+        )
+    return {
+        "project_key": selected_key,
+        "task_check_item_id": task_check_item_id,
+        "check_item_id": check_item_id,
+        "check_item_no": selected.get("check_item_no"),
+        "check_item_name": check_item_name,
+        "check_method": check_method,
+        "seq_num": selected.get("seq_num"),
+    }
+
+
+def _machine_document_error(path: str, message: str) -> ExecutionApiError:
+    return ExecutionApiError(
+        422,
+        "legacy_special_wool_machine_document_invalid",
+        message,
+        details={"path": path},
+    )
+
+
+def _strict_object(
+    value: Any,
+    *,
+    path: str,
+    required: set[str],
+    optional: set[str] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise _machine_document_error(path, "旧系统机器文档字段必须是对象")
+    allowed = required | (optional or set())
+    missing = sorted(required - set(value))
+    unknown = sorted(set(value) - allowed)
+    if missing or unknown:
+        raise _machine_document_error(
+            path,
+            "旧系统机器文档字段集合不符合已发布契约",
+        )
+    return value
+
+
+def _required_text(
+    value: Any,
+    *,
+    path: str,
+    pattern: re.Pattern[str] | None = None,
+) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise _machine_document_error(path, "旧系统机器文档缺少必要文本")
+    normalized = value.strip()
+    if pattern is not None and not pattern.fullmatch(normalized):
+        raise _machine_document_error(path, "旧系统机器文档文本格式无效")
+    return normalized
+
+
+def _required_count(value: Any, *, path: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise _machine_document_error(path, "旧系统机器文档计数必须是非负整数")
+    return value
+
+
+def _validate_bound_project_document(
+    value: Any,
+    *,
+    expected: dict[str, Any],
+    path: str,
+    require_match_count: bool,
+) -> dict[str, Any]:
+    required = {
+        "project_key",
+        "task_check_item_id",
+        "check_item_id",
+        "check_item_no",
+        "check_item_name",
+        "check_method",
+        "seq_num",
+    }
+    if require_match_count:
+        required.add("match_count")
+    project = _strict_object(value, path=path, required=required)
+    _required_text(
+        project.get("project_key"),
+        path=f"{path}.project_key",
+        pattern=_TASK_PROJECT_KEY_RE,
+    )
+    _required_text(
+        project.get("task_check_item_id"),
+        path=f"{path}.task_check_item_id",
+        pattern=_REDACTED_LEGACY_ID_RE,
+    )
+    _required_text(
+        project.get("check_item_id"),
+        path=f"{path}.check_item_id",
+        pattern=_REDACTED_LEGACY_ID_RE,
+    )
+    if require_match_count and _required_count(
+        project.get("match_count"), path=f"{path}.match_count"
+    ) != 1:
+        raise _machine_document_error(
+            f"{path}.match_count", "任务项目必须且只能匹配一条旧系统记录"
+        )
+    for key in (
+        "project_key",
+        "task_check_item_id",
+        "check_item_id",
+        "check_item_no",
+        "check_item_name",
+        "check_method",
+        "seq_num",
+    ):
+        if project.get(key) != expected.get(key):
+            raise _machine_document_error(
+                f"{path}.{key}", "旧系统只读结果与流程预检绑定的任务项目不一致"
+            )
+    return project
+
+
+def validate_special_wool_machine_observation(
+    operation: ExecutionExternalOperation,
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    """Strictly validate a future Windows read-only dry-run observation.
+
+    The function deliberately does not change ``operation`` or its capability;
+    callers may persist the returned document only after an authenticated
+    read-only transport is introduced.
+    """
+
+    operation_type = _operation_type(operation)
+    summary = operation.request_summary or {}
+    common_required = {
+        "schema_version",
+        "observation_type",
+        "mode",
+        "operation_id",
+        "payload_checksum",
+        "generated_at",
+        "observation_checksum",
+        "target_sample_number",
+        "write_performed",
+        "ready_for_write",
+    }
+    if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
+        document = _strict_object(
+            observation,
+            path="$",
+            required=common_required
+            | {
+                "source_inspection_number",
+                "target_family",
+                "task_project",
+                "picture_readback",
+            },
+        )
+        expected_type = SPECIAL_WOOL_IMAGE_OBSERVATION_TYPE
+    elif operation_type == LEGACY_SPECIAL_WOOL_REVIEW_OPERATION:
+        document = _strict_object(
+            observation,
+            path="$",
+            required=common_required
+            | {"source_upload", "permission", "remote_state", "would_update"},
+        )
+        expected_type = SPECIAL_WOOL_REVIEW_OBSERVATION_TYPE
+    else:
+        raise _machine_document_error("$", "当前操作不接受特种毛机器观察文档")
+    if document.get("schema_version") != 1:
+        raise _machine_document_error("$.schema_version", "机器文档版本不受支持")
+    if document.get("observation_type") != expected_type:
+        raise _machine_document_error("$.observation_type", "机器观察类型与操作不一致")
+    if document.get("mode") != "read_only":
+        raise _machine_document_error("$.mode", "机器观察必须来自只读模式")
+    if document.get("write_performed") is not False or document.get(
+        "ready_for_write"
+    ) is not False:
+        raise _machine_document_error(
+            "$.write_performed", "禁写阶段的机器观察不得声明已执行或可执行写入"
+        )
+    expected_pairs = {
+        "operation_id": operation.id,
+        "payload_checksum": operation.payload_checksum,
+        "target_sample_number": summary.get("target_sample_number"),
+    }
+    for key, expected in expected_pairs.items():
+        if document.get(key) != expected:
+            raise _machine_document_error(f"$.{key}", "机器观察与预检单不一致")
+    _required_text(document.get("generated_at"), path="$.generated_at")
+    _required_text(
+        document.get("observation_checksum"),
+        path="$.observation_checksum",
+        pattern=_SHA256_RE,
+    )
+
+    if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
+        if document.get("source_inspection_number") != summary.get(
+            "source_inspection_number"
+        ):
+            raise _machine_document_error(
+                "$.source_inspection_number", "机器观察的源编号与预检单不一致"
+            )
+        family = _strict_object(
+            document.get("target_family"),
+            path="$.target_family",
+            required={
+                "base_number",
+                "occupied_numbers",
+                "ignored_numbers",
+                "candidate_number",
+                "candidate_exact_count",
+                "unique_sample_number_constraint",
+            },
+        )
+        if family.get("base_number") != (
+            (summary.get("target_allocation") or {}).get("base_number")
+        ) or family.get("candidate_number") != summary.get(
+            "target_sample_number"
+        ):
+            raise _machine_document_error(
+                "$.target_family", "远端编号族观察与预检分配结果不一致"
+            )
+        for key in ("occupied_numbers", "ignored_numbers"):
+            if not isinstance(family.get(key), list) or not all(
+                isinstance(item, str) for item in family.get(key)
+            ):
+                raise _machine_document_error(
+                    f"$.target_family.{key}", "编号族字段必须是文本列表"
+                )
+        _required_count(
+            family.get("candidate_exact_count"),
+            path="$.target_family.candidate_exact_count",
+        )
+        if family.get("unique_sample_number_constraint") not in {
+            True,
+            False,
+            None,
+        }:
+            raise _machine_document_error(
+                "$.target_family.unique_sample_number_constraint",
+                "编号唯一约束状态必须是 true、false 或 null",
+            )
+        _validate_bound_project_document(
+            document.get("task_project"),
+            expected=dict(summary.get("task_project") or {}),
+            path="$.task_project",
+            require_match_count=True,
+        )
+        readback = _strict_object(
+            document.get("picture_readback"),
+            path="$.picture_readback",
+            required={"main_count", "picture_count", "records"},
+        )
+        main_count = _required_count(
+            readback.get("main_count"), path="$.picture_readback.main_count"
+        )
+        picture_count = _required_count(
+            readback.get("picture_count"),
+            path="$.picture_readback.picture_count",
+        )
+        records = readback.get("records")
+        if not isinstance(records, list) or len(records) != max(
+            main_count, picture_count
+        ):
+            raise _machine_document_error(
+                "$.picture_readback.records", "图片记录明细数量与只读计数不一致"
+            )
+    else:
+        source_ref = _strict_object(
+            document.get("source_upload"),
+            path="$.source_upload",
+            required={"operation_id", "receipt_checksum", "main_id"},
+        )
+        expected_source = summary.get("source_operation") or {}
+        if source_ref.get("operation_id") != expected_source.get(
+            "operation_id"
+        ) or source_ref.get("receipt_checksum") != expected_source.get(
+            "receipt_checksum"
+        ):
+            raise _machine_document_error(
+                "$.source_upload", "复核观察引用的上传回执与预检单不一致"
+            )
+        _required_text(
+            source_ref.get("main_id"),
+            path="$.source_upload.main_id",
+            pattern=_REDACTED_LEGACY_ID_RE,
+        )
+        permission = _strict_object(
+            document.get("permission"),
+            path="$.permission",
+            required={"function_type", "granted", "btn_check"},
+        )
+        if not str(permission.get("function_type") or "").endswith(
+            ".SpecialWoolCheckUI"
+        ) or permission.get("granted") is not True:
+            raise _machine_document_error(
+                "$.permission", "复核 dry-run 未证明 SpecialWoolCheckUI 权限"
+            )
+        btn_check = _strict_object(
+            permission.get("btn_check"),
+            path="$.permission.btn_check",
+            required={"configured", "enabled"},
+        )
+        if not isinstance(btn_check.get("configured"), bool) or (
+            btn_check.get("configured") is True
+            and btn_check.get("enabled") is not True
+        ) or (
+            btn_check.get("configured") is False
+            and btn_check.get("enabled") is not None
+        ):
+            raise _machine_document_error(
+                "$.permission.btn_check", "btnCheck 控件权限事实不完整或未授权"
+            )
+        remote = _strict_object(
+            document.get("remote_state"),
+            path="$.remote_state",
+            required={
+                "main_count",
+                "review_user",
+                "review_time",
+                "picture_count",
+                "children_fingerprint",
+            },
+        )
+        if _required_count(remote.get("main_count"), path="$.remote_state.main_count") != 1:
+            raise _machine_document_error(
+                "$.remote_state.main_count", "复核目标必须恰好存在一条主记录"
+            )
+        if remote.get("review_user") is not None or remote.get(
+            "review_time"
+        ) is not None:
+            raise _machine_document_error(
+                "$.remote_state.review_user", "目标记录已经复核，不能再次处理"
+            )
+        _required_count(
+            remote.get("picture_count"), path="$.remote_state.picture_count"
+        )
+        _required_text(
+            remote.get("children_fingerprint"),
+            path="$.remote_state.children_fingerprint",
+            pattern=_SHA256_RE,
+        )
+        would_update = _strict_object(
+            document.get("would_update"),
+            path="$.would_update",
+            required={
+                "main",
+                "conditional_check_user5",
+                "picture_children",
+                "wool_children",
+                "quantification_children",
+            },
+        )
+        if would_update.get("main") != ["ReviewUser", "ReviewTime"] or (
+            would_update.get("picture_children") != []
+        ):
+            raise _machine_document_error(
+                "$.would_update", "复核 dry-run 与已取证的旧客户端保存语义不一致"
+            )
+    return document
+
+
+def _receipt_stage_names(value: Any, *, path: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise _machine_document_error(path, "写入回执缺少阶段列表")
+    result: list[str] = []
+    for index, item in enumerate(value):
+        stage = item.get("stage") if isinstance(item, dict) else item
+        result.append(_required_text(stage, path=f"{path}[{index}].stage"))
+    return result
+
+
+def validate_external_receipt(
+    operation: ExecutionExternalOperation,
+    receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate operation-specific machine receipts before state completion."""
+
+    operation_type = _operation_type(operation)
+    if operation_type not in {
+        LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
+        LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
+    }:
+        if not isinstance(receipt, dict) or not receipt:
+            raise ExecutionApiError(
+                422, "external_receipt_invalid", "旧系统上传回执不能为空"
+            )
+        return receipt
+    summary = operation.request_summary or {}
+    common = {
+        "schema_version",
+        "receipt_type",
+        "operation_id",
+        "payload_checksum",
+        "target_sample_number",
+        "stages",
+        "reconciliation_required",
+    }
+    if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
+        document = _strict_object(
+            receipt,
+            path="$",
+            required=common
+            | {
+                "source_artifact",
+                "task_project",
+                "server_file",
+                "main_record",
+                "picture_records",
+                "readback",
+            },
+        )
+        expected_type = SPECIAL_WOOL_IMAGE_RECEIPT_TYPE
+    else:
+        document = _strict_object(
+            receipt,
+            path="$",
+            required=common
+            | {"source_upload", "main_record", "children", "readback"},
+        )
+        expected_type = SPECIAL_WOOL_REVIEW_RECEIPT_TYPE
+    if document.get("schema_version") != 1 or document.get(
+        "receipt_type"
+    ) != expected_type:
+        raise _machine_document_error("$.receipt_type", "写入回执类型或版本不正确")
+    for key, expected in {
+        "operation_id": operation.id,
+        "payload_checksum": operation.payload_checksum,
+        "target_sample_number": summary.get("target_sample_number"),
+    }.items():
+        if document.get(key) != expected:
+            raise _machine_document_error(f"$.{key}", "写入回执与外部操作预检单不一致")
+    if document.get("reconciliation_required") is not False:
+        raise _machine_document_error(
+            "$.reconciliation_required", "需要人工对账的结果不能作为成功回执"
+        )
+    stage_names = _receipt_stage_names(document.get("stages"), path="$.stages")
+    allowed_stages, _boundary, verified_stage = _operation_stage_profile(operation)
+    indexes: list[int] = []
+    for stage in stage_names:
+        if stage not in allowed_stages:
+            raise _machine_document_error("$.stages", "写入回执包含未知阶段")
+        indexes.append(allowed_stages.index(stage))
+    if indexes != sorted(set(indexes)) or verified_stage not in stage_names:
+        raise _machine_document_error(
+            "$.stages", "写入回执阶段必须有序、无重复且包含最终核验阶段"
+        )
+
+    if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
+        artifact = _strict_object(
+            document.get("source_artifact"),
+            path="$.source_artifact",
+            required={"artifact_id", "filename", "size_bytes", "content_sha256"},
+        )
+        expected_file = list(summary.get("files") or [{}])[0]
+        for key in ("artifact_id", "filename", "size_bytes", "content_sha256"):
+            if artifact.get(key) != expected_file.get(key):
+                raise _machine_document_error(
+                    f"$.source_artifact.{key}", "写入回执中的源制品与预检单不一致"
+                )
+        _validate_bound_project_document(
+            document.get("task_project"),
+            expected=dict(summary.get("task_project") or {}),
+            path="$.task_project",
+            require_match_count=False,
+        )
+        server_file = _strict_object(
+            document.get("server_file"),
+            path="$.server_file",
+            required={"filename", "size_bytes", "content_sha256"},
+        )
+        if server_file.get("filename") != artifact.get("filename") or server_file.get(
+            "size_bytes"
+        ) != artifact.get("size_bytes") or server_file.get(
+            "content_sha256"
+        ) != artifact.get("content_sha256"):
+            raise _machine_document_error("$.server_file", "服务器文件与源制品核对不一致")
+        main = _strict_object(
+            document.get("main_record"),
+            path="$.main_record",
+            required={"id", "field_fingerprint", "create_user", "create_time"},
+        )
+        for key in ("id", "create_user"):
+            _required_text(
+                main.get(key), path=f"$.main_record.{key}", pattern=_REDACTED_LEGACY_ID_RE
+            )
+        _required_text(
+            main.get("field_fingerprint"),
+            path="$.main_record.field_fingerprint",
+            pattern=_SHA256_RE,
+        )
+        pictures = document.get("picture_records")
+        if not isinstance(pictures, list) or len(pictures) != 1:
+            raise _machine_document_error(
+                "$.picture_records", "单工作簿上传必须读回一条图片子记录"
+            )
+        picture = _strict_object(
+            pictures[0],
+            path="$.picture_records[0]",
+            required={
+                "id",
+                "main_id",
+                "check_item_id",
+                "field_fingerprint",
+                "filename",
+                "create_time",
+            },
+        )
+        for key in ("id", "main_id", "check_item_id"):
+            _required_text(
+                picture.get(key),
+                path=f"$.picture_records[0].{key}",
+                pattern=_REDACTED_LEGACY_ID_RE,
+            )
+        _required_text(
+            picture.get("field_fingerprint"),
+            path="$.picture_records[0].field_fingerprint",
+            pattern=_SHA256_RE,
+        )
+        if picture.get("main_id") != main.get("id") or picture.get(
+            "check_item_id"
+        ) != (summary.get("task_project") or {}).get(
+            "check_item_id"
+        ) or picture.get("filename") != artifact.get("filename"):
+            raise _machine_document_error(
+                "$.picture_records[0]", "图片子记录外键或项目标识与预检单不一致"
+            )
+        readback = _strict_object(
+            document.get("readback"),
+            path="$.readback",
+            required={"main_count", "picture_count", "mismatches", "verified_at"},
+        )
+        if _required_count(readback.get("main_count"), path="$.readback.main_count") != 1 or _required_count(
+            readback.get("picture_count"), path="$.readback.picture_count"
+        ) != 1 or readback.get("mismatches") != []:
+            raise _machine_document_error("$.readback", "图片上传读回核对未通过")
+    else:
+        source_upload = _strict_object(
+            document.get("source_upload"),
+            path="$.source_upload",
+            required={"operation_id", "receipt_checksum", "main_id"},
+        )
+        expected_source = summary.get("source_operation") or {}
+        if source_upload.get("operation_id") != expected_source.get(
+            "operation_id"
+        ) or source_upload.get("receipt_checksum") != expected_source.get(
+            "receipt_checksum"
+        ):
+            raise _machine_document_error("$.source_upload", "复核回执引用了错误的上传回执")
+        main = _strict_object(
+            document.get("main_record"),
+            path="$.main_record",
+            required={
+                "id",
+                "review_user",
+                "review_time",
+                "pre_fingerprint",
+                "post_fingerprint",
+            },
+        )
+        if main.get("id") != source_upload.get("main_id"):
+            raise _machine_document_error("$.main_record.id", "复核主记录与上传主记录不一致")
+        for key in ("id", "review_user"):
+            _required_text(
+                main.get(key), path=f"$.main_record.{key}", pattern=_REDACTED_LEGACY_ID_RE
+            )
+        _required_text(main.get("review_time"), path="$.main_record.review_time")
+        for key in ("pre_fingerprint", "post_fingerprint"):
+            _required_text(
+                main.get(key),
+                path=f"$.main_record.{key}",
+                pattern=_SHA256_RE,
+            )
+        children = _strict_object(
+            document.get("children"),
+            path="$.children",
+            required={
+                "picture_count",
+                "before_fingerprint",
+                "after_fingerprint",
+                "unchanged",
+            },
+        )
+        if children.get("unchanged") is not True or children.get(
+            "before_fingerprint"
+        ) != children.get("after_fingerprint"):
+            raise _machine_document_error("$.children", "复核后图片子记录发生了意外变化")
+        _required_count(
+            children.get("picture_count"), path="$.children.picture_count"
+        )
+        for key in ("before_fingerprint", "after_fingerprint"):
+            _required_text(
+                children.get(key),
+                path=f"$.children.{key}",
+                pattern=_SHA256_RE,
+            )
+        readback = _strict_object(
+            document.get("readback"),
+            path="$.readback",
+            required={"main_count", "mismatches", "verified_at"},
+        )
+        if _required_count(readback.get("main_count"), path="$.readback.main_count") != 1 or readback.get(
+            "mismatches"
+        ) != []:
+            raise _machine_document_error("$.readback", "复核主记录读回核对未通过")
+    return document
 
 
 def _scoped_hash(scope: str, *parts: str) -> str:
@@ -1287,6 +1981,7 @@ def prepare_legacy_special_wool_image_operation(
         db,
         sample_number=target_number,
     )
+    task_project = _validated_microscopy_project_binding(input_data)
     files, inspector_name = _generated_microscopy_artifact_rows(
         db,
         run=run,
@@ -1313,6 +2008,7 @@ def prepare_legacy_special_wool_image_operation(
             "review_item": "图片",
             "review_copies": 1,
         },
+        "task_project": task_project,
         "inspector": inspector_name,
         "files": files,
         "execution_capability": dict(
@@ -1326,6 +2022,12 @@ def prepare_legacy_special_wool_image_operation(
             "requires_source_reverification": True,
             "overwrite_allowed": False,
             "remote_target_allocation_verified": False,
+        },
+        "machine_contract": {
+            "observation_type": SPECIAL_WOOL_IMAGE_OBSERVATION_TYPE,
+            "receipt_type": SPECIAL_WOOL_IMAGE_RECEIPT_TYPE,
+            "schema_version": 1,
+            "read_only_probe_required": True,
         },
     }
     return _create_prepared_external_operation(
@@ -1379,6 +2081,7 @@ def _special_wool_upload_source_operation(
             "特纤复核只能衔接本流程已完成且已回读核对的图片上传",
             operation_id=operation_id,
         )
+    validate_external_receipt(source, source.receipt)
     return source
 
 
@@ -1437,6 +2140,7 @@ def prepare_legacy_special_wool_review_operation(
             "review_item": "图片",
             "review_copies": 1,
         },
+        "task_project": dict(source_summary.get("task_project") or {}),
         "files": list(source_summary.get("files") or []),
         "execution_capability": dict(
             SPECIAL_WOOL_EXECUTION_CAPABILITY[
@@ -1448,6 +2152,12 @@ def prepare_legacy_special_wool_review_operation(
             "requires_final_approval": True,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
+        },
+        "machine_contract": {
+            "observation_type": SPECIAL_WOOL_REVIEW_OBSERVATION_TYPE,
+            "receipt_type": SPECIAL_WOOL_REVIEW_RECEIPT_TYPE,
+            "schema_version": 1,
+            "read_only_probe_required": True,
         },
     }
     return _create_prepared_external_operation(
@@ -1505,6 +2215,7 @@ def _reverify_special_wool_review_source(
             "复核所引用的图片上传结果已变化，请重新运行流程",
             operation_id=operation.id,
         )
+    validate_external_receipt(source, source.receipt)
 
 
 def approve_prepared_external_operation(
@@ -1699,6 +2410,16 @@ def public_external_operation(
         "source_operation": (
             dict(summary.get("source_operation"))
             if isinstance(summary.get("source_operation"), dict)
+            else None
+        ),
+        "task_project": (
+            dict(summary.get("task_project"))
+            if isinstance(summary.get("task_project"), dict)
+            else None
+        ),
+        "machine_contract": (
+            dict(summary.get("machine_contract"))
+            if isinstance(summary.get("machine_contract"), dict)
             else None
         ),
         "execution_capability": (
@@ -2892,12 +3613,7 @@ def complete_external_attempt(
         bridge_id=bridge_id,
     )
     _ensure_attempt_active(operation, attempt, now=current_time)
-    if not isinstance(receipt, dict) or not receipt:
-        raise ExecutionApiError(
-            422,
-            "external_receipt_invalid",
-            "旧系统上传回执不能为空",
-        )
+    receipt = validate_external_receipt(operation, receipt)
     attempt_stages, _write_boundary, verified_stage = (
         _operation_stage_profile(operation)
     )

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,19 +20,29 @@ from app.execution.errors import ExecutionApiError
 from app.execution.microscopy_original_record import (
     CANVAS_HEIGHT,
     CANVAS_WIDTH,
+    MICROSCOPY_BIFF_EXCEL_X_SCALE,
+    MICROSCOPY_PRINT_AREA,
+    MICROSCOPY_SHEET_NAME,
     MICROSCOPY_TEMPLATE_SHA256,
     _cell_payload,
     _microscopy_record_context_executor,
     _microscopy_original_record_executor,
+    _persisted_images_geometry,
     _resolve_selected_images,
+    _run_uno_writer,
     _sha256,
     _single_image_geometry_matches,
     _template_path,
+    _verify_generated_workbook,
     layout_images,
     prepare_original_record_choices,
     sample_name_v1_candidates,
     split_judgement_basis_options,
     split_multi_value_options,
+)
+from app.execution.microscopy_original_record_uno import (
+    _decode_horizontal,
+    _encode_horizontal,
 )
 from app.execution.models import (
     ExecutionArtifact,
@@ -52,21 +64,44 @@ def _fake_uno_writer(payload_path: Path) -> dict:
             column = column * 26 + ord(character) - ord("A") + 1
         sheet.write(int(match.group(2)) - 1, column - 1, value)
     target.save(payload["workbook_path"])
+    x_scale = payload["canvas"]["biff_excel_x_scale"]
+    images = []
+    for image in payload["images"]:
+        logical = {
+            "x": image["x"],
+            "y": image["y"],
+            "width": image["width"],
+            "height": image["height"],
+        }
+        images.append(
+            {
+                "index": image["index"],
+                "source_id": image["source_id"],
+                **logical,
+                "logical": logical,
+                "encoded": {
+                    "x": _encode_horizontal(image["x"], 1.0, x_scale),
+                    "y": image["y"],
+                    "width": _encode_horizontal(
+                        image["width"], 1.0, x_scale
+                    ),
+                    "height": image["height"],
+                },
+                "resize_with_cell": False,
+            }
+        )
     return {
         "verified": True,
         "image_count": len(payload["images"]),
-        "images": [
-            {
-                "x": image["x"],
-                "y": image["y"],
-                "width": image["width"],
-                "height": image["height"],
-            }
-            for image in payload["images"]
-        ],
-        "canvas": {"width": CANVAS_WIDTH, "height": CANVAS_HEIGHT},
+        "images": images,
+        "canvas": {
+            "width": CANVAS_WIDTH,
+            "height": CANVAS_HEIGHT,
+            "biff_excel_x_scale": x_scale,
+        },
         "print_area": payload["print_area"],
         "print_area_verified": True,
+        "ordinary_print_area_removed": True,
         "reopened": True,
     }
 
@@ -233,6 +268,109 @@ class MicroscopyOriginalRecordPureFunctionTests(unittest.TestCase):
             round((CANVAS_HEIGHT - landscape.height) / 2),
         )
 
+    def test_biff_horizontal_compensation_round_trips_logical_geometry(self):
+        self.assertEqual(MICROSCOPY_BIFF_EXCEL_X_SCALE, 1.2745)
+        for logical in (0, 3006, 15589, CANVAS_WIDTH):
+            encoded = _encode_horizontal(
+                logical, 1.0, MICROSCOPY_BIFF_EXCEL_X_SCALE
+            )
+            decoded = _decode_horizontal(
+                encoded, MICROSCOPY_BIFF_EXCEL_X_SCALE
+            )
+            self.assertAlmostEqual(decoded, logical, delta=1)
+
+    def test_reopened_geometry_validates_non_square_1_2_5_and_10_images(self):
+        source_ratios = [4 / 3, 2.0, 0.5, 1.6, 0.75, 1.25, 0.8, 1.8, 0.6, 1.1]
+        for count in (1, 2, 5, 10):
+            ratios = source_ratios[:count]
+            placements = layout_images(ratios)
+            expected_images = []
+            actual_images = []
+            for placement, ratio in zip(placements, ratios):
+                expected = {
+                    "source_id": f"source-{placement.index}",
+                    "aspect_ratio": ratio,
+                    **placement.as_dict(),
+                }
+                logical = {
+                    "x": placement.x,
+                    "y": placement.y,
+                    "width": placement.width,
+                    "height": placement.height,
+                }
+                actual = {
+                    "index": placement.index,
+                    "source_id": expected["source_id"],
+                    **logical,
+                    "logical": logical,
+                    "encoded": {
+                        "x": _encode_horizontal(
+                            placement.x,
+                            1.0,
+                            MICROSCOPY_BIFF_EXCEL_X_SCALE,
+                        ),
+                        "y": placement.y,
+                        "width": _encode_horizontal(
+                            placement.width,
+                            1.0,
+                            MICROSCOPY_BIFF_EXCEL_X_SCALE,
+                        ),
+                        "height": placement.height,
+                    },
+                    "resize_with_cell": False,
+                }
+                expected_images.append(expected)
+                actual_images.append(actual)
+            result = _persisted_images_geometry(
+                actual_images,
+                expected_images=expected_images,
+                canvas_width=CANVAS_WIDTH,
+                canvas_height=CANVAS_HEIGHT,
+            )
+            self.assertTrue(result["verified"], result["issues"])
+            self.assertTrue(result["non_overlapping"])
+
+    def test_reopened_geometry_rejects_square_conversion_and_overlap(self):
+        ratios = [2.0, 0.5]
+        placements = layout_images(ratios)
+        expected_images = [
+            {
+                "source_id": f"source-{placement.index}",
+                "aspect_ratio": ratio,
+                **placement.as_dict(),
+            }
+            for placement, ratio in zip(placements, ratios)
+        ]
+        actual_images = []
+        for placement in placements:
+            logical = placement.as_dict()
+            logical.pop("index")
+            actual_images.append(
+                {
+                    "index": placement.index,
+                    "source_id": f"source-{placement.index}",
+                    **logical,
+                    "logical": dict(logical),
+                    "encoded": dict(logical),
+                    "resize_with_cell": False,
+                }
+            )
+        actual_images[0]["logical"]["width"] = actual_images[0]["logical"][
+            "height"
+        ]
+        actual_images[1]["logical"]["x"] = actual_images[0]["logical"]["x"]
+        actual_images[1]["logical"]["y"] = actual_images[0]["logical"]["y"]
+        result = _persisted_images_geometry(
+            actual_images,
+            expected_images=expected_images,
+            canvas_width=CANVAS_WIDTH,
+            canvas_height=CANVAS_HEIGHT,
+        )
+        codes = {issue["code"] for issue in result["issues"]}
+        self.assertFalse(result["verified"])
+        self.assertIn("persisted_image_aspect_ratio_mismatch", codes)
+        self.assertIn("persisted_images_overlap", codes)
+
     def test_persisted_single_image_must_keep_ratio_fill_and_center(self):
         self.assertTrue(
             _single_image_geometry_matches(
@@ -327,14 +465,38 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def _candidate(self, **overrides):
+        return self._candidate_for(self.entry, **overrides)
+
+    def _candidate_for(self, entry, **overrides):
         value = {
-            "id": self.entry.id,
+            "id": entry.id,
             "root_id": "electron_microscopy_records",
-            "relative_path": self.entry.relative_path,
-            "fingerprint": self.entry.fingerprint,
+            "relative_path": entry.relative_path,
+            "fingerprint": entry.fingerprint,
         }
         value.update(overrides)
         return value
+
+    def _add_indexed_image(self, index: int, width: int, height: int):
+        path = self.electron_path / "260061860-lisy" / f"image{index:02d}.PNG"
+        Image.new("RGB", (width, height), "white").save(path)
+        stat = path.stat()
+        entry = ExecutionFileIndexEntry(
+            storage_root_id=self.electron_root.id,
+            relative_path=f"260061860-lisy/{path.name}",
+            filename=path.name,
+            extension=".png",
+            file_kind="file",
+            size_bytes=stat.st_size,
+            modified_at=__import__("datetime").datetime.fromtimestamp(
+                stat.st_mtime, __import__("datetime").timezone.utc
+            ),
+            fingerprint=f"{stat.st_size}:{stat.st_mtime_ns}",
+            metadata_json={},
+        )
+        self.db.add(entry)
+        self.db.flush()
+        return entry
 
     def _context(self):
         return SimpleNamespace(
@@ -410,6 +572,39 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         self.assertEqual(sheet.cell_value(32, 1), "GB/T 36422-2018")
         self.assertEqual(sheet.cell_value(33, 8), "符合")
 
+    def test_executor_preserves_source_identity_for_2_5_and_10_images(self):
+        entries = [self.entry]
+        ratios = [(200, 100), (100, 200), (160, 100), (100, 160), (4, 3)]
+        for index in range(2, 11):
+            width, height = ratios[(index - 1) % len(ratios)]
+            entries.append(self._add_indexed_image(index, width, height))
+        self.db.commit()
+
+        for count in (2, 5, 10):
+            selected = entries[:count]
+            context = self._context()
+            context.run.id = f"run-{count}"
+            context.node_run.id = f"node-{count}"
+            context.input_data["selected_image_ids"] = [
+                entry.id for entry in selected
+            ]
+            context.input_data["selected_images"] = [
+                self._candidate_for(entry) for entry in selected
+            ]
+            with patch(
+                "app.execution.microscopy_original_record._run_uno_writer",
+                side_effect=_fake_uno_writer,
+            ):
+                result = _microscopy_original_record_executor(context)
+            verification = result["verification"]
+            self.assertEqual(result["image_count"], count)
+            self.assertTrue(verification["all_images_geometry_verified"])
+            self.assertTrue(verification["multi_image_non_overlap_verified"])
+            self.assertEqual(
+                [image["source_id"] for image in verification["images"]],
+                [entry.id for entry in selected],
+            )
+
     def test_context_returns_only_exact_matching_projects_and_expected_kind(self):
         context = self._context()
         context.input_data["task"]["projects"] = [
@@ -450,6 +645,94 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         self.assertEqual(
             raised.exception.code, "microscopy_task_project_not_found"
         )
+
+
+@unittest.skipUnless(
+    os.getenv("EXECUTION_RUN_UNO_INTEGRATION_TESTS") == "1",
+    "set EXECUTION_RUN_UNO_INTEGRATION_TESTS=1 inside the worker image",
+)
+class MicroscopyOriginalRecordUnoIntegrationTests(unittest.TestCase):
+    def test_real_xls_reopen_validates_non_square_1_2_5_and_10_images(self):
+        source_sizes = [
+            (1280, 960),
+            (800, 400),
+            (400, 800),
+            (1600, 1000),
+            (750, 1000),
+            (1250, 1000),
+            (800, 1000),
+            (1800, 1000),
+            (600, 1000),
+            (1100, 1000),
+        ]
+        cells = {
+            "B2": "UNO-INTEGRATION",
+            "B3": "非方形图片验证",
+            "L3": "正面",
+            "B33": "",
+            "I33": "",
+            "B34": "",
+            "I34": "",
+            "B35": "",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image_paths = []
+            for index, size in enumerate(source_sizes):
+                path = root / f"source-{index}.png"
+                Image.new("RGB", size, "white").save(path)
+                image_paths.append(path)
+
+            for count in (1, 2, 5, 10):
+                workbook_path = root / f"working-{count}.xls"
+                shutil.copyfile(_template_path(), workbook_path)
+                ratios = [width / height for width, height in source_sizes[:count]]
+                placements = layout_images(ratios)
+                payload_images = [
+                    {
+                        "path": str(image_paths[index]),
+                        "source_id": f"source-{index}",
+                        "aspect_ratio": ratios[index],
+                        **placement.as_dict(),
+                    }
+                    for index, placement in enumerate(placements)
+                ]
+                payload = {
+                    "workbook_path": str(workbook_path),
+                    "sheet_name": MICROSCOPY_SHEET_NAME,
+                    "print_area": MICROSCOPY_PRINT_AREA,
+                    "cells": cells,
+                    "canvas": {
+                        "range": "A4:L32",
+                        "max_width": CANVAS_WIDTH,
+                        "max_height": CANVAS_HEIGHT,
+                        "biff_excel_x_scale": MICROSCOPY_BIFF_EXCEL_X_SCALE,
+                    },
+                    "images": payload_images,
+                }
+                payload_path = root / f"payload-{count}.json"
+                payload_path.write_text(
+                    json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+                )
+                uno_result = _run_uno_writer(payload_path)
+                verification = _verify_generated_workbook(
+                    workbook_path,
+                    expected_cells=cells,
+                    expected_images=payload_images,
+                    uno_result=uno_result,
+                )
+                self.assertTrue(verification["all_images_geometry_verified"])
+                self.assertTrue(
+                    verification["multi_image_non_overlap_verified"]
+                )
+                names = xlrd.open_workbook(
+                    str(workbook_path), formatting_info=True
+                ).name_obj_list
+                print_area_names = [
+                    name for name in names if name.name == "Print_Area"
+                ]
+                self.assertEqual(len(print_area_names), 1)
+                self.assertEqual(print_area_names[0].builtin, 1)
 
 
 if __name__ == "__main__":

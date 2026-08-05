@@ -686,7 +686,7 @@ describe('ExecutionTaskInbox', () => {
     expect(screen.queryByRole('radio', { name: '符合' })).not.toBeInTheDocument();
   });
 
-  it('打印确认会展示工作簿入口并绑定文件 SHA-256', async () => {
+  it('选择打印时会明确提示人工打印并绑定文件 SHA-256', async () => {
     const submitted = vi.fn();
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     const sha256 = 'a'.repeat(64);
@@ -726,10 +726,17 @@ describe('ExecutionTaskInbox', () => {
     renderInbox();
 
     await user.click(await screen.findByText('打印微观形貌原始记录'));
-    expect(await screen.findByRole('link', { name: /下载工作簿/ }))
-      .toHaveAttribute('href', '/api/execution/v1/artifacts/artifact-record-1/download');
     expect(screen.getByText(sha256)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /打开并打印/ }));
+    expect(screen.queryByRole('link', { name: /下载工作簿/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+    expect(await screen.findByText('请选择打印原始记录或暂不打印')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: /^打印 / }));
+    expect(screen.getByText('打印需要在 Excel 中手动完成')).toBeInTheDocument();
+    expect(screen.getByText(/网页不会自动打印/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /下载工作簿/ }))
+      .toHaveAttribute('href', '/api/execution/v1/artifacts/artifact-record-1/download');
+    await user.click(screen.getByRole('button', { name: /打开工作簿（手动打印）/ }));
     expect(openSpy).toHaveBeenCalledWith(
       '/api/execution/v1/artifacts/artifact-record-1/preview',
       '_blank',
@@ -737,15 +744,127 @@ describe('ExecutionTaskInbox', () => {
     );
 
     await user.click(screen.getByRole('button', { name: '确认提交' }));
-    expect(await screen.findByText('请完成打印并确认文件校验和')).toBeInTheDocument();
-    await user.click(screen.getByRole('checkbox', { name: /已完成打印/ }));
+    expect(await screen.findByText('请确认已在 Excel 中完成打印')).toBeInTheDocument();
+    expect(submitted).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('checkbox', { name: '我确认已在 Excel 中完成打印' }));
     await user.click(screen.getByRole('button', { name: '确认提交' }));
 
     await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
     expect(submitted.mock.calls[0][0].data).toMatchObject({
+      print_decision: 'print',
+      print_completed: true,
+      artifact_sha256: sha256,
+    });
+    expect(submitted.mock.calls[0][0].data).not.toHaveProperty('printed');
+    openSpy.mockRestore();
+  });
+
+  it('选择暂不打印时无需打开工作簿也可以继续', async () => {
+    const submitted = vi.fn();
+    const sha256 = 'b'.repeat(64);
+    const printTask = {
+      ...openTask,
+      title: '确认是否打印原始记录',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [printTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(printTask),
+          node_run: {
+            node_id: 'microscopy-print',
+            input_data: {
+              task_kind: 'microscopy_print_confirmation',
+              artifact: {
+                id: 'artifact-record-2',
+                name: '260061860-纤维微观形貌.xls',
+                download_url: '/api/execution/v1/artifacts/artifact-record-2/download',
+                sha256,
+              },
+            },
+          },
+        })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({ ...printTask, status: 'completed', revision: 3 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('确认是否打印原始记录'));
+    await user.click(screen.getByRole('radio', { name: /^暂不打印 / }));
+    expect(await screen.findByText('本次暂不打印')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /打开工作簿/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toEqual({
+      print_decision: 'skip',
+      artifact_sha256: sha256,
+    });
+  });
+
+  it('旧版打印任务仍以 printed=true 完成确认', async () => {
+    const submitted = vi.fn();
+    const sha256 = 'c'.repeat(64);
+    const printTask = {
+      ...openTask,
+      title: '打印原始记录',
+      status: 'claimed',
+      revision: 2,
+      claimed_by_id: 'reviewer-1',
+      form_schema: {
+        type: 'object',
+        properties: {
+          printed: { type: 'boolean', const: true },
+          artifact_sha256: { type: 'string' },
+        },
+        required: ['printed', 'artifact_sha256'],
+        additionalProperties: false,
+      },
+    };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () =>
+        HttpResponse.json({ items: [printTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () =>
+        HttpResponse.json({
+          ...detailPayload(printTask),
+          task: printTask,
+          node_run: {
+            node_id: 'microscopy-print',
+            input_data: {
+              task_kind: 'microscopy_print_confirmation',
+              artifact: {
+                id: 'artifact-record-legacy',
+                name: '260061860-纤维微观形貌.xls',
+                download_url: '/api/execution/v1/artifacts/artifact-record-legacy/download',
+                sha256,
+              },
+            },
+          },
+        })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({ ...printTask, status: 'completed', revision: 3 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+
+    await user.click(await screen.findByText('打印原始记录'));
+    expect(await screen.findByText('此任务由旧版本流程创建')).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: '我确认已在 Excel 中完成打印' }));
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toEqual({
       printed: true,
       artifact_sha256: sha256,
     });
-    openSpy.mockRestore();
   });
 });

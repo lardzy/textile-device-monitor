@@ -729,11 +729,20 @@ def _normalize_human_submission(
             artifact.get("sha256") or artifact.get("content_sha256") or ""
         ).strip().casefold()
         submitted_sha = str(data.get("artifact_sha256") or "").strip().casefold()
-        if data.get("printed") is not True:
+        print_decision = str(data.get("print_decision") or "").strip().casefold()
+        # Compatibility for human tasks created by the previously published
+        # contract.  New tasks submit an explicit decision; an old
+        # ``printed=true`` acknowledgement already meant printing was complete.
+        legacy_print_confirmation = bool(
+            not print_decision and data.get("printed") is True
+        )
+        if legacy_print_confirmation:
+            print_decision = "print"
+        if print_decision not in {"print", "skip"}:
             raise ExecutionApiError(
                 422,
                 "microscopy_print_confirmation_required",
-                "请确认是否已按需要完成打印",
+                "请选择打印原始记录或暂不打印",
             )
         if not expected_sha or submitted_sha != expected_sha:
             raise ExecutionApiError(
@@ -741,8 +750,21 @@ def _normalize_human_submission(
                 "microscopy_print_artifact_changed",
                 "待打印原始记录已变化，请重新打开并核对",
             )
+        print_requested = print_decision == "print"
+        print_completed = bool(
+            legacy_print_confirmation or data.get("print_completed") is True
+        )
+        if print_requested and not print_completed:
+            raise ExecutionApiError(
+                422,
+                "microscopy_print_not_completed",
+                "请确认已在 Excel 中完成打印",
+            )
         return {
-            "printed": True,
+            "print_decision": print_decision,
+            "print_requested": print_requested,
+            "print_completed": print_requested and print_completed,
+            "printed": print_requested and print_completed,
             "artifact_sha256": expected_sha,
             "artifact": artifact,
         }

@@ -1,0 +1,21 @@
+{
+  "worksheet_name": "微观形貌",
+  "canvas_address": "A4:L32",
+  "print_area": "$A$1:$L$37",
+  "image_count": 2,
+  "containment_tolerance_points": 1.5,
+  "overlap_tolerance_points": 0.5,
+  "position_tolerance_points": 2.0,
+  "size_tolerance_points": 2.0,
+  "aspect_ratio_tolerance": 0.02,
+  "images": [
+    {
+      "index": 1,
+      "aspect_ratio": 1.333333
+    },
+    {
+      "index": 2,
+      "aspect_ratio": 0.75
+    }
+  ]
+}

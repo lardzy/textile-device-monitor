@@ -458,6 +458,103 @@ TASK_SNAPSHOT_QUERIES: tuple[QueryDefinition, ...] = tuple(
 if tuple(query.key for query in TASK_SNAPSHOT_QUERIES) != TASK_SNAPSHOT_QUERY_KEYS:
     raise RuntimeError("任务快照查询定义缺失或顺序错误")
 
+# 图片类特种毛上传/复核的独立只读事实集。它不会加入默认探针范围，只有
+# 显式 --special-wool-dry-run 才执行，且仍受 SELECT-only 检查、只读事务和
+# 最终 rollback 约束。
+SPECIAL_WOOL_DRY_RUN_QUERIES: tuple[QueryDefinition, ...] = (
+    QueryDefinition(
+        key="special_wool_number_family",
+        purpose="读取基础编号及数字后缀的远端占用事实",
+        sql="""
+            SELECT sw."SampleNo", COUNT(*) AS "RecordCount",
+                   MIN(sw."CreateTime") AS "FirstCreateTime",
+                   MAX(sw."CreateTime") AS "LastCreateTime"
+            FROM "SpecialWoolManage" sw
+            WHERE sw."SampleNo" = :target_base
+               OR sw."SampleNo" LIKE :target_suffix_prefix ESCAPE '\\'
+            GROUP BY sw."SampleNo"
+            ORDER BY sw."SampleNo"
+        """,
+        parameter_names=("target_base", "target_suffix_prefix"),
+    ),
+    QueryDefinition(
+        key="special_wool_task_project",
+        purpose="精确读取微观形貌任务项目及 CheckItem 目录事实",
+        sql="""
+            SELECT t."ID" AS "TaskID", t."ReportNo", t."Status",
+                   t."IsAddVersion",
+                   tci."ID" AS "TaskCheckItemID", tci."CheckItemID",
+                   tci."CheckItemNo", tci."CheckItemName",
+                   tci."CheckMethod", tci."SeqNum", tci."Remark",
+                   tci."SampleIdentify", tci."CheckCount",
+                   tci."GiveJudgement",
+                   ci."No" AS "CatalogCheckItemNo",
+                   ci."ItemName" AS "CatalogCheckItemName",
+                   ci."OriginalDataInputUIClassName"
+            FROM "Task" t
+            JOIN "Task_CheckItem" tci ON tci."TaskID" = t."ID"
+            LEFT JOIN "CheckItem" ci ON ci."ID" = tci."CheckItemID"
+            WHERE t."ReportNo" = :sample_no
+            ORDER BY tci."SeqNum", tci."ID"
+        """,
+    ),
+    QueryDefinition(
+        key="special_wool_picture_records",
+        purpose="读取目标特种毛主记录与 OriginalDataPictureFile 子记录",
+        sql="""
+            SELECT sw."ID" AS "MainID", sw."SampleNo", sw."FibreSort",
+                   sw."CheckWay", sw."CheckUser1", sw."CheckUserItem1",
+                   sw."CheckUserNumber1", sw."ReviewUserNumber1",
+                   sw."FilePath", sw."FileType",
+                   sw."CreateUser" AS "MainCreateUser",
+                   sw."CreateTime" AS "MainCreateTime",
+                   sw."ReviewUser", sw."ReviewTime", sw."AuditUser",
+                   sw."AuditTime", p."ID" AS "PictureID",
+                   p."SampleNo" AS "PictureSampleNo", p."CheckItemID",
+                   p."PictureFileName", p."OriginalDataFileName",
+                   p."CreateUser" AS "PictureCreateUser",
+                   p."CreateTime" AS "PictureCreateTime",
+                   p."SpecialWoolManageID", p."TestMethod", p."Judgement",
+                   p."IsAloneShow", p."SampleIdentify", p."JudgeBasis",
+                   p."PictureDesc", ci."No" AS "CatalogCheckItemNo",
+                   ci."ItemName" AS "CatalogCheckItemName",
+                   ci."OriginalDataInputUIClassName"
+            FROM "SpecialWoolManage" sw
+            LEFT JOIN "OriginalDataPictureFile" p
+              ON p."SpecialWoolManageID" = sw."ID"
+            LEFT JOIN "CheckItem" ci ON ci."ID" = p."CheckItemID"
+            WHERE sw."SampleNo" = :target_sample_no
+            ORDER BY sw."CreateTime" DESC, p."CreateTime", p."ID"
+        """,
+        parameter_names=("target_sample_no",),
+    ),
+    QueryDefinition(
+        key="special_wool_sample_number_unique",
+        purpose="确认 SampleNo 是否存在单列唯一索引或唯一约束",
+        sql="""
+            SELECT ui."INDEX_NAME" AS "IndexName",
+                   ui."UNIQUENESS" AS "Uniqueness",
+                   COUNT(*) AS "ColumnCount",
+                   MIN(uic."COLUMN_NAME") AS "ColumnName"
+            FROM USER_INDEXES ui
+            JOIN USER_IND_COLUMNS uic
+              ON uic."INDEX_NAME" = ui."INDEX_NAME"
+            WHERE ui."TABLE_NAME" = 'SpecialWoolManage'
+            GROUP BY ui."INDEX_NAME", ui."UNIQUENESS"
+            HAVING COUNT(*) = 1
+               AND MIN(uic."COLUMN_NAME") = 'SampleNo'
+            ORDER BY ui."INDEX_NAME"
+        """,
+        parameter_names=(),
+    ),
+    QueryDefinition(
+        key="special_wool_server_time",
+        purpose="记录 Oracle 服务器观察时间",
+        sql='SELECT SYSDATE AS "ServerTime" FROM DUAL',
+        parameter_names=(),
+    ),
+)
+
 FINAL_ENTRY_REQUIRED_QUERY_KEYS = (
     "task_check_items",
     "task_entry_routes",
@@ -724,21 +821,203 @@ def sanitize_row(columns: Sequence[str], row: Sequence[Any]) -> dict[str, Any]:
     }
 
 
-def query_parameters(sample_no: str) -> dict[str, str]:
+def query_parameters(
+    sample_no: str,
+    *,
+    target_sample_no: str | None = None,
+) -> dict[str, str]:
     base_sample_no = sample_no.split("-", 1)[0]
+    target = target_sample_no or sample_no
+    target_base = target.split("-", 1)[0]
     return {
         "sample_no": sample_no,
         # 带后缀的测试号也必须同时看见同一九位底单及其它后缀，避免
         # “260187115-1 不存在”掩盖 “260187115 已存在”。
         "sample_prefix": f"{base_sample_no}%",
+        "target_sample_no": target,
+        "target_base": target_base,
+        "target_suffix_prefix": f"{target_base}-%",
+    }
+
+
+def _required_query_rows(
+    results: Mapping[str, Any], key: str
+) -> list[dict[str, Any]]:
+    state = results.get(key)
+    if not isinstance(state, Mapping) or state.get("status") != "ok":
+        raise ProbeError(f"特种毛 dry-run 查询 {key} 未成功。")
+    rows = state.get("rows")
+    if not isinstance(rows, list) or not all(
+        isinstance(row, dict) for row in rows
+    ):
+        raise ProbeError(f"特种毛 dry-run 查询 {key} 返回格式无效。")
+    if state.get("row_count") != len(rows):
+        raise ProbeError(f"特种毛 dry-run 查询 {key} 计数不一致。")
+    return rows
+
+
+def _special_wool_project_key(row: Mapping[str, Any]) -> str:
+    identity = "\0".join(
+        " ".join(str(row.get(key) or "").strip().split())
+        for key in (
+            "TaskCheckItemID",
+            "CheckItemID",
+            "CheckItemNo",
+            "CheckItemName",
+            "CheckMethod",
+            "SeqNum",
+        )
+    )
+    return "task-project:" + hashlib.sha256(
+        identity.encode("utf-8")
+    ).hexdigest()[:24]
+
+
+def _canonical_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def build_special_wool_image_observation(
+    *,
+    results: Mapping[str, Any],
+    source_inspection_number: str,
+    target_sample_number: str,
+    selected_project_key: str,
+    operation_id: str,
+    payload_checksum: str,
+    generated_at: str,
+) -> dict[str, Any]:
+    """Build the typed, zero-write image-upload database observation."""
+
+    family_rows = _required_query_rows(
+        results, "special_wool_number_family"
+    )
+    project_rows = _required_query_rows(
+        results, "special_wool_task_project"
+    )
+    picture_rows = _required_query_rows(
+        results, "special_wool_picture_records"
+    )
+    index_rows = _required_query_rows(
+        results, "special_wool_sample_number_unique"
+    )
+    server_rows = _required_query_rows(results, "special_wool_server_time")
+    if len(server_rows) != 1:
+        raise ProbeError("Oracle 服务器时间查询必须且只能返回一行。")
+
+    selected_rows = [
+        row
+        for row in project_rows
+        if _special_wool_project_key(row) == selected_project_key
+    ]
+    if len(selected_rows) != 1:
+        raise ProbeError("所选任务项目在旧系统中不存在或不唯一。")
+    selected = selected_rows[0]
+    if " ".join(str(selected.get("CheckItemName") or "").split()) not in {
+        "纤维微观形貌",
+        "膜平面形貌",
+    } or " ".join(str(selected.get("CheckMethod") or "").split()) != (
+        "GB/T 36422-2018"
+    ):
+        raise ProbeError("所选任务项目不是受支持的 GB/T 36422-2018 微观形貌项目。")
+
+    base = target_sample_number.split("-", 1)[0]
+    exact_pattern = re.compile(re.escape(base) + r"(?:-([1-9][0-9]*))?$")
+    occupied: list[str] = []
+    ignored: list[str] = []
+    exact_count = 0
+    for row in family_rows:
+        number = str(row.get("SampleNo") or "").strip()
+        raw_count = row.get("RecordCount")
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            count = -1
+        if isinstance(raw_count, bool) or count < 0:
+            raise ProbeError("编号族查询返回了无效记录数。")
+        if exact_pattern.fullmatch(number):
+            if count > 0:
+                occupied.append(number)
+            if number == target_sample_number:
+                exact_count = count
+        else:
+            ignored.append(number)
+
+    main_ids = {
+        row.get("MainID") for row in picture_rows if row.get("MainID")
+    }
+    picture_ids = {
+        row.get("PictureID") for row in picture_rows if row.get("PictureID")
+    }
+    unique_proven = any(
+        str(row.get("Uniqueness") or "").upper() == "UNIQUE"
+        and str(row.get("ColumnName") or "") == "SampleNo"
+        and str(row.get("ColumnCount")) == "1"
+        for row in index_rows
+    )
+    task_project = {
+        "project_key": selected_project_key,
+        "task_check_item_id": selected.get("TaskCheckItemID"),
+        "check_item_id": selected.get("CheckItemID"),
+        "check_item_no": selected.get("CheckItemNo"),
+        "check_item_name": selected.get("CheckItemName"),
+        "check_method": selected.get("CheckMethod"),
+        "seq_num": selected.get("SeqNum"),
+        "match_count": 1,
+    }
+    return {
+        "schema_version": 1,
+        "observation_type": "legacy_special_wool_image_upload_dry_run",
+        "mode": "read_only",
+        "operation_id": operation_id,
+        "payload_checksum": payload_checksum,
+        "generated_at": generated_at,
+        "source_inspection_number": source_inspection_number,
+        "target_sample_number": target_sample_number,
+        "target_family": {
+            "base_number": base,
+            "occupied_numbers": occupied,
+            "ignored_numbers": ignored,
+            "candidate_number": target_sample_number,
+            "candidate_exact_count": exact_count,
+            "unique_sample_number_constraint": unique_proven,
+        },
+        "task_project": task_project,
+        "picture_readback": {
+            "main_count": len(main_ids),
+            "picture_count": len(picture_ids),
+            "records": picture_rows,
+        },
+        "write_performed": False,
+        # capability 仍关闭；即使全部数据库事实满足，也不能由该观察授权写入。
+        "ready_for_write": False,
+        "observation_checksum": _canonical_sha256(
+            {
+                "server_time": server_rows[0].get("ServerTime"),
+                "family": family_rows,
+                "task_project": task_project,
+                "pictures": picture_rows,
+                "unique_indexes": index_rows,
+            }
+        ),
     }
 
 
 def build_manifest(
     sample_no: str,
     queries: Sequence[QueryDefinition] = QUERIES,
+    *,
+    target_sample_no: str | None = None,
 ) -> list[dict[str, Any]]:
-    parameters = query_parameters(sample_no)
+    parameters = query_parameters(
+        sample_no, target_sample_no=target_sample_no
+    )
     manifest: list[dict[str, Any]] = []
     for query in queries:
         entry = query.manifest_entry()
@@ -1996,8 +2275,11 @@ class ReadOnlyProbeRunner:
         *,
         queries: Sequence[QueryDefinition] = QUERIES,
         include_final_entry_view: bool = True,
+        target_sample_no: str | None = None,
     ) -> dict[str, Any]:
-        parameters = query_parameters(sample_no)
+        parameters = query_parameters(
+            sample_no, target_sample_no=target_sample_no
+        )
         results: dict[str, Any] = {}
         try:
             try:
@@ -2086,6 +2368,7 @@ def build_base_document(
     mode: str,
     profile: OracleProfile | None,
     queries: Sequence[QueryDefinition] = QUERIES,
+    target_sample_no: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -2100,7 +2383,11 @@ def build_base_document(
             "file_server_access": False,
             "attachment_paths": "basename_and_hash_only",
         },
-        "query_manifest": build_manifest(sample_no, queries),
+        "query_manifest": build_manifest(
+            sample_no,
+            queries,
+            target_sample_no=target_sample_no,
+        ),
     }
 
 
@@ -2179,6 +2466,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="仅查询 Task、Task_Sample 和 Task_CheckItem，供任务推荐缓存刷新使用",
     )
+    parser.add_argument(
+        "--special-wool-image-dry-run",
+        action="store_true",
+        help=(
+            "仅执行图片类特种毛上传所需的编号族、任务项目、图片子表、"
+            "唯一索引和服务器时间查询，并生成类型化零写入观察文档"
+        ),
+    )
+    parser.add_argument(
+        "--target-sample-no",
+        help="图片上传预检单分配的候选样品编号",
+    )
+    parser.add_argument(
+        "--selected-project-key",
+        help="人工任务签发的 task-project 项目键",
+    )
+    parser.add_argument("--operation-id", help="执行系统外部操作 ID")
+    parser.add_argument(
+        "--payload-checksum",
+        help="执行系统外部操作预检单 SHA-256",
+    )
     return parser
 
 
@@ -2190,6 +2498,24 @@ def run_cli(
     args = build_parser().parse_args(argv)
     try:
         sample_no = validate_sample_no(args.sample_no)
+        if args.task_snapshot_only and args.special_wool_image_dry_run:
+            raise ProbeError("任务快照模式和特种毛图片 dry-run 不能同时启用。")
+        target_sample_no = None
+        if args.special_wool_image_dry_run:
+            if not args.target_sample_no:
+                raise ProbeError("图片 dry-run 必须提供 --target-sample-no。")
+            target_sample_no = validate_sample_no(args.target_sample_no)
+            if not re.fullmatch(
+                r"task-project:[0-9a-f]{24}",
+                str(args.selected_project_key or ""),
+            ):
+                raise ProbeError("图片 dry-run 缺少有效的 --selected-project-key。")
+            if not str(args.operation_id or "").strip():
+                raise ProbeError("图片 dry-run 缺少 --operation-id。")
+            if not SHA256_HEX_PATTERN.fullmatch(
+                str(args.payload_checksum or "")
+            ):
+                raise ProbeError("图片 dry-run 缺少有效的 --payload-checksum。")
         if args.credential_profile:
             profile = load_credential_profile(
                 Path(args.fibrecheck_dir),
@@ -2207,6 +2533,8 @@ def run_cli(
         selected_queries = (
             TASK_SNAPSHOT_QUERIES
             if args.task_snapshot_only
+            else SPECIAL_WOOL_DRY_RUN_QUERIES
+            if args.special_wool_image_dry_run
             else QUERIES
         )
         document = build_base_document(
@@ -2214,9 +2542,12 @@ def run_cli(
             mode="manifest" if args.manifest else "probe",
             profile=profile,
             queries=selected_queries,
+            target_sample_no=target_sample_no,
         )
         if args.task_snapshot_only:
             document["query_scope"] = "task_snapshot"
+        elif args.special_wool_image_dry_run:
+            document["query_scope"] = "special_wool_image_dry_run"
         if data_source_overridden and document["profile"] is not None:
             document["profile"]["data_source_overridden"] = True
         if args.manifest:
@@ -2232,9 +2563,25 @@ def run_cli(
                 run_result = ReadOnlyProbeRunner(connection).run(
                     sample_no,
                     queries=selected_queries,
-                    include_final_entry_view=not args.task_snapshot_only,
+                    include_final_entry_view=(
+                        not args.task_snapshot_only
+                        and not args.special_wool_image_dry_run
+                    ),
+                    target_sample_no=target_sample_no,
                 )
                 document.update(run_result)
+                if args.special_wool_image_dry_run:
+                    document["observation"] = (
+                        build_special_wool_image_observation(
+                            results=run_result["results"],
+                            source_inspection_number=sample_no,
+                            target_sample_number=target_sample_no,
+                            selected_project_key=args.selected_project_key,
+                            operation_id=args.operation_id,
+                            payload_checksum=args.payload_checksum,
+                            generated_at=document["generated_at"],
+                        )
+                    )
                 document["connection_attempted"] = True
             finally:
                 try:

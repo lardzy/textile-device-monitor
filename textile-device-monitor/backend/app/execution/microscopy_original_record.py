@@ -58,6 +58,11 @@ MAX_SELECTED_IMAGES = 10
 CANVAS_WIDTH = 21_600
 CANVAS_HEIGHT = 11_700
 IMAGE_GAP = 250
+# Excel interprets the horizontal ClientAnchor units written by LibreOffice's
+# legacy BIFF8 exporter more narrowly than LibreOffice reads them back for this
+# template.  Encode only x/width with this measured template-specific factor;
+# the UNO receipt decodes them back to logical canvas coordinates for checks.
+MICROSCOPY_BIFF_EXCEL_X_SCALE = 1.2745
 # LibreOffice's legacy .xls writer rounds drawing coordinates in 1/100 mm and
 # may move an anchored shape by a few units after reopening.  One percent of
 # the image canvas is a deliberately small, format-aware acceptance window.
@@ -470,6 +475,215 @@ def _single_image_geometry_matches(
     return True
 
 
+def _persisted_images_geometry(
+    placements: object,
+    *,
+    expected_images: Sequence[dict[str, Any]],
+    canvas_width: int,
+    canvas_height: int,
+) -> dict[str, Any]:
+    """Compare every reopened .xls shape with its source and planned geometry."""
+
+    issues: list[dict[str, Any]] = []
+    if canvas_width <= 0 or canvas_height <= 0:
+        return {
+            "verified": False,
+            "issues": [{"code": "invalid_canvas"}],
+            "non_overlapping": False,
+        }
+    if not isinstance(placements, list):
+        return {
+            "verified": False,
+            "issues": [{"code": "invalid_persisted_images"}],
+            "non_overlapping": False,
+        }
+
+    expected_by_index: dict[int, dict[str, Any]] = {}
+    for expected in expected_images:
+        try:
+            image_index = int(expected["index"])
+            source_id = str(expected["source_id"])
+            aspect_ratio = float(expected["aspect_ratio"])
+        except (KeyError, TypeError, ValueError):
+            issues.append({"code": "invalid_expected_image"})
+            continue
+        if (
+            image_index in expected_by_index
+            or not source_id
+            or not math.isfinite(aspect_ratio)
+            or aspect_ratio <= 0
+        ):
+            issues.append(
+                {"code": "invalid_expected_image", "index": image_index}
+            )
+            continue
+        expected_by_index[image_index] = expected
+
+    actual_by_index: dict[int, dict[str, Any]] = {}
+    for placement in placements:
+        if not isinstance(placement, dict):
+            issues.append({"code": "invalid_persisted_image"})
+            continue
+        try:
+            image_index = int(placement["index"])
+        except (KeyError, TypeError, ValueError):
+            issues.append({"code": "persisted_image_index_missing"})
+            continue
+        if image_index in actual_by_index:
+            issues.append(
+                {"code": "persisted_image_index_duplicate", "index": image_index}
+            )
+            continue
+        actual_by_index[image_index] = placement
+
+    if set(expected_by_index) != set(actual_by_index):
+        issues.append(
+            {
+                "code": "persisted_image_set_mismatch",
+                "expected": sorted(expected_by_index),
+                "actual": sorted(actual_by_index),
+            }
+        )
+
+    scale = min(
+        1.0,
+        canvas_width / float(CANVAS_WIDTH),
+        canvas_height / float(CANVAS_HEIGHT),
+    )
+    offset_x = (canvas_width - int(CANVAS_WIDTH * scale)) // 2
+    offset_y = (canvas_height - int(CANVAS_HEIGHT * scale)) // 2
+    geometry_tolerance = max(
+        50,
+        round(
+            max(canvas_width, canvas_height)
+            * PERSISTED_GEOMETRY_TOLERANCE_RATIO
+        ),
+    )
+    normalized_actual: list[dict[str, Any]] = []
+    for image_index in sorted(set(expected_by_index) & set(actual_by_index)):
+        expected = expected_by_index[image_index]
+        actual = actual_by_index[image_index]
+        source_id = str(expected["source_id"])
+        actual_source_id = str(actual.get("source_id") or "")
+        if actual_source_id != source_id:
+            issues.append(
+                {
+                    "code": "persisted_image_source_mismatch",
+                    "index": image_index,
+                }
+            )
+        logical = actual.get("logical")
+        if not isinstance(logical, dict):
+            issues.append(
+                {"code": "persisted_image_logical_geometry_missing", "index": image_index}
+            )
+            continue
+        try:
+            x = int(logical["x"])
+            y = int(logical["y"])
+            width = int(logical["width"])
+            height = int(logical["height"])
+            expected_x = offset_x + round(int(expected["x"]) * scale)
+            expected_y = offset_y + round(int(expected["y"]) * scale)
+            expected_width = max(1, round(int(expected["width"]) * scale))
+            expected_height = max(1, round(int(expected["height"]) * scale))
+            expected_aspect_ratio = float(expected["aspect_ratio"])
+        except (KeyError, TypeError, ValueError):
+            issues.append(
+                {"code": "persisted_image_geometry_invalid", "index": image_index}
+            )
+            continue
+        normalized_actual.append(
+            {
+                "index": image_index,
+                "source_id": actual_source_id,
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+            }
+        )
+        if (
+            width <= 0
+            or height <= 0
+            or x < 0
+            or y < 0
+            or x + width > canvas_width + 2
+            or y + height > canvas_height + 2
+        ):
+            issues.append(
+                {"code": "persisted_image_out_of_bounds", "index": image_index}
+            )
+            continue
+        if actual.get("resize_with_cell") is not False:
+            issues.append(
+                {"code": "persisted_image_resizes_with_cell", "index": image_index}
+            )
+        if not math.isclose(
+            width / height,
+            expected_aspect_ratio,
+            rel_tol=PERSISTED_ASPECT_RATIO_TOLERANCE,
+            abs_tol=0.001,
+        ):
+            issues.append(
+                {
+                    "code": "persisted_image_aspect_ratio_mismatch",
+                    "index": image_index,
+                    "expected": expected_aspect_ratio,
+                    "actual": width / height,
+                }
+            )
+        actual_geometry = (x, y, width, height)
+        expected_geometry = (
+            expected_x,
+            expected_y,
+            expected_width,
+            expected_height,
+        )
+        if any(
+            abs(actual_value - expected_value) > geometry_tolerance
+            for actual_value, expected_value in zip(
+                actual_geometry, expected_geometry
+            )
+        ):
+            issues.append(
+                {
+                    "code": "persisted_image_geometry_mismatch",
+                    "index": image_index,
+                    "expected": expected_geometry,
+                    "actual": actual_geometry,
+                    "tolerance": geometry_tolerance,
+                }
+            )
+
+    non_overlapping = True
+    for left_position, left in enumerate(normalized_actual):
+        for right in normalized_actual[left_position + 1 :]:
+            overlap_width = min(
+                left["x"] + left["width"], right["x"] + right["width"]
+            ) - max(left["x"], right["x"])
+            overlap_height = min(
+                left["y"] + left["height"], right["y"] + right["height"]
+            ) - max(left["y"], right["y"])
+            if overlap_width > 2 and overlap_height > 2:
+                non_overlapping = False
+                issues.append(
+                    {
+                        "code": "persisted_images_overlap",
+                        "left_index": left["index"],
+                        "right_index": right["index"],
+                    }
+                )
+
+    return {
+        "verified": not issues,
+        "issues": issues,
+        "non_overlapping": non_overlapping,
+        "geometry_tolerance": geometry_tolerance,
+        "scale": scale,
+    }
+
+
 def _template_path() -> Path:
     return (
         Path(__file__).resolve().parent
@@ -713,8 +927,7 @@ def _verify_generated_workbook(
     path: Path,
     *,
     expected_cells: dict[str, str],
-    expected_image_count: int,
-    expected_image_aspect_ratios: Sequence[float],
+    expected_images: Sequence[dict[str, Any]],
     uno_result: dict[str, Any],
 ) -> dict[str, Any]:
     try:
@@ -766,11 +979,18 @@ def _verify_generated_workbook(
     canvas = uno_result.get("canvas")
     if (
         mismatches
-        or uno_result.get("image_count") != expected_image_count
+        or uno_result.get("image_count") != len(expected_images)
         or not isinstance(placements, list)
-        or len(placements) != expected_image_count
+        or len(placements) != len(expected_images)
         or not isinstance(canvas, dict)
         or uno_result.get("print_area_verified") is not True
+        or uno_result.get("ordinary_print_area_removed") is not True
+        or not math.isclose(
+            float(canvas.get("biff_excel_x_scale") or 0),
+            MICROSCOPY_BIFF_EXCEL_X_SCALE,
+            rel_tol=0,
+            abs_tol=1e-9,
+        )
     ):
         raise ExecutionApiError(
             500,
@@ -780,34 +1000,26 @@ def _verify_generated_workbook(
         )
     canvas_width = int(canvas.get("width") or 0)
     canvas_height = int(canvas.get("height") or 0)
-    for placement in placements:
-        x = int(placement.get("x") or 0)
-        y = int(placement.get("y") or 0)
-        width = int(placement.get("width") or 0)
-        height = int(placement.get("height") or 0)
-        if (
-            width <= 0
-            or height <= 0
-            or x < 0
-            or y < 0
-            or x + width > canvas_width + 2
-            or y + height > canvas_height + 2
-        ):
-            raise ExecutionApiError(
-                500,
-                "workbook_verification_failed",
-                "生成后的图片尺寸或位置超出模板边界",
-            )
-    single_image_max_fill_verified = expected_image_count != 1
-    if expected_image_count == 1:
-        single_image_max_fill_verified = (
-            len(expected_image_aspect_ratios) == 1
-            and _single_image_geometry_matches(
-                placements[0],
-                canvas_width=canvas_width,
-                canvas_height=canvas_height,
-                expected_aspect_ratio=float(expected_image_aspect_ratios[0]),
-            )
+    geometry = _persisted_images_geometry(
+        placements,
+        expected_images=expected_images,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height,
+    )
+    if not geometry["verified"]:
+        raise ExecutionApiError(
+            500,
+            "workbook_verification_failed",
+            "生成后的图片比例、尺寸或位置与预期不一致",
+            details={"geometry": geometry},
+        )
+    single_image_max_fill_verified = len(expected_images) != 1
+    if len(expected_images) == 1:
+        single_image_max_fill_verified = _single_image_geometry_matches(
+            placements[0],
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            expected_aspect_ratio=float(expected_images[0]["aspect_ratio"]),
         )
         if not single_image_max_fill_verified:
             raise ExecutionApiError(
@@ -817,10 +1029,8 @@ def _verify_generated_workbook(
                 details={
                     "canvas": canvas,
                     "image": placements[0],
-                    "expected_aspect_ratio": (
-                        float(expected_image_aspect_ratios[0])
-                        if expected_image_aspect_ratios
-                        else None
+                    "expected_aspect_ratio": float(
+                        expected_images[0]["aspect_ratio"]
                     ),
                 },
             )
@@ -828,11 +1038,14 @@ def _verify_generated_workbook(
         "verified": True,
         "sheet_name": MICROSCOPY_SHEET_NAME,
         "checked_cells": sorted(expected_cells),
-        "image_count": expected_image_count,
+        "image_count": len(expected_images),
         "images": placements,
         "canvas": canvas,
         "print_area": MICROSCOPY_PRINT_AREA,
         "print_area_verified": True,
+        "ordinary_print_area_removed": True,
+        "all_images_geometry_verified": True,
+        "multi_image_non_overlap_verified": geometry["non_overlapping"],
         "single_image_max_fill_verified": single_image_max_fill_verified,
         "ole_header": True,
         "size_bytes": size,
@@ -847,6 +1060,7 @@ def _request_digest(
 ) -> str:
     payload = {
         "template_version": MICROSCOPY_TEMPLATE_VERSION,
+        "biff_excel_x_scale": MICROSCOPY_BIFF_EXCEL_X_SCALE,
         "inspection_number": inspection_number,
         "cells": cells,
         "images": [
@@ -1008,6 +1222,15 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         shutil.copyfile(template, working)
         prepared = _prepare_images(selected, temporary)
         placements = layout_images([item.aspect_ratio for item in prepared])
+        payload_images = [
+            {
+                "path": str(prepared[index].prepared_path),
+                "source_id": prepared[index].source_id,
+                "aspect_ratio": prepared[index].aspect_ratio,
+                **placement.as_dict(),
+            }
+            for index, placement in enumerate(placements)
+        ]
         payload = {
             "workbook_path": str(working),
             "sheet_name": MICROSCOPY_SHEET_NAME,
@@ -1017,14 +1240,9 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
                 "range": "A4:L32",
                 "max_width": CANVAS_WIDTH,
                 "max_height": CANVAS_HEIGHT,
+                "biff_excel_x_scale": MICROSCOPY_BIFF_EXCEL_X_SCALE,
             },
-            "images": [
-                {
-                    "path": str(prepared[index].prepared_path),
-                    **placement.as_dict(),
-                }
-                for index, placement in enumerate(placements)
-            ],
+            "images": payload_images,
         }
         payload_path = temporary / "payload.json"
         payload_path.write_text(
@@ -1034,10 +1252,7 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         verification = _verify_generated_workbook(
             working,
             expected_cells=cells,
-            expected_image_count=len(prepared),
-            expected_image_aspect_ratios=[
-                item.aspect_ratio for item in prepared
-            ],
+            expected_images=payload_images,
             uno_result=uno_result,
         )
         os.replace(working, target)
@@ -1061,6 +1276,7 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
             "request_digest": request_digest,
             "template_version": MICROSCOPY_TEMPLATE_VERSION,
             "template_sha256": MICROSCOPY_TEMPLATE_SHA256,
+            "biff_excel_x_scale": MICROSCOPY_BIFF_EXCEL_X_SCALE,
             "selected_image_ids": [entry.id for entry, _path in selected],
             "verification": verification,
             "sheet_name": MICROSCOPY_SHEET_NAME,

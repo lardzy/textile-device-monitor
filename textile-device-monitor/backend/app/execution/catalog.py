@@ -501,7 +501,12 @@ def _electron_microscopy_image_selection_default_checksums() -> set[str]:
     }
 
 
-def _electron_microscopy_gbt36422_definition() -> dict[str, Any]:
+def _electron_microscopy_gbt36422_definition(
+    *,
+    legacy_print_contract: bool = False,
+    legacy_print_choice_contract: bool = False,
+    legacy_project_contract: bool = False,
+) -> dict[str, Any]:
     """Current full workflow; keep the image-only v1 reproducible above."""
 
     definition = _electron_microscopy_gbt36422_image_selection_definition()
@@ -617,25 +622,100 @@ def _electron_microscopy_gbt36422_definition() -> dict[str, Any]:
             "id": "print-confirm",
             "type": "human.confirm",
             "type_version": 1,
-            "name": "打印原始记录",
+            "name": (
+                "打印原始记录"
+                if legacy_print_contract
+                else "确认是否打印原始记录"
+            ),
             "config": {
-                "title": "下载并按需打印原始记录",
-                "description": (
-                    "请下载生成的 Excel；如需打印，请使用工作表“微观形貌”"
-                    "的默认打印区域。"
+                "title": (
+                    "下载并按需打印原始记录"
+                    if legacy_print_contract
+                    else "确认是否打印原始记录"
                 ),
-                "form_schema": {
-                    "type": "object",
-                    "properties": {
-                        "printed": {"type": "boolean", "const": True},
-                        "artifact_sha256": {
-                            "type": "string",
-                            "pattern": "^[0-9a-f]{64}$",
+                "description": (
+                    (
+                        "请下载生成的 Excel；如需打印，请使用工作表“微观形貌”"
+                        "的默认打印区域。"
+                    )
+                    if legacy_print_contract
+                    else (
+                        "可选择暂不打印并继续；如选择打印，请下载或打开生成的 Excel，"
+                        "在 Excel 中手动打印工作表“微观形貌”的默认打印区域。"
+                    )
+                ),
+                "form_schema": (
+                    {
+                        "type": "object",
+                        "properties": {
+                            "printed": {"type": "boolean", "const": True},
+                            "artifact_sha256": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$",
+                            },
                         },
-                    },
-                    "required": ["printed", "artifact_sha256"],
-                    "additionalProperties": False,
-                },
+                        "required": ["printed", "artifact_sha256"],
+                        "additionalProperties": False,
+                    }
+                    if legacy_print_contract
+                    else {
+                        "type": "object",
+                        "properties": {
+                            "print_decision": {
+                                "type": "string",
+                                "enum": ["print", "skip"],
+                            },
+                            **(
+                                {}
+                                if legacy_print_choice_contract
+                                else {
+                                    "print_completed": {
+                                        "type": "boolean",
+                                    }
+                                }
+                            ),
+                            "artifact_sha256": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$",
+                            },
+                        },
+                        "required": ["print_decision", "artifact_sha256"],
+                        **(
+                            {}
+                            if legacy_print_choice_contract
+                            else {
+                                "allOf": [
+                                    {
+                                        "if": {
+                                            "properties": {
+                                                "print_decision": {
+                                                    "const": "print"
+                                                }
+                                            },
+                                            "required": ["print_decision"],
+                                        },
+                                        "then": {
+                                            "properties": {
+                                                "print_completed": {
+                                                    "const": True
+                                                }
+                                            },
+                                            "required": ["print_completed"],
+                                        },
+                                        "else": {
+                                            "properties": {
+                                                "print_completed": {
+                                                    "const": False
+                                                }
+                                            }
+                                        },
+                                    }
+                                ]
+                            }
+                        ),
+                        "additionalProperties": False,
+                    }
+                ),
             },
             "input_mapping": {
                 "task_kind": "microscopy_print_confirmation",
@@ -655,7 +735,19 @@ def _electron_microscopy_gbt36422_definition() -> dict[str, Any]:
             "input_mapping": {
                 "original_record": (
                     "$.nodes.generate-record.output.original_record"
-                )
+                ),
+                **(
+                    {}
+                    if legacy_project_contract
+                    else {
+                        "selected_project_key": (
+                            "$.nodes.record-input.output.selected_project_key"
+                        ),
+                        "selected_project": (
+                            "$.nodes.record-input.output.selected_project"
+                        ),
+                    }
+                ),
             },
             "ui": {"x": 1740, "y": 180},
         },
@@ -1083,6 +1175,48 @@ def ensure_default_catalog(db: Session) -> None:
         else:
             full_definition = _electron_microscopy_gbt36422_definition()
             full_checksum = definition_checksum(full_definition)
+            legacy_full_definition = _electron_microscopy_gbt36422_definition(
+                legacy_print_contract=True
+            )
+            legacy_full_checksum = definition_checksum(legacy_full_definition)
+            legacy_print_choice_definition = (
+                _electron_microscopy_gbt36422_definition(
+                    legacy_print_choice_contract=True
+                )
+            )
+            legacy_print_choice_checksum = definition_checksum(
+                legacy_print_choice_definition
+            )
+            legacy_project_definition = (
+                _electron_microscopy_gbt36422_definition(
+                    legacy_project_contract=True
+                )
+            )
+            legacy_project_checksum = definition_checksum(
+                legacy_project_definition
+            )
+            legacy_head_definition = _electron_microscopy_gbt36422_definition(
+                legacy_print_contract=True,
+                legacy_project_contract=True,
+            )
+            legacy_head_checksum = definition_checksum(legacy_head_definition)
+            legacy_print_choice_project_definition = (
+                _electron_microscopy_gbt36422_definition(
+                    legacy_print_choice_contract=True,
+                    legacy_project_contract=True,
+                )
+            )
+            legacy_print_choice_project_checksum = definition_checksum(
+                legacy_print_choice_project_definition
+            )
+            compatible_full_checksums = {
+                full_checksum,
+                legacy_full_checksum,
+                legacy_print_choice_checksum,
+                legacy_project_checksum,
+                legacy_head_checksum,
+                legacy_print_choice_project_checksum,
+            }
             version_two = next(
                 (
                     version
@@ -1100,8 +1234,8 @@ def ensure_default_catalog(db: Session) -> None:
                 and len(existing_electron.versions) == 2
                 and version_two is not None
                 and definition_checksum(existing_electron.draft_definition)
-                == full_checksum
-                and version_two.checksum == full_checksum
+                in compatible_full_checksums
+                and version_two.checksum in compatible_full_checksums
                 and existing_electron.capabilities == legacy_capabilities
                 and version_two.capabilities == legacy_capabilities
             )
@@ -1111,6 +1245,7 @@ def ensure_default_catalog(db: Session) -> None:
                     "write": True,
                     "external_write": True,
                 }
+                existing_electron.draft_definition = deepcopy(full_definition)
                 existing_electron.draft_revision = 3
                 existing_electron.published_version_number = 3
                 existing_electron.capabilities = deepcopy(capabilities)
@@ -1131,6 +1266,60 @@ def ensure_default_catalog(db: Session) -> None:
                         ),
                     )
                 )
+            else:
+                current_version = next(
+                    (
+                        version
+                        for version in existing_electron.versions
+                        if version.version_number
+                        == existing_electron.published_version_number
+                    ),
+                    None,
+                )
+                current_capabilities = {
+                    "read": True,
+                    "write": True,
+                    "external_write": True,
+                }
+                system_contract_upgrade_required = bool(
+                    existing_electron.created_by_id is None
+                    and existing_electron.updated_by_id is None
+                    and current_version is not None
+                    and existing_electron.draft_revision
+                    == existing_electron.published_version_number
+                    and len(existing_electron.versions)
+                    == existing_electron.published_version_number
+                    and definition_checksum(existing_electron.draft_definition)
+                    in compatible_full_checksums - {full_checksum}
+                    and current_version.checksum
+                    in compatible_full_checksums - {full_checksum}
+                    and existing_electron.capabilities == current_capabilities
+                    and current_version.capabilities == current_capabilities
+                )
+                if system_contract_upgrade_required:
+                    next_version = existing_electron.published_version_number + 1
+                    existing_electron.draft_definition = deepcopy(full_definition)
+                    existing_electron.draft_revision = next_version
+                    existing_electron.published_version_number = next_version
+                    db.add(
+                        ExecutionWorkflowVersion(
+                            workflow_id=existing_electron.id,
+                            version_number=next_version,
+                            schema_version="1.0",
+                            definition=deepcopy(full_definition),
+                            checksum=full_checksum,
+                            capabilities=deepcopy(current_capabilities),
+                            contract_checksum=workflow_contract_checksum(
+                                full_definition, current_capabilities
+                            ),
+                            release_note=(
+                                "打印确认改为可选的人工打印或暂不打印；"
+                                "选择打印时需确认已在 Excel 完成打印；"
+                                "两种选择均绑定生成制品校验和；图片上传预检"
+                                "绑定人工选择的任务项目"
+                            ),
+                        )
+                    )
 
     legacy_electron = workflows_by_slug.get(LEGACY_ELECTRON_WORKFLOW)
     if legacy_electron is not None:

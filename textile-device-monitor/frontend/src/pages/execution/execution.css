@@ -787,12 +787,69 @@
   overflow-wrap: anywhere;
 }
 
+.execution-microscopy-print__decisions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.execution-microscopy-print__decisions .ant-radio-wrapper {
+  min-width: 0;
+  margin-inline-end: 0;
+  padding: 12px 13px;
+  align-items: flex-start;
+  background: #fff;
+  border: 1px solid #d8e0ea;
+  border-radius: 9px;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.execution-microscopy-print__decisions .ant-radio-wrapper-checked {
+  background: #f3f7ff;
+  border-color: #7da7f5;
+}
+
+.execution-microscopy-print__decisions .ant-radio + span {
+  min-width: 0;
+  display: block;
+}
+
+.execution-microscopy-print__decisions .ant-radio + span > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.execution-microscopy-print__manual-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.execution-microscopy-print__manual-actions .ant-form-item {
+  margin-bottom: 0;
+  padding: 10px 12px;
+  background: #fff9ec;
+  border: 1px solid #ead39a;
+  border-radius: 8px;
+}
+
+.execution-microscopy-print__manual-actions .ant-checkbox-wrapper {
+  color: #5f4712;
+  font-weight: 600;
+}
+
 .execution-microscopy-print__hint {
-  margin: -5px 0 0 !important;
+  margin: 0 !important;
 }
 
 @media (max-width: 720px) {
   .execution-microscopy-record__summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .execution-microscopy-print__decisions {
     grid-template-columns: minmax(0, 1fr);
   }
 }

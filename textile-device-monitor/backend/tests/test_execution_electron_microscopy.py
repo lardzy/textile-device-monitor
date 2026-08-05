@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
 from app.execution.catalog import (
+    _electron_microscopy_gbt36422_definition,
     _electron_microscopy_gbt36422_image_selection_definition,
     bind_user_role,
     ensure_default_catalog,
@@ -56,6 +57,7 @@ from app.execution.security import hash_password
 from app.execution.validation import (
     definition_checksum,
     validate_definition,
+    validate_json_instance,
     workflow_contract_checksum,
 )
 
@@ -138,10 +140,13 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                 "check_basis": "---",
                 "projects": [
                     {
+                        "task_check_item_id": "sha256:1111111111111111",
+                        "check_item_id": "sha256:2222222222222222",
                         "check_item_no": "5103.5",
                         "check_item_name": project_name,
                         "check_method": "GB/T 36422-2018",
                         "check_count": 1,
+                        "seq_num": 1,
                     }
                 ],
             },
@@ -151,7 +156,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         cached = cached_task_snapshot(
             self.db, inspection_number="26A029794"
         )["snapshot"]
-        self.assertEqual(cached["schema_version"], 2)
+        self.assertEqual(cached["schema_version"], 3)
         self.assertEqual(cached["sample_names"], ["示例样品"])
         self.assertTrue(cached["projects"][0]["project_key"].startswith("task-project:"))
 
@@ -185,6 +190,61 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.assertEqual(
             workflow.capabilities,
             {"read": True, "write": True, "external_write": True},
+        )
+        print_node = next(
+            node
+            for node in workflow.draft_definition["nodes"]
+            if node["id"] == "print-confirm"
+        )
+        print_schema = print_node["config"]["form_schema"]
+        self.assertEqual(
+            print_schema["properties"]["print_decision"]["enum"],
+            ["print", "skip"],
+        )
+        self.assertEqual(
+            print_schema["required"],
+            ["print_decision", "artifact_sha256"],
+        )
+        self.assertEqual(
+            print_schema["properties"]["print_completed"],
+            {"type": "boolean"},
+        )
+        self.assertEqual(
+            print_schema["allOf"][0]["then"]["required"],
+            ["print_completed"],
+        )
+        self.assertNotIn("printed", print_schema["properties"])
+        sha256 = "a" * 64
+        self.assertTrue(
+            validate_json_instance(
+                print_schema,
+                {
+                    "print_decision": "print",
+                    "print_completed": True,
+                    "artifact_sha256": sha256,
+                },
+                path_prefix="$.data",
+            ).valid
+        )
+        self.assertTrue(
+            validate_json_instance(
+                print_schema,
+                {
+                    "print_decision": "skip",
+                    "artifact_sha256": sha256,
+                },
+                path_prefix="$.data",
+            ).valid
+        )
+        self.assertFalse(
+            validate_json_instance(
+                print_schema,
+                {
+                    "print_decision": "print",
+                    "artifact_sha256": sha256,
+                },
+                path_prefix="$.data",
+            ).valid
         )
         validation = validate_definition(
             workflow.draft_definition,
@@ -307,6 +367,232 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         ).one()
         self.assertEqual(version_three.capabilities, workflow.capabilities)
 
+    def test_system_owned_legacy_print_contract_is_upgraded(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        legacy_definition = _electron_microscopy_gbt36422_definition(
+            legacy_print_contract=True
+        )
+        capabilities = {"read": True, "write": True, "external_write": True}
+        version_one = self.db.query(ExecutionWorkflowVersion).filter_by(
+            workflow_id=workflow.id,
+            version_number=1,
+        ).one()
+        workflow.draft_definition = legacy_definition
+        workflow.draft_revision = 1
+        workflow.published_version_number = 1
+        workflow.capabilities = capabilities
+        workflow.created_by_id = None
+        workflow.updated_by_id = None
+        version_one.definition = legacy_definition
+        version_one.checksum = definition_checksum(legacy_definition)
+        version_one.capabilities = capabilities
+        version_one.contract_checksum = workflow_contract_checksum(
+            legacy_definition,
+            capabilities,
+        )
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 2)
+        self.assertEqual(workflow.published_version_number, 2)
+        print_node = next(
+            node
+            for node in workflow.draft_definition["nodes"]
+            if node["id"] == "print-confirm"
+        )
+        print_schema = print_node["config"]["form_schema"]
+        self.assertIn("print_decision", print_schema["properties"])
+        self.assertIn("print_completed", print_schema["properties"])
+        self.assertNotIn("printed", print_schema["properties"])
+
+    def test_system_owned_print_choice_without_completion_is_upgraded(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        legacy_definition = _electron_microscopy_gbt36422_definition(
+            legacy_print_choice_contract=True
+        )
+        capabilities = {"read": True, "write": True, "external_write": True}
+        version_one = self.db.query(ExecutionWorkflowVersion).filter_by(
+            workflow_id=workflow.id,
+            version_number=1,
+        ).one()
+        workflow.draft_definition = legacy_definition
+        workflow.draft_revision = 1
+        workflow.published_version_number = 1
+        workflow.capabilities = capabilities
+        workflow.created_by_id = None
+        workflow.updated_by_id = None
+        version_one.definition = legacy_definition
+        version_one.checksum = definition_checksum(legacy_definition)
+        version_one.capabilities = capabilities
+        version_one.contract_checksum = workflow_contract_checksum(
+            legacy_definition,
+            capabilities,
+        )
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 2)
+        print_node = next(
+            node
+            for node in workflow.draft_definition["nodes"]
+            if node["id"] == "print-confirm"
+        )
+        print_schema = print_node["config"]["form_schema"]
+        self.assertIn("print_completed", print_schema["properties"])
+        self.assertIn("allOf", print_schema)
+
+    def test_system_owned_head_v3_project_contract_is_upgraded(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        image_selection = (
+            _electron_microscopy_gbt36422_image_selection_definition()
+        )
+        legacy_head = _electron_microscopy_gbt36422_definition(
+            legacy_print_contract=True,
+            legacy_project_contract=True,
+        )
+        capabilities = {"read": True, "write": True, "external_write": True}
+        version_two_capabilities = {"read": True, "write": True}
+        version_one = self.db.query(ExecutionWorkflowVersion).filter_by(
+            workflow_id=workflow.id,
+            version_number=1,
+        ).one()
+        version_one.definition = image_selection
+        version_one.checksum = definition_checksum(image_selection)
+        version_one.capabilities = {"read": True, "write": False}
+        version_one.contract_checksum = workflow_contract_checksum(
+            image_selection, version_one.capabilities
+        )
+        for version_number, version_capabilities in (
+            (2, version_two_capabilities),
+            (3, capabilities),
+        ):
+            self.db.add(
+                ExecutionWorkflowVersion(
+                    workflow_id=workflow.id,
+                    version_number=version_number,
+                    schema_version="1.0",
+                    definition=legacy_head,
+                    checksum=definition_checksum(legacy_head),
+                    capabilities=version_capabilities,
+                    contract_checksum=workflow_contract_checksum(
+                        legacy_head, version_capabilities
+                    ),
+                    release_note=(
+                        "原始记录完整流程"
+                        if version_number == 2
+                        else "HEAD 外部预检能力版本"
+                    ),
+                )
+            )
+        workflow.draft_definition = legacy_head
+        workflow.draft_revision = 3
+        workflow.published_version_number = 3
+        workflow.capabilities = capabilities
+        workflow.created_by_id = None
+        workflow.updated_by_id = None
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 4)
+        self.assertEqual(workflow.published_version_number, 4)
+        upload_node = next(
+            node
+            for node in workflow.draft_definition["nodes"]
+            if node["id"] == "upload-record"
+        )
+        self.assertEqual(
+            upload_node["input_mapping"]["selected_project_key"],
+            "$.nodes.record-input.output.selected_project_key",
+        )
+        self.assertEqual(
+            upload_node["input_mapping"]["selected_project"],
+            "$.nodes.record-input.output.selected_project",
+        )
+
+    def test_admin_edited_head_v3_contract_is_not_upgraded(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        legacy_head = _electron_microscopy_gbt36422_definition(
+            legacy_print_contract=True,
+            legacy_project_contract=True,
+        )
+        capabilities = {"read": True, "write": True, "external_write": True}
+        version_one = self.db.query(ExecutionWorkflowVersion).filter_by(
+            workflow_id=workflow.id,
+            version_number=1,
+        ).one()
+        version_one.definition = (
+            _electron_microscopy_gbt36422_image_selection_definition()
+        )
+        version_one.checksum = definition_checksum(version_one.definition)
+        version_one.capabilities = {"read": True, "write": False}
+        version_one.contract_checksum = workflow_contract_checksum(
+            version_one.definition,
+            version_one.capabilities,
+        )
+        for version_number, version_capabilities in (
+            (2, {"read": True, "write": True}),
+            (3, capabilities),
+        ):
+            self.db.add(
+                ExecutionWorkflowVersion(
+                    workflow_id=workflow.id,
+                    version_number=version_number,
+                    schema_version="1.0",
+                    definition=legacy_head,
+                    checksum=definition_checksum(legacy_head),
+                    capabilities=version_capabilities,
+                    contract_checksum=workflow_contract_checksum(
+                        legacy_head, version_capabilities
+                    ),
+                    release_note="历史系统版本",
+                )
+            )
+        edited = dict(legacy_head)
+        edited["metadata"] = {
+            **legacy_head["metadata"],
+            "name": "管理员保留的微观形貌流程",
+        }
+        workflow.draft_definition = edited
+        workflow.draft_revision = 3
+        workflow.published_version_number = 3
+        workflow.capabilities = capabilities
+        workflow.updated_by_id = self.user.id
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 3)
+        self.assertEqual(workflow.published_version_number, 3)
+        self.assertEqual(
+            workflow.draft_definition["metadata"]["name"],
+            "管理员保留的微观形貌流程",
+        )
+        self.assertEqual(
+            self.db.query(ExecutionWorkflowVersion)
+            .filter_by(workflow_id=workflow.id)
+            .count(),
+            3,
+        )
+
     def test_recommendation_scores_folder_and_same_project_task_facts(self):
         self._image("26A029794-lisy/纵面/IMAGE01.BMP")
         self._image("26A029794-补拍/横截面/image02.JpEg")
@@ -400,6 +686,107 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.assertTrue(stale["refresh_queued"])
         self.assertFalse(again["refresh_queued"])
 
+    def test_v2_snapshot_is_hidden_and_queued_for_contract_refresh(self):
+        row = ExecutionTaskSnapshotCache(
+            inspection_number="26A029796",
+            status="ready",
+            snapshot={"schema_version": 2, "projects": []},
+            fetched_at=utcnow(),
+            expires_at=utcnow() + timedelta(hours=1),
+        )
+        self.db.add(row)
+        self.db.commit()
+
+        cached = cached_task_snapshot(
+            self.db, inspection_number="26A029796"
+        )
+
+        self.assertEqual(cached["cache_state"], "pending")
+        self.assertIsNone(cached["snapshot"])
+        self.assertTrue(cached["refresh_queued"])
+        self.assertEqual(row.status, "queued")
+
+    def test_v3_microscopy_snapshot_without_public_ids_is_refreshed(self):
+        row = ExecutionTaskSnapshotCache(
+            inspection_number="26A029797",
+            status="ready",
+            snapshot={
+                "schema_version": 3,
+                "projects": [
+                    {
+                        "check_item_name": "纤维微观形貌",
+                        "check_method": "GB/T 36422-2018",
+                    }
+                ],
+            },
+            fetched_at=utcnow(),
+            expires_at=utcnow() + timedelta(hours=1),
+        )
+        self.db.add(row)
+        self.db.commit()
+
+        cached = cached_task_snapshot(
+            self.db, inspection_number="26A029797"
+        )
+
+        self.assertEqual(cached["cache_state"], "pending")
+        self.assertIsNone(cached["snapshot"])
+        self.assertTrue(cached["refresh_queued"])
+
+    def test_bridge_completion_rejects_microscopy_project_without_public_ids(self):
+        cached_task_snapshot(self.db, inspection_number="26A029798")
+        row = claim_task_snapshot_refresh(self.db, bridge_id="bridge-invalid")
+
+        with self.assertRaises(ExecutionApiError) as raised:
+            complete_task_snapshot_refresh(
+                self.db,
+                inspection_number="26A029798",
+                bridge_id="bridge-invalid",
+                claim_token=row.claim_token,
+                snapshot={
+                    "schema_version": 3,
+                    "projects": [
+                        {
+                            "check_item_name": "纤维微观形貌",
+                            "check_method": "GB/T 36422-2018",
+                        }
+                    ],
+                },
+            )
+
+        self.assertEqual(
+            raised.exception.code, "task_snapshot_project_identity_missing"
+        )
+
+    def test_other_project_snapshot_remains_compatible_without_public_ids(self):
+        cached_task_snapshot(self.db, inspection_number="26A029799")
+        row = claim_task_snapshot_refresh(self.db, bridge_id="bridge-other")
+        complete_task_snapshot_refresh(
+            self.db,
+            inspection_number="26A029799",
+            bridge_id="bridge-other",
+            claim_token=row.claim_token,
+            snapshot={
+                "schema_version": 2,
+                "projects": [
+                    {
+                        "check_item_name": "纤维平均直径",
+                        "check_method": "其它方法",
+                    }
+                ],
+            },
+        )
+        self.db.commit()
+
+        cached = cached_task_snapshot(
+            self.db, inspection_number="26A029799"
+        )
+        self.assertEqual(cached["cache_state"], "ready")
+        self.assertEqual(cached["snapshot"]["schema_version"], 3)
+        self.assertIsNone(
+            cached["snapshot"]["projects"][0]["task_check_item_id"]
+        )
+
     def test_task_name_and_method_cannot_be_combined_across_projects(self):
         self._image("26A029795/纵面/one.png")
         cached_task_snapshot(self.db, inspection_number="26A029795")
@@ -412,6 +799,8 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             snapshot={
                 "projects": [
                     {
+                        "task_check_item_id": "sha256:3333333333333333",
+                        "check_item_id": "sha256:4444444444444444",
                         "check_item_name": "纤维微观形貌",
                         "check_method": "按客户要求",
                     },

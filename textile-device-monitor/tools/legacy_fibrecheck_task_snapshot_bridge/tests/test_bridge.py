@@ -31,12 +31,14 @@ def probe_document(*, tasks=None, samples=None, items=None):
     item_rows = (
         [
             {
-                "ID": "item-1",
+                "ID": "sha256:1111111111111111",
                 "TaskID": "task-1",
+                "CheckItemID": "sha256:2222222222222222",
                 "CheckItemNo": "5103.5",
                 "CheckItemName": "纤维微观形貌",
                 "CheckMethod": "GB/T 36422-2018",
                 "CheckCount": 1,
+                "SeqNum": 1,
                 "SampleIdentify": None,
                 "Remark": "内部备注",
                 "GiveJudgement": 0,
@@ -114,17 +116,20 @@ class SnapshotMappingTests(unittest.TestCase):
         self.assertEqual(
             snapshot,
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "sample_name": "Surgicel-Fibrillar",
                 "sample_names": ["Surgicel-Fibrillar"],
                 "check_basis": "---",
                 "projects": [
                     {
                         "project_key": snapshot["projects"][0]["project_key"],
+                        "task_check_item_id": "sha256:1111111111111111",
+                        "check_item_id": "sha256:2222222222222222",
                         "check_item_no": "5103.5",
                         "check_item_name": "纤维微观形貌",
                         "check_method": "GB/T 36422-2018",
                         "check_count": 1,
+                        "seq_num": 1,
                         "sample_identify": None,
                         "remark": "内部备注",
                         "give_judgement": 0,
@@ -141,7 +146,7 @@ class SnapshotMappingTests(unittest.TestCase):
         self.assertEqual(
             snapshot,
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "sample_name": None,
                 "sample_names": [],
                 "check_basis": None,
@@ -163,6 +168,30 @@ class SnapshotMappingTests(unittest.TestCase):
         )
         self.assertIsNone(snapshot["sample_name"])
         self.assertEqual(snapshot["sample_names"], ["样品 A", "样品 B"])
+
+    def test_microscopy_project_without_public_task_item_id_is_rejected(self):
+        item = dict(probe_document()["results"]["task_check_items"]["rows"][0])
+        item.pop("ID")
+        with self.assertRaisesRegex(bridge.SnapshotBridgeError, "脱敏项目标识"):
+            bridge.build_snapshot(probe_document(items=[item]), INSPECTION_NUMBER)
+
+    def test_microscopy_project_without_public_check_item_id_is_rejected(self):
+        item = dict(probe_document()["results"]["task_check_items"]["rows"][0])
+        item["CheckItemID"] = "raw-database-id"
+        with self.assertRaisesRegex(bridge.SnapshotBridgeError, "脱敏项目标识"):
+            bridge.build_snapshot(probe_document(items=[item]), INSPECTION_NUMBER)
+
+    def test_unrelated_project_remains_compatible_without_public_ids(self):
+        item = dict(probe_document()["results"]["task_check_items"]["rows"][0])
+        item["CheckItemName"] = "纤维平均直径"
+        item.pop("ID")
+        item.pop("CheckItemID")
+        snapshot = bridge.build_snapshot(
+            probe_document(items=[item]), INSPECTION_NUMBER
+        )
+        self.assertEqual(snapshot["schema_version"], 3)
+        self.assertIsNone(snapshot["projects"][0]["task_check_item_id"])
+        self.assertIsNone(snapshot["projects"][0]["check_item_id"])
 
     def test_duplicate_task_is_rejected(self):
         task = probe_document()["results"]["tasks"]["rows"][0]

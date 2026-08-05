@@ -308,15 +308,30 @@ legacy_special_wool_review
   review_children_verified → completed`；副作用边界是 `review_save_started`。
 - 当前后端预检声明 `execution_capability.available=false` 并拒绝批准；Bridge 不
   声明这两种能力，Writer 也明确拒绝，不能回落到根数法写入实现。
+- 2026-08-05 静态取证确认 `SpecialWoolAddUI` 创建一条
+  `OriginalDataPictureFile`，其 `CheckItemID` 来自用户选中的任务项目；主记录与
+  图片子记录由官方 DAL 在同一 `SaveChanges` 边界保存。已对
+  `260061860` 执行实库只读回读，但该编号没有图片子记录，仍需一条已有
+  图片主/子记录作为真实样本。
+- `SpecialWoolCheckUI` 的图片类复核仅更新主记录
+  `ReviewUser/ReviewTime`，不修改图片子记录；未来回执必须证明子记录数量、
+  外键、`CheckItemID` 和字段指纹在复核前后不变。
+- 图片上传预检已绑定人工选中的脱敏 `Task_CheckItem/CheckItem`；
+  Python 探针 `--special-wool-image-dry-run` 可以只读查询编号族、精确项目、
+  图片主子记录、唯一索引和服务器时间，但始终输出 `ready_for_write=false`。
+- 2026-08-05 在 Windows/Oracle 只读事务中实测 `260061860`：任务项目
+  唯一命中“纤维微观形貌 / GB/T 36422-2018”；旧库有 2 条精确同号
+  主记录，且没有 `SampleNo` 单列唯一索引。因此后续必须由 Bridge 全局串行
+  执行“重查编号族 → 分配 → 保存 → 精确回读”，不能把查询后的编号当成并发唯一保障。
 
 Windows 下一轮必须先做只读/断点取证，不做真实保存：
 
-1. 证明目标编号远端精确/Contains 占用查询，并把最终 `原号/-1/-2` 分配放到
-   Bridge 写前预检；当前服务端分配仅是本系统围栏内暂定值。
-2. 跟踪 `OriginalDataPictureFile` 的创建、`CheckItemID` 来源、主记录/图片子记录
-   保存顺序和保存后回读条件。
-3. 跟踪“特纤复核”对 `SpecialWoolManage.ReviewUser/ReviewTime`、图片记录以及
-   细度/定量子记录的联动；确认失败时事务边界和可观察结果。
+1. 已证明目标编号远端精确/Contains 占用查询和 `SampleNo` 无唯一索引；
+   下一步把最终 `原号/-1/-2` 分配放到 Bridge 的全局串行写前预检中。
+2. 找到一条真实已有图片主/子记录，以零写入 dry-run 确认
+   `OriginalDataPictureFile` 的实库回读结构。
+3. 在 Windows 实机只读验证 `SpecialWoolCheckUI` 功能权限与可能存在的
+   `btnCheck` 控件权限，并确认文件服务器目标目录及 ACL。
 4. 完成上述证据、测试和最终变更清单后，再回到用户确认是否允许一次受控写入。
 
 ## 7. 后续阶段仍缺少的能力
@@ -327,8 +342,10 @@ Windows 下一轮必须先做只读/断点取证，不做真实保存：
 - ~~`in_progress` 操作参与取消状态机~~（已实现 cancel_pending + abort 回报）；
 - ~~`reconciliation_required` 的管理员人工解决端点~~（2026-08-01 已实现；只
   接受完整写入或完全未写入，部分结果继续锁定）；
-- Bridge/探针生成并签名、绑定 operation/attempt/payload/账号/目标路径的只读
-  observation（当前对账材料仅为 `admin_attestation_v1` 人工声明）；
+- ~~图片上传探针生成绑定 operation/payload/目标编号/任务项目的类型化
+  只读 observation~~（已实现文档生成与后端严格校验）；仍缺 Bridge 认证
+  回传/持久化、attempt 绑定和机器签名。现有对账材料仍可能是
+  `admin_attestation_v1` 人工声明，不可混为机器事实；
 - 远端成功业务键的永久幂等记录（当前以操作/attempt 终态 + 唯一索引承担，
   跨运行重复创建仍靠业务围栏与人工确认）；
 - 旧账号密码的 Windows 端受控解密/传递方式（首版为 Bridge 本地受控
