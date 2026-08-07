@@ -1,0 +1,43 @@
+services:
+  postgres:
+    volumes:
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/postgres-data
+        target: /var/lib/postgresql/data
+
+  backend:
+    environment:
+      EXECUTION_SOURCE_ROOT: /data/execution-source
+    volumes:
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/share66
+        target: /data/share66
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/share82
+        target: /data/share82
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/share66-out
+        target: /data/share66_out
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/execution-source
+        target: /data/execution-source
+        read_only: true
+      # 宋体字体：避免 LibreOffice 生成原始记录时把模板宋体替换成 DejaVu/Arial
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/fonts
+        target: /usr/share/fonts/truetype/simsun
+        read_only: true
+
+  execution-worker:
+    environment:
+      EXECUTION_SOURCE_ROOT: /data/execution-source
+    volumes:
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/execution-source
+        target: /data/execution-source
+        read_only: true
+      # 宋体字体：避免 LibreOffice 生成原始记录时把模板宋体替换成 DejaVu/Arial
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/fonts
+        target: /usr/share/fonts/truetype/simsun
+        read_only: true

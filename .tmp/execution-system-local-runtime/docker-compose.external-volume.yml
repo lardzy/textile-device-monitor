@@ -1,0 +1,5 @@
+# 让 compose 将既有 area_out_cifs 卷视为外部卷，避免配置哈希不一致触发
+# “重建卷”提示并级联重建已无镜像的 area-infer 容器。
+volumes:
+  area_out_cifs:
+    external: true

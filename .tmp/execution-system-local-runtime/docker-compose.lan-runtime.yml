@@ -1,0 +1,8 @@
+services:
+  # 当前测试机继续复用已有的本地 PostgreSQL 数据目录；执行源改用
+  # docker-compose.yml 中的局域网 CIFS 卷，不再引用 /Volumes/LARD。
+  postgres:
+    volumes:
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/postgres-data
+        target: /var/lib/postgresql/data

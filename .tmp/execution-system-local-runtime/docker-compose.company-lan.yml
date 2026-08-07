@@ -1,0 +1,22 @@
+# 公司局域网现场测试覆盖。本文件在 .tmp 中，不进入 Git。
+#
+# 将 local 覆盖中的空测试目录替换为真实 CIFS 共享：
+#   //192.168.105.82/材料检测中心/10特纤/02-检验
+services:
+  backend:
+    environment:
+      EXECUTION_SOURCE_ROOT: /data/execution-source/10特纤/02-检验
+    volumes:
+      - type: volume
+        source: area_out_cifs
+        target: /data/execution-source
+        read_only: true
+
+  execution-worker:
+    environment:
+      EXECUTION_SOURCE_ROOT: /data/execution-source/10特纤/02-检验
+    volumes:
+      - type: volume
+        source: area_out_cifs
+        target: /data/execution-source
+        read_only: true
