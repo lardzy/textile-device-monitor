@@ -2,6 +2,15 @@
 
 ## 2026-08-07：生产部署准备与 Windows Bridge 集中打包
 
+- 纸类人工单选 409 循环修复（同日补记）：`file.paper_fiber_gbt4688_qualitative`
+  候选在“后台索引扫描间隔内文件被重新保存”时会携带过期指纹，提交被
+  `_validate_index_candidate` 以 `file_candidate_stale` 永久拒绝，前端又把所有
+  409 统一提示为“任务已被其他人员更新”，导致无法推进。修复：
+  `paper_fiber._profile_for_entry` 在组候选前按实时 stat 校正索引指纹
+  （连带 size/modified_at，指纹变化自动失效结果缓存并重读 W32）；
+  `HumanTaskCard` 按 409 错误码给出区分提示（`file_candidate_stale` →
+  明确告知文件已变化、需取消后重新发起）。电镜选图路径存在同类窗口，
+  暂未展开，如出现同样症状按同模式处理。
 - 新增 `12_生产部署方案.md`：Win10 64 位 Docker 主机试运行，仅开放
   再生纤根数法/面积法、电镜微观形貌、纸类 GB/T 4688-2020 定性 4 个流程；
   **全链路保持 HTTP、不启用 HTTPS**（用户确认，长期有效）。

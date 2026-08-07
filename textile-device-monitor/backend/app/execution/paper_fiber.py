@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
@@ -177,6 +178,30 @@ def _profile_for_entry(
 ) -> tuple[dict[str, Any], bool]:
     metadata = dict(entry.metadata_json or {})
     profiles = dict(metadata.get("workbook_profiles") or {})
+    # 鲜活度护栏：后台索引按间隔扫描，共享盘上的最新保存可能尚未反映到
+    # entry.fingerprint。候选一旦携带过期指纹，提交时
+    # _validate_index_candidate 会以 file_candidate_stale 永久拒绝。
+    # 这里先按实时 stat 校正指纹（连带 size/modified_at），让候选始终
+    # 与磁盘一致；指纹变化会自动使下方缓存失效并重读结果单元格。
+    try:
+        live_path = gateway.resolve(
+            ArtifactRef(PAPER_FIBER_ROOT_ID, entry.relative_path),
+            expected_type="file",
+        )
+        live_stat = live_path.stat()
+    except (ExecutionApiError, StorageError, OSError):
+        live_stat = None
+    live_fingerprint = (
+        f"{live_stat.st_size}:{live_stat.st_mtime_ns}"
+        if live_stat is not None
+        else None
+    )
+    if live_fingerprint is not None and live_fingerprint != entry.fingerprint:
+        entry.fingerprint = live_fingerprint
+        entry.size_bytes = live_stat.st_size
+        entry.modified_at = datetime.fromtimestamp(
+            live_stat.st_mtime, tz=timezone.utc
+        )
     cached = profiles.get(_PROFILE_CACHE_KEY)
     if (
         isinstance(cached, dict)

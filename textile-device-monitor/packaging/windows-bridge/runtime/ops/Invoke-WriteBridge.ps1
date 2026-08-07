@@ -106,7 +106,18 @@ $BridgeArgs = @(
 if ($Once) { $BridgeArgs += '--once' }
 
 Write-Output "WRITE_BRIDGE_START $(Get-Date -Format o)"
-& $Python @BridgeArgs
-$ExitCode = $LASTEXITCODE
-Write-Output "WRITE_BRIDGE_EXIT=$ExitCode"
-exit $ExitCode
+if ($Once) {
+    & $Python @BridgeArgs
+    $ExitCode = $LASTEXITCODE
+    Write-Output "WRITE_BRIDGE_EXIT=$ExitCode"
+    exit $ExitCode
+}
+
+# bridge.py 每完成一个任务即主动退出（一任务一进程的隔离设计），
+# 因此长期驻留必须靠外层守护循环重启；空闲轮询异常（如后端重启）也一并兜底。
+while ($true) {
+    & $Python @BridgeArgs
+    $ExitCode = $LASTEXITCODE
+    Write-Output "WRITE_BRIDGE_EXIT=$ExitCode $(Get-Date -Format o)（5 秒后重启）"
+    Start-Sleep -Seconds 5
+}

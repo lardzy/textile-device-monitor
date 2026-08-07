@@ -47,7 +47,17 @@ if (Test-Path -LiteralPath $OracleClient -PathType Container) {
 if ($Once) { $SnapshotArgs += '--once' }
 
 Write-Output "SNAPSHOT_BRIDGE_START $(Get-Date -Format o)"
-& $Python @SnapshotArgs
-$ExitCode = $LASTEXITCODE
-Write-Output "SNAPSHOT_BRIDGE_EXIT=$ExitCode"
-exit $ExitCode
+if ($Once) {
+    & $Python @SnapshotArgs
+    $ExitCode = $LASTEXITCODE
+    Write-Output "SNAPSHOT_BRIDGE_EXIT=$ExitCode"
+    exit $ExitCode
+}
+
+# 守护循环：后端重启等瞬断导致桥进程退出时自动拉起。
+while ($true) {
+    & $Python @SnapshotArgs
+    $ExitCode = $LASTEXITCODE
+    Write-Output "SNAPSHOT_BRIDGE_EXIT=$ExitCode $(Get-Date -Format o)（5 秒后重启）"
+    Start-Sleep -Seconds 5
+}

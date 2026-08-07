@@ -442,8 +442,14 @@ export default function HumanTaskCard({
           // Ant Design 已将本地表单校验错误显示在对应字段附近。
           // 这里不再把它误报成接口操作失败。
         } else if (error.status === 409 || error.status === 404) {
+          const conflictMessages = {
+            file_candidate_stale: '原始记录在读取结果后已变化，请取消本次运行并重新发起，以读取最新文件',
+            file_candidate_not_offered: '所选文件已不在候选列表中，请刷新后重新选择',
+            human_task_not_owned: '请先领取该人工任务',
+            human_task_closed: '该步骤已不再等待人工处理，正在刷新最新状态',
+          };
           message.warning(error.status === 409
-            ? '任务已被其他人员更新，正在刷新最新状态'
+            ? (conflictMessages[error.code] || '任务已被其他人员更新，正在刷新最新状态')
             : '任务已结束或不再由当前账号处理');
           await onChanged?.();
         } else {

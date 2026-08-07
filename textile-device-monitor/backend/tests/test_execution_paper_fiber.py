@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -318,6 +319,49 @@ class PaperFiberBackendTests(unittest.TestCase):
             ),
         )
         self.assertFalse(second["cache_updated"])
+
+    def test_stale_index_fingerprint_is_refreshed_before_offering_candidate(self):
+        path = self._xls("26W006701/record.xls", "木浆 100")
+        entry = self._index(path)
+        self._task_snapshot("26W006701")
+        self.db.commit()
+
+        gateway = FileGateway(
+            [StorageRoot(root_id=PAPER_FIBER_ROOT_ID, path=self.root_path)]
+        )
+        first = paper_fiber_match(
+            self.db,
+            inspection_number="26W006701",
+            gateway=gateway,
+        )
+        self.assertEqual(first["candidates"][0]["result"]["w32_value"], "木浆 100")
+        self.assertTrue(first["cache_updated"])
+
+        # 共享盘文件被重新保存，但后台索引尚未扫描（索引指纹仍旧）
+        self._xls("26W006701/record.xls", "草浆、木浆、竹浆")
+        bumped = path.stat()
+        os.utime(path, ns=(bumped.st_atime_ns, bumped.st_mtime_ns + 1_000_000_000))
+        live = path.stat()
+        live_fingerprint = f"{live.st_size}:{live.st_mtime_ns}"
+        self.db.refresh(entry)
+        self.assertNotEqual(entry.fingerprint, live_fingerprint)
+
+        result = paper_fiber_match(
+            self.db,
+            inspection_number="26W006701",
+            gateway=gateway,
+        )
+        candidate = result["candidates"][0]
+        # 候选必须携带实时指纹，否则提交时会被 file_candidate_stale 永久拒绝
+        self.assertEqual(candidate["fingerprint"], live_fingerprint)
+        self.assertEqual(candidate["result"]["w32_value"], "草浆、木浆、竹浆")
+        self.assertEqual(candidate["result"]["unit"], "")
+        self.assertEqual(candidate["result"]["contains_standalone_100"], False)
+        self.assertTrue(result["cache_updated"])
+        # 生产路径由 worker 在节点结束时提交；这里显式提交后验证落库指纹
+        self.db.commit()
+        self.db.refresh(entry)
+        self.assertEqual(entry.fingerprint, live_fingerprint)
 
     def test_task_name_and_method_from_different_projects_do_not_full_match(self):
         path = self._xls("26W006701/record.xls", "木浆 100")
