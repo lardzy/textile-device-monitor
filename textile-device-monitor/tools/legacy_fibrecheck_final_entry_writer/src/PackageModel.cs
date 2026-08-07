@@ -190,7 +190,11 @@ namespace LegacyFibreCheckFinalEntryWriter
             }
             if (root.ContainsKey("controlled_test_override"))
             {
-                if (schemaVersion != 2 || package.OperationType != ExcelOperation)
+                // Schema v2 allows the single-sample controlled append for both
+                // the microscopy Excel route and the paper generic route.  The
+                // payload itself enforces the exact 1->2 count contract, and the
+                // generic route is already paper-scoped by ValidatePaperGenericScope.
+                if (schemaVersion != 2)
                 {
                     throw new PackageValidationException(
                         "controlled_test_override_requires_excel_schema_v2");

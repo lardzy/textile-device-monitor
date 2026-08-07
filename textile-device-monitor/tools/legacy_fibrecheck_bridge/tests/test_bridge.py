@@ -1320,6 +1320,143 @@ class BridgeProtocolTests(unittest.TestCase):
                 {"machine_payload": payload}, summary
             )
 
+    def test_generic_final_entry_override_field_set_and_presence_rules(self):
+        override = {
+            "kind": "append_one_when_check_count_one",
+            "target_sample_number": "26W006687",
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": 1,
+            "resulting_register_count": 2,
+            "reason": "既有 1 条登记，受控追加 1 条",
+        }
+        payload = generic_final_entry_machine_payload("100")
+        payload["expected_existing_register_count"] = 1
+        payload["controlled_test_override"] = dict(override)
+        summary = {
+            "operation_type": bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+            "target_sample_number": payload["sample_number"],
+            "task_project": dict(payload["task_project"]),
+            "result_contract": {
+                "worksheet": "Sheet1",
+                "cell": "W32",
+                "value": "100",
+                "unit": "%",
+            },
+        }
+        operation = {"id": "generic-operation-override", "machine_payload": payload}
+        self.assertEqual(
+            bridge.validate_generic_final_entry_machine_payload(
+                operation, summary
+            ),
+            payload,
+        )
+        plain = generic_final_entry_machine_payload("100")
+        plain["controlled_test_override"] = dict(override)
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_generic_final_entry_machine_payload(
+                {"machine_payload": plain}, summary
+            )
+        no_override = generic_final_entry_machine_payload("100")
+        no_override["expected_existing_register_count"] = 1
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_generic_final_entry_machine_payload(
+                {"machine_payload": no_override}, summary
+            )
+
+    @staticmethod
+    def _override_generic_raw_receipt(payload, override):
+        receipt = generic_final_entry_raw_receipt(payload)
+        receipt["controlled_test_override"] = {
+            "active": True,
+            "applied": True,
+            **override,
+        }
+        for stage in receipt["stages"]:
+            detail = stage.get("detail")
+            if not detail:
+                continue
+            if "expected_existing_register_count" in detail:
+                detail["expected_existing_register_count"] = 1
+            if "existing_register_count" in detail:
+                detail["existing_register_count"] = 1
+            if "controlled_test_override_active" in detail:
+                detail["controlled_test_override_active"] = True
+            if "controlled_test_override_applied" in detail:
+                detail["controlled_test_override_applied"] = True
+        return receipt
+
+    def test_generic_final_entry_override_receipt_conversion(self):
+        override = {
+            "kind": "append_one_when_check_count_one",
+            "target_sample_number": "26W006687",
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": 1,
+            "resulting_register_count": 2,
+            "reason": "既有 1 条登记，受控追加 1 条",
+        }
+        payload = generic_final_entry_machine_payload("100")
+        payload["expected_existing_register_count"] = 1
+        payload["controlled_test_override"] = dict(override)
+        summary = {
+            "operation_type": bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+            "target_sample_number": payload["sample_number"],
+            "task_project": dict(payload["task_project"]),
+            "result_contract": {
+                "worksheet": "Sheet1",
+                "cell": "W32",
+                "value": "100",
+                "unit": "%",
+            },
+        }
+        operation = {
+            "id": "generic-operation-override",
+            "payload_checksum": "9" * 64,
+            "machine_payload": payload,
+        }
+        receipt = bridge.convert_generic_final_entry_receipt(
+            operation,
+            summary,
+            payload,
+            self._override_generic_raw_receipt(payload, override),
+        )
+        self.assertEqual(receipt["final_entry"]["expected_existing_register_count"], 1)
+        self.assertEqual(receipt["final_entry"]["resulting_register_count"], 2)
+        self.assertFalse(receipt["final_entry"]["proofed"])
+        echoed = receipt["controlled_test_override"]
+        self.assertTrue(echoed["active"])
+        self.assertTrue(echoed["applied"])
+        self.assertEqual(echoed["resulting_register_count"], 2)
+        self.assertNotIn("reason", echoed)
+
+        missing_echo = self._override_generic_raw_receipt(payload, override)
+        del missing_echo["controlled_test_override"]
+        with self.assertRaises(bridge.BridgeError):
+            bridge.convert_generic_final_entry_receipt(
+                operation, summary, payload, missing_echo
+            )
+
+        not_applied = self._override_generic_raw_receipt(payload, override)
+        not_applied["controlled_test_override"]["applied"] = False
+        with self.assertRaises(bridge.BridgeError):
+            bridge.convert_generic_final_entry_receipt(
+                operation, summary, payload, not_applied
+            )
+
+        plain_payload = generic_final_entry_machine_payload("100")
+        stray_override = generic_final_entry_raw_receipt(plain_payload)
+        stray_override["controlled_test_override"] = {
+            "active": True,
+            "applied": True,
+            **override,
+        }
+        with self.assertRaises(bridge.BridgeError):
+            bridge.convert_generic_final_entry_receipt(
+                {"id": "plain", "machine_payload": plain_payload},
+                summary,
+                plain_payload,
+                stray_override,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

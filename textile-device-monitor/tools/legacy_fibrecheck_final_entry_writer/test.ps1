@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$FibreCheckDir = "$PSScriptRoot\..\..\..\.tmp\FibreCheck",
     [string]$Odac32Dir = "$PSScriptRoot\..\..\..\.tmp\odac32"
 )
@@ -190,7 +190,7 @@ try {
 
     $paperHundredDecimalPath = Join-Path $fixtureDir 'paper-generic-hundred-decimal.json'
     Write-Utf8NoBom $paperHundredDecimalPath (
-        (Get-Content -Raw -LiteralPath $paperHundredPath).Replace(
+        (Get-Content -Raw -LiteralPath $paperHundredPath -Encoding UTF8).Replace(
             '"real_value": "木浆 100"',
             '"real_value": "木浆 100.0"'))
     Assert-Case 'paper generic 100.0 uses percent unit' `
@@ -223,6 +223,35 @@ try {
     Assert-Case 'paper generic task method is exact' `
         @('--offline-validate', '--package', $paperMethodMismatchPath) 21 `
         @('task_project_binding_invalid')
+
+    $paperOverride = $paperGeneric.Replace(
+        '"expected_existing_register_count": 0,',
+        @'
+"expected_existing_register_count": 1,
+  "controlled_test_override": {
+    "kind": "append_one_when_check_count_one",
+    "target_sample_number": "26W006701",
+    "expected_task_check_count": 1,
+    "expected_existing_register_count": 1,
+    "resulting_register_count": 2,
+    "reason": "纸类项目既有 1 条登记，受控追加 1 条"
+  },
+'@)
+    $paperOverridePath = Join-Path $fixtureDir 'paper-generic-override.json'
+    Write-Utf8NoBom $paperOverridePath $paperOverride
+    $env:FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO = $null
+    Assert-Case 'paper override requires cli flag' `
+        @('--offline-validate', '--package', $paperOverridePath) 21 `
+        @('controlled_test_override_cli_flag_required')
+    $env:FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO = '26W006687'
+    Assert-Case 'paper override rejects wrong environment target' `
+        @('--offline-validate', '--allow-controlled-test-override', '--package', $paperOverridePath) 21 `
+        @('controlled_test_override_environment_target_mismatch')
+    $env:FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO = '26W006701'
+    Assert-Case 'paper generic override triple match' `
+        @('--offline-validate', '--allow-controlled-test-override', '--package', $paperOverridePath) 0 `
+        @('"controlled_test_override"', '"active": true', '"applied": false', 'offline_validation_completed')
+    $env:FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO = $null
 
     $unknownPath = Join-Path $fixtureDir 'generic-unknown.json'
     Write-Utf8NoBom $unknownPath ($generic.Replace('"schema_version": 1,', '"schema_version": 1, "unexpected": true,'))

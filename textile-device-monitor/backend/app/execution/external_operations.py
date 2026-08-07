@@ -1098,7 +1098,7 @@ def validate_external_receipt(
         document = _strict_object(
             receipt,
             path="$",
-            required=common | {"task_project", "final_entry"},
+            required=common | {"task_project", "final_entry", "controlled_test_override"},
         )
         expected_type = GENERIC_CHECK_RECORD_ENTRY_RECEIPT_TYPE
     if document.get("schema_version") != 1 or document.get(
@@ -1196,6 +1196,46 @@ def validate_external_receipt(
             path="$.final_entry.record_id",
             pattern=_REDACTED_LEGACY_ID_RE,
         )
+        expected_override = package.get("controlled_test_override")
+        actual_override = document.get("controlled_test_override")
+        if expected_override is None:
+            if actual_override is not None:
+                raise _machine_document_error(
+                    "$.controlled_test_override", "普通业务回执不得声明受控测试覆盖"
+                )
+        else:
+            override = _strict_object(
+                actual_override,
+                path="$.controlled_test_override",
+                required={
+                    "active",
+                    "applied",
+                    "kind",
+                    "target_sample_number",
+                    "expected_task_check_count",
+                    "expected_existing_register_count",
+                    "resulting_register_count",
+                },
+            )
+            for key in (
+                "kind",
+                "target_sample_number",
+                "expected_task_check_count",
+                "expected_existing_register_count",
+                "resulting_register_count",
+            ):
+                if override.get(key) != expected_override.get(key):
+                    raise _machine_document_error(
+                        f"$.controlled_test_override.{key}",
+                        "受控测试回执与已批准的任务包不一致",
+                    )
+            if override.get("active") is not True or override.get(
+                "applied"
+            ) is not True:
+                raise _machine_document_error(
+                    "$.controlled_test_override.applied",
+                    "受控测试三重门禁未全部激活并通过远端预检",
+                )
         return document
 
     if operation_type == LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION:
@@ -3159,10 +3199,7 @@ def _reverify_operation_sources(
     if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
         _reverify_generated_artifact_source(db, operation=operation)
         return
-    if operation_type in {
-        LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
-        LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
-    }:
+    if operation_type == LEGACY_SPECIAL_WOOL_REVIEW_OPERATION:
         _reverify_special_wool_review_source(db, operation=operation)
         return
     if operation_type == LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION:
@@ -4724,6 +4761,10 @@ def prepare_legacy_generic_check_record_entry_operation(
             "paper_fiber_result_contract_changed",
             "纸纤维 W32 结果或单位绑定无效",
         )
+    override = _controlled_final_entry_override(
+        input_data, sample_number=source_number
+    )
+    expected_existing = 1 if override is not None else 0
     final_entry_package = {
         "schema_version": 2,
         "operation_type": "generic_item_record",
@@ -4731,7 +4772,7 @@ def prepare_legacy_generic_check_record_entry_operation(
         "check_item_no": project["check_item_no"],
         "check_item_name": project["check_item_name"],
         "task_project": dict(project),
-        "expected_existing_register_count": 0,
+        "expected_existing_register_count": expected_existing,
         "generic_record": {
             "header": {
                 "grade": "",
@@ -4755,6 +4796,8 @@ def prepare_legacy_generic_check_record_entry_operation(
             ],
         },
     }
+    if override is not None:
+        final_entry_package["controlled_test_override"] = override
     request_summary = {
         "schema_version": 1,
         "operation_type": LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION,
@@ -4774,10 +4817,14 @@ def prepare_legacy_generic_check_record_entry_operation(
         "final_entry_package": final_entry_package,
         "final_entry_summary": {
             "expected_task_check_count": 1,
-            "expected_existing_register_count": 0,
-            "resulting_register_count": 1,
+            "expected_existing_register_count": expected_existing,
+            "resulting_register_count": expected_existing + 1,
             "detail_count": 1,
             "expected_proofed_count": 0,
+            "controlled_test": override is not None,
+            "controlled_test_reason": (
+                override.get("reason") if override is not None else None
+            ),
         },
         "business_fields": {
             "inspection_item": project["check_item_name"],

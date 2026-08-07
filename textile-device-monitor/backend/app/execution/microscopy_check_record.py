@@ -34,7 +34,7 @@ from app.execution.storage import (
 
 MICROSCOPY_CHECK_RECORD_NODE_TYPE = "workbook.microscopy_check_record"
 MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION = (
-    "gbt36422-2018-microscopy-check-record-v1"
+    "gbt36422-2018-microscopy-check-record-v3"
 )
 MICROSCOPY_CHECK_RECORD_SHEET_NAME = "Sheet1"
 MICROSCOPY_CHECK_RECORD_MEDIA_TYPE = "application/vnd.ms-excel"
@@ -50,6 +50,17 @@ MICROSCOPY_CHECK_RECORD_CELLS = (
     "I11",
     "G12",
     "G13",
+    # Legacy collector feed cells from OriginalKeyDataConfig.  They must hold
+    # final literal values: the legacy collector reads raw cell values and
+    # third-party BIFF8 writers do not guarantee recalculated formula caches.
+    "BI7",
+    "BK7",
+    "BI8",
+    "BI9",
+    "BI10",
+    "BI11",
+    "BI12",
+    "BI13",
 )
 
 
@@ -85,6 +96,7 @@ def microscopy_check_record_cells(
     inspection_number: object,
     sample_identification: object = None,
     test_method: object = None,
+    check_item_name: object = None,
     judgement_required: object = None,
     judgement_basis: object = None,
     indicator_requirement: object = None,
@@ -96,7 +108,9 @@ def microscopy_check_record_cells(
 
     Empty values are written deliberately so a template placeholder can never
     leak into a saved registration.  When the task explicitly does not require
-    judgement, all four judgement-related fields stay empty.
+    judgement, all four judgement-related fields stay empty.  The hidden
+    OriginalKeyDataConfig feed cells (BI7/BK7/BI8..BI13) always receive final
+    literal values because the legacy collector reads raw cell values.
     """
 
     normalized_number = _safe_inspection_number(inspection_number)
@@ -109,6 +123,8 @@ def microscopy_check_record_cells(
             details={"test_method": normalized_method},
         )
 
+    normalized_item_name = _normalized_text(check_item_name) or "纤维微观形貌"
+    normalized_identification = _normalized_text(sample_identification)
     judgement_enabled = (
         None if judgement_required is None else _truthy_flag(judgement_required)
     )
@@ -121,12 +137,24 @@ def microscopy_check_record_cells(
     if judgement_enabled is False:
         judgement_values = {cell: "" for cell in judgement_values}
 
+    normalized_remark = _normalized_text(remark)
     return {
         "AS4": normalized_number,
-        "Z7": _normalized_text(sample_identification),
+        "Z7": normalized_identification,
         "I8": normalized_method,
         **judgement_values,
-        "G12": _normalized_text(remark),
+        "G12": normalized_remark,
+        # OriginalKeyDataConfig feed cells.  The legacy collector concatenates
+        # BI7++BK7 for the key-result CheckItemName and reads BI8..BI13 for the
+        # remaining 类别 fields, so each one receives its final literal value.
+        "BI7": normalized_item_name,
+        "BK7": normalized_identification,
+        "BI8": normalized_method,
+        "BI9": judgement_values["I9"],
+        "BI10": judgement_values["I10"],
+        "BI11": judgement_values["I11"],
+        "BI12": normalized_remark,
+        "BI13": judgement_values["G13"],
     }
 
 
@@ -148,6 +176,11 @@ def _cell_payload(input_data: dict[str, Any], inspection_number: str) -> dict[st
             project.get("test_method"),
             project.get("check_method"),
             ELECTRON_TEST_METHOD,
+        ),
+        check_item_name=_first_value(
+            input_data.get("check_item_name"),
+            project.get("check_item_name"),
+            project.get("item_name"),
         ),
         judgement_required=_first_value(
             input_data.get("judgement_required"),
@@ -173,7 +206,6 @@ def _cell_payload(input_data: dict[str, Any], inspection_number: str) -> dict[st
         ),
         remark=_first_value(
             input_data.get("remark"),
-            project.get("remark"),
         ),
         judgement=_first_value(
             input_data.get("judgement"),
@@ -221,57 +253,6 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _default_uno_python() -> str:
-    configured = os.getenv("EXECUTION_UNO_PYTHON", "").strip()
-    if configured:
-        return configured
-    system_python = Path("/usr/bin/python3")
-    return str(system_python) if system_python.exists() else sys.executable
-
-
-def _run_uno_writer(payload_path: Path) -> dict[str, Any]:
-    script = Path(__file__).with_name("microscopy_check_record_uno.py")
-    try:
-        completed = subprocess.run(
-            [_default_uno_python(), str(script), str(payload_path)],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ExecutionApiError(
-            503,
-            "libreoffice_unavailable",
-            "检验记录登记工作簿生成服务当前不可用，请稍后重试",
-        ) from exc
-    if completed.returncode != 0:
-        message = (completed.stderr or completed.stdout or "").strip()[-500:]
-        raise ExecutionApiError(
-            503,
-            "microscopy_check_record_generation_failed",
-            "LibreOffice 未能生成检验记录登记工作簿",
-            details={"runtime_message": message},
-        )
-    lines = [line for line in completed.stdout.splitlines() if line.strip()]
-    try:
-        result = json.loads(lines[-1])
-    except (IndexError, json.JSONDecodeError) as exc:
-        raise ExecutionApiError(
-            503,
-            "libreoffice_result_invalid",
-            "检验记录登记工作簿生成服务未返回有效核对结果",
-        ) from exc
-    if not isinstance(result, dict) or result.get("verified") is not True:
-        raise ExecutionApiError(
-            500,
-            "microscopy_check_record_verification_failed",
-            "生成后的检验记录登记工作簿未通过重读核对",
-            details={"verification": result if isinstance(result, dict) else {}},
-        )
-    return result
-
-
 def _cell_coordinates(cell: str) -> tuple[int, int]:
     match = re.fullmatch(r"([A-Z]+)([1-9][0-9]*)", cell)
     if match is None:
@@ -282,31 +263,129 @@ def _cell_coordinates(cell: str) -> tuple[int, int]:
     return int(match.group(2)) - 1, column - 1
 
 
-def _verify_generated_workbook(
+def _build_biff_edits(cells: dict[str, str]) -> list["CellEdit"]:
+    """Translate the audited cell values into surgical BIFF edits.
+
+    Only cells that actually receive a value are touched; empty judgement or
+    identity fields keep the template's original records byte-for-byte.  The
+    hidden 类别 feed cells (BI8 and the BI9..BI13 formula caches) mirror the
+    visible cells, exactly like a desktop recalculation.
+    """
+    from app.execution.biff_patch import CellEdit
+
+    def cell(address: str) -> tuple[int, int]:
+        row_text = ""
+        column_text = ""
+        for character in address:
+            if character.isdigit():
+                row_text += character
+            else:
+                column_text += character
+        column = 0
+        for character in column_text:
+            column = column * 26 + ord(character) - ord("A") + 1
+        return int(row_text) - 1, column - 1
+
+    edits: list[CellEdit] = []
+    row, column = cell("AS4")
+    edits.append(CellEdit(row, column, "number", float(cells["AS4"])))
+
+    method = cells["I8"]
+    row, column = cell("BI8")
+    edits.append(CellEdit(row, column, "text", method))
+    row, column = cell("I8")
+    edits.append(CellEdit(row, column, "cached_string", method))
+
+    for visible, mirror in (
+        ("Z7", "BK7"),
+        ("I9", "BI9"),
+        ("I10", "BI10"),
+        ("I11", "BI11"),
+        ("G12", "BI12"),
+        ("G13", "BI13"),
+    ):
+        value = cells[visible]
+        if not value:
+            continue
+        row, column = cell(visible)
+        edits.append(CellEdit(row, column, "text", value))
+        row, column = cell(mirror)
+        edits.append(CellEdit(row, column, "cached_string", value))
+    return edits
+
+
+def _verify_patched_workbook(
     path: Path,
     *,
-    expected_cells: dict[str, str],
-    uno_result: dict[str, Any],
+    template: Path,
+    cells: dict[str, str],
+    expected_cells: list[str],
 ) -> dict[str, Any]:
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            header = handle.read(len(OLE_COMPOUND_FILE_MAGIC))
-    except OSError as exc:
+    """Re-read the patched workbook and prove template faithfulness.
+
+    The desktop client keeps every template formula with a corrected cached
+    result, so the patch must too: values are checked through xlrd, every
+    formula's expression bytes must survive, only the declared cells may
+    change, and every other stream of the compound file stays byte-identical.
+    """
+    from app.execution.biff_patch import (
+        formula_cells,
+        ole_read,
+        verify_patch_scope,
+    )
+
+    patched_ole = ole_read(path)
+    template_ole = ole_read(template)
+    patched_workbook = next(
+        stream.data for stream in patched_ole.streams if stream.name == "Workbook"
+    )
+    template_workbook = next(
+        stream.data for stream in template_ole.streams if stream.name == "Workbook"
+    )
+    for template_stream in template_ole.streams:
+        if template_stream.name == "Workbook":
+            continue
+        patched_stream = next(
+            (stream for stream in patched_ole.streams if stream.name == template_stream.name),
+            None,
+        )
+        if patched_stream is None or patched_stream.data != template_stream.data:
+            raise ExecutionApiError(
+                500,
+                "microscopy_check_record_verification_failed",
+                "登记工作簿的非工作簿流与模板不一致",
+            )
+
+    formulas_before = formula_cells(template_workbook)
+    formulas_after = formula_cells(patched_workbook)
+    if len(formulas_before) != len(formulas_after) or any(
+        formulas_after.get(address, (None,))[0] != rpn
+        for address, (rpn, _) in formulas_before.items()
+    ):
         raise ExecutionApiError(
             500,
             "microscopy_check_record_verification_failed",
-            "生成的检验记录登记工作簿不可读取",
-        ) from exc
-    if size <= len(OLE_COMPOUND_FILE_MAGIC) or header != OLE_COMPOUND_FILE_MAGIC:
+            "登记工作簿的模板公式未完整保留",
+        )
+
+    scope = verify_patch_scope(
+        template_workbook,
+        patched_workbook,
+        max_changed_records=2 * len(_build_biff_edits(cells)) + 6,
+    )
+    if not scope["within_bound"]:
         raise ExecutionApiError(
             500,
             "microscopy_check_record_verification_failed",
-            "生成结果不是有效的 Excel 97-2003 工作簿",
+            "登记工作簿的改动超出声明范围",
+            details={
+                "changed_records": scope["changed_records"],
+                "violations": scope["violations"][:4],
+            },
         )
 
     workbook = None
-    actual_cells: dict[str, str] = {}
+    actual_cells: dict[str, Any] = {}
     try:
         workbook = xlrd.open_workbook(str(path), on_demand=True)
         if MICROSCOPY_CHECK_RECORD_SHEET_NAME not in workbook.sheet_names():
@@ -314,7 +393,16 @@ def _verify_generated_workbook(
         sheet = workbook.sheet_by_name(MICROSCOPY_CHECK_RECORD_SHEET_NAME)
         for cell in expected_cells:
             row, column = _cell_coordinates(cell)
-            actual_cells[cell] = _normalized_text(sheet.cell_value(row, column))
+            if row >= sheet.nrows or column >= sheet.ncols:
+                actual_cells[cell] = "" if cell != "AS4" else None
+            else:
+                value = sheet.cell_value(row, column)
+                if cell == "AS4" and isinstance(value, float) and value.is_integer():
+                    actual_cells[cell] = str(int(value))
+                elif cell == "AS4":
+                    actual_cells[cell] = value
+                else:
+                    actual_cells[cell] = _normalized_text(value)
     except (OSError, xlrd.XLRDError, IndexError, ValueError) as exc:
         raise ExecutionApiError(
             500,
@@ -325,46 +413,39 @@ def _verify_generated_workbook(
         if workbook is not None:
             workbook.release_resources()
 
-    normalized_expected = {
-        cell: _normalized_text(value) for cell, value in expected_cells.items()
-    }
-    mismatches = {
-        cell: {"expected": expected, "actual": actual_cells.get(cell)}
-        for cell, expected in normalized_expected.items()
-        if actual_cells.get(cell) != expected
-    }
-    uno_cells = uno_result.get("cells")
-    uno_mismatches = (
-        uno_cells != expected_cells if isinstance(uno_cells, dict) else True
-    )
-    if (
-        mismatches
-        or uno_mismatches
-        or uno_result.get("reopened") is not True
-        or uno_result.get("recalculated") is not True
-        or uno_result.get("sheet_name") != MICROSCOPY_CHECK_RECORD_SHEET_NAME
-    ):
+    mismatches: dict[str, dict[str, Any]] = {}
+    for cell in expected_cells:
+        expected = cells.get(cell, "")
+        actual = actual_cells.get(cell)
+        if cell == "AS4":
+            actual_number = None
+            try:
+                actual_number = float(actual) if actual is not None else None
+            except (TypeError, ValueError):
+                actual_number = None
+            if actual_number != float(expected):
+                mismatches[cell] = {"expected": expected, "actual": actual}
+            continue
+        if actual != expected:
+            mismatches[cell] = {"expected": expected, "actual": actual}
+    if mismatches:
         raise ExecutionApiError(
             500,
             "microscopy_check_record_verification_failed",
             "生成后的检验记录登记工作簿内容与预期不一致",
-            details={
-                "cell_mismatches": mismatches,
-                "uno_cells_match": not uno_mismatches,
-            },
+            details={"cell_mismatches": mismatches},
         )
     return {
         "verified": True,
         "sheet_name": MICROSCOPY_CHECK_RECORD_SHEET_NAME,
         "checked_cells": sorted(expected_cells),
         "cells": actual_cells,
-        "recalculated": True,
-        "reopened": True,
+        "formulas_preserved": len(formulas_before),
+        "changed_records": scope["changed_records"],
+        "streams_preserved": True,
         "ole_header": True,
-        "size_bytes": size,
+        "size_bytes": path.stat().st_size,
     }
-
-
 def _request_digest(
     *,
     inspection_number: str,
@@ -546,21 +627,14 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
                 "microscopy_check_record_template_copy_failed",
                 "检验记录登记模板工作副本校验失败",
             )
-        payload = {
-            "workbook_path": str(working),
-            "sheet_name": MICROSCOPY_CHECK_RECORD_SHEET_NAME,
-            "cells": cells,
-        }
-        payload_path = Path(temporary_directory) / "payload.json"
-        payload_path.write_text(
-            json.dumps(payload, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        uno_result = _run_uno_writer(payload_path)
-        verification = _verify_generated_workbook(
+        from app.execution.biff_patch import patch_workbook_file
+
+        patch_workbook_file(working, working, _build_biff_edits(cells))
+        verification = _verify_patched_workbook(
             working,
-            expected_cells=cells,
-            uno_result=uno_result,
+            template=template,
+            cells=cells,
+            expected_cells=list(cells),
         )
         os.replace(working, target)
         fsync_file(target)

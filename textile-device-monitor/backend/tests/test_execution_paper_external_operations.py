@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -23,6 +25,7 @@ from app.execution.external_operations import (
     SPECIAL_WOOL_QUALITATIVE_REVIEW_ATTEMPT_STAGES,
     SPECIAL_WOOL_QUALITATIVE_UPLOAD_ATTEMPT_STAGES,
     _paper_result_value,
+    approve_prepared_external_operation,
     bridge_external_operation,
     prepare_legacy_generic_check_record_entry_operation,
     prepare_legacy_special_wool_qualitative_review_operation,
@@ -448,6 +451,217 @@ class PaperExternalOperationTests(unittest.TestCase):
             input_data=data,
         )
         self.assertEqual(upload.request_summary["result_contract"]["unit"], "")
+
+    def test_qualitative_review_approve_uses_paper_source_reverifier(self):
+        upload, _ = prepare_legacy_special_wool_qualitative_upload_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE, "upload"
+            ),
+            node=self._node_config(),
+            input_data=self._input("100"),
+        )
+        upload.receipt = self._upload_receipt(upload)
+        validate_external_receipt(upload, upload.receipt)
+        upload.status = "completed"
+
+        review, _ = prepare_legacy_special_wool_qualitative_review_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE, "review"
+            ),
+            node=self._node_config(),
+            input_data={"upload_result": {"operation_id": upload.id}},
+        )
+        from app.config import settings
+
+        with patch.object(
+            settings, "EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED", True
+        ):
+            approved, _ = approve_prepared_external_operation(
+                self.db,
+                operation=review,
+                run=self.run,
+                actor=self.user,
+                payload_checksum=review.payload_checksum,
+                confirmed_sample_number=review.request_summary[
+                    "target_sample_number"
+                ],
+            )
+        self.assertEqual(approved.status, "approved")
+
+    def test_generic_entry_prepare_accepts_controlled_override(self):
+        upload, _ = prepare_legacy_special_wool_qualitative_upload_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE, "upload"
+            ),
+            node=self._node_config(),
+            input_data=self._input("100"),
+        )
+        upload.receipt = self._upload_receipt(upload)
+        validate_external_receipt(upload, upload.receipt)
+        upload.status = "completed"
+        review, _ = prepare_legacy_special_wool_qualitative_review_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE, "review"
+            ),
+            node=self._node_config(),
+            input_data={"upload_result": {"operation_id": upload.id}},
+        )
+        review.receipt = self._review_receipt(review)
+        validate_external_receipt(review, review.receipt)
+        review.status = "completed"
+
+        project = self._project()
+        override_input = {
+            "kind": "append_one_when_check_count_one",
+            "target_sample_number": self.run.inspection_number,
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": 1,
+            "resulting_register_count": 2,
+            "reason": "既有 1 条登记，受控追加 1 条",
+        }
+        from app.config import settings
+
+        with patch.object(
+            settings,
+            "EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO",
+            self.run.inspection_number,
+        ):
+            entry, _ = prepare_legacy_generic_check_record_entry_operation(
+                self.db,
+                run=self.run,
+                node_run=self._node(
+                    LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE, "entry"
+                ),
+                node=self._node_config(),
+                input_data={
+                    "selected_project_key": project["project_key"],
+                    "selected_project": project,
+                    "review_result": {"operation_id": review.id},
+                    "controlled_test_override": override_input,
+                },
+            )
+        summary = entry.request_summary["final_entry_summary"]
+        self.assertEqual(summary["expected_existing_register_count"], 1)
+        self.assertEqual(summary["resulting_register_count"], 2)
+        self.assertTrue(summary["controlled_test"])
+        package = entry.request_summary["final_entry_package"]
+        self.assertEqual(package["expected_existing_register_count"], 1)
+        self.assertEqual(
+            package["controlled_test_override"]["target_sample_number"],
+            self.run.inspection_number,
+        )
+
+    def test_generic_entry_receipt_accepts_bound_override(self):
+        upload, _ = prepare_legacy_special_wool_qualitative_upload_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE, "upload"
+            ),
+            node=self._node_config(),
+            input_data=self._input("100"),
+        )
+        upload.receipt = self._upload_receipt(upload)
+        validate_external_receipt(upload, upload.receipt)
+        upload.status = "completed"
+        review, _ = prepare_legacy_special_wool_qualitative_review_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE, "review"
+            ),
+            node=self._node_config(),
+            input_data={"upload_result": {"operation_id": upload.id}},
+        )
+        review.receipt = self._review_receipt(review)
+        validate_external_receipt(review, review.receipt)
+        review.status = "completed"
+
+        project = self._project()
+        override_input = {
+            "kind": "append_one_when_check_count_one",
+            "target_sample_number": self.run.inspection_number,
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": 1,
+            "resulting_register_count": 2,
+            "reason": "既有 1 条登记，受控追加 1 条",
+        }
+        from app.config import settings
+
+        with patch.object(
+            settings,
+            "EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO",
+            self.run.inspection_number,
+        ):
+            entry, _ = prepare_legacy_generic_check_record_entry_operation(
+                self.db,
+                run=self.run,
+                node_run=self._node(
+                    LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE, "entry"
+                ),
+                node=self._node_config(),
+                input_data={
+                    "selected_project_key": project["project_key"],
+                    "selected_project": project,
+                    "review_result": {"operation_id": review.id},
+                    "controlled_test_override": override_input,
+                },
+            )
+        receipt = {
+            "schema_version": 1,
+            "receipt_type": "legacy_generic_check_record_entry",
+            "operation_id": entry.id,
+            "payload_checksum": entry.payload_checksum,
+            "target_sample_number": entry.request_summary[
+                "target_sample_number"
+            ],
+            "task_project": dict(entry.request_summary["task_project"]),
+            "final_entry": {
+                "package_schema_version": 2,
+                "expected_existing_register_count": 1,
+                "resulting_register_count": 2,
+                "detail_count": 1,
+                "key_result_count": 1,
+                "record_id": "sha256:" + "a" * 16,
+                "proofed": False,
+            },
+            "controlled_test_override": {
+                "active": True,
+                "applied": True,
+                "kind": override_input["kind"],
+                "target_sample_number": override_input[
+                    "target_sample_number"
+                ],
+                "expected_task_check_count": 1,
+                "expected_existing_register_count": 1,
+                "resulting_register_count": 2,
+            },
+            "stages": [
+                {"stage": stage, "at": "2026-08-06T00:00:00+00:00"}
+                for stage in GENERIC_CHECK_RECORD_ENTRY_ATTEMPT_STAGES
+            ],
+            "reconciliation_required": False,
+        }
+        validate_external_receipt(entry, receipt)
+
+        missing_override = {
+            key: value for key, value in receipt.items() if key != "controlled_test_override"
+        }
+        with self.assertRaises(Exception):
+            validate_external_receipt(entry, missing_override)
+
+        mismatched = json.loads(json.dumps(receipt))
+        mismatched["controlled_test_override"]["resulting_register_count"] = 3
+        with self.assertRaises(Exception):
+            validate_external_receipt(entry, mismatched)
 
 
 if __name__ == "__main__":

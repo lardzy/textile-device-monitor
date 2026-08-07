@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import json
-import os
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import xlrd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from xlutils.copy import copy as copy_workbook
 
 from app.database import Base
 from app.execution.errors import ExecutionApiError
@@ -21,9 +16,7 @@ from app.execution.microscopy_check_record import (
     MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
     MICROSCOPY_CHECK_RECORD_SHEET_NAME,
     _cell_coordinates,
-    _run_uno_writer,
     _template_path,
-    _verify_generated_workbook,
     microscopy_check_record_cells,
     microscopy_check_record_executor,
 )
@@ -34,31 +27,13 @@ from app.execution.microscopy_original_record import (
 from app.execution.models import ExecutionArtifact, ExecutionStorageRoot
 
 
-def _fake_uno_writer(payload_path: Path) -> dict:
-    payload = json.loads(payload_path.read_text(encoding="utf-8"))
-    source = xlrd.open_workbook(payload["workbook_path"], formatting_info=True)
-    target = copy_workbook(source)
-    sheet_index = source.sheet_names().index(payload["sheet_name"])
-    sheet = target.get_sheet(sheet_index)
-    for cell, value in payload["cells"].items():
-        row, column = _cell_coordinates(cell)
-        sheet.write(row, column, value)
-    target.save(payload["workbook_path"])
-    return {
-        "verified": True,
-        "sheet_name": payload["sheet_name"],
-        "cells": payload["cells"],
-        "recalculated": True,
-        "reopened": True,
-    }
-
-
 class MicroscopyCheckRecordPureFunctionTests(unittest.TestCase):
     def test_cells_cover_required_sheet1_fields(self):
         cells = microscopy_check_record_cells(
             inspection_number="260111037",
             sample_identification="纵向",
             test_method="GB/T 36422-2018",
+            check_item_name="纤维微观形貌",
             judgement_required=True,
             judgement_basis="GB/T 36422-2018",
             indicator_requirement="符合标准要求",
@@ -75,6 +50,23 @@ class MicroscopyCheckRecordPureFunctionTests(unittest.TestCase):
         self.assertEqual(cells["I11"], "呈纵向沟槽")
         self.assertEqual(cells["G12"], "测试备注")
         self.assertEqual(cells["G13"], "符合")
+        # OriginalKeyDataConfig feed cells carry final literals.
+        self.assertEqual(cells["BI7"], "纤维微观形貌")
+        self.assertEqual(cells["BK7"], "纵向")
+        self.assertEqual(cells["BI8"], "GB/T 36422-2018")
+        self.assertEqual(cells["BI9"], "GB/T 36422-2018")
+        self.assertEqual(cells["BI10"], "符合标准要求")
+        self.assertEqual(cells["BI11"], "呈纵向沟槽")
+        self.assertEqual(cells["BI12"], "测试备注")
+        self.assertEqual(cells["BI13"], "符合")
+
+    def test_item_name_defaults_to_microscopy(self):
+        cells = microscopy_check_record_cells(
+            inspection_number="260111037",
+        )
+        self.assertEqual(cells["BI7"], "纤维微观形貌")
+        self.assertEqual(cells["BI8"], "GB/T 36422-2018")
+        self.assertEqual(cells["BK7"], "")
 
     def test_explicit_no_judgement_clears_all_judgement_fields(self):
         cells = microscopy_check_record_cells(
@@ -92,6 +84,12 @@ class MicroscopyCheckRecordPureFunctionTests(unittest.TestCase):
         self.assertEqual(cells["I11"], "")
         self.assertEqual(cells["G13"], "")
         self.assertEqual(cells["I8"], "GB/T 36422-2018")
+        self.assertEqual(cells["BI9"], "")
+        self.assertEqual(cells["BI10"], "")
+        self.assertEqual(cells["BI11"], "")
+        self.assertEqual(cells["BI13"], "")
+        self.assertEqual(cells["BK7"], "")
+        self.assertEqual(cells["BI8"], "GB/T 36422-2018")
 
     def test_rejects_other_test_method(self):
         with self.assertRaises(ExecutionApiError) as raised:
@@ -160,12 +158,8 @@ class MicroscopyCheckRecordExecutorTests(unittest.TestCase):
 
     def test_executor_generates_verified_artifact_and_reuses_request(self):
         context = self._context(1)
-        with patch(
-            "app.execution.microscopy_check_record._run_uno_writer",
-            side_effect=_fake_uno_writer,
-        ):
-            first = microscopy_check_record_executor(context)
-            second = microscopy_check_record_executor(context)
+        first = microscopy_check_record_executor(context)
+        second = microscopy_check_record_executor(context)
 
         self.assertFalse(first["reused"])
         self.assertTrue(second["reused"])
@@ -200,7 +194,6 @@ class MicroscopyCheckRecordExecutorTests(unittest.TestCase):
         workbook = xlrd.open_workbook(str(output), on_demand=True)
         sheet = workbook.sheet_by_name(MICROSCOPY_CHECK_RECORD_SHEET_NAME)
         for cell, expected in {
-            "AS4": "260111037",
             "Z7": "纵向",
             "I8": "GB/T 36422-2018",
             "I9": "GB/T 36422-2018",
@@ -211,17 +204,36 @@ class MicroscopyCheckRecordExecutorTests(unittest.TestCase):
         }.items():
             row, column = _cell_coordinates(cell)
             self.assertEqual(sheet.cell_value(row, column), expected)
+        row, column = _cell_coordinates("AS4")
+        self.assertEqual(sheet.cell_value(row, column), 260111037.0)
+        # 隐藏类别镜像格与公式缓存必须与可见格一致，公式本身完整保留。
+        from app.execution.biff_patch import formula_cells, ole_read
+
+        ole = ole_read(output)
+        stream = next(s.data for s in ole.streams if s.name == "Workbook")
+        formulas = formula_cells(stream)
+        self.assertEqual(len(formulas), 8)
+        self.assertEqual(formulas[(6, 60)][1], "纤维微观形貌")
+        self.assertEqual(formulas[(6, 62)][1], "纵向")
+        self.assertEqual(formulas[(7, 8)][1], "GB/T 36422-2018")
+        for mirror, expected in {
+            "BI9": "GB/T 36422-2018",
+            "BI10": "符合标准要求",
+            "BI11": "呈纵向沟槽",
+            "BI12": "测试备注",
+            "BI13": "符合",
+        }.items():
+            row, column = _cell_coordinates(mirror)
+            self.assertEqual(sheet.cell_value(row, column), expected)
+        row, column = _cell_coordinates("BI8")
+        self.assertEqual(sheet.cell_value(row, column), "GB/T 36422-2018")
         workbook.release_resources()
 
     def test_every_configured_image_count_uses_its_bound_asset(self):
         for image_count in MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS:
             with self.subTest(image_count=image_count):
                 context = self._context(image_count)
-                with patch(
-                    "app.execution.microscopy_check_record._run_uno_writer",
-                    side_effect=_fake_uno_writer,
-                ):
-                    result = microscopy_check_record_executor(context)
+                result = microscopy_check_record_executor(context)
                 binding = resolve_microscopy_legacy_template_binding(image_count)
                 self.assertEqual(result["image_count"], image_count)
                 self.assertEqual(result["template_binding"], binding)
@@ -268,47 +280,6 @@ class MicroscopyCheckRecordExecutorTests(unittest.TestCase):
             raised.exception.code,
             "microscopy_template_binding_mismatch",
         )
-
-
-@unittest.skipUnless(
-    os.getenv("EXECUTION_RUN_UNO_INTEGRATION_TESTS") == "1",
-    "set EXECUTION_RUN_UNO_INTEGRATION_TESTS=1 inside the worker image",
-)
-class MicroscopyCheckRecordUnoIntegrationTests(unittest.TestCase):
-    def test_real_xls_is_saved_recalculated_and_reopened(self):
-        binding = resolve_microscopy_legacy_template_binding(7)
-        cells = microscopy_check_record_cells(
-            inspection_number="UNO-CHECK-RECORD",
-            sample_identification="纵向",
-            test_method="GB/T 36422-2018",
-            judgement_required=False,
-            remark="UNO 重读核对",
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            workbook_path = root / "working.xls"
-            shutil.copyfile(_template_path(binding), workbook_path)
-            payload_path = root / "payload.json"
-            payload_path.write_text(
-                json.dumps(
-                    {
-                        "workbook_path": str(workbook_path),
-                        "sheet_name": MICROSCOPY_CHECK_RECORD_SHEET_NAME,
-                        "cells": cells,
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-            result = _run_uno_writer(payload_path)
-            verification = _verify_generated_workbook(
-                workbook_path,
-                expected_cells=cells,
-                uno_result=result,
-            )
-        self.assertTrue(verification["verified"])
-        self.assertTrue(verification["recalculated"])
-        self.assertTrue(verification["reopened"])
 
 
 if __name__ == "__main__":

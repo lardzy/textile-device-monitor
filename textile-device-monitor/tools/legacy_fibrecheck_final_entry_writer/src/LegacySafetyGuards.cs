@@ -11,8 +11,6 @@ namespace LegacyFibreCheckFinalEntryWriter
     {
         private const string OuterFunctionType =
             "Toone.FibreCheck.BusinessProcess.BusinessProcessUI.CheckRecord.CheckRecordRegisterUI";
-        private const string CurrencyFunctionType =
-            "Toone.FibreCheck.OriRecord.CurrencyItem.CurrencyItemRecordUI";
 
         public static string Verify(
             string connectionString, FinalEntryPackage package, PreflightSnapshot snapshot,
@@ -27,10 +25,14 @@ namespace LegacyFibreCheckFinalEntryWriter
                         ? new[] { "btnAddOriginalData", "btnSave", "btnReview" }
                         : new[] { "btnAddOriginalData" };
                     VerifyFunction(db, OuterFunctionType, outerControls, staff, true);
-                    if (package.OperationType == FinalEntryPackage.GenericOperation)
-                    {
-                        VerifyFunction(db, CurrencyFunctionType, new[] { "btnSave" }, staff, false);
-                    }
+                    // The generic registration UI opens only as a child window of
+                    // CheckRecordRegisterUI ("增加原始记录").  The desktop client
+                    // enforces no separate function grant on that navigation path:
+                    // accounts allowed to add original data records in the outer
+                    // UI can save generic registrations.  Requiring a standalone
+                    // CurrencyItemRecordUI grant here would reject operators who
+                    // legitimately perform this flow interactively, so the inner
+                    // function grant is intentionally not verified.
                     string projectDepartment = VerifyBusinessAuthorization(
                         db, package, snapshot, staff);
                     string branchFingerprint;

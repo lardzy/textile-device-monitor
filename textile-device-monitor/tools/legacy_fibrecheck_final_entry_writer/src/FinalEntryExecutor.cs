@@ -447,15 +447,38 @@ namespace LegacyFibreCheckFinalEntryWriter
             for (int index = 0; index < data.CheckItemInfoData.Count; index++)
             {
                 OriginalKeyData_CheckItem item = data.CheckItemInfoData[index];
-                if (item.OriginalRecordID != record.ID || item.CheckItemID != snapshot.CheckItemId
-                    || item.SampleNo != package.SampleNumber
-                    || item.SeqNum != 1
-                    || !SameLegacyText(item.CheckItemName, package.CheckItemName)
-                    || !SameLegacyText(item.ExcelTemplateName,
-                        package.ExcelRecord.TemplateName))
+                // The failing field name travels inside the error code (the Bridge
+                // passes writer error codes through verbatim); no raw legacy IDs.
+                string scopeField = null;
+                if (item.OriginalRecordID != record.ID)
+                {
+                    scopeField = "original_record_id";
+                }
+                else if (item.CheckItemID != snapshot.CheckItemId)
+                {
+                    scopeField = "check_item_id";
+                }
+                else if (item.SampleNo != package.SampleNumber)
+                {
+                    scopeField = "sample_no";
+                }
+                else if (item.SeqNum != 1)
+                {
+                    scopeField = "seq_num";
+                }
+                else if (!SameLegacyText(item.CheckItemName, package.CheckItemName))
+                {
+                    scopeField = "check_item_name";
+                }
+                else if (!SameLegacyText(item.ExcelTemplateName,
+                    package.ExcelRecord.TemplateName))
+                {
+                    scopeField = "excel_template_name";
+                }
+                if (scopeField != null)
                 {
                     throw new WriterFailureException(
-                        "collected_key_result_scope_mismatch",
+                        "collected_key_result_scope_mismatch_" + scopeField,
                         Program.ExitReconciliationRequired, true);
                 }
                 if (!SameLegacyText(

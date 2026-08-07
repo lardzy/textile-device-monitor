@@ -832,14 +832,21 @@ def validate_generic_final_entry_machine_payload(
             "expected_existing_register_count",
             "generic_record",
         },
+        optional={"controlled_test_override"},
     )
+    expected_existing = payload.get("expected_existing_register_count")
     if (
         payload.get("schema_version") != 2
         or payload.get("operation_type") != "generic_item_record"
         or payload.get("sample_number") != summary.get("target_sample_number")
-        or payload.get("expected_existing_register_count") != 0
+        or expected_existing not in {0, 1}
     ):
         raise BridgeError("Generic FinalEntry machine_payload 身份或计数不正确")
+    override = payload.get("controlled_test_override")
+    if expected_existing == 0 and override is not None:
+        raise BridgeError("普通 Generic FinalEntry 包不得声明受控既有登记")
+    if expected_existing == 1 and not isinstance(override, dict):
+        raise BridgeError("已有登记的 Generic FinalEntry 包必须携带受控覆盖对象")
     package_project = _validated_paper_task_project(
         payload.get("task_project"), path="machine_payload.task_project"
     )
@@ -1258,6 +1265,7 @@ def convert_generic_final_entry_receipt(
     machine_payload: dict,
     raw_receipt: dict,
 ) -> dict:
+    override_payload = machine_payload.get("controlled_test_override")
     raw = _strict_map(
         raw_receipt,
         path="raw_receipt",
@@ -1273,6 +1281,7 @@ def convert_generic_final_entry_receipt(
             "check_item_name",
             "task_project",
         },
+        optional={"controlled_test_override"} if override_payload is not None else set(),
     )
     if (
         raw.get("schema_version") != 1
@@ -1299,6 +1308,10 @@ def convert_generic_final_entry_receipt(
     )
     if measured_project != package_project:
         raise BridgeError("Generic FinalEntry Writer 实测任务项目与私有载荷不一致")
+    expected_existing = _required_int(
+        machine_payload.get("expected_existing_register_count"),
+        path="machine_payload.expected_existing_register_count",
+    )
     package_detail = _strict_stage_detail(
         stages,
         "package_validated",
@@ -1312,8 +1325,7 @@ def convert_generic_final_entry_receipt(
     if (
         package_detail.get("schema_version") != 2
         or package_detail.get("operation_type") != "generic_item_record"
-        or package_detail.get("expected_existing_register_count") != 0
-        or package_detail.get("controlled_test_override_active") is not False
+        or package_detail.get("expected_existing_register_count") != expected_existing
     ):
         raise BridgeError("Generic FinalEntry package_validated 详情不匹配")
     detail_validation = _strict_stage_detail(
@@ -1330,12 +1342,12 @@ def convert_generic_final_entry_receipt(
             "controlled_test_override_applied",
         },
     )
-    if (
-        preflight.get("expected_result_count") != 1
-        or preflight.get("existing_register_count") != 0
-        or preflight.get("controlled_test_override_applied") is not False
-    ):
-        raise BridgeError("Generic FinalEntry 远端预检计数不正确")
+    expected_result_count = _required_int(
+        preflight.get("expected_result_count"),
+        path="raw_receipt.remote_preflight_verified.expected_result_count",
+    )
+    if preflight.get("existing_register_count") != expected_existing:
+        raise BridgeError("Generic FinalEntry 远端既有登记数与机器载荷不一致")
     ready = _strict_stage_detail(
         stages,
         "remote_write_ready",
@@ -1348,9 +1360,8 @@ def convert_generic_final_entry_receipt(
     )
     if (
         ready.get("operation_type") != "generic_item_record"
-        or ready.get("expected_existing_register_count") != 0
+        or ready.get("expected_existing_register_count") != expected_existing
         or ready.get("target_filename") is not None
-        or ready.get("controlled_test_override_applied") is not False
     ):
         raise BridgeError("Generic FinalEntry 写入许可详情不正确")
     saved = _strict_stage_detail(
@@ -1375,6 +1386,70 @@ def convert_generic_final_entry_receipt(
         or saved.get("record_fingerprint") != record_id
     ):
         raise BridgeError("Generic FinalEntry 明细或结果投影读回不一致")
+
+    override_receipt = None
+    expected_override_active = override_payload is not None
+    if package_detail.get("controlled_test_override_active") is not expected_override_active:
+        raise BridgeError("Generic FinalEntry package 阶段的受控覆盖状态不一致")
+    if (
+        preflight.get("controlled_test_override_applied")
+        is not expected_override_active
+        or ready.get("controlled_test_override_applied")
+        is not expected_override_active
+    ):
+        raise BridgeError("Generic FinalEntry 远端预检未按任务包应用受控覆盖")
+    if override_payload is not None:
+        raw_override = _strict_map(
+            raw.get("controlled_test_override"),
+            path="raw_receipt.controlled_test_override",
+            required={
+                "active",
+                "applied",
+                "kind",
+                "target_sample_number",
+                "expected_task_check_count",
+                "expected_existing_register_count",
+                "resulting_register_count",
+                "reason",
+            },
+        )
+        for key in (
+            "kind",
+            "target_sample_number",
+            "expected_task_check_count",
+            "expected_existing_register_count",
+            "resulting_register_count",
+            "reason",
+        ):
+            if raw_override.get(key) != override_payload.get(key):
+                raise BridgeError(f"Generic FinalEntry controlled_test_override.{key} 不匹配")
+        if (
+            raw_override.get("active") is not True
+            or raw_override.get("applied") is not True
+        ):
+            raise BridgeError("Generic FinalEntry 受控覆盖成功回执必须同时 active/applied")
+        if expected_result_count != override_payload.get("expected_task_check_count"):
+            raise BridgeError("Generic FinalEntry 受控覆盖的任务份数与远端预检不一致")
+        override_receipt = {
+            key: raw_override[key]
+            for key in (
+                "active",
+                "applied",
+                "kind",
+                "target_sample_number",
+                "expected_task_check_count",
+                "expected_existing_register_count",
+                "resulting_register_count",
+            )
+        }
+        resulting_count = raw_override["resulting_register_count"]
+    else:
+        if "controlled_test_override" in raw:
+            raise BridgeError("普通 Generic FinalEntry 回执不得包含受控覆盖对象")
+        resulting_count = expected_existing + 1
+        if expected_result_count < resulting_count:
+            raise BridgeError("Generic FinalEntry 任务份数不足以容纳本次登记")
+
     inverse_stage = {
         canonical: raw_name
         for raw_name, canonical in GENERIC_FINAL_ENTRY_RAW_STAGE_MAP.items()
@@ -1395,13 +1470,14 @@ def convert_generic_final_entry_receipt(
         "task_project": dict(measured_project),
         "final_entry": {
             "package_schema_version": 2,
-            "expected_existing_register_count": 0,
-            "resulting_register_count": 1,
+            "expected_existing_register_count": expected_existing,
+            "resulting_register_count": resulting_count,
             "detail_count": 1,
             "key_result_count": 1,
             "record_id": record_id,
             "proofed": False,
         },
+        "controlled_test_override": override_receipt,
         "stages": canonical_stages,
         "reconciliation_required": False,
     }
@@ -1604,6 +1680,11 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         try:
             final_entry_payload = validate_generic_final_entry_machine_payload(
                 operation, summary
+            )
+            final_entry_override_enabled = (
+                controlled_final_entry_override_enabled(
+                    args, final_entry_payload
+                )
             )
         except BridgeError as exc:
             api_request(

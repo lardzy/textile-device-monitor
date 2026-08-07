@@ -1292,6 +1292,9 @@ def _register_builtins() -> None:
                     },
                     "selected_project": {"type": "object"},
                     "review_result": {"type": "object"},
+                    "controlled_test_override": {
+                        "type": ["object", "null"]
+                    },
                 },
                 required=(
                     "selected_project_key",
