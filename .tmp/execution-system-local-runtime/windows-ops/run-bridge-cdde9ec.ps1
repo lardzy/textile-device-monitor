@@ -17,7 +17,7 @@ $FinalWriter = Join-Path $Repo 'tools\legacy_fibrecheck_final_entry_writer\out\F
 $FibreCheck = Join-Path $LegacyRoot '.tmp\FibreCheck'
 $Staging = Join-Path $Root '.tmp\execution-win-runtime\staging'
 $FinalWork = Join-Path $Root '.tmp\execution-win-runtime\publish'
-$StageSync = 'C:\Mac\Home\Downloads\stage-sync'
+$StageSync = 'C:\Mac\Home\PycharmProjects\textile-device-monitor\.tmp\execution-system-local-runtime\stage-sync'
 
 Get-Content -LiteralPath $Secrets | ForEach-Object {
     if ($_ -match '^\s*([^#][^=]*)=(.*)$') {

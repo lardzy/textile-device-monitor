@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$zip = 'C:\Mac\Home\Downloads\textile-device-monitor-cdde9ec.zip'
+$zip = 'C:\Mac\Home\PycharmProjects\textile-device-monitor\.tmp\execution-system-local-runtime\textile-device-monitor-cdde9ec.zip'
 $dest = 'C:\Users\lishuyang\Downloads\textile-device-monitor-cdde9ec'
 if (Test-Path -LiteralPath $dest) {
     throw "Destination already exists: $dest"

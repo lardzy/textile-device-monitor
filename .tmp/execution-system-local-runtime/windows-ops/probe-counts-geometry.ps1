@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$ProbeDir = 'C:\Mac\Home\Downloads\geom-probe\counts'
+$ProbeDir = 'C:\Mac\Home\PycharmProjects\textile-device-monitor\.tmp\execution-system-local-runtime\geom-probe\counts'
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
