@@ -34,6 +34,10 @@ __pycache__/
 /textile-device-monitor/tools/legacy_fibrecheck_runner/out/
 /textile-device-monitor/tools/legacy_fibrecheck_writer/out/
 /textile-device-monitor/tools/legacy_fibrecheck_final_entry_writer/out/
+# Windows Bridge 安装包构建产物（物料含第三方厂商文件，不入库）
+/textile-device-monitor/packaging/windows-bridge/staging/
+/textile-device-monitor/packaging/windows-bridge/output/
+/textile-device-monitor/packaging/windows-bridge/version.auto.iss
 
 # 生产 TLS/离线 CA 运行材料（脚本输出必须在仓库外；再防止手工复制误提交）
 **/tls-active/

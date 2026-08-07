@@ -1,5 +1,24 @@
 # 头脑风暴变更日志
 
+## 2026-08-07：生产部署准备与 Windows Bridge 集中打包
+
+- 新增 `12_生产部署方案.md`：Win10 64 位 Docker 主机试运行，仅开放
+  再生纤根数法/面积法、电镜微观形貌、纸类 GB/T 4688-2020 定性 4 个流程；
+  **全链路保持 HTTP、不启用 HTTPS**（用户确认，长期有效）。
+- 新增生产覆盖 `.tmp/execution-system-local-runtime/docker-compose.production.yml`
+  （postgres 数据落宿主机、backend/worker 挂 SimSun）与幂等初始化脚本
+  `production-bootstrap.sh`（禁用 3 个不开放流程、宋体检查、存储根核对）。
+- 新增 `textile-device-monitor/packaging/windows-bridge/`：把写入桥、快照桥、
+  只读探针、两个 Writer（SHA-256 钉值校验 + 随包补 x86
+  `Oracle.DataAccess.dll`，生产机无需装 ODAC/GAC）、冻结 FibreCheck 客户端、
+  x64 Instant Client、CPython 运行时和 probe 离线依赖打成单一 Inno Setup
+  安装包；机密不进包，安装后由管理员填 `config\bridge.env`。
+- 写入桥计划任务按“仅当用户登录时运行”（FinalEntry COM Excel 需交互会话）。
+- 踩坑：PowerShell 5.1 下无 BOM 的 UTF-8 脚本按 GBK 误读中文注释导致解析
+  失败，本目录全部 PowerShell/Inno 文件强制 UTF-8 带 BOM；uv 版 CPython 的
+  ensurepip 被拒（externally-managed），probe 离线依赖改用构建机既有
+  probe-venv 的 pip `--target` 装入。
+
 ## 2026-08-05：微观形貌图片比例和末端契约收口
 
 - 真实 Windows Excel 定位 BIFF8 水平锚点解释差异，按当前版本化模板

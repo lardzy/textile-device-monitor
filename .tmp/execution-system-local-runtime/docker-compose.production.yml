@@ -1,0 +1,40 @@
+# 生产覆盖（Win10 64 位 Docker 主机，仅 HTTP，不启用 HTTPS）。
+#
+# 用法（仓库根 textile-device-monitor/ 下）：
+#   docker compose --env-file <生产.env> \
+#     -f docker-compose.yml \
+#     -f docker-compose.execution.yml \
+#     -f ../.tmp/execution-system-local-runtime/docker-compose.production.yml \
+#     up -d --build postgres backend execution-worker frontend
+#
+# 说明：
+#   - docker-compose.execution.yml 已把 area-infer 放入 area profile 并置
+#     AREA_ENABLED=false，本覆盖不处理 area-infer（不要构建/启动它）。
+#   - 执行源共享盘使用主 compose 的 area_out_cifs CIFS 卷
+#    （//192.168.105.82/材料检测中心，只读挂载到 /data/execution-source），
+#     EXECUTION_SOURCE_ROOT 走主 compose 默认值 /data/execution-source/10特纤/02-检验。
+#   - 所有主机路径经环境变量传入（见配套 .env 模板与 12_生产部署方案.md），
+#     不要把凭据写进本文件。
+services:
+  postgres:
+    volumes:
+      # 生产数据库直接落在宿主机目录，便于备份与巡检
+      - type: bind
+        source: "${POSTGRES_DATA_HOST_PATH:?POSTGRES_DATA_HOST_PATH is required}"
+        target: /var/lib/postgresql/data
+
+  backend:
+    volumes:
+      # 宋体：微观形貌原始记录生成必须（缺字体会把模板宋体替换为 DejaVu/Arial，
+      # 且水平锚点校准因子 MICROSCOPY_BIFF_EXCEL_X_SCALE=1.0 以 SimSun 为前提）
+      - type: bind
+        source: "${EXECUTION_FONTS_HOST_PATH:?EXECUTION_FONTS_HOST_PATH is required}"
+        target: /usr/share/fonts/truetype/simsun
+        read_only: true
+
+  execution-worker:
+    volumes:
+      - type: bind
+        source: "${EXECUTION_FONTS_HOST_PATH:?EXECUTION_FONTS_HOST_PATH is required}"
+        target: /usr/share/fonts/truetype/simsun
+        read_only: true
