@@ -150,15 +150,21 @@ STAGING_ROOT_ID = "execution_staging"
 MAX_SELECTED_IMAGES = 10
 
 # LibreOffice uses 1/100 mm for drawing coordinates. These limits are the
-# measured printable image canvas of A4:L32 in the approved template.
+# measured printable image canvas starting at the top-left corner of A4 in the
+# approved template (Excel measurement: 21.6 cm x 11.7 cm).
 CANVAS_WIDTH = 21_600
 CANVAS_HEIGHT = 11_700
-IMAGE_GAP = 250
+# Images are packed edge to edge; no gap is required between neighbours.
+IMAGE_GAP = 0
 # Excel interprets the horizontal ClientAnchor units written by LibreOffice's
-# legacy BIFF8 exporter more narrowly than LibreOffice reads them back for this
-# template.  Encode only x/width with this measured template-specific factor;
-# the UNO receipt decodes them back to logical canvas coordinates for checks.
-MICROSCOPY_BIFF_EXCEL_X_SCALE = 1.2745
+# legacy BIFF8 exporter through the column widths LibreOffice computes from
+# the workbook default font.  The factor stays 1.0 as long as the runtime
+# provides SimSun (宋体): LibreOffice and Excel then derive identical column
+# widths.  Without SimSun, LibreOffice substitutes DejaVu metrics and Excel
+# renders shapes 1.2745x narrower than LibreOffice encodes them; the previous
+# compensation factor is kept here for reference.  The UNO receipt decodes
+# x/width back to logical canvas coordinates for checks.
+MICROSCOPY_BIFF_EXCEL_X_SCALE = 1.0
 # LibreOffice's legacy .xls writer rounds drawing coordinates in 1/100 mm and
 # may move an anchored shape by a few units after reopening.  One percent of
 # the image canvas is a deliberately small, format-aware acceptance window.

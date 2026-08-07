@@ -272,7 +272,9 @@ class MicroscopyOriginalRecordPureFunctionTests(unittest.TestCase):
         )
 
     def test_biff_horizontal_compensation_round_trips_logical_geometry(self):
-        self.assertEqual(MICROSCOPY_BIFF_EXCEL_X_SCALE, 1.2745)
+        # SimSun (宋体) is available in the runtime image, so LibreOffice and
+        # Excel derive identical column widths and the factor must stay 1.0.
+        self.assertEqual(MICROSCOPY_BIFF_EXCEL_X_SCALE, 1.0)
         for logical in (0, 3006, 15589, CANVAS_WIDTH):
             encoded = _encode_horizontal(
                 logical, 1.0, MICROSCOPY_BIFF_EXCEL_X_SCALE
