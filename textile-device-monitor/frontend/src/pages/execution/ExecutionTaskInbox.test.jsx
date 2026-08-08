@@ -130,7 +130,7 @@ describe('ExecutionTaskInbox', () => {
 
     await user.click(await screen.findByText('选择原始记录'));
     const detail = await screen.findByText('26X910095-1.xlsx');
-    await user.click(detail.closest('label'));
+    // 仅一份候选时表单已自动选中，无需再点击
     expect(detail.closest('label').querySelector('input')).toBeChecked();
     await user.type(screen.getByRole('textbox', { name: '处理备注' }), '已核对');
     await user.click(screen.getByRole('button', { name: '确认提交' }));
@@ -180,7 +180,7 @@ describe('ExecutionTaskInbox', () => {
     expect(screen.getByText('7月 · .xls')).toBeInTheDocument();
     expect(screen.getByTitle(`${longPath} · .xls`)).toBeInTheDocument();
     expect(screen.queryByText(longPath)).not.toBeInTheDocument();
-    await user.click(fileName.closest('label'));
+    // 仅一份候选时表单已自动选中，无需再点击
     expect(fileName.closest('label').querySelector('input')).toBeChecked();
   });
 

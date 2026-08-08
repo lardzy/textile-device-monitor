@@ -497,6 +497,12 @@
   display: grid;
   grid-template-columns: 310px minmax(480px, 1fr) 370px;
   overflow: hidden;
+  transition: grid-template-columns 0.28s ease;
+}
+
+/* 有需要人工处理的内容时，左栏平滑加宽以容纳任务卡与批准卡 */
+.execution-workspace__grid--action {
+  grid-template-columns: clamp(430px, 32vw, 540px) minmax(420px, 1fr) 370px;
 }
 
 .execution-workspace__left,
@@ -2223,6 +2229,10 @@
 
   .execution-workspace__grid {
     grid-template-columns: 280px minmax(420px, 1fr) 320px;
+  }
+
+  .execution-workspace__grid--action {
+    grid-template-columns: clamp(390px, 34vw, 480px) minmax(360px, 1fr) 320px;
   }
 
   .execution-preparation__grid {

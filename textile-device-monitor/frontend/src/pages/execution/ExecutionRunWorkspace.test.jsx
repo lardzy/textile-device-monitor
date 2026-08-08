@@ -349,33 +349,25 @@ describe('ExecutionRunWorkspace', () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('tab', { name: '旧系统上传' }));
+    // 左侧“本次执行信息”中的自动批准卡片展示预检信息
     expect(await screen.findByText('260187115-1')).toBeInTheDocument();
-    expect(screen.getByText('源检验编号')).toBeInTheDocument();
-    expect(screen.getByText('260187115')).toBeInTheDocument();
-    expect(screen.getByText('辜惠珊')).toBeInTheDocument();
     expect(screen.getByText('260187115-根数法.xls')).toBeInTheDocument();
-    expect(screen.getByText('批准可能触发真实的旧系统写入')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '核对并批准预检单' }));
-    await user.type(
-      screen.getByRole('textbox', { name: '确认样品编号' }),
-      '260187115-1',
-    );
-    await user.type(
-      screen.getByRole('textbox', { name: '审核备注' }),
-      '只批准本地预检',
-    );
-    await user.click(
-      screen.getByRole('button', { name: '批准并进入连接器队列' }),
-    );
+    expect((await screen.findAllByText('辜惠珊')).length).toBeGreaterThan(0);
+    expect(screen.getByText(/秒后自动批准/)).toBeInTheDocument();
+    // 人工立即批准（不等 5 秒倒计时）
+    await user.click(screen.getByRole('button', { name: '立即批准' }));
 
     await waitFor(() => expect(approvalBody).toEqual({
       approved: true,
       payload_checksum: 'a'.repeat(64),
       confirmed_sample_number: '260187115-1',
-      note: '只批准本地预检',
+      note: '人工立即批准',
     }));
+    // 右侧标签页仅保留状态与历史，不再提供批准按钮
+    await user.click(await screen.findByRole('tab', { name: '旧系统上传' }));
     expect(await screen.findByText('已批准，等待连接器')).toBeInTheDocument();
+    expect(screen.getByText('源检验编号')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '核对并批准预检单' })).not.toBeInTheDocument();
   });
 
   it('同 revision 的 SSE 快照刷新保留未保存选择，revision 更新后恢复服务端草稿', async () => {

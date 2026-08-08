@@ -49,6 +49,7 @@ import {
 import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
 import ExecutionExternalOperationPanel from './ExecutionExternalOperationPanel';
+import ExecutionAutoApprovalCard from './ExecutionAutoApprovalCard';
 import ExecutionMutationPanel from './ExecutionMutationPanel';
 import ExecutionResultFiles, {
   extractExecutionResultFiles,
@@ -155,6 +156,7 @@ export default function ExecutionRunWorkspace() {
   const [actionLoading, setActionLoading] = useState(null);
   const [connection, setConnection] = useState('connecting');
   const [detailOpen, setDetailOpen] = useState(false);
+  const [approvalPresent, setApprovalPresent] = useState(false);
   const [eventHistory, setEventHistory] = useState({
     runId: null,
     initialized: false,
@@ -387,12 +389,25 @@ export default function ExecutionRunWorkspace() {
       .startsWith('external.legacy_')
   ));
 
+  // 批准卡片始终挂载（自行感知刷新并回报有无内容），
+  // 有人工任务或待批准操作时才加宽左栏。
+  const hasActionItems = activeHumanTasks.length > 0 || approvalPresent;
+
+  const isTerminalRun = terminalStatuses.has(run.status);
   const actions = (
     <Space>
-      <Tooltip title={connection === 'connected' ? '实时连接正常' : '实时连接正在恢复'}>
+      <Tooltip
+        title={isTerminalRun
+          ? '本次运行已结束，实时同步已关闭'
+          : connection === 'connected' ? '实时连接正常' : '实时连接正在恢复'}
+      >
         <Badge
-          status={connection === 'connected' ? 'success' : 'processing'}
-          text={connection === 'connected' ? '实时同步' : '重新连接'}
+          status={isTerminalRun
+            ? 'default'
+            : connection === 'connected' ? 'success' : 'processing'}
+          text={isTerminalRun
+            ? '已结束'
+            : connection === 'connected' ? '实时同步' : '重新连接'}
         />
       </Tooltip>
       <Button icon={<ReloadOutlined />} onClick={() => loadSnapshot()}>刷新</Button>
@@ -506,7 +521,7 @@ export default function ExecutionRunWorkspace() {
         <ExecutionExternalOperationPanel
           runId={runId}
           refreshKey={run.updated_at}
-          canApprove={canRunWorkflow}
+          canApprove={false}
           canReconcile={canReconcileExternalOperations}
           onChanged={() => loadSnapshot({ quiet: true })}
         />
@@ -623,7 +638,7 @@ export default function ExecutionRunWorkspace() {
         />
       )}
 
-      <main className="execution-workspace__grid">
+      <main className={`execution-workspace__grid${hasActionItems ? ' execution-workspace__grid--action' : ''}`}>
         <aside className="execution-workspace__left">
           <div className="execution-workspace__section-title">
             <div>
@@ -655,12 +670,12 @@ export default function ExecutionRunWorkspace() {
               { key: 'mode', label: '运行模式', children: run.mode === 'test' ? '测试运行' : '正式运行' },
             ]}
           />
-          {activeHumanTasks.length > 0 && (
+          {(activeHumanTasks.length > 0 || hasExternalOperations) && (
             <>
-              <Divider orientation="left">需要您处理</Divider>
-              {canHandleHumanTasks ? (
-                <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                  {activeHumanTasks.map(task => (
+              {hasActionItems && <Divider orientation="left">需要您处理</Divider>}
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                {activeHumanTasks.length > 0 && (
+                  canHandleHumanTasks ? activeHumanTasks.map(task => (
                     <HumanTaskCard
                       key={task.id}
                       task={task}
@@ -670,16 +685,25 @@ export default function ExecutionRunWorkspace() {
                       inspectionNumber={run.inspection_number || variables.inspection_number}
                       onChanged={() => loadSnapshot({ quiet: true })}
                     />
-                  ))}
-                </Space>
-              ) : (
-                <Alert
-                  showIcon
-                  type="warning"
-                  message="当前账号不能处理人工任务"
-                  description="请联系拥有人工任务权限的检验员继续本次执行。"
-                />
-              )}
+                  )) : (
+                    <Alert
+                      showIcon
+                      type="warning"
+                      message="当前账号不能处理人工任务"
+                      description="请联系拥有人工任务权限的检验员继续本次执行。"
+                    />
+                  )
+                )}
+                {hasExternalOperations && (
+                  <ExecutionAutoApprovalCard
+                    runId={runId}
+                    refreshKey={run.updated_at}
+                    canApprove={canRunWorkflow}
+                    onChanged={() => loadSnapshot({ quiet: true })}
+                    onPresenceChange={setApprovalPresent}
+                  />
+                )}
+              </Space>
             </>
           )}
         </aside>

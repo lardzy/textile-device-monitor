@@ -265,18 +265,24 @@ export default function HumanTaskCard({
       // 表单子项重挂载并吞掉用户刚完成的选择。
       form.resetFields();
     }
+    const initialSelectedFiles = Array.isArray(values.selected_files)
+      ? values.selected_files.map(candidateId).filter(Boolean).map(String)
+      : candidates.filter(candidate => candidate.selected)
+        .map(candidateId)
+        .filter(Boolean)
+        .map(String);
+    // 只有一份候选时自动选中，减少检验员的一次点击；仍由人确认提交。
+    const defaultedSelectedFiles = initialSelectedFiles.length === 0
+      && candidates.length === 1
+      ? [candidateId(candidates[0])].filter(Boolean).map(String)
+      : initialSelectedFiles;
     form.setFieldsValue({
       ...values,
-      selected_files: Array.isArray(values.selected_files)
-        ? values.selected_files.map(candidateId).filter(Boolean).map(String)
-        : candidates.filter(candidate => candidate.selected)
-          .map(candidateId)
-          .filter(Boolean)
-          .map(String),
+      selected_files: defaultedSelectedFiles,
       primary_file_id: candidateId(values.primary_file)
         || values.primary_file_id
         || candidateId(candidates.find(candidate => candidate.is_primary))
-        || undefined,
+        || (defaultedSelectedFiles.length === 1 ? defaultedSelectedFiles[0] : undefined),
       selected_folder_ids: Array.isArray(values.selected_folder_ids)
         ? values.selected_folder_ids.map(imageSelectionFolderId).filter(Boolean).map(String)
         : (Array.isArray(candidatePayload.selected_folder_ids)
