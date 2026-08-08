@@ -80,8 +80,9 @@ TEST_DATABASE_URL=postgresql://textile_local:<口令>@textile-monitor-db:5432/te
 
 已跟踪（`.gitignore` 显式放行）：
 
-- `*.yml`：本地/公司局域网/SMB 等 compose 覆盖；
-- `*.md`、`compose-260111037.sh`、`execution_api_260111037.py`；
+- `*.yml`：本地/公司局域网/SMB/生产等 compose 覆盖；
+- `*.md`、`compose-260111037.sh`、`production-bootstrap.sh`、
+  `stage-sync-downloads-loop.sh`、`execution_api_260111037.py`、`snapshot_tool.py`；
 - `windows-ops/`：Windows 侧运维脚本——`run-bridge-cdde9ec.ps1`（写入桥）、
   `run-snapshot-bridge.ps1`（快照桥）、`build-/test-/extract-textile-writers-cdde9ec.ps1`
   （Writer 构建与离线自测）、`probe-final-entry-json.ps1`（中文 JSON 解析验证）、

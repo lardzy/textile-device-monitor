@@ -14,6 +14,7 @@
 !.tmp/execution-system-local-runtime/*.md
 !.tmp/execution-system-local-runtime/*.sh
 !.tmp/execution-system-local-runtime/execution_api_260111037.py
+!.tmp/execution-system-local-runtime/snapshot_tool.py
 !.tmp/execution-system-local-runtime/windows-ops/
 !.tmp/execution-system-local-runtime/windows-ops/*
 __pycache__/
