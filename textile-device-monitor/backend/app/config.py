@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     EXECUTION_SSE_MAX_SECONDS: int = 300
     EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES: int = 30
     EXECUTION_EXTERNAL_APPROVAL_TTL_MINUTES: int = 15
+    # Consecutive pre-boundary failures tolerated before an external operation
+    # is settled as failed instead of being re-armed for another claim.
+    EXECUTION_EXTERNAL_MAX_ATTEMPTS: int = 5
     # Independent kill switch plus shared secret for the external Bridge.
     # Both must be configured before any Bridge endpoint is available.
     EXECUTION_BRIDGE_ENABLED: bool = False
@@ -399,6 +402,10 @@ class Settings(BaseSettings):
         if not 1 <= self.EXECUTION_NODE_MAX_ATTEMPTS <= 100:
             raise RuntimeError(
                 "Production EXECUTION_NODE_MAX_ATTEMPTS must be between 1 and 100"
+            )
+        if not 1 <= self.EXECUTION_EXTERNAL_MAX_ATTEMPTS <= 100:
+            raise RuntimeError(
+                "Production EXECUTION_EXTERNAL_MAX_ATTEMPTS must be between 1 and 100"
             )
         if self.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS < 15:
             raise RuntimeError(

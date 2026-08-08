@@ -6984,8 +6984,42 @@ def settle_external_attempt_failure(
                 error_message=operation.error_message,
             )
     elif reclaimed:
-        # 批准 TTL 不延长；过期后由 expire_stale_external_operations 收尾。
-        operation.status = "approved"
+        db.flush()
+        failed_attempts = (
+            db.query(ExecutionExternalAttempt)
+            .filter(
+                ExecutionExternalAttempt.operation_id == operation.id,
+                ExecutionExternalAttempt.status == "failed",
+            )
+            .count()
+        )
+        if failed_attempts >= settings.EXECUTION_EXTERNAL_MAX_ATTEMPTS:
+            # 确定性预检失败（如 target_allocation_stale）无限重领只会
+            # 反复冲击旧系统：达到上限后按“未写入”失败收尾，节点随 run
+            # 进入可人工重试状态，重试会以最新快照重新预检。
+            from app.execution.engine import fail_external_waiting_node
+
+            operation.status = "failed"
+            operation.error_code = error_code or "external_attempts_exhausted"
+            operation.error_message = (
+                "外部操作已连续 {count} 次在执行前失败（最近一次：{reason}），"
+                "已停止自动重试；请确认旧系统与任务信息状态后重试节点".format(
+                    count=failed_attempts,
+                    reason=error_code or error_message or "未知错误",
+                )
+            )
+            operation.completed_at = now
+            settlement_reason = "attempts_exhausted"
+            if node_run is not None and node_run.status == "waiting_external":
+                fail_external_waiting_node(
+                    db,
+                    node_run_id=node_run.id,
+                    error_code="external_attempts_exhausted",
+                    error_message=operation.error_message,
+                )
+        else:
+            # 批准 TTL 不延长；过期后由 expire_stale_external_operations 收尾。
+            operation.status = "approved"
     else:
         operation.status = "reconciliation_required"
         operation.error_code = error_code

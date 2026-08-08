@@ -918,6 +918,42 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         self.assertEqual(reclaimed["attempt"]["attempt_no"], 2)
         self.assertNotEqual(reclaimed["attempt"]["id"], attempt_id)
 
+    def test_deterministic_prewrite_failures_stop_after_max_attempts(self):
+        run, operation = self._approved_run(
+            idempotency_key="external-attempt-cap",
+        )
+        for round_no in range(1, 6):
+            claimed = self._claim()
+            self.assertTrue(claimed["claimed"])
+            attempt_id = claimed["attempt"]["id"]
+            self._fail(
+                attempt_id,
+                "remote_absence_verified",
+                error_code="target_allocation_stale",
+            )
+            self.db.refresh(operation)
+            if round_no < 5:
+                self.assertEqual(operation.status, "approved")
+                self.assertEqual(run.status, "waiting_external")
+
+        self.assertEqual(operation.status, "failed")
+        self.assertEqual(operation.error_code, "target_allocation_stale")
+        self.assertIn("已停止自动重试", operation.error_message)
+        node = self._upload_node(run)
+        self.assertEqual(node.status, "failed")
+        self.assertEqual(node.error_code, "external_attempts_exhausted")
+        self.db.refresh(run)
+        self.assertEqual(run.status, "failed")
+        # 已达上限的操作不再可被领取，事件时间线可见收尾原因
+        self.assertFalse(self._claim()["claimed"])
+        event = (
+            self.db.query(ExecutionEvent)
+            .filter_by(run_id=run.id, event_type="external_operation.attempt_failed")
+            .order_by(ExecutionEvent.id.desc())
+            .first()
+        )
+        self.assertEqual(event.payload["settlement_reason"], "attempts_exhausted")
+
     def test_fail_after_copy_requires_reconciliation_and_keeps_fence(self):
         _path, entry, candidate = self._workbook()
         run = self._prepare_run(
