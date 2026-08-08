@@ -224,6 +224,55 @@ try {
         @('--offline-validate', '--package', $paperMethodMismatchPath) 21 `
         @('task_project_binding_invalid')
 
+    # 判定变体（样式参照人工登记 260191286）：判定依据/总评定必填、
+    # 报告项目名称等于项目名、标准值列与实测值同文。
+    $paperJudgement = $paperGeneric.Replace(
+        '"judge_basis": ""',
+        '"judge_basis": "按客户要求"').Replace(
+        '"report_check_item_name": ""',
+        '"report_check_item_name": "纸、纸板和纸浆纤维鉴别分析"').Replace(
+        '"total_judge": ""',
+        '"total_judge": "符合"').Replace(
+        '"standard_value": ""',
+        '"standard_value": "草浆、木浆、竹浆"')
+    $paperJudgementPath = Join-Path $fixtureDir 'paper-generic-judgement.json'
+    Write-Utf8NoBom $paperJudgementPath $paperJudgement
+    Assert-Case 'valid paper generic with judgement' `
+        @('--offline-validate', '--package', $paperJudgementPath) 0 `
+        @('package_validated', 'generic_details_validated', 'offline_validation_completed')
+
+    $paperJudgementNoBasisPath = Join-Path $fixtureDir 'paper-generic-judgement-no-basis.json'
+    Write-Utf8NoBom $paperJudgementNoBasisPath ($paperJudgement.Replace(
+        '"judge_basis": "按客户要求"',
+        '"judge_basis": ""'))
+    Assert-Case 'paper judgement requires judge basis' `
+        @('--offline-validate', '--package', $paperJudgementNoBasisPath) 21 `
+        @('paper_generic_record_contract_invalid')
+
+    $paperJudgementNoStdValuePath = Join-Path $fixtureDir 'paper-generic-judgement-no-std-value.json'
+    Write-Utf8NoBom $paperJudgementNoStdValuePath ($paperJudgement.Replace(
+        '"standard_value": "草浆、木浆、竹浆"',
+        '"standard_value": ""'))
+    Assert-Case 'paper judgement requires standard value mirror' `
+        @('--offline-validate', '--package', $paperJudgementNoStdValuePath) 21 `
+        @('paper_generic_record_contract_invalid')
+
+    $paperJudgementNoReportNamePath = Join-Path $fixtureDir 'paper-generic-judgement-no-report-name.json'
+    Write-Utf8NoBom $paperJudgementNoReportNamePath ($paperJudgement.Replace(
+        '"report_check_item_name": "纸、纸板和纸浆纤维鉴别分析"',
+        '"report_check_item_name": ""'))
+    Assert-Case 'paper judgement requires report item name' `
+        @('--offline-validate', '--package', $paperJudgementNoReportNamePath) 21 `
+        @('paper_generic_record_contract_invalid')
+
+    $paperNoJudgementWithBasisPath = Join-Path $fixtureDir 'paper-generic-no-judgement-with-basis.json'
+    Write-Utf8NoBom $paperNoJudgementWithBasisPath ($paperGeneric.Replace(
+        '"judge_basis": ""',
+        '"judge_basis": "按客户要求"'))
+    Assert-Case 'paper without judgement rejects judge basis' `
+        @('--offline-validate', '--package', $paperNoJudgementWithBasisPath) 21 `
+        @('paper_generic_record_contract_invalid')
+
     $paperOverride = $paperGeneric.Replace(
         '"expected_existing_register_count": 0,',
         @'

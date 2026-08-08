@@ -268,20 +268,41 @@ namespace LegacyFibreCheckFinalEntryWriter
                 normalizedResult,
                 @"(?<![\p{L}\p{N}_.])100(?:\.0+)?(?![\p{L}\p{N}_.])",
                 RegexOptions.CultureInvariant);
+            // 两种合法形态共用的基线：实测值、测试方法、单位与其余空白字段。
             if (string.IsNullOrWhiteSpace(detail.RealValue)
                 || !string.IsNullOrEmpty(detail.StandardLocation)
-                || !string.IsNullOrEmpty(detail.StandardValue)
                 || !string.IsNullOrEmpty(detail.RealLocation)
                 || header.TestMethod != PaperCheckMethod
                 || header.Unit != (containsOneHundred ? "%" : string.Empty)
                 || !string.IsNullOrEmpty(header.Grade)
-                || !string.IsNullOrEmpty(header.JudgeBasis)
                 || !string.IsNullOrEmpty(header.SampleDescription)
                 || !string.IsNullOrEmpty(header.StandardType)
-                || !string.IsNullOrEmpty(header.ReportCheckItemName)
                 || !string.IsNullOrEmpty(header.AttachInfo)
-                || !string.IsNullOrEmpty(header.Remark)
-                || !string.IsNullOrEmpty(header.TotalJudge))
+                || !string.IsNullOrEmpty(header.Remark))
+            {
+                throw new PackageValidationException(
+                    "paper_generic_record_contract_invalid");
+            }
+            bool hasJudgement = !string.IsNullOrWhiteSpace(header.TotalJudge);
+            if (hasJudgement)
+            {
+                // 判定变体（与人工登记样式一致，参照 260191286）：判定依据
+                // 与总评定必填、报告项目名称等于项目名、标准值列与实测值
+                // 同文。是否与任务单 GiveJudgement 匹配由 LegacySafetyGuards
+                // 在执行前强制核验。
+                if (string.IsNullOrWhiteSpace(header.JudgeBasis)
+                    || header.ReportCheckItemName != PaperCheckItemName
+                    || string.IsNullOrEmpty(detail.StandardValue)
+                    || detail.StandardValue != detail.RealValue)
+                {
+                    throw new PackageValidationException(
+                        "paper_generic_record_contract_invalid");
+                }
+            }
+            else if (!string.IsNullOrEmpty(header.JudgeBasis)
+                || !string.IsNullOrEmpty(header.TotalJudge)
+                || !string.IsNullOrEmpty(header.ReportCheckItemName)
+                || !string.IsNullOrEmpty(detail.StandardValue))
             {
                 throw new PackageValidationException(
                     "paper_generic_record_contract_invalid");

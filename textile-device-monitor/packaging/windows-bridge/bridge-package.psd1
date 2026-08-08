@@ -23,8 +23,8 @@
     # Writer 源可执行文件 SHA-256 钉值：与本次验收通过的编译产物绑定。
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
-        'FibreCheckWriter.exe'           = 'e892f409d9eab2030aa7a4bf6c5680055038703a99819b2099fdd94529672fc2'
-        'FibreCheckFinalEntryWriter.exe' = '1a46dc9df225a51015ff15fac4d5589427fc10b9120993aaa8d65ef306f2587a'
+        'FibreCheckWriter.exe'           = '1c14d99a39b0a708653c0adfa5232a51eb490be8e59ea4fe67e5c7fcc20c5da5'
+        'FibreCheckFinalEntryWriter.exe' = '147457ac2f6130d6b32391180355dc9ba78b75df132d9ad999343089fe72175b'
     }
 
     # probe 离线依赖打包时的 pip 源（构建机需要能访问；--no-input）
