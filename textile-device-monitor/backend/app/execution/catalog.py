@@ -553,6 +553,9 @@ def _paper_fiber_gbt4688_qualitative_readonly_definition() -> dict[str, Any]:
                     "allow_primary": False,
                     "require_primary": True,
                     "presentation": "qualitative_result",
+                    # 仅匹配到一份候选时自动选择并推进，无需人工领取处理；
+                    # 多候选或读取失败时仍回落为人工单选。
+                    "auto_submit_single_candidate": True,
                 },
                 "input_mapping": {
                     "candidates": "$.nodes.query.output.candidates",
@@ -1516,6 +1519,8 @@ def ensure_default_catalog(db: Session) -> None:
             _paper_fiber_gbt4688_qualitative_readonly_definition()
         )
         read_only_checksum = definition_checksum(read_only_definition)
+        current_definition = _paper_fiber_gbt4688_qualitative_definition()
+        current_checksum = definition_checksum(current_definition)
         version_one = next(
             (
                 version
@@ -1524,19 +1529,22 @@ def ensure_default_catalog(db: Session) -> None:
             ),
             None,
         )
-        untouched_read_only = bool(
+        untouched_default = bool(
             existing_paper.created_by_id is None
             and existing_paper.updated_by_id is None
             and existing_paper.draft_revision == 1
             and existing_paper.published_version_number == 1
             and len(existing_paper.versions) == 1
             and version_one is not None
+        )
+        untouched_read_only = bool(
+            untouched_default
             and definition_checksum(existing_paper.draft_definition)
             == read_only_checksum
             and version_one.checksum == read_only_checksum
         )
         if untouched_read_only:
-            definition = _paper_fiber_gbt4688_qualitative_definition()
+            definition = current_definition
             capabilities = {
                 "read": True,
                 "write": True,
@@ -1565,6 +1573,31 @@ def ensure_default_catalog(db: Session) -> None:
                     release_note=(
                         "增加特种毛定性上传、复核和检验记录登记"
                     ),
+                )
+            )
+        elif (
+            untouched_default
+            and version_one.checksum != current_checksum
+        ):
+            # 未被用户修改过的默认流程始终跟随代码中的最新定义：
+            # 旧版完整定义（无 auto_submit_single_candidate 等后续修订）
+            # 自动升级出新版本，历史运行仍钉在各自创建时的版本上。
+            existing_paper.draft_definition = deepcopy(current_definition)
+            existing_paper.draft_revision = 2
+            existing_paper.published_version_number = 2
+            db.add(
+                ExecutionWorkflowVersion(
+                    workflow_id=existing_paper.id,
+                    version_number=2,
+                    schema_version="1.0",
+                    definition=deepcopy(current_definition),
+                    checksum=current_checksum,
+                    capabilities=deepcopy(existing_paper.capabilities),
+                    contract_checksum=workflow_contract_checksum(
+                        current_definition,
+                        deepcopy(existing_paper.capabilities),
+                    ),
+                    release_note="默认流程定义升级（跟随代码修订）",
                 )
             )
     electron_slug, electron_name = ELECTRON_MICROSCOPY_WORKFLOW

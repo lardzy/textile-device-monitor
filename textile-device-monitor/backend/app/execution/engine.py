@@ -951,6 +951,54 @@ def _normalize_human_submission(
     }
 
 
+def _auto_submit_single_candidate(
+    db: Session,
+    context: NodeExecutionContext,
+) -> Optional[dict[str, Any]]:
+    """仅匹配到一份候选时直接规范化并返回节点输出，实现零人工干预。
+
+    返回 None 表示不满足自动提交条件，仍按原路径创建人工任务：
+    - 节点 config 显式开启 auto_submit_single_candidate（按流程/节点
+      逐一放行，未开启的流程交互不变）；
+    - 仅限 human.file_selection；
+    - 表单没有任何需要人工填写的字段（无 required/properties），
+      避免跳过备注、确认类输入；
+    - 候选恰好一份且可读。
+    规范化失败（如候选已变化）按 ExecutionApiError 上抛，由调用方
+    fail_node，保持失败关闭而不是带病推进。
+    """
+    if context.node_run.node_type != "human.file_selection":
+        return None
+    config = context.node.get("config") or {}
+    if not config.get("auto_submit_single_candidate"):
+        return None
+    form_schema = config.get("form_schema") or {}
+    if form_schema.get("required") or form_schema.get("properties"):
+        return None
+    candidates = [
+        candidate
+        for candidate in _candidate_items(context.input_data or {})
+        if candidate.get("id") and candidate.get("read_status") != "failed"
+    ]
+    if len(candidates) != 1:
+        return None
+    candidate_id = str(candidates[0]["id"])
+    normalized = _normalize_human_submission(
+        db,
+        run=context.run,
+        node_run=context.node_run,
+        data={
+            "selected_files": [candidate_id],
+            "primary_file_id": candidate_id,
+        },
+    )
+    return {
+        **normalized,
+        "auto_submitted": True,
+        "auto_submit_reason": "single_candidate",
+    }
+
+
 def _latest_published_version(
     db: Session,
     workflow: ExecutionWorkflow,
@@ -3324,7 +3372,16 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
             lease_token=lease_token,
         )
         if node_run.node_type in HUMAN_NODE_TYPES:
-            _create_human_task(db, context)
+            auto_output = _auto_submit_single_candidate(db, context)
+            if auto_output is not None:
+                complete_node(
+                    db,
+                    node_run_id=node_run.id,
+                    lease_token=lease_token,
+                    output_data=auto_output,
+                )
+            else:
+                _create_human_task(db, context)
             return
         if node_run.node_type in EXTERNAL_NODE_TYPES:
             _prepare_external_operation_wait(db, context)

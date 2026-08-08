@@ -446,6 +446,51 @@ class PaperFiberBackendTests(unittest.TestCase):
             },
         )
 
+    def test_single_candidate_selection_auto_submits_without_human_task(self):
+        path = self._xls("26W006701/record.xls", "木浆 100")
+        entry = self._index(path)
+        self._task_snapshot("26W006701")
+        self.db.commit()
+        workflow = (
+            self.db.query(ExecutionWorkflow)
+            .filter_by(slug=PAPER_FIBER_WORKFLOW_SLUG)
+            .one()
+        )
+        run, _ = create_run(
+            self.db,
+            workflow=workflow,
+            actor=self.user,
+            inspection_number="26W006701",
+            input_data={},
+            global_data={},
+            idempotency_key="paper-auto-submit-run",
+        )
+        self.db.commit()
+        self._execute_one()  # start
+        self._execute_one()  # query and W32 read
+        self._execute_one()  # select：唯一候选应自动提交，不创建人工任务
+        selection = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="select")
+            .one()
+        )
+        self.assertEqual(selection.status, "succeeded")
+        self.assertTrue(selection.output_data["auto_submitted"])
+        self.assertEqual(
+            selection.output_data["auto_submit_reason"], "single_candidate"
+        )
+        self.assertEqual(selection.output_data["primary_file_id"], entry.id)
+        self.assertEqual(
+            selection.output_data["primary_file"]["result"]["w32_value"],
+            "木浆 100",
+        )
+        self.assertEqual(
+            self.db.query(ExecutionHumanTask).filter_by(run_id=run.id).count(),
+            0,
+        )
+        self.db.refresh(run)
+        self.assertEqual(run.status, "running")
+
     def test_workflow_rejects_multiple_files_and_auto_marks_single_primary(self):
         first = self._xls("26W006701/first.xls", "木浆 100")
         second = self._xls("26W006701/second.xls", "草浆、木浆")
@@ -579,6 +624,50 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertIn(
             "register-result",
             {node["id"] for node in workflow.draft_definition["nodes"]},
+        )
+
+    def test_untouched_outdated_full_catalog_follows_current_definition(self):
+        # 模拟升级前的线上库：v1 为无 auto_submit_single_candidate 的旧完整定义
+        workflow = (
+            self.db.query(ExecutionWorkflow)
+            .filter_by(slug=PAPER_FIBER_WORKFLOW_SLUG)
+            .one()
+        )
+        outdated = _paper_fiber_gbt4688_qualitative_definition()
+        select = next(node for node in outdated["nodes"] if node["id"] == "select")
+        select["config"].pop("auto_submit_single_candidate", None)
+        version_one = next(
+            version for version in workflow.versions
+            if version.version_number == 1
+        )
+        workflow.draft_definition = outdated
+        version_one.definition = outdated
+        version_one.checksum = definition_checksum(outdated)
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+        self.assertEqual(workflow.published_version_number, 2)
+        self.assertEqual(workflow.draft_revision, 2)
+        self.assertEqual(len(workflow.versions), 2)
+        upgraded_select = next(
+            node for node in workflow.draft_definition["nodes"]
+            if node["id"] == "select"
+        )
+        self.assertIs(
+            upgraded_select["config"]["auto_submit_single_candidate"], True
+        )
+        # 旧版本保持原样，历史运行不受影响
+        self.assertNotIn(
+            "auto_submit_single_candidate",
+            version_one.definition["nodes"][
+                next(
+                    index
+                    for index, node in enumerate(version_one.definition["nodes"])
+                    if node["id"] == "select"
+                )
+            ]["config"],
         )
 
     def test_background_index_defers_paper_workbook_content(self):
