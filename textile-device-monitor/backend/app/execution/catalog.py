@@ -534,7 +534,7 @@ def _paper_fiber_gbt4688_qualitative_readonly_definition() -> dict[str, Any]:
                 "config": {
                     "root_id": PAPER_FIBER_ROOT_ID,
                     "limit": 6,
-                    "require_full_task_match": False,
+                    "require_full_task_match": True,
                 },
                 "input_mapping": {
                     "inspection_number": "$.inputs.inspection_number"
@@ -656,6 +656,29 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
             "ui": {"x": 1040, "y": 180},
         },
         {
+            "id": "judgement-input",
+            "type": "human.input",
+            "type_version": 1,
+            "name": "确认判定信息",
+            "config": {
+                "title": "确认纸类定性判定信息",
+                "description": (
+                    "任务单要求对本项目给出判定：请选择判定依据与本次"
+                    "判定结果。任务单未要求判定时本步骤自动跳过。"
+                ),
+                # engine 识别该标记：任务单未要求判定时自动完成
+                # （零人工干预）；要求判定时动态生成带选项的表单。
+                "paper_judgement": True,
+            },
+            "input_mapping": {
+                "selected_project": (
+                    "$.nodes.query.output.matched_task_project"
+                ),
+                "task": "$.nodes.query.output.task",
+            },
+            "ui": {"x": 1280, "y": 180},
+        },
+        {
             "id": "register-result",
             "type": "external.legacy_generic_check_record_entry",
             "type_version": 1,
@@ -666,6 +689,7 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
             },
             "input_mapping": {
                 "review_result": "$.nodes.review-record.output",
+                "judgement_input": "$.nodes.judgement-input.output",
                 "selected_project_key": (
                     "$.nodes.query.output.matched_task_project.project_key"
                 ),
@@ -673,7 +697,7 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
                     "$.nodes.query.output.matched_task_project"
                 ),
             },
-            "ui": {"x": 1280, "y": 180},
+            "ui": {"x": 1520, "y": 180},
         },
         {
             "id": "end",
@@ -689,9 +713,10 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
                 ),
                 "upload": "$.nodes.upload-record.output",
                 "review": "$.nodes.review-record.output",
+                "judgement": "$.nodes.judgement-input.output",
                 "final_entry": "$.nodes.register-result.output",
             },
-            "ui": {"x": 1520, "y": 180},
+            "ui": {"x": 1760, "y": 180},
         },
     ]
     definition["edges"] = [
@@ -706,11 +731,33 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
         {
             "id": "e5",
             "source": "review-record",
+            "target": "judgement-input",
+        },
+        {
+            "id": "e6",
+            "source": "judgement-input",
             "target": "register-result",
         },
-        {"id": "e6", "source": "register-result", "target": "end"},
+        {"id": "e7", "source": "register-result", "target": "end"},
     ]
     return definition
+
+
+def _paper_fiber_default_checksums() -> set[str]:
+    """系统发布过的纸类默认定义校验和（用于未修改流程的跟随升级）。"""
+
+    return {
+        # 只读首版（读取 + 人工单选，早期部署种子）
+        definition_checksum(
+            _paper_fiber_gbt4688_qualitative_readonly_definition()
+        ),
+        # 完整首版（上传/复核/登记，无单候选自动提交）
+        "7b09325ffef43642d1f53a81540d8fcc4209482a66e82f00df6024b8d5a9e8d1",
+        # 完整定义 v2（选择节点单候选自动提交）
+        "30f80623f97c9e15f9ac6ad865addeb43eecda70b8a1c8f15f292f9559e738e3",
+        # 完整定义 v3（判定分支 judgement-input 节点）
+        "cebf82bb4abad019f3f36837a671d7e267042a2768c34beef3a05f0028e39e7c",
+    }
 
 
 def _electron_microscopy_image_selection_default_checksums() -> set[str]:
@@ -1515,80 +1562,49 @@ def ensure_default_catalog(db: Session) -> None:
         workflows_by_slug[PAPER_FIBER_WORKFLOW_SLUG] = workflow
     else:
         existing_paper = workflows_by_slug[PAPER_FIBER_WORKFLOW_SLUG]
-        read_only_definition = (
-            _paper_fiber_gbt4688_qualitative_readonly_definition()
-        )
-        read_only_checksum = definition_checksum(read_only_definition)
         current_definition = _paper_fiber_gbt4688_qualitative_definition()
         current_checksum = definition_checksum(current_definition)
-        version_one = next(
-            (
-                version
-                for version in existing_paper.versions
-                if version.version_number == 1
-            ),
-            None,
-        )
+        known_checksums = _paper_fiber_default_checksums()
+        version_checksums = {
+            version.checksum for version in existing_paper.versions
+        }
+        # 未被用户修改过的默认流程始终跟随代码中的最新定义：只要草稿与
+        # 全部历史版本都是系统发布过的定义（只读首版/历次完整定义），
+        # 就自动升级出新版本，历史运行仍钉在各自创建时的版本上。
         untouched_default = bool(
             existing_paper.created_by_id is None
             and existing_paper.updated_by_id is None
-            and existing_paper.draft_revision == 1
-            and existing_paper.published_version_number == 1
-            and len(existing_paper.versions) == 1
-            and version_one is not None
-        )
-        untouched_read_only = bool(
-            untouched_default
+            and existing_paper.versions
+            and version_checksums <= known_checksums
             and definition_checksum(existing_paper.draft_definition)
-            == read_only_checksum
-            and version_one.checksum == read_only_checksum
+            in known_checksums
         )
-        if untouched_read_only:
-            definition = current_definition
-            capabilities = {
-                "read": True,
-                "write": True,
-                "external_write": True,
-            }
+        if untouched_default and current_checksum not in version_checksums:
+            next_version = (
+                max(
+                    version.version_number
+                    for version in existing_paper.versions
+                )
+                + 1
+            )
             existing_paper.description = (
                 "按编号文件夹与旧系统任务项目识别纸类定性分析原始记录，"
                 "读取 Sheet1!W32 后完成特种毛上传、复核和检验记录登记。"
             )
-            existing_paper.draft_definition = deepcopy(definition)
-            existing_paper.draft_revision = 2
-            existing_paper.published_version_number = 2
-            existing_paper.capabilities = deepcopy(capabilities)
-            existing_paper.required_input_count = 1
-            db.add(
-                ExecutionWorkflowVersion(
-                    workflow_id=existing_paper.id,
-                    version_number=2,
-                    schema_version="1.0",
-                    definition=deepcopy(definition),
-                    checksum=definition_checksum(definition),
-                    capabilities=deepcopy(capabilities),
-                    contract_checksum=workflow_contract_checksum(
-                        definition, capabilities
-                    ),
-                    release_note=(
-                        "增加特种毛定性上传、复核和检验记录登记"
-                    ),
-                )
-            )
-        elif (
-            untouched_default
-            and version_one.checksum != current_checksum
-        ):
-            # 未被用户修改过的默认流程始终跟随代码中的最新定义：
-            # 旧版完整定义（无 auto_submit_single_candidate 等后续修订）
-            # 自动升级出新版本，历史运行仍钉在各自创建时的版本上。
             existing_paper.draft_definition = deepcopy(current_definition)
-            existing_paper.draft_revision = 2
-            existing_paper.published_version_number = 2
+            existing_paper.draft_revision += 1
+            existing_paper.published_version_number = next_version
+            existing_paper.required_input_count = 1
+            # 只读首版种子可能缺少外部写能力，升级时一并补齐
+            existing_paper.capabilities = {
+                "read": True,
+                "write": True,
+                "external_write": True,
+            }
             db.add(
                 ExecutionWorkflowVersion(
                     workflow_id=existing_paper.id,
-                    version_number=2,
+                    version_number=next_version,
                     schema_version="1.0",
                     definition=deepcopy(current_definition),
                     checksum=current_checksum,

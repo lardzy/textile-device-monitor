@@ -4761,6 +4761,40 @@ def prepare_legacy_generic_check_record_entry_operation(
             "paper_fiber_result_contract_changed",
             "纸纤维 W32 结果或单位绑定无效",
         )
+    # 判定变体：任务单要求判定时必须已由判定确认节点收集依据与结论；
+    # 未要求判定时一律留空（Writer 会按任务单 GiveJudgement 再核验一次）。
+    # give_judgement 是任务项目的辅助信息而非标识字段，不进 task_project
+    # 契约（Writer ParseTaskProject 与回执均为严格键集）。
+    selected_project = input_data.get("selected_project")
+    give_judgement = (
+        selected_project.get("give_judgement")
+        if isinstance(selected_project, dict)
+        else None
+    )
+    judgement_required = not (
+        give_judgement is None
+        or give_judgement is False
+        or give_judgement == 0
+        or str(give_judgement).strip().casefold()
+        in {"", "0", "false", "no", "否", "否定"}
+    )
+    judgement_input = input_data.get("judgement_input")
+    if not isinstance(judgement_input, dict):
+        judgement_input = {}
+    judge_basis = " ".join(
+        str(judgement_input.get("judge_basis") or "").strip().split()
+    )
+    judgement = " ".join(
+        str(judgement_input.get("judgement") or "").strip().split()
+    )
+    if judgement_required and (not judge_basis or not judgement):
+        raise conflict(
+            "paper_fiber_judgement_required",
+            "任务单要求对本项目判定，请先完成判定信息确认后再登记",
+        )
+    if not judgement_required:
+        judge_basis = ""
+        judgement = ""
     override = _controlled_final_entry_override(
         input_data, sample_number=source_number
     )
@@ -4777,19 +4811,23 @@ def prepare_legacy_generic_check_record_entry_operation(
             "header": {
                 "grade": "",
                 "unit": unit,
-                "judge_basis": "",
+                "judge_basis": judge_basis,
                 "test_method": PAPER_FIBER_TEST_METHOD,
                 "sample_description": "",
                 "standard_type": "",
-                "report_check_item_name": "",
+                "report_check_item_name": (
+                    project["check_item_name"] if judgement_required else ""
+                ),
                 "attach_info": "",
                 "remark": "",
-                "total_judge": "",
+                "total_judge": judgement,
             },
             "details": [
                 {
                     "standard_location": "",
-                    "standard_value": "",
+                    "standard_value": (
+                        result_value if judgement_required else ""
+                    ),
                     "real_location": "",
                     "real_value": result_value,
                 }
@@ -4820,6 +4858,7 @@ def prepare_legacy_generic_check_record_entry_operation(
             "expected_existing_register_count": expected_existing,
             "resulting_register_count": expected_existing + 1,
             "detail_count": 1,
+            "judgement_required": judgement_required,
             "expected_proofed_count": 0,
             "controlled_test": override is not None,
             "controlled_test_reason": (

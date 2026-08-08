@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +23,10 @@ from app.execution.catalog import (
     ensure_default_rbac,
 )
 from app.execution.engine import (
+    NodeExecutionContext,
+    _auto_complete_paper_judgement,
+    _normalize_human_submission,
+    _paper_judgement_form_schema,
     claim_human_task,
     claim_next_node,
     create_run,
@@ -414,8 +419,14 @@ class PaperFiberBackendTests(unittest.TestCase):
         select = next(node for node in definition["nodes"] if node["id"] == "select")
         self.assertIs(select["config"]["allow_multiple"], False)
         self.assertEqual(
-            [node["id"] for node in definition["nodes"][-4:]],
-            ["upload-record", "review-record", "register-result", "end"],
+            [node["id"] for node in definition["nodes"][-5:]],
+            [
+                "upload-record",
+                "review-record",
+                "judgement-input",
+                "register-result",
+                "end",
+            ],
         )
         self.assertEqual(
             workflow.capabilities,
@@ -490,6 +501,206 @@ class PaperFiberBackendTests(unittest.TestCase):
         )
         self.db.refresh(run)
         self.assertEqual(run.status, "running")
+
+    def _failed_query_run(self, idempotency_key: str):
+        workflow = (
+            self.db.query(ExecutionWorkflow)
+            .filter_by(slug=PAPER_FIBER_WORKFLOW_SLUG)
+            .one()
+        )
+        run, _ = create_run(
+            self.db,
+            workflow=workflow,
+            actor=self.user,
+            inspection_number="26W006701",
+            input_data={},
+            global_data={},
+            idempotency_key=idempotency_key,
+        )
+        self.db.commit()
+        self._execute_one()  # start
+        self._execute_one()  # query
+        query = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="query")
+            .one()
+        )
+        self.db.refresh(run)
+        return run, query
+
+    def test_query_fails_fast_with_task_snapshot_pending_when_cache_missing(
+        self,
+    ):
+        self._index(self._xls("26W006701/record.xls", "木浆 100"))
+        self.db.commit()
+
+        run, query = self._failed_query_run("paper-query-snapshot-pending")
+
+        self.assertEqual(query.status, "failed")
+        self.assertEqual(query.error_code, "task_snapshot_pending")
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "task_snapshot_pending")
+
+    def test_query_fails_fast_with_task_snapshot_unavailable_when_refresh_failed(
+        self,
+    ):
+        self._index(self._xls("26W006701/record.xls", "木浆 100"))
+        self.db.add(
+            ExecutionTaskSnapshotCache(
+                inspection_number="26W006701",
+                status="failed",
+                snapshot=None,
+                error_code="bridge_timeout",
+                refresh_requested_at=utcnow(),
+            )
+        )
+        self.db.commit()
+
+        run, query = self._failed_query_run("paper-query-snapshot-failed")
+
+        self.assertEqual(query.status, "failed")
+        self.assertEqual(query.error_code, "task_snapshot_unavailable")
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "task_snapshot_unavailable")
+
+    def test_query_fails_fast_with_rule_not_matched_when_task_lacks_project(
+        self,
+    ):
+        self._index(self._xls("26W006701/record.xls", "木浆 100"))
+        self._task_snapshot("26W006701", projects=[])
+        self.db.commit()
+
+        run, query = self._failed_query_run("paper-query-rule-not-matched")
+
+        self.assertEqual(query.status, "failed")
+        self.assertEqual(query.error_code, "paper_fiber_rule_not_matched")
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_code, "paper_fiber_rule_not_matched")
+
+    def _judgement_context(self, run, input_data):
+        node_run = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="judgement-input")
+            .one()
+        )
+        node = {
+            "id": "judgement-input",
+            "type": "human.input",
+            "config": {
+                "title": "确认纸类定性判定信息",
+                "paper_judgement": True,
+            },
+        }
+        return NodeExecutionContext(
+            db=self.db,
+            run=run,
+            node_run=node_run,
+            node=node,
+            input_data=input_data,
+            worker_id="paper-worker",
+            lease_token="",
+        )
+
+    def _paper_run(self, idempotency_key):
+        workflow = (
+            self.db.query(ExecutionWorkflow)
+            .filter_by(slug=PAPER_FIBER_WORKFLOW_SLUG)
+            .one()
+        )
+        run, _ = create_run(
+            self.db,
+            workflow=workflow,
+            actor=self.user,
+            inspection_number="26W006701",
+            input_data={},
+            global_data={},
+            idempotency_key=idempotency_key,
+        )
+        self.db.commit()
+        return run
+
+    def test_judgement_node_auto_completes_when_task_waives_judgement(self):
+        self._task_snapshot("26W006701")
+        self.db.commit()
+        run = self._paper_run("paper-judgement-auto")
+        context = self._judgement_context(
+            run,
+            {
+                "selected_project": {"give_judgement": 0},
+                "task": {"check_basis": "按客户要求"},
+            },
+        )
+        output = _auto_complete_paper_judgement(context)
+        self.assertIsNotNone(output)
+        self.assertIs(output["judgement_required"], False)
+        self.assertIsNone(output["judge_basis"])
+        self.assertIsNone(output["judgement"])
+        self.assertEqual(
+            output["auto_submit_reason"], "judgement_not_required"
+        )
+
+    def test_judgement_node_waits_with_dynamic_form_when_required(self):
+        self._task_snapshot("26W006701")
+        self.db.commit()
+        run = self._paper_run("paper-judgement-manual")
+        context = self._judgement_context(
+            run,
+            {
+                "selected_project": {"give_judgement": 1},
+                "task": {"check_basis": "按客户要求，GB/T 4688-2020、企业标准"},
+            },
+        )
+        # 要求判定时不自动完成，必须创建人工任务
+        self.assertIsNone(_auto_complete_paper_judgement(context))
+        schema = _paper_judgement_form_schema(context)
+        self.assertEqual(
+            schema["properties"]["judge_basis"]["enum"],
+            ["按客户要求", "GB/T 4688-2020", "企业标准"],
+        )
+        self.assertEqual(
+            schema["properties"]["judgement"]["enum"], ["符合", "不符合"]
+        )
+        self.assertEqual(
+            schema["required"], ["judge_basis", "judgement"]
+        )
+
+    def test_judgement_form_falls_back_to_free_text_without_basis(self):
+        run = self._paper_run("paper-judgement-no-basis")
+        context = self._judgement_context(
+            run,
+            {
+                "selected_project": {"give_judgement": 1},
+                "task": {"check_basis": None},
+            },
+        )
+        schema = _paper_judgement_form_schema(context)
+        basis_field = schema["properties"]["judge_basis"]
+        self.assertNotIn("enum", basis_field)
+        self.assertEqual(basis_field["minLength"], 1)
+
+    def test_judgement_submission_is_shaped_with_uniform_keys(self):
+        run = self._paper_run("paper-judgement-shape")
+        context = self._judgement_context(
+            run,
+            {
+                "selected_project": {"give_judgement": 1},
+                "task": {"check_basis": "按客户要求"},
+            },
+        )
+        output = _normalize_human_submission(
+            self.db,
+            run=run,
+            node_run=context.node_run,
+            data={"judge_basis": " 按客户要求 ", "judgement": "符合"},
+        )
+        self.assertEqual(
+            output,
+            {
+                "judgement_required": True,
+                "judge_basis": "按客户要求",
+                "judgement": "符合",
+            },
+        )
 
     def test_workflow_rejects_multiple_files_and_auto_marks_single_primary(self):
         first = self._xls("26W006701/first.xls", "木浆 100")
@@ -627,22 +838,25 @@ class PaperFiberBackendTests(unittest.TestCase):
         )
 
     def test_untouched_outdated_full_catalog_follows_current_definition(self):
-        # 模拟升级前的线上库：v1 为无 auto_submit_single_candidate 的旧完整定义
+        # 模拟升级前的线上库：草稿与历史版本均为系统发布过的定义
+        # （只读首版校验和现场计算，完整首版/单候选版为已知校验和），
+        # 未被人为修改时应跟随代码升级出新版本。
         workflow = (
             self.db.query(ExecutionWorkflow)
             .filter_by(slug=PAPER_FIBER_WORKFLOW_SLUG)
             .one()
         )
-        outdated = _paper_fiber_gbt4688_qualitative_definition()
-        select = next(node for node in outdated["nodes"] if node["id"] == "select")
-        select["config"].pop("auto_submit_single_candidate", None)
+        read_only = _paper_fiber_gbt4688_qualitative_readonly_definition()
+        known_v1_full = (
+            "7b09325ffef43642d1f53a81540d8fcc4209482a66e82f00df6024b8d5a9e8d1"
+        )
         version_one = next(
             version for version in workflow.versions
             if version.version_number == 1
         )
-        workflow.draft_definition = outdated
-        version_one.definition = outdated
-        version_one.checksum = definition_checksum(outdated)
+        workflow.draft_definition = read_only
+        version_one.definition = read_only
+        version_one.checksum = known_v1_full
         self.db.commit()
 
         ensure_default_catalog(self.db)
@@ -651,6 +865,10 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertEqual(workflow.published_version_number, 2)
         self.assertEqual(workflow.draft_revision, 2)
         self.assertEqual(len(workflow.versions), 2)
+        node_ids = {
+            node["id"] for node in workflow.draft_definition["nodes"]
+        }
+        self.assertIn("judgement-input", node_ids)
         upgraded_select = next(
             node for node in workflow.draft_definition["nodes"]
             if node["id"] == "select"
@@ -660,14 +878,67 @@ class PaperFiberBackendTests(unittest.TestCase):
         )
         # 旧版本保持原样，历史运行不受影响
         self.assertNotIn(
-            "auto_submit_single_candidate",
-            version_one.definition["nodes"][
-                next(
-                    index
-                    for index, node in enumerate(version_one.definition["nodes"])
-                    if node["id"] == "select"
-                )
-            ]["config"],
+            "judgement-input",
+            {node["id"] for node in version_one.definition["nodes"]},
+        )
+
+    def test_known_two_version_history_upgrades_increments_revision(self):
+        # 模拟当前线上库：v1（完整首版）+ v2（单候选自动提交）均为已知
+        # 系统定义，升级应追加 v3 且草稿修订号递增而不是回写。
+        workflow = (
+            self.db.query(ExecutionWorkflow)
+            .filter_by(slug=PAPER_FIBER_WORKFLOW_SLUG)
+            .one()
+        )
+        read_only = _paper_fiber_gbt4688_qualitative_readonly_definition()
+        known_v1_full = (
+            "7b09325ffef43642d1f53a81540d8fcc4209482a66e82f00df6024b8d5a9e8d1"
+        )
+        known_v2_auto_submit = (
+            "30f80623f97c9e15f9ac6ad865addeb43eecda70b8a1c8f15f292f9559e738e3"
+        )
+        version_one = next(
+            version for version in workflow.versions
+            if version.version_number == 1
+        )
+        version_one.definition = read_only
+        version_one.checksum = known_v1_full
+        self.db.add(
+            ExecutionWorkflowVersion(
+                workflow_id=workflow.id,
+                version_number=2,
+                schema_version="1.0",
+                definition=read_only,
+                checksum=known_v2_auto_submit,
+                capabilities=deepcopy(workflow.capabilities),
+                contract_checksum=workflow_contract_checksum(
+                    read_only, workflow.capabilities
+                ),
+                release_note="历史单候选版本",
+            )
+        )
+        workflow.draft_definition = read_only
+        workflow.draft_revision = 2
+        workflow.published_version_number = 2
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+        self.assertEqual(workflow.published_version_number, 3)
+        self.assertEqual(workflow.draft_revision, 3)
+        self.assertEqual(len(workflow.versions), 3)
+        latest = next(
+            version for version in workflow.versions
+            if version.version_number == 3
+        )
+        self.assertEqual(
+            latest.checksum,
+            definition_checksum(_paper_fiber_gbt4688_qualitative_definition()),
+        )
+        self.assertIn(
+            "judgement-input",
+            {node["id"] for node in workflow.draft_definition["nodes"]},
         )
 
     def test_background_index_defers_paper_workbook_content(self):

@@ -27,6 +27,10 @@ from app.execution.electron_microscopy import (
     task_snapshot_status,
 )
 from app.api.execution import preview_indexed_electron_image
+from app.execution.paper_fiber import (
+    PAPER_FIBER_PROJECT_NAME,
+    PAPER_FIBER_TEST_METHOD,
+)
 from app.execution.engine import (
     claim_human_task,
     claim_next_node,
@@ -784,6 +788,67 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(running["refresh_status"], "running")
         self.assertFalse(running["snapshot_available"])
+
+    def test_task_snapshot_status_matches_paper_fibre_project_conditions(self):
+        self.db.add(
+            ExecutionTaskSnapshotCache(
+                inspection_number="26W006701",
+                status="ready",
+                snapshot={
+                    "schema_version": 4,
+                    "inspection_number": "26W006701",
+                    "projects": [
+                        {
+                            "project_key": "task-project:paper-status",
+                            "check_item_name": PAPER_FIBER_PROJECT_NAME,
+                            "check_method": PAPER_FIBER_TEST_METHOD,
+                        }
+                    ],
+                    "special_wool_occupied_numbers": [],
+                },
+                fetched_at=utcnow(),
+                expires_at=utcnow() + timedelta(minutes=15),
+            )
+        )
+        self.db.commit()
+
+        status = task_snapshot_status(self.db, inspection_number="26W006701")
+
+        self.assertEqual(status["cache_state"], "ready")
+        self.assertEqual(
+            status["matched_conditions"], ["task_item_name", "test_method"]
+        )
+        self.assertEqual(status["missing_conditions"], [])
+
+    def test_task_snapshot_status_reports_missing_when_no_flow_matches(self):
+        self.db.add(
+            ExecutionTaskSnapshotCache(
+                inspection_number="26A029799",
+                status="ready",
+                snapshot={
+                    "schema_version": 4,
+                    "inspection_number": "26A029799",
+                    "projects": [
+                        {
+                            "project_key": "task-project:unrelated",
+                            "check_item_name": "耐洗色牢度",
+                            "check_method": "GB/T 3921-2008",
+                        }
+                    ],
+                    "special_wool_occupied_numbers": [],
+                },
+                fetched_at=utcnow(),
+                expires_at=utcnow() + timedelta(minutes=15),
+            )
+        )
+        self.db.commit()
+
+        status = task_snapshot_status(self.db, inspection_number="26A029799")
+
+        self.assertEqual(status["matched_conditions"], [])
+        self.assertEqual(
+            status["missing_conditions"], ["task_item_name", "test_method"]
+        )
 
     def test_v2_snapshot_is_hidden_and_queued_for_contract_refresh(self):
         row = ExecutionTaskSnapshotCache(

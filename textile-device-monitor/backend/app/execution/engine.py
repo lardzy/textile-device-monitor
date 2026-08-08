@@ -856,6 +856,19 @@ def _normalize_human_submission(
         }
     if node_run.node_type != "human.file_selection":
         _assert_declared_root_refs(run, data)
+        if node_run.node_type == "human.input":
+            node = _definition_node_map(run).get(node_run.node_id) or {}
+            config = node.get("config") or {}
+            if config.get("paper_judgement"):
+                return {
+                    "judgement_required": True,
+                    "judge_basis": " ".join(
+                        str(data.get("judge_basis") or "").strip().split()
+                    ),
+                    "judgement": " ".join(
+                        str(data.get("judgement") or "").strip().split()
+                    ),
+                }
         return data
     selected = data.get("selected_files")
     if not isinstance(selected, list) or not selected:
@@ -996,6 +1009,106 @@ def _auto_submit_single_candidate(
         **normalized,
         "auto_submitted": True,
         "auto_submit_reason": "single_candidate",
+    }
+
+
+def _paper_judgement_node_config(context: "NodeExecutionContext") -> dict[str, Any]:
+    """纸类判定信息确认节点的 config（仅 human.input 且显式标记）。"""
+
+    if context.node_run.node_type != "human.input":
+        return {}
+    config = context.node.get("config") or {}
+    return config if config.get("paper_judgement") else {}
+
+
+def _truthy_judgement_flag(value: Any) -> bool:
+    return not (
+        value is None
+        or value is False
+        or value == 0
+        or str(value).strip().casefold() in {"", "0", "false", "no", "否", "否定"}
+    )
+
+
+def _compact_text_options(value: Any) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        parts = re.split(r"[，,、]", item) if isinstance(item, str) else [item]
+        for part in parts:
+            text = " ".join(str(part or "").strip().split())
+            if text and text.casefold() not in seen:
+                result.append(text)
+                seen.add(text.casefold())
+    return result
+
+
+def _auto_complete_paper_judgement(
+    context: "NodeExecutionContext",
+) -> Optional[dict[str, Any]]:
+    """任务单未要求判定时自动完成纸类判定节点，避免无谓的人工打断。
+
+    返回 None 表示任务单要求判定（give_judgement 为真），仍按原路径
+    创建人工任务收集判定依据与判定结果。
+    """
+
+    if not _paper_judgement_node_config(context):
+        return None
+    input_data = context.input_data or {}
+    selected_project = input_data.get("selected_project") or {}
+    give_judgement = (
+        selected_project.get("give_judgement")
+        if isinstance(selected_project, dict)
+        else None
+    )
+    if _truthy_judgement_flag(give_judgement):
+        return None
+    return {
+        "judgement_required": False,
+        "judge_basis": None,
+        "judgement": None,
+        "auto_submitted": True,
+        "auto_submit_reason": "judgement_not_required",
+    }
+
+
+def _paper_judgement_form_schema(
+    context: "NodeExecutionContext",
+) -> Optional[dict[str, Any]]:
+    """为纸类判定节点动态生成表单：判定依据选项取自任务单快照。"""
+
+    if not _paper_judgement_node_config(context):
+        return None
+    input_data = context.input_data or {}
+    task = input_data.get("task")
+    check_basis = task.get("check_basis") if isinstance(task, dict) else None
+    basis_options = _compact_text_options(check_basis)
+    if basis_options:
+        basis_field: dict[str, Any] = {
+            "type": "string",
+            "title": "判定依据",
+            "enum": basis_options,
+        }
+    else:
+        basis_field = {
+            "type": "string",
+            "title": "判定依据",
+            "minLength": 1,
+            "maxLength": 500,
+        }
+    return {
+        "type": "object",
+        "properties": {
+            "judge_basis": basis_field,
+            "judgement": {
+                "type": "string",
+                "title": "判定结果",
+                "enum": ["符合", "不符合"],
+            },
+        },
+        "required": ["judge_basis", "judgement"],
+        "additionalProperties": False,
     }
 
 
@@ -3201,6 +3314,7 @@ def fail_node(
 def _create_human_task(
     db: Session,
     context: NodeExecutionContext,
+    form_schema_override: Optional[dict[str, Any]] = None,
 ) -> ExecutionHumanTask:
     run, node_run = _lock_run_and_node(db, context.node_run.id)
     _ensure_run_accepts_result(run)
@@ -3216,7 +3330,11 @@ def _create_human_task(
     context.run = run
     context.node_run = node_run
     config = context.node.get("config") or {}
-    form_schema = config.get("form_schema") or {}
+    form_schema = (
+        form_schema_override
+        if form_schema_override is not None
+        else config.get("form_schema") or {}
+    )
     if node_run.node_type == "human.confirm" and not form_schema:
         form_schema = {
             "type": "object",
@@ -3373,6 +3491,8 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
         )
         if node_run.node_type in HUMAN_NODE_TYPES:
             auto_output = _auto_submit_single_candidate(db, context)
+            if auto_output is None:
+                auto_output = _auto_complete_paper_judgement(context)
             if auto_output is not None:
                 complete_node(
                     db,
@@ -3381,7 +3501,11 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                     output_data=auto_output,
                 )
             else:
-                _create_human_task(db, context)
+                _create_human_task(
+                    db,
+                    context,
+                    form_schema_override=_paper_judgement_form_schema(context),
+                )
             return
         if node_run.node_type in EXTERNAL_NODE_TYPES:
             _prepare_external_operation_wait(db, context)

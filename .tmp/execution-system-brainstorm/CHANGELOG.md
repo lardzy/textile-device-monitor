@@ -1,5 +1,63 @@
 # 头脑风暴变更日志
 
+## 2026-08-08：任务单快照未就绪的快速失败与状态接口分流程评估
+
+- 背景：运行 289db134（26W006742）在快照桥抓取完成前 4 秒启动，
+  query 节点容忍 pending 输出 `matched_task_project=null`，upload-record
+  映射时裸报 `mapping_value_missing`（paper_fiber.py 下游节点无条件映射
+  `matched_task_project`）。
+- 纸类 query 节点快速失败（paper_fiber.py `_paper_fiber_executor`）：
+  任务单条件缺失且快照 `pending` → `task_snapshot_pending`
+  （提示稍后重新运行）；快照 `failed` → `task_snapshot_unavailable`
+  （提示检查快照连接器）；快照就绪但任务单无纸类项目 →
+  DAG `require_full_task_match` 翻为 `true`，走既有
+  `paper_fiber_rule_not_matched`。失败发生在首节点，带可操作提示，
+  不再出现裸映射错误。电镜流程不改：其下游不硬依赖
+  `matched_task_project`，选图人工任务按设计容忍 pending 并轮询。
+- 目录升级：纸类流程 v4（require_full_task_match=true），v3 校验和
+  `cebf82bb4abad019…` 加入已知系统校验和集合，未被人为修改的流程
+  自动升级，历史运行钉在各自版本。
+- 快照状态接口 `task_snapshot_status`（electron_microscopy.py）：
+  任务单条件改为对电镜别名与纸类项目名/方法两套规则取最佳匹配，
+  纸类编号不再误报 `missing_conditions=[task_item_name, test_method]`。
+  前端无需改动——该接口的轮询仅由电镜图片选择人工任务触发，
+  纸类流程的快照状态来自 query 节点输出（本就走纸类规则）。
+- 测试：纸类新增 3 个快速失败用例（pending/failed/未匹配），
+  EM 新增 2 个状态接口用例（纸类项目命中、两流程都不命中）；
+  后端全量 510 过（仅既有失败 test_config_security 1 个）。
+
+## 2026-08-08：纸类判定分支（GiveJudgement=1）
+
+- 背景：旧系统纸类项目存在"要求判定"的任务单（人工正确登记参照
+  260191286：`JudgeBasis=按客户要求`、`TotalJudge=符合`、报告项目名称
+  必填、标准值列与实测值同文）。此前流程对判定字段恒置空，Writer 端
+  `LegacySafetyGuards` 会在执行前以 `judgement_requires_interactive_confirmation`
+  拒绝（fail-closed，不写半截数据）。
+- 后端：纸类 DAG 在"特纤复核"与"检验记录登记"之间新增
+  `judgement-input`（`human.input`，config 标记 `paper_judgement`）。
+  任务单 `give_judgement` 为假时引擎直接自动完成该节点
+  （`auto_submit_reason=judgement_not_required`，零人工干预）；为真时
+  动态生成人工表单——判定依据选项取自任务快照 `check_basis`（按
+  ，、、 分隔；无依据时回退为必填自由文本），判定结果固定
+  "符合/不符合"下拉。提交统一整形为
+  `{judgement_required, judge_basis, judgement}`。
+- 登记包判定变体：`give_judgement` 为真且判定值齐备时，
+  `judge_basis`/`total_judge` 填入人工选择、`report_check_item_name`
+  填项目名、明细 `standard_value` 与实测值同文；为假时全部留空并
+  忽略任何游离判定值。缺失判定值时以 `paper_fiber_judgement_required`
+  冲突拒绝。`give_judgement` 不进入 `task_project` 严格键集契约
+  （Writer `ParseTaskProject` 与回执校验均为白名单）。
+- Writer（FinalEntry）：`ValidatePaperGenericScope` 拆分为共用基线
+  （结果/方法/单位/空白字段）+ 两形态——无判定（维持原全空约束）与
+  判定变体（依据/总评定必填、报告项目名等于项目名、标准值与实测值
+  同文）；与任务单 `GiveJudgement` 的一致性仍由 `LegacySafetyGuards`
+  执行前强制核验。离线自测新增 5 个判定用例。
+- 目录升级：纸类流程跟随机制改为"已知系统校验和"模式
+  （只读首版/完整首版/单候选版），未被人为修改的流程自动升级出
+  新版本（本次升 v3），历史运行钉在各自版本；只读种子库升级时
+  补齐 external_write 能力。
+- 纸类登记维持"只保存、不校对"不变。
+
 ## 2026-08-07：生产部署准备与 Windows Bridge 集中打包
 
 - 外部操作确定性失败热重试修复（同日补记）：批准后的操作若在远端写入

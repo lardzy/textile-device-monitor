@@ -12,6 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
+from app.execution.errors import ExecutionApiError
 from app.execution.external_operations import (
     GENERIC_CHECK_RECORD_ENTRY_ATTEMPT_STAGES,
     LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE,
@@ -435,6 +436,104 @@ class PaperExternalOperationTests(unittest.TestCase):
         self.assertEqual(
             GENERIC_CHECK_RECORD_ENTRY_ATTEMPT_STAGES[-2],
             "generic_projection_verified",
+        )
+
+    def _completed_review(self, value="100"):
+        upload, _ = prepare_legacy_special_wool_qualitative_upload_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE, "upload"
+            ),
+            node=self._node_config(),
+            input_data=self._input(value),
+        )
+        upload.receipt = self._upload_receipt(upload)
+        validate_external_receipt(upload, upload.receipt)
+        upload.status = "completed"
+        review, _ = prepare_legacy_special_wool_qualitative_review_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE, "review"
+            ),
+            node=self._node_config(),
+            input_data={"upload_result": {"operation_id": upload.id}},
+        )
+        review.receipt = self._review_receipt(review)
+        validate_external_receipt(review, review.receipt)
+        review.status = "completed"
+        return review
+
+    def _prepare_generic_entry(self, project, *, judgement_input=None):
+        review = self._completed_review()
+        input_data = {
+            "selected_project_key": project["project_key"],
+            "selected_project": project,
+            "review_result": {"operation_id": review.id},
+        }
+        if judgement_input is not None:
+            input_data["judgement_input"] = judgement_input
+        entry, _ = prepare_legacy_generic_check_record_entry_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE, "entry"
+            ),
+            node=self._node_config(),
+            input_data=input_data,
+        )
+        return entry
+
+    def test_generic_entry_judgement_variant_writes_full_judgement_fields(self):
+        project = self._project()
+        project["give_judgement"] = 1
+        entry = self._prepare_generic_entry(
+            project,
+            judgement_input={"judge_basis": "按客户要求", "judgement": "符合"},
+        )
+        payload = entry.request_summary["final_entry_package"]
+        header = payload["generic_record"]["header"]
+        detail = payload["generic_record"]["details"][0]
+        self.assertEqual(header["judge_basis"], "按客户要求")
+        self.assertEqual(header["total_judge"], "符合")
+        self.assertEqual(
+            header["report_check_item_name"], PAPER_FIBER_PROJECT_NAME
+        )
+        self.assertEqual(header["unit"], "%")
+        self.assertEqual(header["test_method"], PAPER_FIBER_TEST_METHOD)
+        self.assertEqual(detail["standard_value"], "100")
+        self.assertEqual(detail["real_value"], "100")
+        self.assertTrue(
+            entry.request_summary["final_entry_summary"]["judgement_required"]
+        )
+        # give_judgement 属于辅助信息，不进入 task_project 严格契约
+        self.assertNotIn("give_judgement", payload["task_project"])
+
+    def test_generic_entry_judgement_required_but_missing_conflicts(self):
+        project = self._project()
+        project["give_judgement"] = 1
+        with self.assertRaises(ExecutionApiError) as raised:
+            self._prepare_generic_entry(project)
+        self.assertEqual(
+            raised.exception.code, "paper_fiber_judgement_required"
+        )
+
+    def test_generic_entry_without_judgement_ignores_stray_values(self):
+        project = self._project()
+        entry = self._prepare_generic_entry(
+            project,
+            judgement_input={"judge_basis": "按客户要求", "judgement": "符合"},
+        )
+        payload = entry.request_summary["final_entry_package"]
+        header = payload["generic_record"]["header"]
+        detail = payload["generic_record"]["details"][0]
+        self.assertEqual(header["judge_basis"], "")
+        self.assertEqual(header["total_judge"], "")
+        self.assertEqual(header["report_check_item_name"], "")
+        self.assertEqual(detail["standard_value"], "")
+        self.assertFalse(
+            entry.request_summary["final_entry_summary"]["judgement_required"]
         )
 
     def test_non_standalone_100_has_no_percent_unit(self):

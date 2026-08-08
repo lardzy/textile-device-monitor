@@ -532,6 +532,34 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
         for item in ("source_root", "folder", "task_item_name", "test_method")
         if item not in match["matched_conditions"]
     ]
+    task_conditions_missing = any(
+        item in missing for item in ("task_item_name", "test_method")
+    )
+    # Downstream nodes map ``matched_task_project`` unconditionally, so a run
+    # that continues without task facts would fail later with a bare
+    # ``mapping_value_missing``.  Fail fast here with actionable errors.
+    if task_conditions_missing:
+        cache_state = str(match["task_cache_state"])
+        if cache_state == "pending":
+            raise ExecutionApiError(
+                422,
+                "task_snapshot_pending",
+                "旧系统任务单信息正在读取中，请稍后重新运行流程",
+                details={
+                    "missing_conditions": missing,
+                    "task_cache_state": cache_state,
+                },
+            )
+        if cache_state == "failed":
+            raise ExecutionApiError(
+                422,
+                "task_snapshot_unavailable",
+                "旧系统任务单信息读取失败，请检查快照连接器状态后重试",
+                details={
+                    "missing_conditions": missing,
+                    "task_cache_state": cache_state,
+                },
+            )
     if missing and bool(config.get("require_full_task_match", False)):
         raise ExecutionApiError(
             422,

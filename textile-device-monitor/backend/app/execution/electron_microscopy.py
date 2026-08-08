@@ -649,10 +649,22 @@ def task_snapshot_status(
     *,
     inspection_number: str,
 ) -> dict[str, Any]:
-    """Return a small, polling-safe status contract for the human task UI."""
+    """Return a small, polling-safe status contract for the human task UI.
+
+    Task conditions are evaluated against every built-in flow's project
+    rules (electron microscopy and GB/T 4688 paper fibre) and the best
+    match wins, so a paper-fibre task no longer reports its item name and
+    test method as missing just because they are not microscopy aliases.
+    """
 
     cached = cached_task_snapshot(db, inspection_number=inspection_number)
-    matched = _task_project_conditions(cached.get("snapshot"))
+    snapshot = cached.get("snapshot")
+    matched = _task_project_conditions(snapshot)
+    from app.execution.paper_fiber import paper_task_project_match
+
+    paper_conditions, _matched_project = paper_task_project_match(snapshot)
+    if len(paper_conditions) > len(matched):
+        matched = paper_conditions
     missing = [
         item
         for item in ("task_item_name", "test_method")
