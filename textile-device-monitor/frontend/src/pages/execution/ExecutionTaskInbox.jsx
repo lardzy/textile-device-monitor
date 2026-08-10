@@ -33,13 +33,15 @@ const taskOf = payload => payload?.task || payload?.human_task || payload;
 const nodeRunOf = payload => payload?.node_run || payload?.nodeRun || taskOf(payload)?.node_run;
 
 const statusMeta = {
-  open: { label: '待领取', color: 'orange' },
-  pending: { label: '待领取', color: 'orange' },
+  open: { label: '待处理', color: 'orange' },
+  pending: { label: '待处理', color: 'orange' },
   claimed: { label: '处理中', color: 'processing' },
   completed: { label: '已完成', color: 'success' },
   rejected: { label: '已驳回', color: 'error' },
   cancelled: { label: '已取消', color: 'default' },
 };
+
+const INBOX_POLL_INTERVAL_MS = 10000;
 
 export default function ExecutionTaskInbox() {
   const { taskId } = useParams();
@@ -94,6 +96,21 @@ export default function ExecutionTaskInbox() {
     loadDetail(taskId);
   }, [loadDetail, taskId]);
 
+  // 收件箱常驻期间静默轮询，新任务和状态变化无需退出重进即可看到。
+  // 表单本地未提交的修改由 HumanTaskCard 按 revision 保护，静默刷新不会覆盖。
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.hidden) {
+        return;
+      }
+      loadTasks({ quiet: true });
+      if (taskId) {
+        loadDetail(taskId, { quiet: true });
+      }
+    }, INBOX_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadTasks, loadDetail, taskId]);
+
   const visibleTasks = useMemo(() => tasks.filter(task => (
     filter === 'active' ? ACTIVE_STATUSES.has(task.status) : !ACTIVE_STATUSES.has(task.status)
   )), [filter, tasks]);
@@ -112,7 +129,7 @@ export default function ExecutionTaskInbox() {
     <div className="execution-page execution-task-inbox">
       <ExecutionChrome
         title="人工任务收件箱"
-        subtitle="集中领取和处理分配给您的文件选择、复核输入与发布确认"
+        subtitle="集中处理分配给您的文件选择、复核输入与发布确认，新任务会自动出现"
         backTo={{ path: '/execution', label: '流程目录' }}
         actions={(
           <Button icon={<ReloadOutlined />} onClick={refreshAll}>刷新</Button>

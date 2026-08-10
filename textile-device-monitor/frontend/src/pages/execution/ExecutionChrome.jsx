@@ -1,4 +1,5 @@
-import { Avatar, Button, Dropdown, Space, Tag, Typography } from 'antd';
+import { useEffect, useRef, useState } from 'react';
+import { Avatar, Badge, Button, Dropdown, notification, Space, Tag, Typography } from 'antd';
 import {
   LogoutOutlined,
   ApartmentOutlined,
@@ -9,9 +10,13 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { getHumanTasks } from '../../api/execution';
 import { useExecutionAuth } from './ExecutionAuthContext';
 
 const { Text } = Typography;
+
+const ACTIVE_TASK_STATUSES = new Set(['open', 'pending', 'claimed']);
+const TODO_POLL_INTERVAL_MS = 15000;
 
 export default function ExecutionChrome({
   title,
@@ -31,6 +36,75 @@ export default function ExecutionChrome({
     canDesignWorkflow,
     logout,
   } = useExecutionAuth();
+
+  const onInboxPage = location.pathname.startsWith('/execution/tasks');
+  const [todoCount, setTodoCount] = useState(0);
+  const [notificationApi, notificationHolder] = notification.useNotification();
+  const seenTaskIdsRef = useRef(null);
+
+  // 全局待办轮询：驱动头部角标；发现新任务时右下角气泡提醒。
+  // 收件箱页面有自己的高频轮询，这里跳过避免重复请求。
+  useEffect(() => {
+    if (!canHandleHumanTasks || onInboxPage) {
+      return undefined;
+    }
+    let cancelled = false;
+    let timer = null;
+    const poll = async () => {
+      if (!document.hidden) {
+        try {
+          const items = await getHumanTasks();
+          if (!cancelled) {
+            const active = items.filter(task => ACTIVE_TASK_STATUSES.has(task.status));
+            setTodoCount(active.length);
+            const activeIds = new Set(active.map(task => String(task.id)));
+            const seen = seenTaskIdsRef.current;
+            if (seen === null) {
+              // 首次载入只建立基线，不把存量任务当作“新任务”打扰用户。
+              seenTaskIdsRef.current = activeIds;
+            } else {
+              const fresh = active.filter(task => !seen.has(String(task.id)));
+              seenTaskIdsRef.current = activeIds;
+              if (fresh.length > 0) {
+                const first = fresh[0];
+                notificationApi.info({
+                  message: '有新的待办人工任务',
+                  description: fresh.length > 1
+                    ? `${first.title || '人工处理'} 等 ${fresh.length} 项任务等待处理`
+                    : (first.title || '人工处理'),
+                  placement: 'bottomRight',
+                  btn: (
+                    <Button
+                      type="primary"
+                      size="small"
+                      onClick={() => {
+                        notificationApi.destroy();
+                        navigate('/execution/tasks');
+                      }}
+                    >
+                      前往处理
+                    </Button>
+                  ),
+                });
+              }
+            }
+          }
+        } catch (_error) {
+          // 提醒轮询失败不影响当前页面，下个周期自动重试。
+        }
+      }
+      if (!cancelled) {
+        timer = window.setTimeout(poll, TODO_POLL_INTERVAL_MS);
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [canHandleHumanTasks, onInboxPage, navigate, notificationApi]);
 
   const handleLogout = async () => {
     await logout();
@@ -79,6 +153,7 @@ export default function ExecutionChrome({
 
   return (
     <header className="execution-page-header">
+      {notificationHolder}
       <div className="execution-page-header__identity">
         {backTo && (
           <Button
@@ -110,14 +185,16 @@ export default function ExecutionChrome({
             执行记录
           </Button>
         )}
-        {canHandleHumanTasks && !location.pathname.startsWith('/execution/tasks') && (
-          <Button
-            type="text"
-            icon={<InboxOutlined />}
-            onClick={() => navigate('/execution/tasks')}
-          >
-            待办任务
-          </Button>
+        {canHandleHumanTasks && !onInboxPage && (
+          <Badge count={todoCount} size="small" offset={[-2, 2]}>
+            <Button
+              type="text"
+              icon={<InboxOutlined />}
+              onClick={() => navigate('/execution/tasks')}
+            >
+              待办任务
+            </Button>
+          </Badge>
         )}
         {actions}
         <Dropdown menu={accountMenu} trigger={['click']}>

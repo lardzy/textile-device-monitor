@@ -3597,6 +3597,46 @@ def claim_human_task(
     return task
 
 
+def _ensure_human_task_ownership(
+    db: Session,
+    *,
+    task: ExecutionHumanTask,
+    actor: ExecutionUser,
+) -> None:
+    """确保任务由 actor 持有。
+
+    任务处于 open 且无人领取时隐式领取（前端不再要求单独的领取步骤，
+    减少一次人工点击）；已被他人领取或已处理时仍然拒绝，保留并发保护。
+    """
+    if task.status == "claimed" and task.claimed_by_id == actor.id:
+        return
+    if task.status == "open" and task.claimed_by_id is None:
+        if not can_user_handle_human_task(db, task=task, user=actor):
+            raise ExecutionApiError(
+                403,
+                "human_task_not_eligible",
+                "该人工任务未分配给您或您的角色",
+            )
+        task.claimed_by_id = actor.id
+        task.claimed_at = utcnow()
+        task.status = "claimed"
+        task.revision += 1
+        append_run_event(
+            db,
+            run_id=task.run_id,
+            event_type="human_task.claimed",
+            actor_type="user",
+            actor_id=actor.id,
+            payload={"task_id": task.id, "revision": task.revision, "implicit": True},
+        )
+        return
+    raise conflict(
+        "human_task_not_owned",
+        "人工任务已由其他人员领取或已处理",
+        claimed_by_id=task.claimed_by_id,
+    )
+
+
 def save_human_task_draft(
     db: Session,
     *,
@@ -3619,8 +3659,7 @@ def save_human_task_draft(
             "人工任务草稿已被更新",
             current_revision=task.revision,
         )
-    if task.status != "claimed" or task.claimed_by_id != actor.id:
-        raise conflict("human_task_not_owned", "请先领取该人工任务")
+    _ensure_human_task_ownership(db, task=task, actor=actor)
     task.draft_data = data
     task.revision += 1
     append_run_event(
@@ -3650,8 +3689,7 @@ def submit_human_task(
             "人工任务已被更新",
             current_revision=task.revision,
         )
-    if task.status != "claimed" or task.claimed_by_id != actor.id:
-        raise conflict("human_task_not_owned", "请先领取该人工任务")
+    _ensure_human_task_ownership(db, task=task, actor=actor)
     if node_run.status != "waiting_human":
         raise conflict(
             "human_task_closed",
@@ -3726,8 +3764,7 @@ def reject_human_task(
             "人工任务已被更新",
             current_revision=task.revision,
         )
-    if task.status != "claimed" or task.claimed_by_id != actor.id:
-        raise conflict("human_task_not_owned", "请先领取该人工任务")
+    _ensure_human_task_ownership(db, task=task, actor=actor)
     if node_run.status != "waiting_human":
         raise conflict(
             "human_task_closed",

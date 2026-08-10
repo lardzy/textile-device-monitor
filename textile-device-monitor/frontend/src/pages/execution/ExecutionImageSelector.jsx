@@ -13,6 +13,8 @@ import {
 } from 'antd';
 import {
   CheckCircleFilled,
+  CheckOutlined,
+  CloseOutlined,
   EyeOutlined,
   FileImageOutlined,
   LeftOutlined,
@@ -147,12 +149,25 @@ const normalizePayload = (foldersValue, imagesValue) => {
   return { folders, images };
 };
 
-function ImagePreviewModal({ images, imageId, onImageIdChange, onClose }) {
+function ImagePreviewModal({
+  images,
+  imageId,
+  onImageIdChange,
+  onClose,
+  selectedImageIds = [],
+  onToggleImage,
+  disabled = false,
+  maxImages = MAX_IMAGES,
+}) {
   const index = images.findIndex(image => (
     String(imageSelectionImageId(image)) === String(imageId)
   ));
   const activeImage = index >= 0 ? images[index] : null;
   const source = imageSourceOf(activeImage);
+  const activeId = activeImage ? String(imageSelectionImageId(activeImage)) : null;
+  const isSelected = Boolean(
+    activeId && selectedImageIds.map(String).includes(activeId),
+  );
 
   useEffect(() => {
     if (!activeImage) {
@@ -180,35 +195,55 @@ function ImagePreviewModal({ images, imageId, onImageIdChange, onClose }) {
       className="execution-image-preview-modal"
     >
       {activeImage && (
-        <div className="execution-image-preview">
-          <Button
-            type="text"
-            className="execution-image-preview__nav"
-            icon={<LeftOutlined />}
-            aria-label="上一张图片"
-            disabled={index <= 0}
-            onClick={() => onImageIdChange(String(imageSelectionImageId(images[index - 1])))}
-          />
-          <div className="execution-image-preview__stage">
-            {source ? (
-              <img src={source} alt={imageNameOf(activeImage)} />
-            ) : (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="此图片暂时没有预览地址"
-              />
-            )}
-            <Text type="secondary">{index + 1} / {images.length}</Text>
+        <>
+          <div className="execution-image-preview">
+            <Button
+              type="text"
+              className="execution-image-preview__nav"
+              icon={<LeftOutlined />}
+              aria-label="上一张图片"
+              disabled={index <= 0}
+              onClick={() => onImageIdChange(String(imageSelectionImageId(images[index - 1])))}
+            />
+            <div className="execution-image-preview__stage">
+              {source ? (
+                <img src={source} alt={imageNameOf(activeImage)} />
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="此图片暂时没有预览地址"
+                />
+              )}
+              {isSelected && (
+                <CheckCircleFilled className="execution-image-preview__selected-badge" />
+              )}
+              <Text type="secondary">{index + 1} / {images.length}</Text>
+            </div>
+            <Button
+              type="text"
+              className="execution-image-preview__nav"
+              icon={<RightOutlined />}
+              aria-label="下一张图片"
+              disabled={index < 0 || index >= images.length - 1}
+              onClick={() => onImageIdChange(String(imageSelectionImageId(images[index + 1])))}
+            />
           </div>
-          <Button
-            type="text"
-            className="execution-image-preview__nav"
-            icon={<RightOutlined />}
-            aria-label="下一张图片"
-            disabled={index < 0 || index >= images.length - 1}
-            onClick={() => onImageIdChange(String(imageSelectionImageId(images[index + 1])))}
-          />
-        </div>
+          <div className="execution-image-preview__toolbar">
+            <Text type="secondary">
+              已选 {selectedImageIds.length} / {maxImages} 张
+              {isSelected ? '，当前图片在选择范围内' : ''}
+            </Text>
+            <Button
+              type={isSelected ? 'default' : 'primary'}
+              danger={isSelected}
+              disabled={disabled}
+              icon={isSelected ? <CloseOutlined /> : <CheckOutlined />}
+              onClick={() => onToggleImage?.(activeId, !isSelected)}
+            >
+              {isSelected ? '取消选择此图片' : '选为结果图片'}
+            </Button>
+          </div>
+        </>
       )}
     </Modal>
   );
@@ -344,7 +379,7 @@ export default function ExecutionImageSelector({
         <div className="execution-image-selector__section-head">
           <div>
             <Text strong>{folders.length > 0 ? '2. 选择结果图片' : '选择结果图片'}</Text>
-            <Text type="secondary">至少 1 张，最多 {maxImages} 张；点击放大镜查看原图</Text>
+            <Text type="secondary">至少 1 张，最多 {maxImages} 张；点击放大镜查看原图，大图内可直接选择</Text>
           </div>
           <Tag color={normalizedImageIds.length > maxImages ? 'error' : 'blue'}>
             已选 {normalizedImageIds.length} / {maxImages}
@@ -438,6 +473,10 @@ export default function ExecutionImageSelector({
         imageId={previewImageId}
         onImageIdChange={setPreviewImageId}
         onClose={() => setPreviewImageId(null)}
+        selectedImageIds={normalizedImageIds}
+        onToggleImage={toggleImage}
+        disabled={disabled}
+        maxImages={maxImages}
       />
     </div>
   );

@@ -1200,6 +1200,24 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
+  position: relative;
+}
+
+.execution-image-preview__selected-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 26px;
+  color: #52c41a;
+  filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.45));
+}
+
+.execution-image-preview__toolbar {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .execution-image-preview__stage img {

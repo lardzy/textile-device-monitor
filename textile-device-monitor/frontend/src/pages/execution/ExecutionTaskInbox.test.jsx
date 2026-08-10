@@ -81,28 +81,36 @@ describe('ExecutionTaskInbox', () => {
         HttpResponse.json({ items: [task] })),
       http.get('/api/execution/v1/human-tasks/task-1', () =>
         HttpResponse.json(detailPayload(task))),
-      http.post('/api/execution/v1/human-tasks/task-1/claim', () => {
-        task = {
-          ...task,
-          status: 'claimed',
-          revision: 2,
-          claimed_by_id: 'reviewer-1',
-        };
-        return HttpResponse.json(task);
-      }),
     );
   });
 
-  it('显示跨用户待办，并通过详情领取任务', async () => {
+  it('显示跨用户待办，打开详情即可直接提交（服务端自动领取）', async () => {
+    const submitted = vi.fn();
+    server.use(
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        const body = await request.json();
+        submitted(body);
+        return HttpResponse.json({
+          ...openTask,
+          status: 'completed',
+          revision: 3,
+          claimed_by_id: 'reviewer-1',
+        });
+      }),
+    );
     const user = userEvent.setup();
     renderInbox();
 
     expect(await screen.findByText('选择原始记录')).toBeInTheDocument();
     await user.click(screen.getByText('选择原始记录'));
-    await user.click(await screen.findByRole('button', { name: '领取并处理' }));
 
+    // 未领取的开放任务直接呈现表单，无需单独的领取步骤
     expect(await screen.findByText('26X910095-1.xlsx')).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: '确认提交' })).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].revision).toBe(1);
+    expect(await screen.findByText('任务已提交')).toBeInTheDocument();
   });
 
   it('文件选择仅提交服务端签发的稳定候选 ID', async () => {

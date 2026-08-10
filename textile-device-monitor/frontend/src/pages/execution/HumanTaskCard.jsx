@@ -16,7 +16,6 @@ import {
   message,
 } from 'antd';
 import {
-  claimHumanTask,
   getExecutionRunMutation,
   getExecutionTaskSnapshotStatus,
   rejectHumanTask,
@@ -91,6 +90,8 @@ export default function HumanTaskCard({
   const isClaimed = Boolean(claimedById || task.status === 'claimed');
   const isClaimedByMe = Boolean(claimedById && String(claimedById) === String(user?.id));
   const isClosed = !['open', 'pending', 'claimed'].includes(task.status);
+  // 无人领取或本人持有时才允许填写；服务端会在保存/提交时隐式领取。
+  const canInteract = !isClosed && (!isClaimed || isClaimedByMe);
   const schema = task.form_schema || task.schema || {
     type: 'object',
     properties: {},
@@ -313,8 +314,7 @@ export default function HumanTaskCard({
       taskSnapshotStatusProp
       || !hasImageSelection
       || !normalizedInspectionNumber
-      || isClosed
-      || !isClaimedByMe
+      || !canInteract
     ) {
       return undefined;
     }
@@ -358,16 +358,15 @@ export default function HumanTaskCard({
   }, [
     candidatePayload.task_cache_state,
     candidatePayload.task_validation_state,
+    canInteract,
     hasImageSelection,
-    isClaimedByMe,
-    isClosed,
     normalizedInspectionNumber,
     task.id,
     taskSnapshotStatusProp,
   ]);
 
   useEffect(() => {
-    if (!approvalMutationId || !task.run_id || !isClaimedByMe || isClosed) {
+    if (!approvalMutationId || !task.run_id || !canInteract) {
       setApprovalMutation(null);
       setApprovalMutationError(null);
       setApprovalMutationLoading(false);
@@ -400,17 +399,14 @@ export default function HumanTaskCard({
   }, [
     approvalMutationId,
     approvalMutationReloadKey,
-    isClaimedByMe,
-    isClosed,
+    canInteract,
     task.run_id,
   ]);
 
   const execute = async (action) => {
     setWorking(true);
     try {
-      if (action === 'claim') {
-        await claimHumanTask(task.id, task.revision);
-      } else if (action === 'save') {
+      if (action === 'save') {
         await saveHumanTaskDraft(task.id, task.revision, valuesForSubmit());
       } else if (action === 'submit') {
         await form.validateFields();
@@ -451,7 +447,7 @@ export default function HumanTaskCard({
           const conflictMessages = {
             file_candidate_stale: '原始记录在读取结果后已变化，请取消本次运行并重新发起，以读取最新文件',
             file_candidate_not_offered: '所选文件已不在候选列表中，请刷新后重新选择',
-            human_task_not_owned: '请先领取该人工任务',
+            human_task_not_owned: '该任务已由其他人员领取，正在刷新最新状态',
             human_task_closed: '该步骤已不再等待人工处理，正在刷新最新状态',
           };
           message.warning(error.status === 409
@@ -474,7 +470,7 @@ export default function HumanTaskCard({
       title={task.title || task.name || '人工处理'}
       extra={(
         <Tag color={task.status === 'claimed' ? 'processing' : 'orange'}>
-          {task.status === 'claimed' ? '处理中' : '待领取'}
+          {task.status === 'claimed' ? '处理中' : '待处理'}
         </Tag>
       )}
     >
@@ -518,7 +514,7 @@ export default function HumanTaskCard({
                 <Text code copyable>{approvalContext.change_plan_checksum || '—'}</Text>
               </Descriptions.Item>
             </Descriptions>
-            {isClaimedByMe && !isClosed && (
+            {canInteract && (
               <div className="execution-human-task__mutation-detail">
                 {approvalMutationLoading ? (
                   <div className="execution-human-task__mutation-loading">
@@ -579,11 +575,7 @@ export default function HumanTaskCard({
               ? `完成时间：${new Date(task.completed_at).toLocaleString()}`
               : '任务已不可再次领取或提交。'}
           />
-        ) : !isClaimed ? (
-          <Button type="primary" block loading={working} onClick={() => execute('claim')}>
-            领取并处理
-          </Button>
-        ) : !isClaimedByMe ? (
+        ) : isClaimed && !isClaimedByMe ? (
           <Alert
             showIcon
             type="info"

@@ -355,6 +355,96 @@ class ExecutionEngineTests(unittest.TestCase):
         restored = self.db.get(type(run), run.id)
         self.assertEqual(restored.status, "completed")
 
+    def test_submit_on_open_task_auto_claims(self):
+        run, _ = create_run(
+            self.db,
+            workflow=self.workflow,
+            actor=self.user,
+            inspection_number="260003",
+            input_data={},
+            global_data={},
+            idempotency_key="run-human-autoclaim",
+        )
+        self.db.commit()
+
+        self._execute_one()
+        self._execute_one()
+        task = self.db.query(ExecutionHumanTask).one()
+        self.assertEqual(task.status, "open")
+
+        # 不再要求单独的领取步骤：直接提交即隐式领取。
+        submit_human_task(
+            self.db,
+            task_id=task.id,
+            expected_revision=task.revision,
+            data={"answer": 42},
+            actor=self.user,
+        )
+        self.db.commit()
+
+        self.assertEqual(task.status, "completed")
+        self.assertEqual(task.claimed_by_id, self.user.id)
+        claim_events = (
+            self.db.query(ExecutionEvent)
+            .filter(
+                ExecutionEvent.run_id == run.id,
+                ExecutionEvent.event_type == "human_task.claimed",
+            )
+            .all()
+        )
+        self.assertEqual(len(claim_events), 1)
+        self.assertTrue(claim_events[0].payload.get("implicit"))
+
+        self._execute_one()
+        self._execute_one()
+        self.db.refresh(run)
+        self.assertEqual(run.status, "completed")
+        self.assertEqual(run.output_data, {"answer": 42})
+
+    def test_submit_on_task_claimed_by_other_is_rejected(self):
+        other = ExecutionUser(
+            username="reviewer-2",
+            display_name="复核员乙",
+            password_hash=hash_password("test-password"),
+            role="admin",
+        )
+        self.db.add(other)
+        self.db.flush()
+
+        run, _ = create_run(
+            self.db,
+            workflow=self.workflow,
+            actor=self.user,
+            inspection_number="260004",
+            input_data={},
+            global_data={},
+            idempotency_key="run-human-claim-guard",
+        )
+        self.db.commit()
+
+        self._execute_one()
+        self._execute_one()
+        task = self.db.query(ExecutionHumanTask).one()
+        claim_human_task(
+            self.db,
+            task_id=task.id,
+            expected_revision=task.revision,
+            actor=other,
+        )
+        self.db.commit()
+
+        with self.assertRaises(ExecutionApiError) as raised:
+            submit_human_task(
+                self.db,
+                task_id=task.id,
+                expected_revision=task.revision,
+                data={"answer": 42},
+                actor=self.user,
+            )
+        self.assertEqual(raised.exception.code, "human_task_not_owned")
+        self.assertEqual(task.status, "claimed")
+        self.assertEqual(task.claimed_by_id, other.id)
+
     def test_run_creation_is_idempotent(self):
         first, first_duplicate = create_run(
             self.db,
