@@ -1432,18 +1432,27 @@ def validate_external_receipt(
         )
         if qualitative_document:
             source_file = list(summary.get("files") or [{}])[0]
-            expected_target_filename = _paper_special_wool_target_filename(
+            preflight_target_filename = _paper_special_wool_target_filename(
                 str(summary.get("target_sample_number") or ""),
                 str(source_file.get("filename") or ""),
             )
+            expected_target_filename = _paper_special_wool_target_filename(
+                str(document.get("target_sample_number") or ""),
+                str(source_file.get("filename") or ""),
+            )
         else:
-            expected_target_filename = _special_wool_target_filename(
+            preflight_target_filename = _special_wool_target_filename(
                 str(summary.get("target_sample_number") or "")
             )
-        if (
-            summary.get("target_filename") != expected_target_filename
-            or document.get("target_filename") != expected_target_filename
-        ):
+            expected_target_filename = _special_wool_target_filename(
+                str(document.get("target_sample_number") or "")
+            )
+        if summary.get("target_filename") != preflight_target_filename:
+            raise _machine_document_error(
+                "$.request_summary.target_filename",
+                "预检目标文件名与预检样品编号不一致",
+            )
+        if document.get("target_filename") != expected_target_filename:
             raise _machine_document_error(
                 "$.target_filename",
                 "写入回执中的目标文件名与最终样品编号不一致",
@@ -1485,7 +1494,7 @@ def validate_external_receipt(
         )
         if server_file.get("filename") != expected_target_filename:
             raise _machine_document_error(
-                "$.server_file.filename", "服务器文件名与预检目标不一致"
+                "$.server_file.filename", "服务器文件名与实际写入目标不一致"
             )
         _validate_special_wool_server_file_verification(
             server_file.get("verification"),
@@ -1506,7 +1515,7 @@ def validate_external_receipt(
         if main.get("file_path") != expected_target_filename:
             raise _machine_document_error(
                 "$.main_record.file_path",
-                "主记录文件名与预检目标不一致",
+                "主记录文件名与实际写入目标不一致",
             )
         for key in ("id", "create_user"):
             _required_text(
@@ -1583,7 +1592,7 @@ def validate_external_receipt(
             != expected_target_filename
         ):
             raise _machine_document_error(
-                "$.picture_records[0]", "图片子记录外键或项目标识与预检单不一致"
+                "$.picture_records[0]", "图片子记录外键、项目标识或文件名不一致"
             )
         readback = _strict_object(
             document.get("readback"),

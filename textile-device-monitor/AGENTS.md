@@ -35,7 +35,8 @@ npm run preview
 ```
 
 ### Tests / Lint
-- No backend/frontend test runner configured.
+- Backend: `cd backend && python -m pytest tests`.
+- Frontend: `cd frontend && npm test` (Node tests, then Vitest).
 - No eslint/prettier/ruff/black config in this repo; keep formatting consistent with existing files.
 
 ## Environment and Config
@@ -72,10 +73,10 @@ npm run preview
 - Frontend WebSocket client: `frontend/src/websocket/client.js` (fixed-delay reconnect, limited retries).
 
 ## Domain Rules
-- Heartbeat interval is 5 seconds; backend marks devices offline after 30 seconds.
+- Heartbeat interval is 5 seconds; backend checks every 10 seconds and marks devices offline after 90 seconds.
 - Queue operations must update logs and broadcast WebSocket events.
 - Data retention is 30 days; cleanup runs daily at 2 AM.
-- No authentication (LAN-only); avoid adding auth without explicit approval.
+- Existing monitor routes remain LAN-only without authentication; `/execution` uses its own accounts and roles. Preserve that boundary unless explicitly asked to change it.
 
 ## Generated Artifacts
 - Avoid editing files under `frontend/dist/`.

@@ -83,8 +83,9 @@ HSTS_MAX_AGE=0
 `/data/execution-source`；无需先在 Docker 宿主机手工挂载共享盘。默认
 `EXECUTION_SOURCE_ROOT=/data/execution-source/10特纤/02-检验`，其下直接包含
 `2026-特种毛`、`2026-再生纤`、`2026-麻棉` 和 `2026-电镜`。
-首版后台自动索引由 `EXECUTION_AUTO_INDEX_ROOT_IDS` 控制，默认扫描
-`regenerated_fiber_records` 和 `electron_microscopy_records`。再生纤扫描只记录
+后台自动索引由 `EXECUTION_AUTO_INDEX_ROOT_IDS` 控制，默认扫描
+`regenerated_fiber_records`、`electron_microscopy_records` 和
+`paper_fiber_records`。再生纤扫描只记录
 文件元数据，不会批量打开历史工作簿；电镜根目录会索引到“编号
 文件夹/部位/图片”层级，供图片选择节点使用。其它目录仍可从执行系统
 手动触发刷新。
@@ -93,6 +94,9 @@ HSTS_MAX_AGE=0
 匹配旧系统项目名和测试方法。推荐请求只读本地缓存；缓存缺失或过期
 时，由独立的 Windows 只读 Bridge 合并刷新，默认 15 分钟有效。当前受控
 项目名包括“纤维微观形貌”及同标准子项“膜平面形貌”。
+纸类 query 节点遇到正在刷新的快照时，会按
+`EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS` 有限等待，默认 60 秒；设为 0
+可恢复立即失败。
 
 该流程在选图后继续生成微观形貌原始记录：任务快照提供样品名称、样品识别和
 按需判定字段，用户确认后把 1～10 张图片等比例最大化写入版本化 `.xls` 模板。
@@ -235,7 +239,7 @@ docker compose exec backend python -c "import urllib.request; print(urllib.reque
   原来的内网免登录边界。
 - 后端容器启动时先执行 Alembic。空数据库会从 `0001_legacy_baseline`
   完整建库；已有数据库只有通过结构预检后才会标记基线并升级。当前迁移头为
-  `0005_execution_external_attempts`。
+  `0006_execution_task_snapshot_cache`。
 - `execution-worker` 通过 PostgreSQL 租约领取节点。请勿只启动
   `backend` 而遗漏 Worker，否则新运行不会被执行。
 - `/health/live` 仅表示 API 进程存活；`/health/ready` 还会检查数据库、

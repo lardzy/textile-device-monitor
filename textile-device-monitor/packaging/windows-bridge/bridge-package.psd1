@@ -23,7 +23,7 @@
     # Writer 源可执行文件 SHA-256 钉值：与本次验收通过的编译产物绑定。
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
-        'FibreCheckWriter.exe'           = '1c14d99a39b0a708653c0adfa5232a51eb490be8e59ea4fe67e5c7fcc20c5da5'
+        'FibreCheckWriter.exe'           = 'd23f3f11cae2c5a493f97c9f4ca9a240c6109a62cb90397214f9e6c45775be81'
         'FibreCheckFinalEntryWriter.exe' = '147457ac2f6130d6b32391180355dc9ba78b75df132d9ad999343089fe72175b'
     }
 

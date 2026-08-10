@@ -18,7 +18,9 @@ from app.execution.external_operations import (
     MICROSCOPY_CHECK_RECORD_ENTRY_ATTEMPT_STAGES,
     LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
     LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+    LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
     LEGACY_SPECIAL_WOOL_REVIEW_NODE,
+    SPECIAL_WOOL_QUALITATIVE_UPLOAD_ATTEMPT_STAGES,
     SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES,
     _operation_stage_profile,
     _rearm_expired_external_operation,
@@ -1127,13 +1129,48 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         )
         requested = upload.request_summary["target_sample_number"]
         actual = f"{self.run.inspection_number}-3"
-        receipt = {
-            **self._image_receipt(upload),
-            "target_sample_number": actual,
-            "requested_sample_number": requested,
-            "renumbered": True,
-        }
+        receipt = self._image_receipt(upload)
+        requested_filename = receipt["target_filename"]
+        actual_filename = requested_filename.replace(requested, actual, 1)
+        receipt.update(
+            {
+                "target_sample_number": actual,
+                "requested_sample_number": requested,
+                "renumbered": True,
+                "target_filename": actual_filename,
+            }
+        )
+        receipt["server_file"]["filename"] = actual_filename
+        receipt["main_record"]["file_path"] = actual_filename
+        receipt["picture_records"][0]["filename"] = actual_filename
+        receipt["picture_records"][0][
+            "original_data_filename"
+        ] = actual_filename
+        receipt["readback"]["target_filename"] = actual_filename
+        receipt["readback"]["original_data_filename"] = actual_filename
         self.assertIs(validate_external_receipt(upload, receipt), receipt)
+
+        for path in (
+            ("target_filename",),
+            ("server_file", "filename"),
+            ("main_record", "file_path"),
+            ("picture_records", 0, "filename"),
+            ("picture_records", 0, "original_data_filename"),
+            ("readback", "target_filename"),
+            ("readback", "original_data_filename"),
+        ):
+            with self.subTest(path=path):
+                stale_filename = json.loads(json.dumps(receipt))
+                parent = stale_filename
+                for key in path[:-1]:
+                    parent = parent[key]
+                parent[path[-1]] = requested_filename
+                with self.assertRaises(ExecutionApiError) as rejected:
+                    validate_external_receipt(upload, stale_filename)
+                self.assertEqual(
+                    rejected.exception.code,
+                    "legacy_special_wool_machine_document_invalid",
+                )
 
         with self.assertRaises(ExecutionApiError):
             validate_external_receipt(
@@ -1156,6 +1193,10 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             )
         # 旧版回执（无顺号字段）仍要求与预检单完全一致
         legacy_receipt = self._image_receipt(upload)
+        self.assertIs(
+            validate_external_receipt(upload, legacy_receipt),
+            legacy_receipt,
+        )
         with self.assertRaises(ExecutionApiError):
             validate_external_receipt(
                 upload,
@@ -1178,6 +1219,140 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         )
         self.assertEqual(
             review.request_summary["target_sample_number"], actual
+        )
+
+    def test_renumbered_qualitative_upload_filenames_follow_actual_target(self):
+        requested = self.run.inspection_number
+        actual = f"{requested}-2"
+        source = {
+            "artifact_id": "paper-source-artifact",
+            "filename": "纸纤维鉴别原始记录.xls",
+            "size_bytes": 128,
+            "content_sha256": "a" * 64,
+        }
+        project = self._project_input(
+            name="纸、纸板和纸浆纤维鉴别分析"
+        )["selected_project"]
+        requested_filename = f"{requested}-{source['filename']}"
+        actual_filename = f"{actual}-{source['filename']}"
+        operation = ExecutionExternalOperation(
+            id="paper-upload-renumber",
+            payload_checksum="b" * 64,
+            request_summary={
+                "operation_type": (
+                    LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
+                ),
+                "target_sample_number": requested,
+                "target_filename": requested_filename,
+                "target_allocation": {"base_number": requested},
+                "files": [source],
+                "task_project": project,
+            },
+        )
+
+        def receipt_for(
+            target_sample_number: str,
+            target_filename: str,
+            *,
+            include_allocation: bool,
+        ) -> dict:
+            receipt = {
+                "schema_version": 1,
+                "receipt_type": (
+                    LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
+                ),
+                "operation_id": operation.id,
+                "payload_checksum": operation.payload_checksum,
+                "target_sample_number": target_sample_number,
+                "target_filename": target_filename,
+                "source_artifact": dict(source),
+                "task_project": dict(project),
+                "server_file": {
+                    "filename": target_filename,
+                    "size_bytes": source["size_bytes"],
+                    "content_sha256": source["content_sha256"],
+                    "verification": {
+                        "mode": "exact_sha256",
+                        "source_size_bytes": source["size_bytes"],
+                        "source_content_sha256": source["content_sha256"],
+                        "remote_size_bytes": source["size_bytes"],
+                        "remote_content_sha256": source["content_sha256"],
+                        "stream_paths_equal": True,
+                        "stream_sizes_equal": True,
+                        "non_workbook_streams_equal": True,
+                        "biff_record_boundaries_equal": True,
+                        "changed_record_ids": [],
+                        "changed_record_count": 0,
+                    },
+                },
+                "main_record": {
+                    "id": "sha256:" + "3" * 16,
+                    "field_fingerprint": "4" * 64,
+                    "create_user": "sha256:" + "5" * 16,
+                    "create_time": "2026-08-05T08:30:00Z",
+                    "file_path": target_filename,
+                },
+                "picture_count": 0,
+                "readback": {
+                    "main_count": 1,
+                    "picture_count": 0,
+                    "mismatches": [],
+                    "verified_at": "2026-08-05T08:30:01Z",
+                    "target_filename": target_filename,
+                },
+                "stages": list(
+                    SPECIAL_WOOL_QUALITATIVE_UPLOAD_ATTEMPT_STAGES
+                ),
+                "reconciliation_required": False,
+            }
+            if include_allocation:
+                receipt.update(
+                    {
+                        "requested_sample_number": requested,
+                        "renumbered": True,
+                    }
+                )
+            return receipt
+
+        current = receipt_for(
+            actual,
+            actual_filename,
+            include_allocation=True,
+        )
+        self.assertIs(validate_external_receipt(operation, current), current)
+        for path in (
+            ("target_filename",),
+            ("server_file", "filename"),
+            ("main_record", "file_path"),
+            ("readback", "target_filename"),
+        ):
+            with self.subTest(path=path):
+                stale_filename = json.loads(json.dumps(current))
+                parent = stale_filename
+                for key in path[:-1]:
+                    parent = parent[key]
+                parent[path[-1]] = requested_filename
+                with self.assertRaises(ExecutionApiError) as rejected:
+                    validate_external_receipt(operation, stale_filename)
+                self.assertEqual(
+                    rejected.exception.code,
+                    "legacy_special_wool_machine_document_invalid",
+                )
+
+        legacy = receipt_for(
+            requested,
+            requested_filename,
+            include_allocation=False,
+        )
+        self.assertIs(validate_external_receipt(operation, legacy), legacy)
+        with self.assertRaises(ExecutionApiError) as legacy_renumbered:
+            validate_external_receipt(
+                operation,
+                {**legacy, "target_sample_number": actual},
+            )
+        self.assertEqual(
+            legacy_renumbered.exception.code,
+            "legacy_special_wool_machine_document_invalid",
         )
 
     def test_image_receipt_original_data_filename_is_bound_and_v1_compatible(self):
