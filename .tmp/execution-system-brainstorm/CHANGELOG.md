@@ -1,5 +1,91 @@
 # 头脑风暴变更日志
 
+## 2026-08-10：特种毛上传按旧系统实况顺号（容忍人工增删漂移）
+
+- 背景：旧检务系统的特种毛检验记录存在人工新增、删除。此前 Writer
+  在只读段/写锁内强制"预检请求号 == 旧系统第一空闲号"
+  （`target_allocation_stale` / `target_already_exists` /
+  `target_conflict_under_lock`），快照一旦与实况漂移（TTL 15 分钟
+  内的人工变更），运行即进入对账/失败，无法正常推进。
+- 新规则（用户拍板）：实际写入编号以**写锁内旧系统当前实际记录**
+  为准，取第一空闲号（基号、-1、-2…，规则不变）；请求号仅作为
+  预检展示与审计。写入与人工并发撞号可容忍（记录可随时人工删除），
+  不加额外分布式锁。
+- Writer（legacy_fibrecheck_writer SpecialWoolExecutor.ExecuteUpload）：
+  只读段不再因漂移失败，阶段事件改报 requested/planned/
+  renumber_planned；写锁内用 `ReadOccupiedUnderLock` 重算第一空闲号，
+  文件残留（人工只删记录未删文件）时逐号推进；记录、图片、文件、
+  回读校验全部使用实际号。回执新增 `requested_sample_number` 与
+  `renumbered`，`target_sample_number` 变为实际写入号；
+  `target_conflict_under_lock` 仅作理论兜底保留。
+- 后端：上传回执校验接受顺号改写（requested 必须等于预检单目标号，
+  实际号必须同编号族，renumbered 标记必须与实际一致；无顺号字段的
+  旧回执仍要求完全一致）；图片/纸类两个复核准备节点改为跟随上传回执
+  的实际写入号；本地占用集合并入已完成操作的回执实际号。
+- 测试：新增"顺号回执通过校验 + 标记不符/请求号不符/族外编号均
+  拒绝 + 旧版回执仍严格 + 复核跟随实际号"用例；后端全量 515 过
+  （仅既有失败 1）。Writer 离线契约自测 23 项过。
+- 部署：新 FibreCheckWriter.exe SHA256
+  `d23f3f11cae2c5a493f97c9f4ca9a240c6109a62cb90397214f9e6c45775be81`，
+  已同步 VM 安装位 `C:\TextileExecutionBridge\writers\FibreCheckWriter\`
+  与打包 staging（manifest 哈希已更新）。
+- 追加修复（同日，运行 82aea921 / 26W006740 暴露）：桥端
+  `validate_special_wool_qualitative_upload_receipt` 同样按旧契约严格
+  拒绝新回执（未知键 requested_sample_number/renumbered + 编号/文件名
+  不再等于预检值），导致**写入已成功但回执被桥拒收**、操作进入对账。
+  桥端校验同步顺号规则（requested 绑定预检单、实际号限同族、
+  最终文件名按编号前缀替换推导、renumbered 必须属实；无顺号字段的
+  旧回执仍严格）；桥测试新增 3 个用例（32 过）。已部署
+  `C:\TextileExecutionBridge\app\legacy_fibrecheck_bridge\bridge.py`
+  并更新 `BridgeConfig.psd1` 的 Writer 钉值（该钉值由
+  Build-BridgePackage.ps1 在打包时重新生成，源码模板无需改）。
+  写桥计划任务已重启加载新代码。26W006740 由用户人工接手，卡住的
+  运行保留现状、不要重跑同号（重跑会按实况顺号写出 -2）。
+- 多份数（check_count>1，如 26A045793 份数 2）本轮不处理，仍按
+  `legacy_special_wool_task_project_count_invalid` 快速失败。
+
+## 2026-08-08：人工任务交互提效（免领取、待办角标/气泡、收件箱轮询、大图内选图）
+
+- 免领取：`submit`/`draft`/`reject` 在任务 open 且未领取时由服务端隐式
+  领取（engine.py `_ensure_human_task_ownership`，追加
+  `human_task.claimed` 事件含 `implicit: true`）；已被他人领取仍
+  `human_task_not_owned` 冲突兜底，并发保护不变。前端 HumanTaskCard
+  删除"领取并处理"按钮，开放任务直接呈现表单；显式
+  `/human-tasks/{id}/claim` 接口保留兼容。状态文案"待领取"→"待处理"。
+- 待办提醒：ExecutionChrome 每 15 秒轮询 `/human-tasks`（隐藏标签页
+  跳过），头部"待办任务"按钮显示 Badge 计数；检测到新任务 ID 时右下
+  角 notification 气泡（含标题与"前往处理"按钮）；收件箱页内跳过该
+  轮询（页面自有 10 秒轮询）。testServer.js 增加全局默认空待办
+  handler，避免 onUnhandledRequest=error 误伤其他页面测试。
+- 收件箱自动刷新：每 10 秒静默轮询列表与当前详情，无需退出重进；
+  HumanTaskCard 本地未提交编辑按 revision 保护不受影响。
+- 大图内选图：ExecutionImageSelector 预览弹窗新增底部工具条（已选
+  计数 + 选为结果图片/取消选择按钮），已选图片在舞台上角显示对勾
+  角标；左右切换与键盘导航保持不变。
+- 测试：后端新增"open 任务直接提交自动领取/他人已领取仍拒绝"两个
+  用例，全量 514 过（仅既有失败 1）；前端收件箱首测改为直接提交，
+  全量 106 过。
+
+## 2026-08-08：纸类 query 节点快照等待（替代立即失败）
+
+- 背景：前一条目的 fail-fast 解决了裸 `mapping_value_missing`，但
+  "快照抓取中 → 运行直接失败 → 人工重跑"仍影响效率；实测竞态通常
+  只差几秒（快照桥 15 秒轮询、单次抓取数秒，289db134 的快照在运行
+  启动后约 5 秒落地）。
+- 纸类 query 节点在快照 `pending` 时改为节点内有限等待：每 2 秒
+  轮询一次快照缓存，最长 `EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS`
+  （默认 60 秒，0 表示不等待）；等待期间先 commit 一次使本节点
+  入队的刷新请求对快照桥可见（快照状态接口同款模式）；节点租约
+  由 worker 的 `_LeaseHeartbeat` 后台续期，阻塞不会丢租约。
+- 等待中检测到运行取消（cancel_pending/cancelled/failed/
+  failure_pending）立即退出等待，按原 pending 错误收尾，取消流程
+  不被拖住。
+- 超时仍按 `task_snapshot_pending` 失败兜底；快照 `failed` 仍立即
+  失败（桥故障时等待无意义）。DAG 定义不变（无版本升级），行为
+  变化仅在执行器。
+- 测试：等待成功后继续、取消立即退出、0 等待超时兜底三个用例；
+  后端全量 512 过（仅既有失败 test_config_security 1 个）。
+
 ## 2026-08-08：任务单快照未就绪的快速失败与状态接口分流程评估
 
 - 背景：运行 289db134（26W006742）在快照桥抓取完成前 4 秒启动，
