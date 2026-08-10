@@ -52,6 +52,7 @@ from app.execution.paper_fiber import (
     PAPER_FIBER_ROOT_ID,
     PAPER_FIBER_TEST_METHOD,
     PAPER_FIBER_WORKFLOW_SLUG,
+    _paper_fiber_executor,
     _read_result_profile,
     contains_standalone_100,
     paper_fiber_match,
@@ -534,12 +535,100 @@ class PaperFiberBackendTests(unittest.TestCase):
         self._index(self._xls("26W006701/record.xls", "木浆 100"))
         self.db.commit()
 
-        run, query = self._failed_query_run("paper-query-snapshot-pending")
+        # 等待时长置 0，直接走超时兜底路径
+        with patch.object(settings, "EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS", 0):
+            run, query = self._failed_query_run("paper-query-snapshot-pending")
 
         self.assertEqual(query.status, "failed")
         self.assertEqual(query.error_code, "task_snapshot_pending")
         self.assertEqual(run.status, "failed")
         self.assertEqual(run.error_code, "task_snapshot_pending")
+
+    def _query_context(self, run):
+        node_run = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="query")
+            .one()
+        )
+        node = {
+            "id": "query",
+            "type": PAPER_FIBER_NODE_TYPE,
+            "type_version": 1,
+            "config": {"limit": 6, "require_full_task_match": True},
+        }
+        return NodeExecutionContext(
+            db=self.db,
+            run=run,
+            node_run=node_run,
+            node=node,
+            input_data={"inspection_number": "26W006701"},
+            worker_id="paper-worker",
+            lease_token="",
+        )
+
+    def test_query_waits_for_pending_snapshot_and_continues_when_ready(self):
+        run = self._paper_run("paper-query-wait-ready")
+        context = self._query_context(run)
+        pending_match = {
+            "matched_conditions": ["source_root", "folder"],
+            "task_cache_state": "pending",
+            "candidates": [{"id": "file-1"}],
+            "task_snapshot": None,
+            "matched_task_project": None,
+        }
+        ready_match = {
+            "matched_conditions": [
+                "source_root",
+                "folder",
+                "task_item_name",
+                "test_method",
+            ],
+            "task_cache_state": "ready",
+            "candidates": [{"id": "file-1"}],
+            "task_snapshot": {"projects": []},
+            "matched_task_project": {"project_key": "task-project:paper-test"},
+        }
+        with (
+            patch(
+                "app.execution.paper_fiber.paper_fiber_match",
+                side_effect=[pending_match, ready_match],
+            ) as match_mock,
+            patch("time.sleep"),
+        ):
+            output = _paper_fiber_executor(context)
+
+        self.assertEqual(match_mock.call_count, 2)
+        self.assertEqual(
+            output["matched_task_project"]["project_key"],
+            "task-project:paper-test",
+        )
+        self.assertEqual(output["task_cache_state"], "ready")
+
+    def test_query_snapshot_wait_exits_early_when_run_cancelled(self):
+        run = self._paper_run("paper-query-wait-cancelled")
+        run.status = "cancel_pending"
+        self.db.commit()
+        context = self._query_context(run)
+        pending_match = {
+            "matched_conditions": ["source_root", "folder"],
+            "task_cache_state": "pending",
+            "candidates": [{"id": "file-1"}],
+            "task_snapshot": None,
+            "matched_task_project": None,
+        }
+        with (
+            patch(
+                "app.execution.paper_fiber.paper_fiber_match",
+                return_value=pending_match,
+            ) as match_mock,
+            patch("time.sleep") as sleep_mock,
+        ):
+            with self.assertRaises(ExecutionApiError) as raised:
+                _paper_fiber_executor(context)
+
+        self.assertEqual(raised.exception.code, "task_snapshot_pending")
+        self.assertEqual(match_mock.call_count, 1)
+        sleep_mock.assert_not_called()
 
     def test_query_fails_fast_with_task_snapshot_unavailable_when_refresh_failed(
         self,

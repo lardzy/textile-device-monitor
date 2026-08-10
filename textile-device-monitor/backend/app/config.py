@@ -109,6 +109,11 @@ class Settings(BaseSettings):
     # warning instead of blocking the operator.
     EXECUTION_TASK_SNAPSHOT_TTL_MINUTES: int = 15
     EXECUTION_TASK_SNAPSHOT_RETRY_SECONDS: int = 60
+    # How long a paper-fibre query node waits for a pending task snapshot
+    # before failing with ``task_snapshot_pending``.  The snapshot bridge
+    # polls every ~15 seconds, so the typical catalog-page race resolves
+    # in a few seconds; the node lease heartbeat keeps the claim alive.
+    EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS: int = 60
     EXECUTION_WORKER_POLL_SECONDS: float = 1.0
     EXECUTION_WORKER_LEASE_SECONDS: int = 60
     EXECUTION_NODE_MAX_ATTEMPTS: int = 5
@@ -419,6 +424,11 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "Production task snapshot retry delay must be between 10 and "
                 "3600 seconds"
+            )
+        if not 0 <= self.EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS <= 600:
+            raise RuntimeError(
+                "Production task snapshot wait must be between 0 and "
+                "600 seconds"
             )
         if not 1 <= self.EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES <= 1440:
             raise RuntimeError(

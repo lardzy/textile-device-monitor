@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -11,6 +12,7 @@ from openpyxl import load_workbook
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.execution.electron_microscopy import cached_task_snapshot
 from app.execution.errors import ExecutionApiError
 from app.execution.index_metadata import inspection_numbers_in_text
@@ -522,24 +524,53 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
             "inspection_number_incomplete",
             "请先输入完整检验编号后再读取纸类原始记录",
         )
-    match = paper_fiber_match(
-        context.db,
-        inspection_number=inspection_number,
-        result_limit=min(int(config.get("limit", 6)), 6),
-    )
-    missing = [
-        item
-        for item in ("source_root", "folder", "task_item_name", "test_method")
-        if item not in match["matched_conditions"]
-    ]
-    task_conditions_missing = any(
-        item in missing for item in ("task_item_name", "test_method")
-    )
+    result_limit = min(int(config.get("limit", 6)), 6)
+    # The snapshot bridge polls every ~15 seconds, so a snapshot that is
+    # still pending typically lands within a few seconds of run start (the
+    # catalog recommendation already queued the refresh).  Wait briefly
+    # instead of failing outright; the worker lease heartbeat keeps this
+    # node's claim alive while we poll.
+    wait_seconds = max(0, int(settings.EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS))
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        match = paper_fiber_match(
+            context.db,
+            inspection_number=inspection_number,
+            result_limit=result_limit,
+        )
+        missing = [
+            item
+            for item in ("source_root", "folder", "task_item_name", "test_method")
+            if item not in match["matched_conditions"]
+        ]
+        task_conditions_missing = any(
+            item in missing for item in ("task_item_name", "test_method")
+        )
+        cache_state = str(match["task_cache_state"])
+        if not (
+            task_conditions_missing
+            and cache_state == "pending"
+            and time.monotonic() < deadline
+        ):
+            break
+        if context.run.status in {
+            "cancel_pending",
+            "cancelled",
+            "failed",
+            "failure_pending",
+        }:
+            break
+        # Persist the refresh request this node may have queued so the
+        # snapshot bridge can see it (the snapshot-status API endpoint
+        # follows the same pattern), then poll for the snapshot to land.
+        context.db.commit()
+        time.sleep(2)
+        context.db.expire_all()
+
     # Downstream nodes map ``matched_task_project`` unconditionally, so a run
     # that continues without task facts would fail later with a bare
     # ``mapping_value_missing``.  Fail fast here with actionable errors.
     if task_conditions_missing:
-        cache_state = str(match["task_cache_state"])
         if cache_state == "pending":
             raise ExecutionApiError(
                 422,
