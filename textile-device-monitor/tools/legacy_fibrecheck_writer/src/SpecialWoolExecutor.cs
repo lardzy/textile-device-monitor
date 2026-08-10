@@ -436,6 +436,7 @@ namespace LegacyFibreCheckWriter
                 result,
                 operation,
                 summary,
+                UploadExecutor.GetStr(summary, "target_sample_number"),
                 expectedProject,
                 source,
                 targetFilename,
@@ -547,7 +548,8 @@ namespace LegacyFibreCheckWriter
             string inspectorId;
             DateTime serverDate;
             string targetDir;
-            string targetPath;
+            string planned;
+            string plannedFilename;
             using (var db = new OdpNetDb(connectionString))
             {
                 db.OpenReadOnly();
@@ -560,10 +562,9 @@ namespace LegacyFibreCheckWriter
                 }
 
                 List<string> occupied = ReadOccupied(db, targetBase);
-                string allocated;
                 try
                 {
-                    allocated = SpecialWoolContracts.AllocateFirstFree(
+                    planned = SpecialWoolContracts.AllocateFirstFree(
                         targetBase, occupied);
                 }
                 catch (Exception)
@@ -571,29 +572,18 @@ namespace LegacyFibreCheckWriter
                     return PackageFailure(
                         result, emit, "target_allocation_invalid");
                 }
-                if (!string.Equals(allocated, target, StringComparison.Ordinal))
-                {
-                    result.Receipt["error"] = "target_allocation_stale";
-                    return UploadExecutor.Finish(
-                        result, ExitCodes.DryRunConflict, null, emit);
-                }
-                DataTable existing = db.Query(
-                    ExactMainSql,
-                    new List<DbParam>
-                    {
-                        new DbParam("target_sample_no", target),
-                    });
-                if (existing.Rows.Count != 0)
-                {
-                    result.Receipt["error"] = "target_already_exists";
-                    return UploadExecutor.Finish(
-                        result, ExitCodes.DryRunConflict, null, emit);
-                }
+                // 顺号规则：预检请求号只是建议值，实际写入号在写锁内按旧系统
+                // 当前实况取第一空闲号。人工新增/删除造成的漂移不再阻断执行，
+                // 只在这里与回执中记录 planned/requested 供审计。
                 stage("remote_state_verified", new SortedDictionary<string, object>
                 {
-                    { "target_sample_number", target },
+                    { "requested_sample_number", target },
+                    { "planned_sample_number", planned },
+                    {
+                        "renumber_planned",
+                        !string.Equals(planned, target, StringComparison.Ordinal)
+                    },
                     { "occupied_family_count", occupied.Count },
-                    { "exact_count", 0 },
                 });
                 stage("task_project_verified", new SortedDictionary<string, object>
                 {
@@ -645,19 +635,23 @@ namespace LegacyFibreCheckWriter
                     serverDate.Month.ToString(CultureInfo.InvariantCulture),
                     serverDate.Day.ToString(CultureInfo.InvariantCulture),
                     "SpecialWool");
-                targetPath = Path.Combine(targetDir, targetFilename);
+                try
+                {
+                    plannedFilename = imageUpload
+                        ? SpecialWoolContracts.BuildTargetFilename(planned)
+                        : SpecialWoolContracts.BuildPrefixedTargetFilename(
+                            planned, source.FileName);
+                }
+                catch (ArgumentException)
+                {
+                    return PackageFailure(result, emit, "target_filename_invalid");
+                }
             }
 
-            if (File.Exists(targetPath))
-            {
-                result.Receipt["error"] = "target_file_already_exists";
-                result.Receipt["target_path_hash"] = Redact.HashId(targetPath);
-                return UploadExecutor.Finish(
-                    result, UploadExecutor.ExitTargetFileConflict, null, emit);
-            }
             stage("file_copy_ready", new SortedDictionary<string, object>
             {
-                { "file_name", targetFilename },
+                { "file_name", plannedFilename },
+                { "planned_sample_number", planned },
                 { "size_bytes", source.Size },
                 { "content_sha256", source.Sha256 },
             });
@@ -675,19 +669,34 @@ namespace LegacyFibreCheckWriter
                 {
                     return UploadExecutor.ExitReconciliationRequired;
                 }
-                string lockedAllocation = AllocateUnderLock(writeLock, targetBase);
-                if (!string.Equals(lockedAllocation, target, StringComparison.Ordinal))
+                // 顺号规则：以写锁内旧系统当前实际记录为准取第一空闲号；
+                // 与预检请求号不一致（人工新增/删除漂移）不再阻断执行。
+                List<string> lockedOccupied = ReadOccupiedUnderLock(
+                    writeLock, targetBase);
+                string actual = SpecialWoolContracts.AllocateFirstFree(
+                    targetBase, lockedOccupied);
+                string actualFilename = imageUpload
+                    ? SpecialWoolContracts.BuildTargetFilename(actual)
+                    : SpecialWoolContracts.BuildPrefixedTargetFilename(
+                        actual, source.FileName);
+                string actualPath = Path.Combine(targetDir, actualFilename);
+                while (File.Exists(actualPath))
                 {
-                    result.Receipt["error"] = "target_allocation_changed_under_lock";
-                    return UploadExecutor.Finish(
-                        result,
-                        UploadExecutor.ExitReconciliationRequired,
-                        "file_copy_started",
-                        emit);
+                    // 文件残留但主表无记录（人工只删了记录）：跳过该号继续顺号。
+                    lockedOccupied.Add(actual);
+                    actual = SpecialWoolContracts.AllocateFirstFree(
+                        targetBase, lockedOccupied);
+                    actualFilename = imageUpload
+                        ? SpecialWoolContracts.BuildTargetFilename(actual)
+                        : SpecialWoolContracts.BuildPrefixedTargetFilename(
+                            actual, source.FileName);
+                    actualPath = Path.Combine(targetDir, actualFilename);
                 }
-                DataTable lockedExisting = QueryMain(writeLock, target);
-                if (lockedExisting.Rows.Count != 0 || File.Exists(targetPath))
+                DataTable lockedExisting = QueryMain(writeLock, actual);
+                if (lockedExisting.Rows.Count != 0)
                 {
+                    // 与并发写入撞号（理论上 AllocateFirstFree 已排除）：
+                    // 交人工对账，不自动推进。
                     result.Receipt["error"] = "target_conflict_under_lock";
                     return UploadExecutor.Finish(
                         result,
@@ -698,7 +707,7 @@ namespace LegacyFibreCheckWriter
 
                 stage("file_copy_started", new SortedDictionary<string, object>
                 {
-                    { "file_name", targetFilename },
+                    { "file_name", actualFilename },
                     { "size_bytes", source.Size },
                     { "content_sha256", source.Sha256 },
                 });
@@ -706,7 +715,7 @@ namespace LegacyFibreCheckWriter
                 {
                     Directory.CreateDirectory(targetDir);
                     using (var stream = new FileStream(
-                        targetPath,
+                        actualPath,
                         FileMode.CreateNew,
                         FileAccess.Write,
                         FileShare.None))
@@ -714,7 +723,7 @@ namespace LegacyFibreCheckWriter
                         stream.Write(source.Bytes, 0, source.Bytes.Length);
                         stream.Flush();
                     }
-                    byte[] copied = File.ReadAllBytes(targetPath);
+                    byte[] copied = File.ReadAllBytes(actualPath);
                     if (copied.LongLength != source.Size
                         || !string.Equals(
                             UploadExecutor.Sha256Hex(copied),
@@ -740,7 +749,7 @@ namespace LegacyFibreCheckWriter
                 }
                 stage("file_copy_verified", new SortedDictionary<string, object>
                 {
-                    { "file_name", targetFilename },
+                    { "file_name", actualFilename },
                     { "content_sha256", source.Sha256 },
                 });
 
@@ -750,7 +759,7 @@ namespace LegacyFibreCheckWriter
                 {
                     var record = new SpecialWoolManage
                     {
-                        SampleNo = target,
+                        SampleNo = actual,
                         FibreSort = imageUpload ? "图片" : "棉再生纤",
                         CheckWay = imageUpload ? string.Empty : "定量",
                         CheckUser1 = inspectorId,
@@ -762,7 +771,7 @@ namespace LegacyFibreCheckWriter
                             ? "图片"
                             : "棉再生纤定性",
                         ReviewUserNumber1 = 1,
-                        FilePath = targetFilename,
+                        FilePath = actualFilename,
                         FileType = imageUpload ? "图片" : "定量试验",
                     };
                     var picturesToSave = new List<OriginalDataPictureFile>();
@@ -770,13 +779,13 @@ namespace LegacyFibreCheckWriter
                     {
                         picturesToSave.Add(new OriginalDataPictureFile
                         {
-                            SampleNo = target,
+                            SampleNo = actual,
                             CheckItemID = project.CheckItemId,
-                            PictureFileName = targetFilename,
+                            PictureFileName = actualFilename,
                             // 旧字段只有 NVARCHAR2(100)。保存隔离 staging 的绝对路径
                             // 会被 Provider 截断且不同运行不可辨识；制品路径/哈希已经由
                             // 执行系统审计，旧库只保存稳定且可读的最终文件名。
-                            OriginalDataFileName = targetFilename,
+                            OriginalDataFileName = actualFilename,
                         });
                     }
                     var dal = new SpecialWoolDAL();
@@ -798,7 +807,7 @@ namespace LegacyFibreCheckWriter
                         emit);
                 }
 
-                DataTable main = QueryMain(writeLock, target);
+                DataTable main = QueryMain(writeLock, actual);
                 if (main.Rows.Count != 1)
                 {
                     result.Receipt["error"] = "main_record_readback_count_mismatch";
@@ -812,9 +821,9 @@ namespace LegacyFibreCheckWriter
                 var mismatches = VerifyUploadMain(
                     mainRow,
                     savedId,
-                    target,
+                    actual,
                     inspectorId,
-                    targetFilename,
+                    actualFilename,
                     staff.Id,
                     imageUpload);
                 if (mismatches.Count != 0)
@@ -849,8 +858,8 @@ namespace LegacyFibreCheckWriter
                 if (imageUpload)
                 {
                     mismatches = VerifyPicture(
-                        pictureRow, mainId, target, project.CheckItemId,
-                        targetFilename, staff.Id);
+                        pictureRow, mainId, actual, project.CheckItemId,
+                        actualFilename, staff.Id);
                     if (mismatches.Count != 0)
                     {
                         result.Receipt["error"] = "picture_child_verify_mismatch";
@@ -875,7 +884,7 @@ namespace LegacyFibreCheckWriter
                     // 同一快照，避免共享盘空闲扇区变化造成两次读取结果串线。
                     serverVerification = LegacyXlsFileVerifier.Verify(
                         source.Bytes,
-                        File.ReadAllBytes(targetPath));
+                        File.ReadAllBytes(actualPath));
                 }
                 catch (Exception ex)
                 {
@@ -911,9 +920,10 @@ namespace LegacyFibreCheckWriter
                         result,
                         operation,
                         summary,
+                        actual,
                         expectedProject,
                         source,
-                        targetFilename,
+                        actualFilename,
                         mainRow,
                         pictureRow,
                         serverVerification);
@@ -924,9 +934,10 @@ namespace LegacyFibreCheckWriter
                         result,
                         operation,
                         summary,
+                        actual,
                         expectedProject,
                         source,
-                        targetFilename,
+                        actualFilename,
                         mainRow,
                         serverVerification);
                 }
@@ -1695,7 +1706,7 @@ namespace LegacyFibreCheckWriter
             return result;
         }
 
-        private static string AllocateUnderLock(
+        private static List<string> ReadOccupiedUnderLock(
             SpecialWoolWriteLock writeLock,
             string baseNumber)
         {
@@ -1711,8 +1722,7 @@ namespace LegacyFibreCheckWriter
             {
                 occupied.Add(Text(row, "SampleNo"));
             }
-            return SpecialWoolContracts.AllocateFirstFree(
-                baseNumber, occupied);
+            return occupied;
         }
 
         private static SpecialWoolWriteLock AcquireLock(
@@ -1944,6 +1954,7 @@ namespace LegacyFibreCheckWriter
             UploadExecutor.Result result,
             Dictionary<string, object> operation,
             Dictionary<string, object> summary,
+            string actualSampleNumber,
             Dictionary<string, object> expectedProject,
             SourceArtifact source,
             string targetFilename,
@@ -1955,11 +1966,15 @@ namespace LegacyFibreCheckWriter
             string originalDataFilename = Text(
                 picture,
                 "OriginalDataFileName");
+            string requested = UploadExecutor.GetStr(summary, "target_sample_number");
             result.Receipt["schema_version"] = 1;
             result.Receipt["receipt_type"] = SpecialWoolContracts.ImageReceiptType;
             result.Receipt["operation_id"] = UploadExecutor.GetStr(operation, "id");
             result.Receipt["payload_checksum"] = UploadExecutor.GetStr(operation, "payload_checksum");
-            result.Receipt["target_sample_number"] = UploadExecutor.GetStr(summary, "target_sample_number");
+            result.Receipt["target_sample_number"] = actualSampleNumber;
+            result.Receipt["requested_sample_number"] = requested;
+            result.Receipt["renumbered"] = !string.Equals(
+                actualSampleNumber, requested, StringComparison.Ordinal);
             result.Receipt["target_filename"] = targetFilename;
             result.Receipt["source_artifact"] = new SortedDictionary<string, object>
             {
@@ -2012,6 +2027,7 @@ namespace LegacyFibreCheckWriter
             UploadExecutor.Result result,
             Dictionary<string, object> operation,
             Dictionary<string, object> summary,
+            string actualSampleNumber,
             Dictionary<string, object> expectedProject,
             SourceArtifact source,
             string targetFilename,
@@ -2019,6 +2035,7 @@ namespace LegacyFibreCheckWriter
             LegacyXlsFileVerification serverVerification)
         {
             string mainId = Text(main, "ID");
+            string requested = UploadExecutor.GetStr(summary, "target_sample_number");
             result.Receipt["schema_version"] = 1;
             result.Receipt["receipt_type"] =
                 SpecialWoolContracts.QualitativeUploadReceiptType;
@@ -2026,8 +2043,10 @@ namespace LegacyFibreCheckWriter
                 UploadExecutor.GetStr(operation, "id");
             result.Receipt["payload_checksum"] =
                 UploadExecutor.GetStr(operation, "payload_checksum");
-            result.Receipt["target_sample_number"] =
-                UploadExecutor.GetStr(summary, "target_sample_number");
+            result.Receipt["target_sample_number"] = actualSampleNumber;
+            result.Receipt["requested_sample_number"] = requested;
+            result.Receipt["renumbered"] = !string.Equals(
+                actualSampleNumber, requested, StringComparison.Ordinal);
             result.Receipt["target_filename"] = targetFilename;
             result.Receipt["picture_count"] = 0;
             result.Receipt["source_artifact"] =

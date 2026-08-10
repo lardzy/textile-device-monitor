@@ -560,6 +560,9 @@ def validate_special_wool_qualitative_upload_receipt(
             "stages",
             "reconciliation_required",
         },
+        # 顺号改写：Writer 按旧系统锁内实况取第一空闲号写入时，
+        # 回执用 requested_sample_number 绑定预检单。
+        optional={"requested_sample_number", "renumbered"},
     )
     if (
         document.get("schema_version") != 1
@@ -568,13 +571,41 @@ def validate_special_wool_qualitative_upload_receipt(
         or document.get("operation_id") != operation.get("id")
         or document.get("payload_checksum")
         != operation.get("payload_checksum")
-        or document.get("target_sample_number")
-        != summary.get("target_sample_number")
-        or document.get("target_filename") != summary.get("target_filename")
         or document.get("reconciliation_required") is not False
         or document.get("picture_count") != 0
     ):
         raise BridgeError("文档型 SpecialWool 上传回执身份或状态不匹配")
+    expected_target = str(summary.get("target_sample_number") or "")
+    requested = document.get("requested_sample_number")
+    actual = document.get("target_sample_number")
+    if requested is None:
+        # 旧版 Writer 回执：目标编号必须与预检单完全一致。
+        if actual != expected_target:
+            raise BridgeError("文档型 SpecialWool 上传回执目标编号与预检单不一致")
+    else:
+        if requested != expected_target:
+            raise BridgeError("文档型 SpecialWool 上传回执请求编号与预检单不一致")
+        target_base = str(
+            (summary.get("target_allocation") or {}).get("base_number")
+            or expected_target
+        ).strip().upper()
+        if not isinstance(actual, str) or not (
+            actual == requested or actual.startswith(target_base + "-")
+        ):
+            raise BridgeError("文档型 SpecialWool 上传回执实际编号不属于预检单编号族")
+        renumbered = document.get("renumbered")
+        if not isinstance(renumbered, bool) or renumbered != (actual != requested):
+            raise BridgeError("文档型 SpecialWool 上传回执顺号标记与实际编号不一致")
+    expected_filename = str(summary.get("target_filename") or "")
+    if (
+        isinstance(actual, str)
+        and actual != expected_target
+        and expected_filename.startswith(expected_target)
+    ):
+        # 顺号改写后最终文件名跟随实际编号（编号前缀替换，其余部分不变）。
+        expected_filename = actual + expected_filename[len(expected_target):]
+    if document.get("target_filename") != expected_filename:
+        raise BridgeError("文档型 SpecialWool 上传回执目标文件名与预检单不一致")
     files = summary.get("files")
     if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict):
         raise BridgeError("文档型 SpecialWool 上传摘要缺少唯一源文件")
@@ -598,7 +629,7 @@ def validate_special_wool_qualitative_upload_receipt(
     if not isinstance(main, dict):
         raise BridgeError("文档型 SpecialWool 上传缺少主记录读回")
     _required_text(main.get("id"), path="receipt.main_record.id", pattern=_REDACTED_ID_RE)
-    if main.get("file_path") != summary.get("target_filename"):
+    if main.get("file_path") != expected_filename:
         raise BridgeError("文档型 SpecialWool 主记录文件名不匹配")
     readback = document.get("readback")
     if (
@@ -606,7 +637,7 @@ def validate_special_wool_qualitative_upload_receipt(
         or readback.get("main_count") != 1
         or readback.get("picture_count") != 0
         or readback.get("mismatches") != []
-        or readback.get("target_filename") != summary.get("target_filename")
+        or readback.get("target_filename") != expected_filename
     ):
         raise BridgeError("文档型 SpecialWool 上传读回未确认无图片子记录")
     stage_names = [

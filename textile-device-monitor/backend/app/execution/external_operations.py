@@ -1046,6 +1046,9 @@ def validate_external_receipt(
                 "picture_records",
                 "readback",
             },
+            # 顺号改写：Writer 按旧系统锁内实况取第一空闲号，
+            # 回执用 requested_sample_number 绑定预检单。
+            optional={"requested_sample_number", "renumbered"},
         )
         expected_type = SPECIAL_WOOL_IMAGE_RECEIPT_TYPE
     elif operation_type == LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION:
@@ -1062,6 +1065,7 @@ def validate_external_receipt(
                 "picture_count",
                 "readback",
             },
+            optional={"requested_sample_number", "renumbered"},
         )
         expected_type = SPECIAL_WOOL_QUALITATIVE_UPLOAD_RECEIPT_TYPE
     elif operation_type in {
@@ -1108,10 +1112,49 @@ def validate_external_receipt(
     for key, expected in {
         "operation_id": operation.id,
         "payload_checksum": operation.payload_checksum,
-        "target_sample_number": summary.get("target_sample_number"),
     }.items():
         if document.get(key) != expected:
             raise _machine_document_error(f"$.{key}", "写入回执与外部操作预检单不一致")
+    expected_target = summary.get("target_sample_number")
+    requested_target = document.get("requested_sample_number")
+    if requested_target is None:
+        # 旧版 Writer 回执：目标编号必须与预检单完全一致。
+        if document.get("target_sample_number") != expected_target:
+            raise _machine_document_error(
+                "$.target_sample_number", "写入回执与外部操作预检单不一致"
+            )
+    else:
+        # 顺号改写回执：requested 绑定预检单，target 是旧系统实况决定的
+        # 实际写入编号，必须仍属于同一编号族。
+        if requested_target != expected_target:
+            raise _machine_document_error(
+                "$.requested_sample_number", "写入回执与外部操作预检单不一致"
+            )
+        actual_target = document.get("target_sample_number")
+        target_base = str(
+            (summary.get("target_allocation") or {}).get("base_number")
+            or expected_target
+            or ""
+        ).strip().upper()
+        if (
+            not isinstance(actual_target, str)
+            or not _LEGACY_SAMPLE_NUMBER_RE.fullmatch(actual_target)
+            or not (
+                actual_target == requested_target
+                or actual_target.startswith(target_base + "-")
+            )
+        ):
+            raise _machine_document_error(
+                "$.target_sample_number",
+                "写入回执的实际目标编号不属于预检单编号族",
+            )
+        renumbered = document.get("renumbered")
+        if not isinstance(renumbered, bool) or renumbered != (
+            actual_target != requested_target
+        ):
+            raise _machine_document_error(
+                "$.renumbered", "写入回执的顺号标记与实际编号不一致"
+            )
     if document.get("reconciliation_required") is not False:
         raise _machine_document_error(
             "$.reconciliation_required", "需要人工对账的结果不能作为成功回执"
@@ -1842,6 +1885,11 @@ def _locally_occupied_target_numbers(db: Session) -> set[str]:
         ).strip()
         if target:
             occupied.add(target)
+        # Writer 可能按旧系统实况顺号改写；实际写入号同样视为本地占用。
+        receipt = row.receipt if isinstance(row.receipt, dict) else {}
+        actual = str(receipt.get("target_sample_number") or "").strip()
+        if actual:
+            occupied.add(actual)
     return occupied
 
 
@@ -4172,7 +4220,10 @@ def prepare_legacy_special_wool_review_operation(
     )
     source_summary = source.request_summary or {}
     source_main_id = _special_wool_upload_main_id(source)
+    # 上传可能按旧系统实况顺号改写；复核必须跟随回执中的实际写入编号。
     target_number = str(
+        (source.receipt or {}).get("target_sample_number") or ""
+    ).strip() or str(
         source_summary.get("target_sample_number") or ""
     ).strip()
     if not target_number:
@@ -4611,7 +4662,10 @@ def prepare_legacy_special_wool_qualitative_review_operation(
     account_scope_key = _account_scope_key(credential.account_name or "")
     source = _paper_upload_source_operation(db, run=run, input_data=input_data)
     source_summary = source.request_summary or {}
-    target_number = str(source_summary.get("target_sample_number") or "").strip()
+    # 与图片复核一致：优先跟随上传回执中的实际顺号写入编号。
+    target_number = str(
+        (source.receipt or {}).get("target_sample_number") or ""
+    ).strip() or str(source_summary.get("target_sample_number") or "").strip()
     source_main_id = _special_wool_upload_main_id(source)
     remote_business_key = lock_legacy_remote_business_scope(
         db, sample_number=target_number

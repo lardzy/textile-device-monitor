@@ -1107,6 +1107,79 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             "legacy_special_wool_machine_document_invalid",
         )
 
+    def test_renumbered_upload_receipt_is_bound_and_review_follows_actual(self):
+        # 人工增删导致快照漂移时，Writer 按旧系统实况顺号写入；
+        # 回执用 requested_sample_number 绑定预检单，target 为实际写入号。
+        _artifact, original_record = self._artifact()
+        upload_node = self._node_run(
+            LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+            "upload-renumber",
+        )
+        upload, _reused = prepare_legacy_special_wool_image_operation(
+            self.db,
+            run=self.run,
+            node_run=upload_node,
+            node={"config": {"credential_slot": "legacy_account"}},
+            input_data={
+                "original_record": original_record,
+                **self._project_input(),
+            },
+        )
+        requested = upload.request_summary["target_sample_number"]
+        actual = f"{self.run.inspection_number}-3"
+        receipt = {
+            **self._image_receipt(upload),
+            "target_sample_number": actual,
+            "requested_sample_number": requested,
+            "renumbered": True,
+        }
+        self.assertIs(validate_external_receipt(upload, receipt), receipt)
+
+        with self.assertRaises(ExecutionApiError):
+            validate_external_receipt(
+                upload, {**receipt, "renumbered": False}
+            )
+        with self.assertRaises(ExecutionApiError):
+            validate_external_receipt(
+                upload,
+                {
+                    **receipt,
+                    "requested_sample_number": (
+                        f"{self.run.inspection_number}-8"
+                    ),
+                },
+            )
+        with self.assertRaises(ExecutionApiError):
+            validate_external_receipt(
+                upload,
+                {**receipt, "target_sample_number": "26X999999-1"},
+            )
+        # 旧版回执（无顺号字段）仍要求与预检单完全一致
+        legacy_receipt = self._image_receipt(upload)
+        with self.assertRaises(ExecutionApiError):
+            validate_external_receipt(
+                upload,
+                {**legacy_receipt, "target_sample_number": actual},
+            )
+
+        # 复核节点跟随回执中的实际写入号，而不是预检请求号
+        upload.receipt = receipt
+        upload.status = "completed"
+        review_node = self._node_run(
+            LEGACY_SPECIAL_WOOL_REVIEW_NODE,
+            "review-renumber",
+        )
+        review, _reused = prepare_legacy_special_wool_review_operation(
+            self.db,
+            run=self.run,
+            node_run=review_node,
+            node={"config": {"credential_slot": "legacy_account"}},
+            input_data={"upload_result": {"operation_id": upload.id}},
+        )
+        self.assertEqual(
+            review.request_summary["target_sample_number"], actual
+        )
+
     def test_image_receipt_original_data_filename_is_bound_and_v1_compatible(self):
         self.task_snapshot.snapshot = {
             **self.task_snapshot.snapshot,

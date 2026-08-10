@@ -278,6 +278,103 @@ def special_wool_review_receipt(claim: dict) -> dict:
     }
 
 
+def qualitative_upload_claim() -> dict:
+    project = {
+        "task_check_item_id": "sha256:" + "1" * 16,
+        "check_item_id": "sha256:" + "2" * 16,
+        "check_item_no": "51.113K",
+        "check_item_name": "纸、纸板和纸浆纤维鉴别分析",
+        "check_method": "GB/T 4688-2020",
+        "seq_num": 18,
+        "check_count": 1,
+    }
+    identity = "\0".join(
+        " ".join(str(project[key]).strip().split())
+        for key in (
+            "task_check_item_id",
+            "check_item_id",
+            "check_item_no",
+            "check_item_name",
+            "check_method",
+            "seq_num",
+        )
+    )
+    project["project_key"] = "task-project:" + hashlib.sha256(
+        identity.encode("utf-8")
+    ).hexdigest()[:24]
+    summary = {
+        "operation_type": bridge.LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+        "source_inspection_number": "26W006740",
+        "target_sample_number": "26W006740-1",
+        "target_filename": "26W006740-1-26W006740-record.xls",
+        "target_allocation": {"base_number": "26W006740"},
+        "task_project": project,
+        "files": [
+            {
+                "root_id": "paper_fiber_records",
+                "relative_path": "26W006740/record.xls",
+                "artifact_id": "artifact-1",
+                "filename": "26W006740-record.xls",
+                "size_bytes": 84480,
+                "content_sha256": "d" * 64,
+            }
+        ],
+    }
+    return {
+        "claimed": True,
+        "attempt": {"id": "attempt-1"},
+        "operation": {
+            "id": "operation-1",
+            "payload_checksum": "c" * 64,
+            "credential": {"account_name": ACCOUNT},
+            "request_summary": summary,
+        },
+    }
+
+
+def qualitative_upload_receipt(
+    claim: dict, *, target: str | None = None, filename: str | None = None
+) -> dict:
+    operation = claim["operation"]
+    summary = operation["request_summary"]
+    source = summary["files"][0]
+    target = target or summary["target_sample_number"]
+    filename = filename or summary["target_filename"]
+    return {
+        "schema_version": 1,
+        "receipt_type": bridge.LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
+        "operation_id": operation["id"],
+        "payload_checksum": operation["payload_checksum"],
+        "target_sample_number": target,
+        "target_filename": filename,
+        "source_artifact": {
+            "artifact_id": source["artifact_id"],
+            "filename": source["filename"],
+            "size_bytes": source["size_bytes"],
+            "content_sha256": source["content_sha256"],
+        },
+        "task_project": dict(summary["task_project"]),
+        "server_file": {
+            "filename": filename,
+            "size_bytes": source["size_bytes"],
+            "content_sha256": source["content_sha256"],
+        },
+        "main_record": {"id": "sha256:" + "3" * 16, "file_path": filename},
+        "picture_count": 0,
+        "readback": {
+            "main_count": 1,
+            "picture_count": 0,
+            "mismatches": [],
+            "target_filename": filename,
+        },
+        "stages": [
+            {"stage": stage}
+            for stage in bridge.QUALITATIVE_UPLOAD_PROGRESS_STAGES
+        ],
+        "reconciliation_required": False,
+    }
+
+
 def final_entry_machine_payload(*, controlled=False):
     payload = {
         "schema_version": 2,
@@ -787,6 +884,67 @@ class BridgeProtocolTests(unittest.TestCase):
             failure["error_code"],
             "special_wool_review_receipt_rejected",
         )
+
+    def test_qualitative_upload_receipt_accepts_exact_match(self):
+        claim = qualitative_upload_claim()
+        receipt = qualitative_upload_receipt(claim)
+        self.assertIs(
+            bridge.validate_special_wool_qualitative_upload_receipt(
+                claim["operation"],
+                claim["operation"]["request_summary"],
+                receipt,
+            ),
+            receipt,
+        )
+
+    def test_qualitative_upload_receipt_accepts_renumbered_actual(self):
+        # Writer 按旧系统锁内实况顺号写入 -2；requested 仍绑定预检的 -1。
+        claim = qualitative_upload_claim()
+        receipt = qualitative_upload_receipt(
+            claim,
+            target="26W006740-2",
+            filename="26W006740-2-26W006740-record.xls",
+        )
+        receipt["requested_sample_number"] = "26W006740-1"
+        receipt["renumbered"] = True
+        self.assertIs(
+            bridge.validate_special_wool_qualitative_upload_receipt(
+                claim["operation"],
+                claim["operation"]["request_summary"],
+                receipt,
+            ),
+            receipt,
+        )
+
+    def test_qualitative_upload_receipt_rejects_renumber_tampering(self):
+        claim = qualitative_upload_claim()
+        operation = claim["operation"]
+        summary = operation["request_summary"]
+        base = qualitative_upload_receipt(
+            claim,
+            target="26W006740-2",
+            filename="26W006740-2-26W006740-record.xls",
+        )
+        base["requested_sample_number"] = "26W006740-1"
+        base["renumbered"] = True
+
+        def rejected(receipt):
+            with self.assertRaises(bridge.BridgeError):
+                bridge.validate_special_wool_qualitative_upload_receipt(
+                    operation, summary, receipt
+                )
+
+        # 顺号标记与实际编号不一致
+        rejected({**base, "renumbered": False})
+        # requested 不绑定预检单
+        rejected({**base, "requested_sample_number": "26W006740-3"})
+        # 实际号不属于同一编号族
+        rejected({**base, "target_sample_number": "26X999999-1"})
+        # 旧版回执（无顺号字段）编号漂移必须拒绝
+        legacy = qualitative_upload_receipt(claim, target="26W006740-2")
+        rejected(legacy)
+        # 未知字段仍按契约拒绝
+        rejected({**qualitative_upload_receipt(claim), "unexpected": True})
 
     def test_writer_receives_permit_only_after_boundary_is_persisted(self):
         process = FakeProcess(
