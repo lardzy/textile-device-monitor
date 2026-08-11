@@ -224,8 +224,9 @@ try {
         @('--offline-validate', '--package', $paperMethodMismatchPath) 21 `
         @('task_project_binding_invalid')
 
-    # 判定变体（样式参照人工登记 260191286）：判定依据/总评定必填、
-    # 报告项目名称等于项目名、标准值列与实测值同文。
+    # 判定变体（样式参照人工登记 260191286/260174495）：判定依据/总评定必填、
+    # 报告项目名称等于项目名、标准值列必填（通常与实测值同文，允许人工按
+    # 任务单实际要求改成不同文本）。
     $paperJudgement = $paperGeneric.Replace(
         '"judge_basis": ""',
         '"judge_basis": "按客户要求"').Replace(
@@ -241,6 +242,14 @@ try {
         @('--offline-validate', '--package', $paperJudgementPath) 0 `
         @('package_validated', 'generic_details_validated', 'offline_validation_completed')
 
+    $paperJudgementDiffStdPath = Join-Path $fixtureDir 'paper-generic-judgement-diff-std.json'
+    Write-Utf8NoBom $paperJudgementDiffStdPath ($paperJudgement.Replace(
+        '"standard_value": "草浆、木浆、竹浆"',
+        '"standard_value": "定性，100%木浆"'))
+    Assert-Case 'paper judgement allows overridden standard value' `
+        @('--offline-validate', '--package', $paperJudgementDiffStdPath) 0 `
+        @('package_validated', 'generic_details_validated', 'offline_validation_completed')
+
     $paperJudgementNoBasisPath = Join-Path $fixtureDir 'paper-generic-judgement-no-basis.json'
     Write-Utf8NoBom $paperJudgementNoBasisPath ($paperJudgement.Replace(
         '"judge_basis": "按客户要求"',
@@ -253,7 +262,7 @@ try {
     Write-Utf8NoBom $paperJudgementNoStdValuePath ($paperJudgement.Replace(
         '"standard_value": "草浆、木浆、竹浆"',
         '"standard_value": ""'))
-    Assert-Case 'paper judgement requires standard value mirror' `
+    Assert-Case 'paper judgement requires standard value' `
         @('--offline-validate', '--package', $paperJudgementNoStdValuePath) 21 `
         @('paper_generic_record_contract_invalid')
 

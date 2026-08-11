@@ -27,16 +27,20 @@ from app.execution.engine import (
     _auto_complete_paper_judgement,
     _normalize_human_submission,
     _paper_judgement_form_schema,
+    _reopen_paper_judgement_for_standard_value,
     claim_human_task,
     claim_next_node,
     create_run,
+    effective_human_task_form_schema,
     execute_claimed_node,
     submit_human_task,
 )
 from app.execution.errors import ExecutionApiError
 from app.execution.models import (
+    ExecutionEdgeRun,
     ExecutionFileIndexEntry,
     ExecutionHumanTask,
+    ExecutionNodeAttempt,
     ExecutionNodeRun,
     ExecutionStorageRoot,
     ExecutionTaskSnapshotCache,
@@ -118,13 +122,22 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.engine.dispose()
         self.tempdir.cleanup()
 
-    def _xls(self, relative_path: str, value: object, *, sheet="Sheet1") -> Path:
+    def _xls(
+        self,
+        relative_path: str,
+        value: object,
+        *,
+        sheet="Sheet1",
+        m32: object = None,
+    ) -> Path:
         path = self.root_path / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         workbook = xlwt.Workbook()
         worksheet = workbook.add_sheet(sheet)
         if value is not None:
             worksheet.write(31, 22, value)
+        if m32 is not None:
+            worksheet.write(31, 12, m32)
         workbook.save(str(path))
         return path
 
@@ -134,6 +147,7 @@ class PaperFiberBackendTests(unittest.TestCase):
         value: object,
         *,
         sheet="Sheet1",
+        m32: object = None,
     ) -> Path:
         path = self.root_path / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +155,8 @@ class PaperFiberBackendTests(unittest.TestCase):
         worksheet = workbook.active
         worksheet.title = sheet
         worksheet["W32"] = value
+        if m32 is not None:
+            worksheet["M32"] = m32
         workbook.save(path)
         workbook.close()
         return path
@@ -239,10 +255,11 @@ class PaperFiberBackendTests(unittest.TestCase):
                 self.assertFalse(contains_standalone_100(value))
 
     def test_reads_sheet1_w32_from_ole_and_ooxml(self):
-        ole = self._xls("26W006687/result.xls", "木浆 100")
+        ole = self._xls("26W006687/result.xls", "木浆 100", m32="100%木浆")
         ole_profile = _read_result_profile(ole)
         self.assertEqual(ole_profile["status"], "matched")
         self.assertEqual(ole_profile["qualitative_result"], "木浆 100")
+        self.assertEqual(ole_profile["m32_value"], "100%木浆")
         self.assertTrue(ole_profile["contains_standalone_100"])
         self.assertEqual(ole_profile["unit"], "%")
 
@@ -253,6 +270,8 @@ class PaperFiberBackendTests(unittest.TestCase):
             ooxml_profile["qualitative_result"],
             "草浆、木浆、竹浆",
         )
+        # 未写 M32 时数据源为空，不影响结果读取
+        self.assertIsNone(ooxml_profile["m32_value"])
         self.assertFalse(ooxml_profile["contains_standalone_100"])
         self.assertEqual(ooxml_profile["unit"], "")
 
@@ -311,6 +330,7 @@ class PaperFiberBackendTests(unittest.TestCase):
                     "worksheet": "Sheet1",
                     "cell": "W32",
                     "w32_value": "木浆 100",
+                    "m32_value": "",
                     "unit": "%",
                 },
             },
@@ -454,6 +474,7 @@ class PaperFiberBackendTests(unittest.TestCase):
                 "worksheet": "Sheet1",
                 "cell": "W32",
                 "w32_value": "木浆 100",
+                "m32_value": "",
                 "unit": "%",
             },
         )
@@ -724,6 +745,7 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertIs(output["judgement_required"], False)
         self.assertIsNone(output["judge_basis"])
         self.assertIsNone(output["judgement"])
+        self.assertIsNone(output["standard_value"])
         self.assertEqual(
             output["auto_submit_reason"], "judgement_not_required"
         )
@@ -749,8 +771,13 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertEqual(
             schema["properties"]["judgement"]["enum"], ["符合", "不符合"]
         )
+        # 选择节点尚未完成：标准值字段存在但无默认值与数据源
+        standard_field = schema["properties"]["standard_value"]
+        self.assertEqual(standard_field["title"], "标准值与允差")
+        self.assertNotIn("default", standard_field)
+        self.assertNotIn("x-copy-sources", standard_field)
         self.assertEqual(
-            schema["required"], ["judge_basis", "judgement"]
+            schema["required"], ["judge_basis", "judgement", "standard_value"]
         )
 
     def test_judgement_form_falls_back_to_free_text_without_basis(self):
@@ -780,7 +807,11 @@ class PaperFiberBackendTests(unittest.TestCase):
             self.db,
             run=run,
             node_run=context.node_run,
-            data={"judge_basis": " 按客户要求 ", "judgement": "符合"},
+            data={
+                "judge_basis": " 按客户要求 ",
+                "judgement": "符合",
+                "standard_value": " 定性，100%木浆 ",
+            },
         )
         self.assertEqual(
             output,
@@ -788,8 +819,287 @@ class PaperFiberBackendTests(unittest.TestCase):
                 "judgement_required": True,
                 "judge_basis": "按客户要求",
                 "judgement": "符合",
+                "standard_value": "定性，100%木浆",
             },
         )
+
+    def test_judgement_submission_requires_standard_value(self):
+        run = self._paper_run("paper-judgement-no-std")
+        context = self._judgement_context(
+            run,
+            {
+                "selected_project": {"give_judgement": 1},
+                "task": {"check_basis": "按客户要求"},
+            },
+        )
+        with self.assertRaises(ExecutionApiError) as raised:
+            _normalize_human_submission(
+                self.db,
+                run=run,
+                node_run=context.node_run,
+                data={"judge_basis": "按客户要求", "judgement": "符合"},
+            )
+        self.assertEqual(
+            raised.exception.code, "paper_standard_value_required"
+        )
+
+    def test_judgement_form_offers_w32_default_and_copy_sources(self):
+        run = self._paper_run("paper-judgement-sources")
+        selection = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="select")
+            .one()
+        )
+        selection.status = "succeeded"
+        selection.output_data = {
+            "primary_file": {
+                "result": {
+                    "w32_value": "木浆 100",
+                    "m32_value": "100%木浆",
+                }
+            }
+        }
+        self.db.flush()
+        context = self._judgement_context(
+            run,
+            {
+                "selected_project": {
+                    "give_judgement": 1,
+                    "remark": "定性，100%木浆",
+                },
+                "task": {"check_basis": "按客户要求"},
+            },
+        )
+        schema = _paper_judgement_form_schema(context)
+        standard_field = schema["properties"]["standard_value"]
+        # 默认沿用 W32 同文结果，人工可按数据源改写
+        self.assertEqual(standard_field["default"], "木浆 100")
+        self.assertEqual(
+            standard_field["x-copy-sources"],
+            [
+                {"label": "任务单说明列", "text": "定性，100%木浆"},
+                {"label": "Sheet1!M32", "text": "100%木浆"},
+            ],
+        )
+
+    def test_open_legacy_judgement_task_uses_current_strict_schema(self):
+        run = self._paper_run("paper-judgement-open-upgrade")
+        selection = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="select")
+            .one()
+        )
+        selection.status = "succeeded"
+        selection.output_data = {
+            "primary_file": {
+                "result": {
+                    "w32_value": "木浆 100",
+                    "m32_value": "100%木浆",
+                }
+            }
+        }
+        judgement = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="judgement-input")
+            .one()
+        )
+        judgement.status = "waiting_human"
+        judgement.input_data = {
+            "selected_project": {
+                "give_judgement": 1,
+                "remark": "定性，100%木浆",
+            },
+            "task": {"check_basis": "按客户要求"},
+        }
+        legacy_schema = {
+            "type": "object",
+            "properties": {
+                "judge_basis": {"type": "string"},
+                "judgement": {
+                    "type": "string",
+                    "enum": ["符合", "不符合"],
+                },
+            },
+            "required": ["judge_basis", "judgement"],
+            "additionalProperties": False,
+        }
+        task = ExecutionHumanTask(
+            run_id=run.id,
+            node_run_id=judgement.id,
+            title="确认纸类定性判定信息",
+            form_schema=legacy_schema,
+            status="open",
+            assigned_user_id=self.user.id,
+        )
+        self.db.add(task)
+        self.db.flush()
+
+        current_schema = effective_human_task_form_schema(task)
+        self.assertEqual(
+            current_schema["required"],
+            ["judge_basis", "judgement", "standard_value"],
+        )
+        self.assertEqual(
+            current_schema["properties"]["standard_value"]["default"],
+            "木浆 100",
+        )
+        completed = submit_human_task(
+            self.db,
+            task_id=task.id,
+            expected_revision=task.revision,
+            data={
+                "judge_basis": "按客户要求",
+                "judgement": "符合",
+                "standard_value": "定性，100%木浆",
+            },
+            actor=self.user,
+        )
+        self.assertEqual(
+            completed.result_data["standard_value"],
+            "定性，100%木浆",
+        )
+        self.assertIn(
+            "standard_value",
+            completed.form_schema["properties"],
+        )
+
+    def test_completed_legacy_judgement_reopens_before_final_entry(self):
+        run = self._paper_run("paper-judgement-completed-upgrade")
+        selection = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="select")
+            .one()
+        )
+        selection.status = "succeeded"
+        selection.output_data = {
+            "primary_file": {
+                "result": {
+                    "w32_value": "木浆 100",
+                    "m32_value": "100%木浆",
+                }
+            }
+        }
+        selected_project = {
+            "give_judgement": 1,
+            "remark": "定性，100%木浆",
+        }
+        judgement = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="judgement-input")
+            .one()
+        )
+        judgement.status = "succeeded"
+        judgement.input_data = {
+            "selected_project": selected_project,
+            "task": {"check_basis": "按客户要求"},
+        }
+        judgement.output_data = {
+            "judgement_required": True,
+            "judge_basis": "按客户要求",
+            "judgement": "符合",
+        }
+        judgement.finished_at = utcnow()
+        task = ExecutionHumanTask(
+            run_id=run.id,
+            node_run_id=judgement.id,
+            title="确认纸类定性判定信息",
+            form_schema={
+                "type": "object",
+                "properties": {
+                    "judge_basis": {"type": "string"},
+                    "judgement": {"type": "string"},
+                },
+                "required": ["judge_basis", "judgement"],
+                "additionalProperties": False,
+            },
+            result_data=dict(judgement.output_data),
+            status="completed",
+            assigned_user_id=self.user.id,
+            completed_by_id=self.user.id,
+            completed_at=utcnow(),
+        )
+        self.db.add(task)
+        edge = (
+            self.db.query(ExecutionEdgeRun)
+            .filter_by(
+                run_id=run.id,
+                source_node_id="judgement-input",
+                target_node_id="register-result",
+            )
+            .one()
+        )
+        edge.status = "selected"
+        edge.resolved_at = utcnow()
+        entry = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="register-result")
+            .one()
+        )
+        entry.status = "running"
+        entry.attempt_count = 1
+        entry.lease_owner = "paper-worker"
+        entry.lease_token = "entry-lease"
+        entry.lease_expires_at = utcnow() + timedelta(seconds=30)
+        entry.started_at = utcnow()
+        entry_input = {
+            "selected_project": selected_project,
+            "judgement_input": dict(judgement.output_data),
+        }
+        entry.input_data = entry_input
+        self.db.add(
+            ExecutionNodeAttempt(
+                node_run_id=entry.id,
+                attempt_number=1,
+                worker_id="paper-worker",
+                lease_token="entry-lease",
+                status="running",
+                input_data=entry_input,
+            )
+        )
+        run.status = "running"
+        self.db.flush()
+        entry_definition = next(
+            node
+            for node in run.definition_snapshot["nodes"]
+            if node["id"] == "register-result"
+        )
+        context = NodeExecutionContext(
+            db=self.db,
+            run=run,
+            node_run=entry,
+            node=entry_definition,
+            input_data=entry_input,
+            worker_id="paper-worker",
+            lease_token="entry-lease",
+        )
+
+        self.assertTrue(
+            _reopen_paper_judgement_for_standard_value(self.db, context)
+        )
+        self.assertEqual(judgement.status, "waiting_human")
+        self.assertEqual(task.status, "open")
+        self.assertEqual(
+            task.draft_data,
+            {"judge_basis": "按客户要求", "judgement": "符合"},
+        )
+        self.assertEqual(entry.status, "pending")
+        self.assertEqual(edge.status, "pending")
+        self.assertEqual(run.status, "waiting_human")
+
+        submit_human_task(
+            self.db,
+            task_id=task.id,
+            expected_revision=task.revision,
+            data={
+                "judge_basis": "按客户要求",
+                "judgement": "符合",
+                "standard_value": "定性，100%木浆",
+            },
+            actor=self.user,
+        )
+        self.assertEqual(judgement.status, "succeeded")
+        self.assertEqual(entry.status, "ready")
+        self.assertEqual(edge.status, "selected")
 
     def test_workflow_rejects_multiple_files_and_auto_marks_single_primary(self):
         first = self._xls("26W006701/first.xls", "木浆 100")

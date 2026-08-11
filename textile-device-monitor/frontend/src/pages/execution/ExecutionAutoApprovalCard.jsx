@@ -87,6 +87,8 @@ export default function ExecutionAutoApprovalCard({
 
   const summary = prepared?.request_summary || {};
   const business = summary.business_fields || {};
+  const resultContract = summary.result_contract || {};
+  const judgementContract = summary.judgement_contract || {};
   const files = Array.isArray(summary.files) ? summary.files : [];
   const executionAvailable = summary?.safety?.execution_available !== false;
   const autoApprovable = Boolean(prepared && canApprove && executionAvailable);
@@ -227,6 +229,24 @@ export default function ExecutionAutoApprovalCard({
             key: 'inspector',
             label: '检验员',
             children: summary.inspector,
+          }] : []),
+          ...(resultContract.value ? [{
+            key: 'paper-result',
+            label: `${resultContract.worksheet || 'Sheet1'}!${resultContract.cell || 'W32'}`,
+            children: `${resultContract.value}${resultContract.unit || ''}`,
+          }] : []),
+          ...(judgementContract.required === true ? [{
+            key: 'judge-basis',
+            label: '判定依据',
+            children: judgementContract.judge_basis || '—',
+          }, {
+            key: 'judgement',
+            label: '判定结果',
+            children: judgementContract.judgement || '—',
+          }, {
+            key: 'standard-value',
+            label: '标准值与允差（人工确认）',
+            children: judgementContract.standard_value || '—',
           }] : []),
         ]}
       />

@@ -8,7 +8,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from sqlalchemy import and_, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.config import settings
 from app.execution.errors import ExecutionApiError, conflict, not_found
@@ -860,6 +860,15 @@ def _normalize_human_submission(
             node = _definition_node_map(run).get(node_run.node_id) or {}
             config = node.get("config") or {}
             if config.get("paper_judgement"):
+                standard_value = " ".join(
+                    str(data.get("standard_value") or "").strip().split()
+                )
+                if not standard_value:
+                    raise ExecutionApiError(
+                        422,
+                        "paper_standard_value_required",
+                        "请填写标准值与允差",
+                    )
                 return {
                     "judgement_required": True,
                     "judge_basis": " ".join(
@@ -868,6 +877,7 @@ def _normalize_human_submission(
                     "judgement": " ".join(
                         str(data.get("judgement") or "").strip().split()
                     ),
+                    "standard_value": standard_value,
                 }
         return data
     selected = data.get("selected_files")
@@ -1030,6 +1040,41 @@ def _truthy_judgement_flag(value: Any) -> bool:
     )
 
 
+def _paper_selected_record_result(context: "NodeExecutionContext") -> dict[str, Any]:
+    """已选纸类原始记录的 result（含 W32/M32），供判定表单展示数据源。
+
+    判定节点本身不映射选择节点输出（保持 DAG 定义不变），这里按流程定义
+    找到 human.file_selection 节点并读取其已成功 node_run 的
+    primary_file.result。节点尚未完成时返回空 dict，表单退化为无数据源。
+    """
+
+    definition = _definition_node_map(context.run)
+    selection_node_ids = [
+        node_id
+        for node_id, node in definition.items()
+        if isinstance(node, dict) and node.get("type") == "human.file_selection"
+    ]
+    if not selection_node_ids:
+        return {}
+    node_runs = (
+        context.db.query(ExecutionNodeRun)
+        .filter(
+            ExecutionNodeRun.run_id == context.run.id,
+            ExecutionNodeRun.node_id.in_(selection_node_ids),
+            ExecutionNodeRun.status == "succeeded",
+        )
+        .all()
+    )
+    for node_run in node_runs:
+        primary = (node_run.output_data or {}).get("primary_file") or {}
+        result = primary.get("result")
+        if isinstance(result, dict) and (
+            result.get("w32_value") or result.get("m32_value")
+        ):
+            return result
+    return {}
+
+
 def _compact_text_options(value: Any) -> list[str]:
     values = value if isinstance(value, list) else [value]
     result: list[str] = []
@@ -1068,6 +1113,7 @@ def _auto_complete_paper_judgement(
         "judgement_required": False,
         "judge_basis": None,
         "judgement": None,
+        "standard_value": None,
         "auto_submitted": True,
         "auto_submit_reason": "judgement_not_required",
     }
@@ -1076,7 +1122,12 @@ def _auto_complete_paper_judgement(
 def _paper_judgement_form_schema(
     context: "NodeExecutionContext",
 ) -> Optional[dict[str, Any]]:
-    """为纸类判定节点动态生成表单：判定依据选项取自任务单快照。"""
+    """为纸类判定节点动态生成表单：判定依据选项取自任务单快照。
+
+    “标准值与允差”默认填入所选原始记录的 Sheet1!W32 结果（与人工登记的
+    同文样式一致），并提供任务单说明列与 Sheet1!M32 作为可复制/填入的
+    数据源，人工可按实际要求修改后提交。
+    """
 
     if not _paper_judgement_node_config(context):
         return None
@@ -1097,6 +1148,38 @@ def _paper_judgement_form_schema(
             "minLength": 1,
             "maxLength": 500,
         }
+    selected_project = input_data.get("selected_project")
+    remark = " ".join(
+        str(
+            (selected_project or {}).get("remark") or ""
+        ).strip().split()
+    )
+    record_result = _paper_selected_record_result(context)
+    w32_value = " ".join(
+        str(record_result.get("w32_value") or "").strip().split()
+    )
+    m32_value = " ".join(
+        str(record_result.get("m32_value") or "").strip().split()
+    )
+    copy_sources: list[dict[str, str]] = []
+    if remark:
+        copy_sources.append({"label": "任务单说明列", "text": remark})
+    if m32_value:
+        copy_sources.append({"label": "Sheet1!M32", "text": m32_value})
+    standard_field: dict[str, Any] = {
+        "type": "string",
+        "title": "标准值与允差",
+        "minLength": 1,
+        "maxLength": 500,
+        "description": (
+            "默认填入 Sheet1!W32 结果；如与本单判定要求不一致，"
+            "请从上方数据源复制或选词修改。"
+        ),
+    }
+    if w32_value:
+        standard_field["default"] = w32_value
+    if copy_sources:
+        standard_field["x-copy-sources"] = copy_sources
     return {
         "type": "object",
         "properties": {
@@ -1106,10 +1189,217 @@ def _paper_judgement_form_schema(
                 "title": "判定结果",
                 "enum": ["符合", "不符合"],
             },
+            "standard_value": standard_field,
         },
-        "required": ["judge_basis", "judgement"],
+        "required": ["judge_basis", "judgement", "standard_value"],
         "additionalProperties": False,
     }
+
+
+def effective_human_task_form_schema(
+    task: ExecutionHumanTask,
+) -> dict[str, Any]:
+    """Return the current paper-judgement schema for persisted open tasks.
+
+    Human-task schemas are stored with the run.  Tasks created before the
+    standard-value field was introduced therefore still carry the old strict
+    two-field schema.  Regenerating only this built-in dynamic schema keeps
+    those tasks usable without weakening validation for arbitrary workflows.
+    """
+
+    persisted = task.form_schema or {}
+    if task.status not in {"open", "claimed"}:
+        return persisted
+    db = object_session(task)
+    node_run = task.node_run
+    run = node_run.run if node_run is not None else None
+    if db is None or node_run is None or run is None:
+        return persisted
+    node = _definition_node_map(run).get(node_run.node_id)
+    if not isinstance(node, dict):
+        return persisted
+    context = NodeExecutionContext(
+        db=db,
+        run=run,
+        node_run=node_run,
+        node=node,
+        input_data=node_run.input_data or {},
+        worker_id="human-task-schema",
+        lease_token=node_run.lease_token or "",
+    )
+    current = _paper_judgement_form_schema(context)
+    return current if current is not None else persisted
+
+
+def _reopen_paper_judgement_for_standard_value(
+    db: Session,
+    context: "NodeExecutionContext",
+) -> bool:
+    """Reopen a pre-upgrade judgement task instead of mirroring W32 silently.
+
+    The paper workflow places the judgement node immediately before the final
+    record-entry node.  A run that crossed that node before this contract was
+    introduced has no human-confirmed ``standard_value``.  Before preparing
+    any external side effect, move that single edge back to human confirmation
+    and retire the current Worker attempt.  Submitting the reopened task
+    resolves the edge normally and makes the entry node runnable again.
+    """
+
+    if context.node_run.node_type != LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE:
+        return False
+    input_data = context.input_data or {}
+    selected_project = input_data.get("selected_project")
+    give_judgement = (
+        selected_project.get("give_judgement")
+        if isinstance(selected_project, dict)
+        else None
+    )
+    if not _truthy_judgement_flag(give_judgement):
+        return False
+    judgement_input = input_data.get("judgement_input")
+    if isinstance(judgement_input, dict) and str(
+        judgement_input.get("standard_value") or ""
+    ).strip():
+        return False
+
+    run, entry_node = _lock_run_and_node(db, context.node_run.id)
+    if (
+        entry_node.status != "running"
+        or entry_node.lease_token != context.lease_token
+    ):
+        raise conflict(
+            "node_lease_lost",
+            "节点租约已失效，不能重新打开判定确认任务",
+            node_id=entry_node.node_id,
+        )
+    judgement_definitions = [
+        node
+        for node in (run.definition_snapshot or {}).get("nodes", [])
+        if isinstance(node, dict)
+        and isinstance(node.get("config"), dict)
+        and node["config"].get("paper_judgement")
+    ]
+    if len(judgement_definitions) != 1:
+        return False
+    judgement_definition = judgement_definitions[0]
+    judgement_node = (
+        db.query(ExecutionNodeRun)
+        .filter(
+            ExecutionNodeRun.run_id == run.id,
+            ExecutionNodeRun.node_id == judgement_definition.get("id"),
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if judgement_node is None or judgement_node.status != "succeeded":
+        return False
+    task = (
+        db.query(ExecutionHumanTask)
+        .filter(ExecutionHumanTask.node_run_id == judgement_node.id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    edge = (
+        db.query(ExecutionEdgeRun)
+        .filter(
+            ExecutionEdgeRun.run_id == run.id,
+            ExecutionEdgeRun.source_node_id == judgement_node.node_id,
+            ExecutionEdgeRun.target_node_id == entry_node.node_id,
+        )
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if task is None or task.status != "completed" or edge is None:
+        return False
+
+    judgement_context = NodeExecutionContext(
+        db=db,
+        run=run,
+        node_run=judgement_node,
+        node=judgement_definition,
+        input_data=judgement_node.input_data or {},
+        worker_id="paper-judgement-upgrade",
+        lease_token="",
+    )
+    form_schema = _paper_judgement_form_schema(judgement_context)
+    if form_schema is None:
+        return False
+
+    previous_output = (
+        dict(judgement_node.output_data)
+        if isinstance(judgement_node.output_data, dict)
+        else {}
+    )
+    draft_data = {
+        key: previous_output[key]
+        for key in ("judge_basis", "judgement")
+        if previous_output.get(key)
+    }
+    _finish_attempt(
+        db,
+        entry_node,
+        lease_token=context.lease_token,
+        status="cancelled",
+        error_code="paper_judgement_contract_upgraded",
+        error_message="等待人工补充确认标准值与允差",
+    )
+    entry_node.status = "pending"
+    entry_node.input_data = {}
+    entry_node.output_data = {}
+    entry_node.error_code = None
+    entry_node.error_message = None
+    entry_node.ready_at = utcnow()
+    entry_node.started_at = None
+    entry_node.finished_at = None
+    entry_node.lease_owner = None
+    entry_node.lease_token = None
+    entry_node.lease_expires_at = None
+
+    edge.status = "pending"
+    edge.resolved_at = None
+    judgement_node.status = "waiting_human"
+    judgement_node.output_data = {}
+    judgement_node.error_code = None
+    judgement_node.error_message = None
+    judgement_node.finished_at = None
+
+    task.status = "open"
+    task.form_schema = form_schema
+    task.draft_data = draft_data
+    task.result_data = {}
+    task.revision += 1
+    task.claimed_by_id = None
+    task.claimed_at = None
+    task.completed_by_id = None
+    task.completed_at = None
+    if run.status != "paused":
+        run.status = "waiting_human"
+    run.finished_at = None
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type="human_task.reopened",
+        payload={
+            "task_id": task.id,
+            "node_id": judgement_node.node_id,
+            "reason": "paper_standard_value_confirmation_required",
+            "reset_node_id": entry_node.node_id,
+        },
+    )
+    append_run_event(
+        db,
+        run_id=run.id,
+        event_type="node.reset_for_human_confirmation",
+        payload={
+            "node_id": entry_node.node_id,
+            "human_task_id": task.id,
+            "reason": "paper_standard_value_confirmation_required",
+        },
+    )
+    return True
 
 
 def _latest_published_version(
@@ -3508,6 +3798,8 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                 )
             return
         if node_run.node_type in EXTERNAL_NODE_TYPES:
+            if _reopen_paper_judgement_for_standard_value(db, context):
+                return
             _prepare_external_operation_wait(db, context)
             return
         executor = node_registry.executor(
@@ -3696,13 +3988,18 @@ def submit_human_task(
             "人工任务对应节点已不再等待处理",
             status=node_run.status,
         )
+    form_schema = effective_human_task_form_schema(task)
     _raise_payload_validation(
-        schema=task.form_schema or {},
+        schema=form_schema,
         value=data,
         path_prefix="$.data",
         code="human_task_input_invalid",
         message="人工任务输入校验失败",
     )
+    if form_schema != (task.form_schema or {}):
+        # Preserve the contract that actually validated the submission for
+        # later audit/history views of a task created before this upgrade.
+        task.form_schema = form_schema
     normalized_data = _normalize_human_submission(
         db,
         run=run,

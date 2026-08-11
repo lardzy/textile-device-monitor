@@ -937,4 +937,70 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
     expect(dialog).toHaveTextContent('Sheet1!W32');
     expect(dialog).toHaveTextContent('木浆 100%');
   });
+
+  it('纸类登记批准卡片和弹窗展示人工确认的判定字段', async () => {
+    const paperEntry = {
+      id: 'paper-entry-judgement',
+      status: 'prepared',
+      payload_checksum: '4'.repeat(64),
+      preflight_expires_at: '2026-08-11T12:00:00Z',
+      request_summary: {
+        operation_type: 'legacy_generic_check_record_entry',
+        source_inspection_number: '260174495',
+        target_sample_number: '260174495',
+        result_contract: {
+          worksheet: 'Sheet1',
+          cell: 'W32',
+          value: '木浆 100',
+          unit: '%',
+        },
+        judgement_contract: {
+          required: true,
+          judge_basis: '按客户要求',
+          judgement: '符合',
+          standard_value: '定性，100%木浆',
+        },
+        business_fields: {
+          inspection_method: 'GB/T 4688-2020',
+          inspection_item: '纸、纸板和纸浆纤维鉴别分析',
+          inspection_copies: 1,
+        },
+        safety: {
+          execution_available: true,
+          proof_required: false,
+        },
+      },
+    };
+    server.use(
+      http.get(
+        '/api/execution/v1/runs/run-1/external-operations',
+        () => HttpResponse.json({ items: [paperEntry] }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(
+      <ExecutionExternalOperationPanel
+        runId="run-1"
+        canApprove
+      />,
+    );
+
+    expect(await screen.findByText('260174495')).toBeInTheDocument();
+    expect(screen.getByText('判定依据')).toBeInTheDocument();
+    expect(screen.getByText('按客户要求')).toBeInTheDocument();
+    expect(screen.getByText('判定结果')).toBeInTheDocument();
+    expect(screen.getByText('符合')).toBeInTheDocument();
+    expect(screen.getByText('标准值与允差（人工确认）')).toBeInTheDocument();
+    expect(screen.getByText('定性，100%木浆')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '核对并批准预检单' }));
+    const dialog = screen.getByRole('dialog', {
+      name: '最终核对本次纸类定性结果登记预检单',
+    });
+    expect(dialog).toHaveTextContent('260174495');
+    expect(dialog).toHaveTextContent('木浆 100%');
+    expect(dialog).toHaveTextContent('按客户要求');
+    expect(dialog).toHaveTextContent('符合');
+    expect(dialog).toHaveTextContent('定性，100%木浆');
+  });
 });

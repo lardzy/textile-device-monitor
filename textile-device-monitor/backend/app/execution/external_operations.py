@@ -4850,14 +4850,24 @@ def prepare_legacy_generic_check_record_entry_operation(
     judgement = " ".join(
         str(judgement_input.get("judgement") or "").strip().split()
     )
+    # 标准值与允差由人工在判定确认步骤核对填写（默认 W32 同文，可改）。
+    standard_value = " ".join(
+        str(judgement_input.get("standard_value") or "").strip().split()
+    )
     if judgement_required and (not judge_basis or not judgement):
         raise conflict(
             "paper_fiber_judgement_required",
             "任务单要求对本项目判定，请先完成判定信息确认后再登记",
         )
+    if judgement_required and not standard_value:
+        raise conflict(
+            "paper_fiber_standard_value_required",
+            "请先在确认判定信息步骤填写标准值与允差后再登记",
+        )
     if not judgement_required:
         judge_basis = ""
         judgement = ""
+        standard_value = ""
     override = _controlled_final_entry_override(
         input_data, sample_number=source_number
     )
@@ -4889,7 +4899,7 @@ def prepare_legacy_generic_check_record_entry_operation(
                 {
                     "standard_location": "",
                     "standard_value": (
-                        result_value if judgement_required else ""
+                        standard_value if judgement_required else ""
                     ),
                     "real_location": "",
                     "real_value": result_value,
@@ -4915,6 +4925,14 @@ def prepare_legacy_generic_check_record_entry_operation(
             ),
         },
         "result_contract": dict(result_contract),
+        # Public, checksum-bound contract used by both the approval UI and the
+        # Windows Bridge to verify the exact human-confirmed judgement fields.
+        "judgement_contract": {
+            "required": judgement_required,
+            "judge_basis": judge_basis,
+            "judgement": judgement,
+            "standard_value": standard_value,
+        },
         "final_entry_package": final_entry_package,
         "final_entry_summary": {
             "expected_task_check_count": 1,
@@ -5168,6 +5186,8 @@ def public_external_operation(
     summary = operation.request_summary or {}
     remote_write_performed = _public_remote_write_performed(operation)
     business_fields = summary.get("business_fields")
+    result_contract = summary.get("result_contract")
+    judgement_contract = summary.get("judgement_contract")
     files = summary.get("files")
     public_files = [
         {
@@ -5225,6 +5245,27 @@ def public_external_operation(
         "task_project": (
             dict(summary.get("task_project"))
             if isinstance(summary.get("task_project"), dict)
+            else None
+        ),
+        "result_contract": (
+            {
+                key: result_contract.get(key)
+                for key in ("worksheet", "cell", "value", "unit")
+            }
+            if isinstance(result_contract, dict)
+            else None
+        ),
+        "judgement_contract": (
+            {
+                key: judgement_contract.get(key)
+                for key in (
+                    "required",
+                    "judge_basis",
+                    "judgement",
+                    "standard_value",
+                )
+            }
+            if isinstance(judgement_contract, dict)
             else None
         ),
         "final_entry_summary": (

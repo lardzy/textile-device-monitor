@@ -37,7 +37,9 @@ PAPER_FIBER_PROJECT_NAME = "纸、纸板和纸浆纤维鉴别分析"
 PAPER_FIBER_TEST_METHOD = "GB/T 4688-2020"
 PAPER_FIBER_WORKSHEET = "Sheet1"
 PAPER_FIBER_RESULT_CELL = "W32"
-PAPER_FIBER_PROFILE_VERSION = 1
+# 判定“标准值与允差”的人工选词/复制数据源之一（另一个为任务单项目说明列）。
+PAPER_FIBER_STANDARD_SOURCE_CELL = "M32"
+PAPER_FIBER_PROFILE_VERSION = 2
 MAX_WORKBOOK_VALIDATION_MATCHES = 50
 _PROFILE_CACHE_KEY = (
     f"{PAPER_FIBER_NODE_TYPE}@{PAPER_FIBER_PROFILE_VERSION}"
@@ -94,6 +96,7 @@ def _read_result_profile(path: Path) -> dict[str, Any]:
         "result_cell": PAPER_FIBER_RESULT_CELL,
         "worksheet_exists": False,
         "qualitative_result": None,
+        "m32_value": None,
         "contains_standalone_100": False,
         "unit": "",
     }
@@ -131,6 +134,12 @@ def _read_result_profile(path: Path) -> dict[str, Any]:
                     if sheet.nrows > 31 and sheet.ncols > 22
                     else None
                 )
+                # Sheet1!M32：判定标准值的人工核对数据源，缺失不阻断读取。
+                raw_m32 = (
+                    sheet.cell_value(31, 12)
+                    if sheet.nrows > 31 and sheet.ncols > 12
+                    else None
+                )
             finally:
                 workbook.release_resources()
         else:
@@ -150,6 +159,9 @@ def _read_result_profile(path: Path) -> dict[str, Any]:
                     raw_value = workbook[PAPER_FIBER_WORKSHEET][
                         PAPER_FIBER_RESULT_CELL
                     ].value
+                    raw_m32 = workbook[PAPER_FIBER_WORKSHEET][
+                        PAPER_FIBER_STANDARD_SOURCE_CELL
+                    ].value
                 finally:
                     workbook.close()
     except Exception as exc:
@@ -158,6 +170,7 @@ def _read_result_profile(path: Path) -> dict[str, Any]:
         return profile
 
     result = _display_value(raw_value)
+    profile["m32_value"] = _display_value(raw_m32)
     if result is None:
         profile["status"] = "result_empty"
         return profile
@@ -227,6 +240,7 @@ def _profile_for_entry(
             "result_cell": PAPER_FIBER_RESULT_CELL,
             "worksheet_exists": False,
             "qualitative_result": None,
+            "m32_value": None,
             "contains_standalone_100": False,
             "unit": "",
             "status": "file_unavailable",
@@ -455,6 +469,7 @@ def paper_fiber_match(
                         "cell": PAPER_FIBER_RESULT_CELL,
                         "w32_value": result,
                         "qualitative_result": result,
+                        "m32_value": str(profile.get("m32_value") or ""),
                         "contains_standalone_100": bool(
                             profile["contains_standalone_100"]
                         ),
@@ -484,6 +499,7 @@ def paper_fiber_match(
                 "worksheet": str(preview_result["worksheet"]),
                 "cell": str(preview_result["cell"]),
                 "w32_value": str(preview_result["w32_value"]),
+                "m32_value": str(preview_result.get("m32_value") or ""),
                 "unit": str(preview_result["unit"]),
             },
         }

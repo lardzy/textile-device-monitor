@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -31,6 +32,7 @@ from app.execution.external_operations import (
     prepare_legacy_generic_check_record_entry_operation,
     prepare_legacy_special_wool_qualitative_review_operation,
     prepare_legacy_special_wool_qualitative_upload_operation,
+    public_external_operation,
     validate_external_receipt,
 )
 from app.execution.models import (
@@ -44,6 +46,21 @@ from app.execution.models import (
     ExecutionUser,
     ExecutionWorkflow,
 )
+
+
+_BRIDGE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tools"
+    / "legacy_fibrecheck_bridge"
+    / "bridge.py"
+)
+_BRIDGE_SPEC = importlib.util.spec_from_file_location(
+    "paper_external_contract_bridge",
+    _BRIDGE_PATH,
+)
+assert _BRIDGE_SPEC is not None and _BRIDGE_SPEC.loader is not None
+_BRIDGE_MODULE = importlib.util.module_from_spec(_BRIDGE_SPEC)
+_BRIDGE_SPEC.loader.exec_module(_BRIDGE_MODULE)
 
 
 class PaperExternalOperationTests(unittest.TestCase):
@@ -490,7 +507,12 @@ class PaperExternalOperationTests(unittest.TestCase):
         project["give_judgement"] = 1
         entry = self._prepare_generic_entry(
             project,
-            judgement_input={"judge_basis": "按客户要求", "judgement": "符合"},
+            judgement_input={
+                "judge_basis": "按客户要求",
+                "judgement": "符合",
+                # 人工在判定确认步骤把标准值改成与实测值不同的文本
+                "standard_value": "定性，100%木浆",
+            },
         )
         payload = entry.request_summary["final_entry_package"]
         header = payload["generic_record"]["header"]
@@ -502,10 +524,40 @@ class PaperExternalOperationTests(unittest.TestCase):
         )
         self.assertEqual(header["unit"], "%")
         self.assertEqual(header["test_method"], PAPER_FIBER_TEST_METHOD)
-        self.assertEqual(detail["standard_value"], "100")
+        self.assertEqual(detail["standard_value"], "定性，100%木浆")
         self.assertEqual(detail["real_value"], "100")
         self.assertTrue(
             entry.request_summary["final_entry_summary"]["judgement_required"]
+        )
+        self.assertEqual(
+            entry.request_summary["judgement_contract"],
+            {
+                "required": True,
+                "judge_basis": "按客户要求",
+                "judgement": "符合",
+                "standard_value": "定性，100%木浆",
+            },
+        )
+        self.assertEqual(
+            public_external_operation(entry)["request_summary"][
+                "judgement_contract"
+            ],
+            entry.request_summary["judgement_contract"],
+        )
+        bridge_view = bridge_external_operation(
+            entry,
+            credential=self.credential,
+        )
+        self.assertEqual(
+            bridge_view["request_summary"]["judgement_contract"],
+            entry.request_summary["judgement_contract"],
+        )
+        self.assertEqual(
+            _BRIDGE_MODULE.validate_generic_final_entry_machine_payload(
+                bridge_view,
+                bridge_view["request_summary"],
+            ),
+            payload,
         )
         # give_judgement 属于辅助信息，不进入 task_project 严格契约
         self.assertNotIn("give_judgement", payload["task_project"])
@@ -519,11 +571,30 @@ class PaperExternalOperationTests(unittest.TestCase):
             raised.exception.code, "paper_fiber_judgement_required"
         )
 
+    def test_generic_entry_judgement_without_standard_value_conflicts(self):
+        project = self._project()
+        project["give_judgement"] = 1
+        with self.assertRaises(ExecutionApiError) as raised:
+            self._prepare_generic_entry(
+                project,
+                judgement_input={
+                    "judge_basis": "按客户要求",
+                    "judgement": "符合",
+                },
+            )
+        self.assertEqual(
+            raised.exception.code, "paper_fiber_standard_value_required"
+        )
+
     def test_generic_entry_without_judgement_ignores_stray_values(self):
         project = self._project()
         entry = self._prepare_generic_entry(
             project,
-            judgement_input={"judge_basis": "按客户要求", "judgement": "符合"},
+            judgement_input={
+                "judge_basis": "按客户要求",
+                "judgement": "符合",
+                "standard_value": "不应写入",
+            },
         )
         payload = entry.request_summary["final_entry_package"]
         header = payload["generic_record"]["header"]
@@ -534,6 +605,15 @@ class PaperExternalOperationTests(unittest.TestCase):
         self.assertEqual(detail["standard_value"], "")
         self.assertFalse(
             entry.request_summary["final_entry_summary"]["judgement_required"]
+        )
+        self.assertEqual(
+            entry.request_summary["judgement_contract"],
+            {
+                "required": False,
+                "judge_basis": "",
+                "judgement": "",
+                "standard_value": "",
+            },
         )
 
     def test_non_standalone_100_has_no_percent_unit(self):

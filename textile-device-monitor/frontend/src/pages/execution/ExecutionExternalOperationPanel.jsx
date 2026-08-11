@@ -92,6 +92,9 @@ const paperOperationGuidance = (operation) => {
     if (type === 'legacy_special_wool_qualitative_review') {
       return '请核对已上传的特纤记录后批准复核；本步骤不会重复上传文件。';
     }
+    if (operation?.request_summary?.judgement_contract?.required === true) {
+      return '请核对 Sheet1!W32 实测值、判定依据、判定结果及人工确认的“标准值与允差”后批准登记；本步骤只保存，不执行校对。';
+    }
     return '请核对 Sheet1!W32 的实际值和单位后批准登记；本步骤只保存，不执行校对。';
   }
   if (['approved', 'in_progress'].includes(status)) {
@@ -583,6 +586,7 @@ export default function ExecutionExternalOperationPanel({
   ) || null;
   const confirmingPaper = isPaperOperation(confirming);
   const confirmingPaperResult = confirmingSummary.result_contract || {};
+  const confirmingJudgement = confirmingSummary.judgement_contract || {};
 
   return (
     <>
@@ -621,6 +625,7 @@ export default function ExecutionExternalOperationPanel({
           const paperOperation = isPaperOperation(operation);
           const paperGuidance = paperOperationGuidance(operation);
           const resultContract = summary.result_contract || {};
+          const judgementContract = summary.judgement_contract || {};
           const executionAvailable = summary?.safety?.execution_available !== false;
           let cardAction = null;
           if (operation.status === 'prepared' && canApprove && executionAvailable) {
@@ -748,6 +753,21 @@ export default function ExecutionExternalOperationPanel({
                           <Tag color="blue">单位：{resultContract.unit}</Tag>
                         )}
                       </Space>
+                    ),
+                  }] : []),
+                  ...(judgementContract.required === true ? [{
+                    key: 'judge-basis',
+                    label: '判定依据',
+                    children: judgementContract.judge_basis || '—',
+                  }, {
+                    key: 'judgement',
+                    label: '判定结果',
+                    children: judgementContract.judgement || '—',
+                  }, {
+                    key: 'standard-value',
+                    label: '标准值与允差（人工确认）',
+                    children: (
+                      <Text strong>{judgementContract.standard_value || '—'}</Text>
                     ),
                   }] : []),
                   ...(summary.operation_type === 'legacy_generic_check_record_entry'
@@ -923,6 +943,21 @@ export default function ExecutionExternalOperationPanel({
                 key: 'paper-result',
                 label: `${confirmingPaperResult.worksheet || 'Sheet1'}!${confirmingPaperResult.cell || 'W32'}`,
                 children: `${confirmingPaperResult.value}${confirmingPaperResult.unit || ''}`,
+              }] : []),
+              ...(confirmingJudgement.required === true ? [{
+                key: 'paper-judge-basis',
+                label: '判定依据',
+                children: confirmingJudgement.judge_basis || '—',
+              }, {
+                key: 'paper-judgement',
+                label: '判定结果',
+                children: confirmingJudgement.judgement || '—',
+              }, {
+                key: 'paper-standard-value',
+                label: '标准值与允差（人工确认）',
+                children: (
+                  <Text strong>{confirmingJudgement.standard_value || '—'}</Text>
+                ),
               }] : []),
               ...(confirmingSummary.operation_type === 'legacy_generic_check_record_entry'
                 ? [{

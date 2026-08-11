@@ -905,6 +905,61 @@ def validate_generic_final_entry_machine_payload(
         or result_contract.get("unit") not in {"", "%"}
     ):
         raise BridgeError("Generic FinalEntry W32 结果绑定不正确")
+    judgement_contract_value = summary.get("judgement_contract")
+    legacy_judgement_contract = judgement_contract_value is None
+    if legacy_judgement_contract:
+        final_entry_summary = summary.get("final_entry_summary")
+        judgement_required = bool(
+            isinstance(final_entry_summary, dict)
+            and final_entry_summary.get("judgement_required") is True
+        )
+        expected_judge_basis = None if judgement_required else ""
+        expected_judgement = None if judgement_required else ""
+        expected_standard_value = (
+            result_contract.get("value") if judgement_required else ""
+        )
+    else:
+        judgement_contract = _strict_map(
+            judgement_contract_value,
+            path="request_summary.judgement_contract",
+            required={
+                "required",
+                "judge_basis",
+                "judgement",
+                "standard_value",
+            },
+        )
+        judgement_required = judgement_contract.get("required")
+        if not isinstance(judgement_required, bool):
+            raise BridgeError(
+                "request_summary.judgement_contract.required 必须是布尔值"
+            )
+        if judgement_required:
+            expected_judge_basis = _required_text(
+                judgement_contract.get("judge_basis"),
+                path="request_summary.judgement_contract.judge_basis",
+            )
+            expected_judgement = _required_text(
+                judgement_contract.get("judgement"),
+                path="request_summary.judgement_contract.judgement",
+            )
+            expected_standard_value = _required_text(
+                judgement_contract.get("standard_value"),
+                path="request_summary.judgement_contract.standard_value",
+            )
+            if expected_judgement not in {"符合", "不符合"}:
+                raise BridgeError(
+                    "request_summary.judgement_contract.judgement 不受支持"
+                )
+        else:
+            if any(
+                judgement_contract.get(key) not in {"", None}
+                for key in ("judge_basis", "judgement", "standard_value")
+            ):
+                raise BridgeError("无需判定的 Generic FinalEntry 判定摘要必须为空")
+            expected_judge_basis = ""
+            expected_judgement = ""
+            expected_standard_value = ""
     generic = _strict_map(
         payload.get("generic_record"),
         path="machine_payload.generic_record",
@@ -933,13 +988,10 @@ def validate_generic_final_entry_machine_payload(
             header.get(key) not in {"", None}
             for key in (
                 "grade",
-                "judge_basis",
                 "sample_description",
                 "standard_type",
-                "report_check_item_name",
                 "attach_info",
                 "remark",
-                "total_judge",
             )
         )
     ):
@@ -963,12 +1015,36 @@ def validate_generic_final_entry_machine_payload(
             detail.get(key) not in {"", None}
             for key in (
                 "standard_location",
-                "standard_value",
                 "real_location",
             )
         )
     ):
         raise BridgeError("Generic FinalEntry 实测值与 W32 结果不一致")
+    if legacy_judgement_contract and judgement_required:
+        # Prepared operations from the previous release carried no signed
+        # judgement contract and only allowed StandardValue to mirror W32.
+        # Keep those already-approved packages executable without granting
+        # the new free-form override capability.
+        expected_judge_basis = _required_text(
+            header.get("judge_basis"),
+            path="machine_payload.generic_record.header.judge_basis",
+        )
+        expected_judgement = _required_text(
+            header.get("total_judge"),
+            path="machine_payload.generic_record.header.total_judge",
+        )
+        if expected_judgement not in {"符合", "不符合"}:
+            raise BridgeError("旧版 Generic FinalEntry 判定结果不受支持")
+    expected_report_name = (
+        package_project.get("check_item_name") if judgement_required else ""
+    )
+    if (
+        header.get("judge_basis") != expected_judge_basis
+        or header.get("report_check_item_name") != expected_report_name
+        or header.get("total_judge") != expected_judgement
+        or detail.get("standard_value") != expected_standard_value
+    ):
+        raise BridgeError("Generic FinalEntry 判定字段与签发摘要不一致")
     return payload
 
 

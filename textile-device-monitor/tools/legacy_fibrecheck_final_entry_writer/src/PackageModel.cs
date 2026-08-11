@@ -286,14 +286,14 @@ namespace LegacyFibreCheckFinalEntryWriter
             bool hasJudgement = !string.IsNullOrWhiteSpace(header.TotalJudge);
             if (hasJudgement)
             {
-                // 判定变体（与人工登记样式一致，参照 260191286）：判定依据
-                // 与总评定必填、报告项目名称等于项目名、标准值列与实测值
-                // 同文。是否与任务单 GiveJudgement 匹配由 LegacySafetyGuards
-                // 在执行前强制核验。
+                // 判定变体（样式参照人工登记 260191286/260174495）：判定依据
+                // 与总评定必填、报告项目名称等于项目名、标准值列必填。标准值
+                // 由检验员在判定确认步骤核对填写，通常与实测值同文，但允许
+                // 按任务单实际要求不同。是否与任务单 GiveJudgement 匹配由
+                // LegacySafetyGuards 在执行前强制核验。
                 if (string.IsNullOrWhiteSpace(header.JudgeBasis)
                     || header.ReportCheckItemName != PaperCheckItemName
-                    || string.IsNullOrEmpty(detail.StandardValue)
-                    || detail.StandardValue != detail.RealValue)
+                    || string.IsNullOrWhiteSpace(detail.StandardValue))
                 {
                     throw new PackageValidationException(
                         "paper_generic_record_contract_invalid");

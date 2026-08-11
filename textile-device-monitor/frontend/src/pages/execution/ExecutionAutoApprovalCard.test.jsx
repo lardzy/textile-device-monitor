@@ -90,6 +90,45 @@ describe('ExecutionAutoApprovalCard', () => {
     await waitFor(() => expect(approveCalls).toBe(1));
   }, 12000);
 
+  it('纸类判定登记在自动批准前展示人工确认的标准值', async () => {
+    const paperJudgementOperation = {
+      ...preparedOperation,
+      request_summary: {
+        ...preparedOperation.request_summary,
+        operation_type: 'legacy_generic_check_record_entry',
+        target_sample_number: '260174495',
+        result_contract: {
+          worksheet: 'Sheet1',
+          cell: 'W32',
+          value: '木浆 100',
+          unit: '%',
+        },
+        judgement_contract: {
+          required: true,
+          judge_basis: '按客户要求',
+          judgement: '符合',
+          standard_value: '定性，100%木浆',
+        },
+      },
+    };
+    server.use(
+      csrfHandler,
+      http.get('/api/execution/v1/runs/run-1/external-operations', () =>
+        HttpResponse.json({ items: [paperJudgementOperation] })),
+    );
+
+    renderCard();
+    expect(await screen.findByText('260174495')).toBeInTheDocument();
+    expect(screen.getByText('Sheet1!W32')).toBeInTheDocument();
+    expect(screen.getByText('木浆 100%')).toBeInTheDocument();
+    expect(screen.getByText('判定依据')).toBeInTheDocument();
+    expect(screen.getByText('按客户要求')).toBeInTheDocument();
+    expect(screen.getByText('判定结果')).toBeInTheDocument();
+    expect(screen.getByText('符合')).toBeInTheDocument();
+    expect(screen.getByText('标准值与允差（人工确认）')).toBeInTheDocument();
+    expect(screen.getByText('定性，100%木浆')).toBeInTheDocument();
+  });
+
   it('没有待处理操作时渲染为空', async () => {
     server.use(
       csrfHandler,

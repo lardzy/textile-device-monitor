@@ -1,5 +1,50 @@
 # 头脑风暴变更日志
 
+## 2026-08-11：纸类判定步骤人工确认“标准值与允差”（数据源：说明列/M32）
+
+- 背景：此前判定变体的标准值列由后端直接镜像 W32 实测值（Writer 强校验
+  StandardValue == RealValue）。实际业务中存在“录入的标准值与原始记录
+  不一致”的单据，同文镜像会写错，因此判定流程恢复人工确认该字段。
+- 事实核对（VM 只读查 Oracle）：人工参考样例 260191286、260174495 的
+  登记记录中 StandardValue 均与 RealValue 同文（如“木浆 100”），任务单
+  说明列（260174495 为“定性，100%木浆”）并未被照抄——故默认仍预填
+  W32 同文结果，人工按单修改。
+- 后端：`paper_fiber.py` 随 W32 同读 `Sheet1!M32`（候选
+  `result.m32_value`，profile version 1→2 使旧缓存失效重读）；
+  `_paper_judgement_form_schema` 新增必填字段“标准值与允差”，
+  `default` 预填所选记录 W32，`x-copy-sources` 携带任务单说明列
+  （快照 `remark`）与 M32 两个数据源（表单生成时按 DAG 定义反查已成功
+  的 human.file_selection 节点输出，不改 DAG）；提交校验
+  `paper_standard_value_required`；登记包 `standard_value` 改取人工
+  提交值（判定必需，缺失报 `paper_fiber_standard_value_required`；
+  未要求判定时仍强制留空）。
+- Writer（PackageModel 纸类判定变体）：标准值校验由“必须与实测值同文”
+  放宽为“必填非空白”，允许人工改写；离线自测新增“人工改写标准值可
+  通过”用例（50 项过）。新 FibreCheckFinalEntryWriter.exe SHA256
+  `9495717078c2e169909dd8d53a46b02549e2beb5aa8f4728f39f3b5d3e945ed1`，
+  已部署 VM 安装位与打包 staging，`BridgeConfig.psd1` 钉值、staging
+  manifest/config 均已同步（`Test-BridgeInstallation` PASS）。
+- 前端：`SchemaFields.jsx` 支持字段 `default` 预填与 `x-copy-sources`
+  数据源展示（文本可拖选、复制图标、“填入”一键写入字段）。
+- 跨层契约闭环：预检摘要新增受 `payload_checksum` 保护的
+  `judgement_contract`，Windows Bridge 按摘要逐字段核对判定依据、
+  判定结果和人工标准值；批准卡片与最终确认弹窗同时展示 W32 和实际
+  将写入的“标准值与允差”。旧版已签发包仍只允许 StandardValue 镜像
+  W32，不会借升级放宽历史包。
+- 升级兼容：旧版已创建但尚未提交的判定任务动态使用新三字段表单；
+  已完成旧判定、尚未生成登记预检单的运行会在任何外部副作用前自动
+  退回“确认判定信息”，保留原判定依据/结果草稿并要求人工补填标准值。
+- 打包：仓库 `packaging/windows-bridge/bridge-package.psd1` 已同步新
+  FinalEntry Writer SHA256，正式构建不再因旧钉值拒绝新产物。
+- 测试：后端 519 过（仅既有失败 1），前端 106 过；纸类判定相关用例
+  覆盖默认值/数据源生成、缺标准值拒绝、登记包改写、非判定留空。
+- 本轮定点回归：后端纸类/执行/外部操作 163 项及 58 个子测试通过，
+  Bridge 34 项及 10 个子测试通过，前端判定字段/批准界面 17 项、
+  SchemaFields 主要调用页面 38 项通过；
+  后端回归直接把真实签发视图送入仓库 Bridge 校验器，防止再次出现
+  两层测试分别通过但真实契约不通的问题。
+- 约束文档同步：`.tmp/execution-system-brainstorm/10_纸纤维鉴别分析首版.md`。
+
 ## 2026-08-10：特种毛上传按旧系统实况顺号（容忍人工增删漂移）
 
 - 背景：旧检务系统的特种毛检验记录存在人工新增、删除。此前 Writer

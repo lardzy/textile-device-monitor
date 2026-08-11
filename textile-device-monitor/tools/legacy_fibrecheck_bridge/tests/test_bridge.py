@@ -1430,6 +1430,12 @@ class BridgeProtocolTests(unittest.TestCase):
                 "value": "100",
                 "unit": "%",
             },
+            "judgement_contract": {
+                "required": False,
+                "judge_basis": "",
+                "judgement": "",
+                "standard_value": "",
+            },
         }
         operation = {
             "id": "generic-operation-1",
@@ -1458,6 +1464,82 @@ class BridgeProtocolTests(unittest.TestCase):
             [item["stage"] for item in receipt["stages"]],
             list(bridge.GENERIC_FINAL_ENTRY_PROGRESS_STAGES),
         )
+
+    def test_generic_final_entry_accepts_human_confirmed_standard_value(self):
+        payload = generic_final_entry_machine_payload("100")
+        header = payload["generic_record"]["header"]
+        header["judge_basis"] = "按客户要求"
+        header["report_check_item_name"] = payload["check_item_name"]
+        header["total_judge"] = "符合"
+        detail = payload["generic_record"]["details"][0]
+        detail["standard_value"] = "定性，100%木浆"
+        summary = {
+            "operation_type": bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+            "target_sample_number": payload["sample_number"],
+            "task_project": dict(payload["task_project"]),
+            "result_contract": {
+                "worksheet": "Sheet1",
+                "cell": "W32",
+                "value": "100",
+                "unit": "%",
+            },
+            "judgement_contract": {
+                "required": True,
+                "judge_basis": "按客户要求",
+                "judgement": "符合",
+                "standard_value": "定性，100%木浆",
+            },
+        }
+        operation = {"machine_payload": payload}
+        self.assertEqual(
+            bridge.validate_generic_final_entry_machine_payload(
+                operation, summary
+            ),
+            payload,
+        )
+
+        detail["standard_value"] = "被篡改的标准值"
+        with self.assertRaisesRegex(
+            bridge.BridgeError,
+            "判定字段与签发摘要不一致",
+        ):
+            bridge.validate_generic_final_entry_machine_payload(
+                operation, summary
+            )
+
+    def test_generic_final_entry_legacy_judgement_only_allows_w32_mirror(self):
+        payload = generic_final_entry_machine_payload("100")
+        header = payload["generic_record"]["header"]
+        header["judge_basis"] = "按客户要求"
+        header["report_check_item_name"] = payload["check_item_name"]
+        header["total_judge"] = "符合"
+        detail = payload["generic_record"]["details"][0]
+        detail["standard_value"] = "100"
+        summary = {
+            "operation_type": bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+            "target_sample_number": payload["sample_number"],
+            "task_project": dict(payload["task_project"]),
+            "result_contract": {
+                "worksheet": "Sheet1",
+                "cell": "W32",
+                "value": "100",
+                "unit": "%",
+            },
+            "final_entry_summary": {"judgement_required": True},
+        }
+        operation = {"machine_payload": payload}
+        self.assertEqual(
+            bridge.validate_generic_final_entry_machine_payload(
+                operation, summary
+            ),
+            payload,
+        )
+
+        detail["standard_value"] = "定性，100%木浆"
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_generic_final_entry_machine_payload(
+                operation, summary
+            )
 
     def test_generic_final_entry_rejects_unit_not_bound_to_w32(self):
         payload = generic_final_entry_machine_payload("混合纤维")
