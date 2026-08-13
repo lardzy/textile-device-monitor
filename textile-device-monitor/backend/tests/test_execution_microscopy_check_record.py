@@ -229,6 +229,69 @@ class MicroscopyCheckRecordExecutorTests(unittest.TestCase):
         self.assertEqual(sheet.cell_value(row, column), "GB/T 36422-2018")
         workbook.release_resources()
 
+    def test_written_cells_keep_template_format_without_duplicates(self):
+        # 登记模板把 Z7、I9-I11、G12、G13、BI8 等空格存放在 MULBLANK 区间里
+        # （Z7=79、I9/G12 系=74、G13=75）。写入必须拆分区间并继承该列被分配
+        # 的 XF；若在区间外再插一条外来 XF 的记录，Excel 会用后一条记录覆盖
+        # 模板底色（Z7 填充色丢失的实测回归）。
+        import struct
+
+        from app.execution.biff_patch import ole_read
+
+        single_ids = {0x00FD, 0x0201, 0x0203, 0x027E, 0x0204, 0x0006, 0x00D6}
+
+        def cell_format_map(path):
+            """address -> xf, expanding MUL ranges; plus duplicate detection."""
+            data = next(
+                stream.data
+                for stream in ole_read(path).streams
+                if stream.name == "Workbook"
+            )
+            formats: dict[tuple[int, int], int] = {}
+            duplicates: list[tuple[int, int]] = []
+            pos = 0
+            while pos + 4 <= len(data):
+                record_id, size = struct.unpack_from("<HH", data, pos)
+                payload = data[pos + 4 : pos + 4 + size]
+                if record_id in (0x00BD, 0x00BE):
+                    row, first = struct.unpack_from("<HH", payload, 0)
+                    last = struct.unpack_from("<H", payload, len(payload) - 2)[0]
+                    step = 6 if record_id == 0x00BD else 2
+                    for column in range(first, last + 1):
+                        xf = struct.unpack_from(
+                            "<H", payload, 4 + step * (column - first)
+                        )[0]
+                        if (row, column) in formats:
+                            duplicates.append((row, column))
+                        formats[(row, column)] = xf
+                elif record_id in single_ids and size >= 6:
+                    row, column, xf = struct.unpack_from("<HHH", payload, 0)
+                    if (row, column) in formats:
+                        duplicates.append((row, column))
+                    formats[(row, column)] = xf
+                pos += 4 + size
+            return formats, duplicates
+
+        context = self._context(1)
+        result = microscopy_check_record_executor(context)
+        artifact = self.db.get(ExecutionArtifact, result["artifact_id"])
+        output = self.staging_path / artifact.relative_path
+        template = _template_path(result["template_binding"])
+
+        template_formats, _ = cell_format_map(template)
+        output_formats, output_duplicates = cell_format_map(output)
+
+        written = ("AS4", "Z7", "I8", "I9", "I10", "I11", "G12", "G13", "BI8")
+        for address in written:
+            coords = _cell_coordinates(address)
+            with self.subTest(cell=address):
+                self.assertIn(coords, template_formats)
+                self.assertEqual(
+                    output_formats.get(coords),
+                    template_formats[coords],
+                )
+        self.assertEqual(output_duplicates, [])
+
     def test_every_configured_image_count_uses_its_bound_asset(self):
         for image_count in MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS:
             with self.subTest(image_count=image_count):

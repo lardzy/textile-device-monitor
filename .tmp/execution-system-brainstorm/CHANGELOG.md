@@ -1,5 +1,23 @@
 # 头脑风暴变更日志
 
+## 2026-08-13：登记工作簿格式继承修复、顺号复核校验修正与桥运行环境根因记录
+
+- 复核批准前校验与 prepare 对称，跟随上传回执的实际写入编号，修复人工删除
+  旧记录后 Writer 顺号回退导致的 `special_wool_upload_result_changed` 误拒。
+- `biff_patch` 修复登记模板格式被改动：Z7、I9–I11、G12、G13、BI8 等空格
+  由模板 MULBLANK 区间承载，补丁器此前未识别该区间（`colLast` 误读末字节）
+  而插入外来 XF 的重复记录，Excel 用它覆盖了模板底色/边框。现围绕目标列
+  拆分区间并继承其逐列 XF（Z7=79 等）；范围校验器按同 id 配对并允许插入
+  MULBLANK/BLANK 段，数值记录仍禁插。260190894 真实链路字节级核验通过。
+- Windows 写入桥计划任务以最高权限运行时看不到交互会话的 `Z:` 盘映射
+  （`EnableLinkedConnections` 未开），这是计划任务方式读取暂存文件连续
+  `DirectoryNotFoundException` 的根因；VM 桥 `ExecutionStagingPath` 已改为
+  UNC 路径 `\\Mac\Home\Downloads\exec-stage-sync`。桥 `ApiBase` 端口必须与
+  前端容器发布端口保持一致（本次 8088→80 漂移已对齐）。
+- 已知引擎缺口（待处理）：外部操作确定性失败重试封顶后，“重试节点”无法
+  复活 failed 状态操作（rearm 仅覆盖 expired）；运行途中人工增删旧记录会
+  使冻结的 `register_count` 与实况漂移，运行无自愈路径。
+
 ## 2026-08-13：纸类多份登记门禁移除、print-confirm 拓扑变化口径记录
 
 - 纸类通用登记 prepare 阶段删除多份容量门禁（原

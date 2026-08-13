@@ -44,8 +44,13 @@ Inno Setup 安装包，用于生产 Windows 主机的一次性部署。
 ## 安装与启用（生产 Windows 主机）
 
 1. 运行安装包（管理员）。默认安装到 `C:\TextileExecutionBridge`。
-2. 编辑 `config\BridgeConfig.psd1`：API 地址（保持 http）、
+2. 编辑 `config\BridgeConfig.psd1`：API 地址（保持 http，端口必须与前端容器
+   发布端口一致，桥不可用期间的外部操作会停在“等待连接器”）、
    `ExecutionStagingPath`（必须与容器 `EXECUTION_RUNTIME_HOST_PATH` 同目录）等。
+   该路径**不要使用交互会话的映射盘符**（如 `Z:`）：计划任务按最高权限运行时
+   看不到未提升会话的盘符映射（除非启用 `EnableLinkedConnections`），Writer 会
+   连续报 `DirectoryNotFoundException`。请用本地盘路径（如 `D:\...`）或 UNC
+   路径（如 `\\Mac\Home\...`、`\\192.168.105.82\...`）。
 3. 复制 `config\bridge.env.example` 为 `config\bridge.env` 并填写机密；
    收紧 ACL 仅管理员/SYSTEM 可读。
 4. 自检：`ops\Test-BridgeInstallation.ps1`（无副作用）。

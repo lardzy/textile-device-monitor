@@ -379,7 +379,7 @@ def _verify_patched_workbook(
     scope = verify_patch_scope(
         template_workbook,
         patched_workbook,
-        max_changed_records=2 * len(_build_biff_edits(cells)) + 6,
+        max_changed_records=3 * len(_build_biff_edits(cells)) + 6,
     )
     if not scope["within_bound"]:
         raise ExecutionApiError(

@@ -11,7 +11,12 @@ file untouched:
   replaced in place, preserving each cell's XF index;
 - formula cells keep their expression bytes and only receive an updated cached
   result (numeric or string), exactly like a desktop recalculation;
-- truly empty cells (no record at the address) get a LABELSST record inserted;
+- cells stored inside a MULBLANK range make the range split around the written
+  cell, which inherits exactly the XF the range assigned to that column;
+- truly empty cells (no record at the address) get a LABELSST record inserted,
+  with the XF inherited exactly the way Excel renders an empty cell: the row's
+  default format first, then the column's COLINFO format, finally the built-in
+  default cell XF;
 - new strings are appended to the SST, which is grown in place.
 
 Only the ``Workbook`` stream bytes change.  Summary streams, fonts, formats,
@@ -43,6 +48,11 @@ BOUNDSHEET_ID = 0x0085
 INDEX_ID = 0x020B
 DBCELL_ID = 0x00D7
 ROW_ID = 0x0208
+COLINFO_ID = 0x007D
+
+# BIFF8 built-in default cell XF, used only when neither the row nor the
+# column declares a default format.
+DEFAULT_CELL_XF = 15
 
 CELL_RECORD_IDS = (
     LABELSST_ID,
@@ -424,6 +434,36 @@ def _make_blank(row: int, column: int, xf: int) -> bytes:
     return struct.pack("<HHH", row, column, xf)
 
 
+def _mul_bounds(record: BiffRecord) -> tuple[int, int, int]:
+    """(row, col_first, col_last) of a MULRK/MULBLANK record; colLast is the
+    two-byte trailer, not the last payload byte."""
+    row, col_first = struct.unpack_from("<HH", record.payload, 0)
+    col_last = struct.unpack_from("<H", record.payload, len(record.payload) - 2)[0]
+    return row, col_first, col_last
+
+
+def _mul_entry_xf(record: BiffRecord, column: int) -> int:
+    """XF a MULBLANK range assigns to one covered column."""
+    _, col_first, _ = _mul_bounds(record)
+    return struct.unpack_from("<H", record.payload, 4 + 2 * (column - col_first))[0]
+
+
+def _mul_segment(record: BiffRecord, seg_first: int, seg_last: int) -> BiffRecord:
+    """Re-emit a column sub-range of a MULBLANK, preserving each column's XF.
+    A single-column remainder becomes a plain BLANK record."""
+    row, _, _ = _mul_bounds(record)
+    xfs = [
+        _mul_entry_xf(record, column)
+        for column in range(seg_first, seg_last + 1)
+    ]
+    if len(xfs) == 1:
+        return BiffRecord(0, BLANK_ID, _make_blank(row, seg_first, xfs[0]))
+    payload = struct.pack("<HH", row, seg_first)
+    payload += b"".join(struct.pack("<H", xf) for xf in xfs)
+    payload += struct.pack("<H", seg_last)
+    return BiffRecord(0, MULBLANK_ID, payload)
+
+
 @dataclass
 class CellEdit:
     row: int
@@ -463,6 +503,40 @@ def patch_workbook_stream(data: bytes, edits: list[CellEdit]) -> bytes:
         if record.record_id == FORMULA_ID and records[index + 1].record_id == STRING_ID:
             formula_string_followers.add(index)
 
+    # XF fallback for cells that have no record of their own, resolved exactly
+    # the way Excel renders an empty cell: the row's default format wins when
+    # the ROW record declares one (flags bit 0x0080), then the column's
+    # COLINFO format, and finally the built-in default cell XF.  A hardcoded
+    # index would import whatever fill/font that XF happens to carry in the
+    # template (e.g. Z7 picking up a grey fill from an unrelated XF).
+    row_default_xfs: dict[int, int] = {}
+    column_default_xfs: list[tuple[int, int, int]] = []
+    for record in records:
+        if record.record_id == ROW_ID and len(record.payload) >= 16:
+            row_index = struct.unpack_from("<H", record.payload, 0)[0]
+            row_flags = struct.unpack_from("<H", record.payload, 12)[0]
+            if row_flags & 0x0080:
+                row_default_xfs[row_index] = struct.unpack_from(
+                    "<H", record.payload, 14
+                )[0]
+        elif record.record_id == COLINFO_ID and len(record.payload) >= 8:
+            col_first, col_last = struct.unpack_from("<HH", record.payload, 0)
+            column_default_xfs.append(
+                (
+                    col_first,
+                    col_last,
+                    struct.unpack_from("<H", record.payload, 6)[0],
+                )
+            )
+
+    def empty_cell_xf(row: int, column: int) -> int:
+        if row in row_default_xfs:
+            return row_default_xfs[row]
+        for col_first, col_last, col_xf in column_default_xfs:
+            if col_first <= column <= col_last:
+                return col_xf
+        return DEFAULT_CELL_XF
+
     new_string_refs = 0
     # Descending address order: inserts only shift records after the edit
     # point, which have already been processed, so every cell_records index
@@ -471,7 +545,91 @@ def patch_workbook_stream(data: bytes, edits: list[CellEdit]) -> bytes:
         address = (edit.row, edit.column)
         record_index = cell_records.get(address)
         record = records[record_index] if record_index is not None else None
-        xf = _cell_xf(record.payload) if record is not None else 72
+        mul_index: int | None = None
+        if record is None:
+            for index, candidate in enumerate(records):
+                if candidate is None or candidate.record_id not in (
+                    MULRK_ID,
+                    MULBLANK_ID,
+                ):
+                    continue
+                mul_row, mul_first, mul_last = _mul_bounds(candidate)
+                if mul_row == edit.row and mul_first <= edit.column <= mul_last:
+                    # Splitting a numeric MULRK range is not supported; the
+                    # registration templates only store blank runs there.
+                    if candidate.record_id == MULRK_ID:
+                        raise BiffPatchError("biff_target_inside_mul_record")
+                    mul_index = index
+                    break
+        if record is not None:
+            xf = _cell_xf(record.payload)
+        elif mul_index is not None:
+            # The template holds this cell inside a MULBLANK range: the new
+            # record inherits exactly the XF the range assigns to this column,
+            # and the range is re-emitted around the written cell.  Inserting
+            # a duplicate record with a foreign XF would let Excel override
+            # the template fill/border (e.g. Z7 losing its background).
+            xf = _mul_entry_xf(records[mul_index], edit.column)
+        else:
+            xf = empty_cell_xf(edit.row, edit.column)
+
+        def place(new_record: BiffRecord) -> None:
+            if record is not None:
+                # Drop a string-cached formula's STRING follower when replacing.
+                if (
+                    record.record_id == FORMULA_ID
+                    and record_index in formula_string_followers
+                ):
+                    records[record_index + 1] = None
+                records[record_index] = new_record
+                return
+            if mul_index is not None:
+                mul_record = records[mul_index]
+                _, mul_first, mul_last = _mul_bounds(mul_record)
+                segments: list[BiffRecord] = []
+                if mul_first < edit.column:
+                    segments.append(
+                        _mul_segment(mul_record, mul_first, edit.column - 1)
+                    )
+                segments.append(new_record)
+                if edit.column < mul_last:
+                    segments.append(
+                        _mul_segment(mul_record, edit.column + 1, mul_last)
+                    )
+                records[mul_index : mul_index + 1] = segments
+                return
+            # Insert at the end of the target row's cell run: immediately
+            # before the first cell record with a higher address, which is
+            # where the row's run ends in stream order.  Non-cell records
+            # (ROW blocks and the like) are not valid anchors.
+            insert_at = None
+            for index, candidate in enumerate(records):
+                if candidate is None:
+                    continue
+                if candidate.record_id in (MULRK_ID, MULBLANK_ID):
+                    anchor_row, anchor_first, _ = _mul_bounds(candidate)
+                    if (anchor_row, anchor_first) > address:
+                        insert_at = index
+                        break
+                    continue
+                if candidate.record_id not in CELL_RECORD_IDS:
+                    continue
+                addr = _cell_address(candidate.payload)
+                if addr is not None and addr > address:
+                    insert_at = index
+                    break
+            if insert_at is None:
+                # No later cell exists: append after the last cell record,
+                # ahead of DBCELL or the sheet EOF.
+                for index, candidate in enumerate(records):
+                    if candidate.record_id == DBCELL_ID:
+                        insert_at = index
+                        break
+                if insert_at is None:
+                    insert_at = len(records)
+            records.insert(insert_at, new_record)
+            cell_records[address] = insert_at
+
         if edit.kind == "cached_string":
             if record is not None and record.record_id == FORMULA_ID:
                 _set_formula_cached_string(records, record, str(edit.value))
@@ -482,16 +640,7 @@ def patch_workbook_stream(data: bytes, edits: list[CellEdit]) -> bytes:
             sst_index, _ = intern(text)
             new_string_refs += 1
             payload = _make_labelsst(edit.row, edit.column, xf, sst_index)
-            new_record = BiffRecord(record.offset if record else 0, LABELSST_ID, payload)
-            if record is not None:
-                records[record_index] = new_record
-            else:
-                for index, candidate in enumerate(records):
-                    if candidate.record_id == DBCELL_ID:
-                        records.insert(index, new_record)
-                        break
-                else:
-                    records.append(new_record)
+            place(BiffRecord(record.offset if record else 0, LABELSST_ID, payload))
             continue
         if edit.kind == "cached_number":
             if record is None or record.record_id != FORMULA_ID:
@@ -513,46 +662,7 @@ def patch_workbook_stream(data: bytes, edits: list[CellEdit]) -> bytes:
             new_record = BiffRecord(record.offset if record else 0, LABELSST_ID, payload)
         else:
             raise BiffPatchError("biff_edit_kind_unknown")
-        if record is not None:
-            # Drop a string-cached formula's STRING follower when replacing the cell.
-            if record.record_id == FORMULA_ID and record_index in formula_string_followers:
-                records[record_index + 1] = None
-            records[record_index] = new_record
-        else:
-            # Insert at the end of the target row's cell run: immediately
-            # before the first cell record with a higher address, which is
-            # where the row's run ends in stream order.  Non-cell records
-            # (ROW blocks and the like) are not valid anchors.
-            insert_at = None
-            for index, candidate in enumerate(records):
-                if candidate is None:
-                    continue
-                if candidate.record_id in (MULRK_ID, MULBLANK_ID):
-                    mul_row, mul_first = struct.unpack_from("<HH", candidate.payload, 0)
-                    mul_last = candidate.payload[-1]
-                    if (mul_row, mul_first) <= address <= (mul_row, mul_last):
-                        raise BiffPatchError("biff_target_inside_mul_record")
-                    if (mul_row, mul_first) > address:
-                        insert_at = index
-                        break
-                    continue
-                if candidate.record_id not in CELL_RECORD_IDS:
-                    continue
-                addr = _cell_address(candidate.payload)
-                if addr is not None and addr > address:
-                    insert_at = index
-                    break
-            if insert_at is None:
-                # No later cell exists: append after the last cell record,
-                # ahead of DBCELL or the sheet EOF.
-                for index, candidate in enumerate(records):
-                    if candidate.record_id == DBCELL_ID:
-                        insert_at = index
-                        break
-                if insert_at is None:
-                    insert_at = len(records)
-            records.insert(insert_at, new_record)
-            cell_records[address] = insert_at
+        place(new_record)
 
     records = [record for record in records if record is not None]
 
@@ -716,7 +826,10 @@ def formula_cells(data: bytes) -> dict[tuple[int, int], tuple[bytes, str | None]
 
 
 POINTER_RECORD_IDS = (BOUNDSHEET_ID, INDEX_ID, DBCELL_ID, SST_ID)
-INSERTABLE_RECORD_IDS = (LABELSST_ID, STRING_ID)
+# Records a patch may add: the written cell itself plus the MULBLANK/BLANK
+# segments re-emitted around a cell that was covered by a MULBLANK range.
+# Numeric record kinds stay forbidden, so no undeclared value can appear.
+INSERTABLE_RECORD_IDS = (LABELSST_ID, STRING_ID, MULBLANK_ID, BLANK_ID)
 
 
 def verify_patch_scope(
@@ -724,10 +837,14 @@ def verify_patch_scope(
 ) -> dict[str, Any]:
     """Prove the patch only touched its declared neighbourhood.
 
-    Aligns the two record sequences, tolerating inserted LABELSST/STRING
-    records (the only record kinds a patch may add).  Every other record must
-    be byte-identical to its aligned counterpart unless it is a pointer record
-    (SST/BOUNDSHEET/INDEX/DBCELL) whose offsets were legitimately relocated.
+    Aligns the two record sequences.  An ``after`` record pairs with the next
+    ``before`` record when they share a record id; a payload difference then
+    counts as an in-place update (cell/formula rewrite or pointer relocation).
+    Records of the insertable kinds (LABELSST/STRING plus the MULBLANK/BLANK
+    segments re-emitted around a cell that was covered by a MULBLANK range)
+    may appear between pairings; numeric kinds stay forbidden as inserts, so
+    no undeclared value can appear.  Remaining id mismatches and removals are
+    violations.
     """
     before_records = iter_records(before)
     after_records = iter_records(after)
@@ -745,17 +862,27 @@ def verify_patch_scope(
             after_index += 1
             continue
         previous = before_records[before_index]
-        if record.record_id == previous.record_id and record.payload == previous.payload:
+        if record.record_id == previous.record_id:
+            if record.payload != previous.payload:
+                kind = (
+                    "pointer_relocated"
+                    if previous.record_id in POINTER_RECORD_IDS
+                    else "cell_or_formula_updated"
+                )
+                changed.append(
+                    {
+                        "before_index": before_index,
+                        "after_index": after_index,
+                        "before_id": previous.record_id,
+                        "after_id": record.record_id,
+                        "kind": kind,
+                    }
+                )
             before_index += 1
             after_index += 1
             continue
-        # Possible insertion of a cell/string record in the after stream.
-        if (
-            record.record_id in INSERTABLE_RECORD_IDS
-            and after_index + 1 < len(after_records)
-            and after_records[after_index + 1].record_id == previous.record_id
-            and after_records[after_index + 1].payload == previous.payload
-        ):
+        # A record kind the patch may add without consuming its before peer.
+        if record.record_id in INSERTABLE_RECORD_IDS:
             changed.append({"after_index": after_index, "kind": "inserted"})
             after_index += 1
             continue
@@ -765,13 +892,8 @@ def verify_patch_scope(
             "before_id": previous.record_id,
             "after_id": record.record_id,
         }
-        if previous.record_id != record.record_id and (
-            previous.record_id not in CELL_RECORD_IDS
-            or record.record_id not in CELL_RECORD_IDS
-        ):
+        if previous.record_id not in CELL_RECORD_IDS or record.record_id not in CELL_RECORD_IDS:
             violations.append(entry)
-        elif previous.record_id in POINTER_RECORD_IDS:
-            changed.append({**entry, "kind": "pointer_relocated"})
         else:
             changed.append({**entry, "kind": "cell_or_formula_updated"})
         before_index += 1
