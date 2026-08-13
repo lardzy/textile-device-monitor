@@ -16,7 +16,9 @@ import bridge  # noqa: E402
 INSPECTION_NUMBER = "26A029794"
 
 
-def probe_document(*, tasks=None, samples=None, items=None, family=None):
+def probe_document(
+    *, tasks=None, samples=None, items=None, register_counts=None, family=None
+):
     task_rows = (
         [
             {
@@ -57,6 +59,21 @@ def probe_document(*, tasks=None, samples=None, items=None, family=None):
         if family is None
         else family
     )
+    count_rows = (
+        [
+            {
+                "TaskCheckItemID": item.get("ID"),
+                "CheckItemID": item.get("CheckItemID"),
+                "RegisterCount": 0,
+            }
+            for item in item_rows
+            if item.get("TaskID") == "task-1"
+            and item.get("ID")
+            and item.get("CheckItemID")
+        ]
+        if register_counts is None
+        else register_counts
+    )
     return {
         "schema_version": 1,
         "mode": "probe",
@@ -74,6 +91,11 @@ def probe_document(*, tasks=None, samples=None, items=None, family=None):
                 "status": "ok",
                 "row_count": len(item_rows),
                 "rows": item_rows,
+            },
+            "task_project_register_counts": {
+                "status": "ok",
+                "row_count": len(count_rows),
+                "rows": count_rows,
             },
             "task_special_wool_family": {
                 "status": "ok",
@@ -126,7 +148,7 @@ class SnapshotMappingTests(unittest.TestCase):
         self.assertEqual(
             snapshot,
             {
-                "schema_version": 4,
+                "schema_version": 5,
                 "sample_name": "Surgicel-Fibrillar",
                 "sample_names": ["Surgicel-Fibrillar"],
                 "check_basis": "---",
@@ -139,6 +161,7 @@ class SnapshotMappingTests(unittest.TestCase):
                         "check_item_name": "纤维微观形貌",
                         "check_method": "GB/T 36422-2018",
                         "check_count": 1,
+                        "register_count": 0,
                         "seq_num": 1,
                         "sample_identify": None,
                         "remark": "内部备注",
@@ -157,7 +180,7 @@ class SnapshotMappingTests(unittest.TestCase):
         self.assertEqual(
             snapshot,
             {
-                "schema_version": 4,
+                "schema_version": 5,
                 "sample_name": None,
                 "sample_names": [],
                 "check_basis": None,
@@ -224,12 +247,12 @@ class SnapshotMappingTests(unittest.TestCase):
     def test_unrelated_project_remains_compatible_without_public_ids(self):
         item = dict(probe_document()["results"]["task_check_items"]["rows"][0])
         item["CheckItemName"] = "纤维平均直径"
-        item.pop("ID")
-        item.pop("CheckItemID")
+        item["ID"] = "raw-task-item-id"
+        item["CheckItemID"] = "raw-check-item-id"
         snapshot = bridge.build_snapshot(
             probe_document(items=[item]), INSPECTION_NUMBER
         )
-        self.assertEqual(snapshot["schema_version"], 4)
+        self.assertEqual(snapshot["schema_version"], 5)
         self.assertIsNone(snapshot["projects"][0]["task_check_item_id"])
         self.assertIsNone(snapshot["projects"][0]["check_item_id"])
 

@@ -67,7 +67,8 @@ review_main_verified → review_children_verified → completed
 图片上传的离线实现还固定执行以下核验：
 
 - 根据源任务号重查 `Task_CheckItem`，由原始 ID 和项目字段重新计算脱敏项目键，
-  严格绑定 `OriginalDataPictureFile.CheckItemID`；
+  严格绑定 `OriginalDataPictureFile.CheckItemID`；任务项目的 `CheckCount` 必须大于
+  等于 1，并与服务端签发的预期总份数精确相等，但不要求任务总份数只能为 1；
 - 在 `Task_CheckItem` 的 `SELECT ... FOR UPDATE` 协作锁内重新计算
   `原号、-1、-2...` 的 first-free 编号，且结果必须仍与服务端签发的
   `target_sample_number` 完全相同；Writer 不会擅自改号绕过回执契约；
@@ -125,7 +126,9 @@ Instant Client 运行时件（来源：部门共享 ODAC 11.2.0.2.50 xcopy 包�
 ## 待证明的图片上传与特纤复核边界
 
 - 图片上传固定业务字段已经锁定为：`FibreSort=图片`、`CheckWay=''`、
-  `CheckUserItem1=图片`、检验份数 1、复核项目/份数为图片/1。
+  `CheckUserItem1=图片`、本次检验记录份数 1、复核项目/本次复核记录份数为图片/1。
+  这里的单次记录份数与任务项目的总 `CheckCount` 是两个独立概念；任务总份数可
+  大于 1，但必须与服务端签发值精确一致。
 - 执行系统只接受同一次运行中由服务端签发的 `.xls` 微观形貌制品，并在批准前
   重新核对制品行、路径、大小和 SHA-256；目标号按 `原号、-1、-2...` 对本系统
   围栏做暂定分配，仍必须由 Windows 只读探针核对旧库占用后才能批准。

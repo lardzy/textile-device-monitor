@@ -682,8 +682,8 @@ def _validated_final_entry_task_project(value, *, path: str) -> dict:
     _required_int(project.get("seq_num"), path=f"{path}.seq_num")
     if _required_int(
         project.get("check_count"), path=f"{path}.check_count"
-    ) != 1:
-        raise BridgeError(f"{path}.check_count 必须恰好为 1")
+    ) < 1:
+        raise BridgeError(f"{path}.check_count 必须至少为 1")
     identity = "\0".join(
         " ".join(str(project[key]).strip().split())
         for key in (
@@ -723,7 +723,7 @@ def validate_final_entry_machine_payload(
             "expected_existing_register_count",
             "excel_record",
         },
-        optional={"controlled_test_override"},
+        optional={"controlled_test_override", "existing_record_decision"},
     )
     if payload.get("schema_version") != 2 or payload.get(
         "operation_type"
@@ -782,13 +782,80 @@ def validate_final_entry_machine_payload(
         raise BridgeError("FinalEntry 私有任务项目与签发摘要不一致")
     if not isinstance(summary.get("template_binding"), dict):
         raise BridgeError("FinalEntry request_summary 缺少项目或模板绑定")
-    if expected_existing not in {0, 1}:
-        raise BridgeError("FinalEntry 首版只允许 0 条正常登记或 1 条受控既有登记")
+    check_count = package_project["check_count"]
     override = payload.get("controlled_test_override")
-    if expected_existing == 0 and override is not None:
+    existing_decision_value = payload.get("existing_record_decision")
+    if override is not None and existing_decision_value is not None:
+        raise BridgeError("FinalEntry 不得同时声明测试覆盖和已有登记确认")
+    if expected_existing == 0 and (
+        override is not None or existing_decision_value is not None
+    ):
         raise BridgeError("普通 FinalEntry 包不得声明受控既有登记")
-    if expected_existing == 1 and not isinstance(override, dict):
-        raise BridgeError("已有登记的 FinalEntry 包必须携带受控覆盖对象")
+    existing_decision = None
+    if existing_decision_value is not None:
+        existing_decision = _strict_map(
+            existing_decision_value,
+            path="machine_payload.existing_record_decision",
+            required={
+                "kind",
+                "action",
+                "expected_task_check_count",
+                "expected_existing_register_count",
+                "resulting_register_count",
+            },
+        )
+        if (
+            existing_decision.get("kind") != "append_when_check_count_one"
+            or existing_decision.get("action") != "append"
+            or existing_decision.get("expected_task_check_count") != 1
+            or check_count != 1
+            or expected_existing < 1
+            or existing_decision.get("expected_existing_register_count")
+            != expected_existing
+            or existing_decision.get("resulting_register_count")
+            != expected_existing + 1
+        ):
+            raise BridgeError("FinalEntry 已有登记确认契约不正确")
+    elif override is None and check_count == 1 and expected_existing > 0:
+        raise BridgeError("FinalEntry 单份项目已有登记时必须明确确认继续新增")
+    if existing_decision != summary.get("existing_record_decision"):
+        raise BridgeError("FinalEntry 已有登记确认与签发摘要不一致")
+
+    identity_contract = _strict_map(
+        summary.get("sample_identity_contract"),
+        path="request_summary.sample_identity_contract",
+        required={
+            "selected",
+            "options",
+            "option_count",
+            "check_count",
+            "count_mismatch",
+        },
+    )
+    selected_identity = identity_contract.get("selected")
+    offered_identities = identity_contract.get("options")
+    expected_identities = excel.get("expected_key_identities")
+    register = excel.get("register")
+    register_identity = (
+        register.get("sample_identity") if isinstance(register, dict) else None
+    )
+    if (
+        not isinstance(selected_identity, str)
+        or not isinstance(offered_identities, list)
+        or any(not isinstance(value, str) for value in offered_identities)
+        or identity_contract.get("option_count") != len(offered_identities)
+        or identity_contract.get("check_count") != check_count
+        or identity_contract.get("count_mismatch")
+        is not bool(offered_identities and len(offered_identities) != check_count)
+        or expected_identities != [selected_identity]
+        or register_identity != selected_identity
+        or (
+            offered_identities
+            and selected_identity not in offered_identities
+        )
+        or (not offered_identities and selected_identity)
+    ):
+        raise BridgeError("FinalEntry 样品识别与任务单或工作簿绑定不一致")
     return payload, source
 
 
@@ -823,7 +890,7 @@ def _validated_paper_task_project(value, *, path: str) -> dict:
         project.get("check_item_name") != "纸、纸板和纸浆纤维鉴别分析"
         or project.get("check_method") != "GB/T 4688-2020"
         or _required_int(project.get("check_count"), path=f"{path}.check_count")
-        != 1
+        < 1
     ):
         raise BridgeError(f"{path} 不是受支持的 GB/T 4688-2020 纸纤维项目")
     _required_int(project.get("seq_num"), path=f"{path}.seq_num")
@@ -863,21 +930,24 @@ def validate_generic_final_entry_machine_payload(
             "expected_existing_register_count",
             "generic_record",
         },
-        optional={"controlled_test_override"},
+        optional={"controlled_test_override", "existing_record_decision"},
     )
     expected_existing = payload.get("expected_existing_register_count")
     if (
         payload.get("schema_version") != 2
         or payload.get("operation_type") != "generic_item_record"
         or payload.get("sample_number") != summary.get("target_sample_number")
-        or expected_existing not in {0, 1}
+        or not isinstance(expected_existing, int)
+        or isinstance(expected_existing, bool)
+        or expected_existing < 0
     ):
         raise BridgeError("Generic FinalEntry machine_payload 身份或计数不正确")
     override = payload.get("controlled_test_override")
+    existing_decision_value = payload.get("existing_record_decision")
+    if override is not None and existing_decision_value is not None:
+        raise BridgeError("Generic FinalEntry 不得同时声明测试覆盖和已有登记确认")
     if expected_existing == 0 and override is not None:
         raise BridgeError("普通 Generic FinalEntry 包不得声明受控既有登记")
-    if expected_existing == 1 and not isinstance(override, dict):
-        raise BridgeError("已有登记的 Generic FinalEntry 包必须携带受控覆盖对象")
     package_project = _validated_paper_task_project(
         payload.get("task_project"), path="machine_payload.task_project"
     )
@@ -886,6 +956,37 @@ def validate_generic_final_entry_machine_payload(
     )
     if package_project != summary_project:
         raise BridgeError("Generic FinalEntry 私有任务项目与签发摘要不一致")
+    check_count = package_project["check_count"]
+    existing_decision = None
+    if existing_decision_value is not None:
+        existing_decision = _strict_map(
+            existing_decision_value,
+            path="machine_payload.existing_record_decision",
+            required={
+                "kind",
+                "action",
+                "expected_task_check_count",
+                "expected_existing_register_count",
+                "resulting_register_count",
+            },
+        )
+        if (
+            existing_decision.get("kind") != "append_when_check_count_one"
+            or existing_decision.get("action") != "append"
+            or existing_decision.get("expected_task_check_count") != 1
+            or check_count != 1
+            or expected_existing < 1
+            or existing_decision.get("expected_existing_register_count")
+            != expected_existing
+            or existing_decision.get("resulting_register_count")
+            != expected_existing + 1
+        ):
+            raise BridgeError("Generic FinalEntry 已有登记确认契约不正确")
+    elif override is None and check_count == 1 and expected_existing > 0:
+        raise BridgeError("Generic FinalEntry 单份项目已有登记时必须明确确认继续新增")
+    summary_decision = summary.get("existing_record_decision")
+    if existing_decision != summary_decision:
+        raise BridgeError("Generic FinalEntry 已有登记确认与签发摘要不一致")
     if (
         payload.get("check_item_no") != package_project.get("check_item_no")
         or payload.get("check_item_name")
@@ -988,7 +1089,6 @@ def validate_generic_final_entry_machine_payload(
             header.get(key) not in {"", None}
             for key in (
                 "grade",
-                "sample_description",
                 "standard_type",
                 "attach_info",
                 "remark",
@@ -996,6 +1096,42 @@ def validate_generic_final_entry_machine_payload(
         )
     ):
         raise BridgeError("Generic FinalEntry 表头与纸纤维结果绑定不一致")
+    identity_contract_value = summary.get("sample_identity_contract")
+    # Already-approved operations from the preceding release did not carry a
+    # sample-identity summary and were only allowed to submit an empty value.
+    if identity_contract_value is None:
+        if header.get("sample_description") not in {"", None}:
+            raise BridgeError("旧版 Generic FinalEntry 不得补写样品识别")
+        identity_contract = None
+    else:
+        identity_contract = _strict_map(
+            identity_contract_value,
+            path="request_summary.sample_identity_contract",
+            required={
+                "selected",
+                "options",
+                "option_count",
+                "check_count",
+                "count_mismatch",
+            },
+        )
+    if identity_contract is not None:
+        options = identity_contract.get("options")
+        selected_identity = identity_contract.get("selected")
+        if (
+            not isinstance(options, list)
+            or not all(isinstance(value, str) and value for value in options)
+            or len(set(options)) != len(options)
+            or identity_contract.get("option_count") != len(options)
+            or identity_contract.get("check_count") != check_count
+            or identity_contract.get("count_mismatch")
+            is not bool(options and len(options) != check_count)
+            or not isinstance(selected_identity, str)
+            or header.get("sample_description") != selected_identity
+            or (options and selected_identity not in options)
+            or (not options and selected_identity != "")
+        ):
+            raise BridgeError("Generic FinalEntry 样品识别契约不正确")
     details = generic.get("details")
     if not isinstance(details, list) or len(details) != 1:
         raise BridgeError("Generic FinalEntry 必须包含一条实测结果")
@@ -1100,11 +1236,13 @@ def _strict_stage_detail(
     stages: dict[str, dict],
     stage: str,
     required: set[str],
+    optional: set[str] | None = None,
 ) -> dict:
     return _strict_map(
         stages[stage].get("detail"),
         path=f"raw_receipt.stages.{stage}.detail",
         required=required,
+        optional=optional,
     )
 
 
@@ -1175,11 +1313,17 @@ def convert_final_entry_receipt(
             "expected_existing_register_count",
             "controlled_test_override_active",
         },
+        optional={"existing_record_decision_present"},
     )
+    existing_decision = machine_payload.get("existing_record_decision")
+    expected_existing_decision = existing_decision is not None
     if (
         package_detail.get("schema_version") != 2
         or package_detail.get("operation_type") != "excel_check_record"
         or package_detail.get("expected_existing_register_count") != expected_existing
+        or package_detail.get(
+            "existing_record_decision_present", False
+        ) is not expected_existing_decision
     ):
         raise BridgeError("FinalEntry package_validated 详情不匹配")
     workbook_detail = _strict_stage_detail(
@@ -1201,13 +1345,21 @@ def convert_final_entry_receipt(
             "mapping_config_sha256",
             "mapping_config_count",
         },
+        optional={"existing_record_decision_applied"},
     )
     expected_result_count = _required_int(
         preflight.get("expected_result_count"),
         path="raw_receipt.remote_preflight_verified.expected_result_count",
     )
+    if expected_result_count != package_project["check_count"]:
+        raise BridgeError("FinalEntry 远端任务份数与实测任务项目不一致")
     if preflight.get("existing_register_count") != expected_existing:
         raise BridgeError("FinalEntry 远端既有登记数与机器载荷不一致")
+    if (
+        preflight.get("existing_record_decision_applied", False)
+        is not expected_existing_decision
+    ):
+        raise BridgeError("Excel FinalEntry 未按任务包应用已有登记确认")
     if preflight.get("mapping_config_sha256") != excel.get(
         "expected_mapping_config_sha256"
     ) or _required_int(
@@ -1224,6 +1376,7 @@ def convert_final_entry_receipt(
             "target_filename",
             "controlled_test_override_applied",
         },
+        optional={"existing_record_decision_applied"},
     )
     target_filename = _required_text(
         ready.get("target_filename"),
@@ -1234,6 +1387,11 @@ def convert_final_entry_receipt(
         "expected_existing_register_count"
     ) != expected_existing:
         raise BridgeError("FinalEntry remote_write_ready 详情不匹配")
+    if (
+        ready.get("existing_record_decision_applied", False)
+        is not expected_existing_decision
+    ):
+        raise BridgeError("Excel FinalEntry 写入阶段未按任务包应用已有登记确认")
     staging_file = _strict_stage_detail(
         stages,
         "staging_file_verified",
@@ -1317,12 +1475,18 @@ def convert_final_entry_receipt(
             )
         }
         resulting_count = raw_override["resulting_register_count"]
+    elif existing_decision is not None:
+        if "controlled_test_override" in raw:
+            raise BridgeError("已有登记确认回执不得包含受控测试覆盖对象")
+        resulting_count = existing_decision["resulting_register_count"]
+        if expected_result_count != existing_decision["expected_task_check_count"]:
+            raise BridgeError("FinalEntry 已有登记确认的任务份数与远端预检不一致")
     else:
         if "controlled_test_override" in raw:
             raise BridgeError("普通 FinalEntry 回执不得包含受控覆盖对象")
         resulting_count = expected_existing + 1
-        if expected_result_count < resulting_count:
-            raise BridgeError("FinalEntry 任务份数不足以容纳本次登记")
+        if expected_result_count == 1 and expected_existing > 0:
+            raise BridgeError("FinalEntry 单份项目已有登记但缺少继续新增确认")
 
     inverse_stage = {
         canonical: raw_name
@@ -1361,6 +1525,11 @@ def convert_final_entry_receipt(
             "proofed": True,
         },
         "controlled_test_override": override_receipt,
+        "existing_record_decision": (
+            dict(existing_decision)
+            if isinstance(existing_decision, dict)
+            else None
+        ),
         "stages": canonical_stages,
         "reconciliation_required": False,
     }
@@ -1428,6 +1597,7 @@ def convert_generic_final_entry_receipt(
             "expected_existing_register_count",
             "controlled_test_override_active",
         },
+        optional={"existing_record_decision_present"},
     )
     if (
         package_detail.get("schema_version") != 2
@@ -1448,11 +1618,14 @@ def convert_generic_final_entry_receipt(
             "existing_register_count",
             "controlled_test_override_applied",
         },
+        optional={"existing_record_decision_applied"},
     )
     expected_result_count = _required_int(
         preflight.get("expected_result_count"),
         path="raw_receipt.remote_preflight_verified.expected_result_count",
     )
+    if expected_result_count != package_project["check_count"]:
+        raise BridgeError("Generic FinalEntry 远端任务份数与实测任务项目不一致")
     if preflight.get("existing_register_count") != expected_existing:
         raise BridgeError("Generic FinalEntry 远端既有登记数与机器载荷不一致")
     ready = _strict_stage_detail(
@@ -1464,6 +1637,7 @@ def convert_generic_final_entry_receipt(
             "target_filename",
             "controlled_test_override_applied",
         },
+        optional={"existing_record_decision_applied"},
     )
     if (
         ready.get("operation_type") != "generic_item_record"
@@ -1496,6 +1670,8 @@ def convert_generic_final_entry_receipt(
 
     override_receipt = None
     expected_override_active = override_payload is not None
+    existing_decision = machine_payload.get("existing_record_decision")
+    expected_existing_decision = existing_decision is not None
     if package_detail.get("controlled_test_override_active") is not expected_override_active:
         raise BridgeError("Generic FinalEntry package 阶段的受控覆盖状态不一致")
     if (
@@ -1505,6 +1681,15 @@ def convert_generic_final_entry_receipt(
         is not expected_override_active
     ):
         raise BridgeError("Generic FinalEntry 远端预检未按任务包应用受控覆盖")
+    if (
+        package_detail.get("existing_record_decision_present", False)
+        is not expected_existing_decision
+        or preflight.get("existing_record_decision_applied", False)
+        is not expected_existing_decision
+        or ready.get("existing_record_decision_applied", False)
+        is not expected_existing_decision
+    ):
+        raise BridgeError("Generic FinalEntry 未按任务包应用已有登记确认")
     if override_payload is not None:
         raw_override = _strict_map(
             raw.get("controlled_test_override"),
@@ -1550,12 +1735,18 @@ def convert_generic_final_entry_receipt(
             )
         }
         resulting_count = raw_override["resulting_register_count"]
+    elif existing_decision is not None:
+        if "controlled_test_override" in raw:
+            raise BridgeError("已有登记确认回执不得包含受控测试覆盖对象")
+        resulting_count = existing_decision["resulting_register_count"]
+        if expected_result_count != existing_decision["expected_task_check_count"]:
+            raise BridgeError("已有登记确认的任务份数与远端预检不一致")
     else:
         if "controlled_test_override" in raw:
             raise BridgeError("普通 Generic FinalEntry 回执不得包含受控覆盖对象")
         resulting_count = expected_existing + 1
-        if expected_result_count < resulting_count:
-            raise BridgeError("Generic FinalEntry 任务份数不足以容纳本次登记")
+        if expected_result_count == 1 and expected_existing > 0:
+            raise BridgeError("Generic FinalEntry 单份项目已有登记但缺少继续新增确认")
 
     inverse_stage = {
         canonical: raw_name
@@ -1585,6 +1776,11 @@ def convert_generic_final_entry_receipt(
             "proofed": False,
         },
         "controlled_test_override": override_receipt,
+        "existing_record_decision": (
+            dict(existing_decision)
+            if isinstance(existing_decision, dict)
+            else None
+        ),
         "stages": canonical_stages,
         "reconciliation_required": False,
     }

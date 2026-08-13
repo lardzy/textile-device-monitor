@@ -91,6 +91,8 @@ namespace LegacyFibreCheckFinalEntryWriter
         public ControlledTestOverridePayload ControlledTestOverride;
         public bool ControlledTestOverrideActive;
         public bool ControlledTestOverrideApplied;
+        public ExistingRecordDecisionPayload ExistingRecordDecision;
+        public bool ExistingRecordDecisionApplied;
 
         public static FinalEntryPackage Load(string path)
         {
@@ -134,7 +136,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 RequireOnly(root, "schema_version", "operation_type", "sample_number",
                     "check_item_no", "check_item_name", "expected_existing_register_count",
                     "generic_record", "excel_record", "controlled_test_override",
-                    "task_project");
+                    "existing_record_decision", "task_project");
             }
 
             var package = new FinalEntryPackage();
@@ -202,6 +204,25 @@ namespace LegacyFibreCheckFinalEntryWriter
                 package.ControlledTestOverride = ParseControlledTestOverride(
                     RequireMap(root, "controlled_test_override"), package);
             }
+            if (root.ContainsKey("existing_record_decision"))
+            {
+                if (schemaVersion != 2)
+                {
+                    throw new PackageValidationException(
+                        "existing_record_decision_scope_invalid");
+                }
+                package.ExistingRecordDecision = ParseExistingRecordDecision(
+                    RequireMap(root, "existing_record_decision"), package);
+            }
+            if (schemaVersion == 2
+                && package.TaskProject.CheckCount == 1
+                && package.ExpectedExistingRegisterCount > 0
+                && package.ControlledTestOverride == null
+                && package.ExistingRecordDecision == null)
+            {
+                throw new PackageValidationException(
+                    "existing_record_decision_required_for_single_copy");
+            }
             return package;
         }
 
@@ -239,7 +260,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 || result.CheckItemName != package.CheckItemName
                 || !supportedProject
                 || result.SeqNum < 0
-                || result.CheckCount != 1
+                || result.CheckCount < 1
                 || result.ProjectKey != BuildTaskProjectKey(result))
             {
                 throw new PackageValidationException(
@@ -275,7 +296,6 @@ namespace LegacyFibreCheckFinalEntryWriter
                 || header.TestMethod != PaperCheckMethod
                 || header.Unit != (containsOneHundred ? "%" : string.Empty)
                 || !string.IsNullOrEmpty(header.Grade)
-                || !string.IsNullOrEmpty(header.SampleDescription)
                 || !string.IsNullOrEmpty(header.StandardType)
                 || !string.IsNullOrEmpty(header.AttachInfo)
                 || !string.IsNullOrEmpty(header.Remark))
@@ -359,15 +379,57 @@ namespace LegacyFibreCheckFinalEntryWriter
             ControlledTestOverrideActive = true;
         }
 
-        internal bool AllowsOneAdditionalRegistration(int taskCheckCount)
+        internal bool AllowsConfirmedSingleCopyAppend(int taskCheckCount)
         {
-            return ControlledTestOverrideActive
+            bool controlled = ControlledTestOverrideActive
                 && ControlledTestOverride != null
                 && taskCheckCount == ControlledTestOverride.ExpectedTaskCheckCount
                 && ExpectedExistingRegisterCount
                     == ControlledTestOverride.ExpectedExistingRegisterCount
                 && ExpectedExistingRegisterCount + 1
                     == ControlledTestOverride.ResultingRegisterCount;
+            bool confirmedExisting = ExistingRecordDecision != null
+                && taskCheckCount
+                    == ExistingRecordDecision.ExpectedTaskCheckCount
+                && ExpectedExistingRegisterCount
+                    == ExistingRecordDecision.ExpectedExistingRegisterCount
+                && ExpectedExistingRegisterCount + 1
+                    == ExistingRecordDecision.ResultingRegisterCount;
+            return controlled || confirmedExisting;
+        }
+
+        private static ExistingRecordDecisionPayload ParseExistingRecordDecision(
+            Dictionary<string, object> map, FinalEntryPackage package)
+        {
+            RequireOnly(map, "kind", "action", "expected_task_check_count",
+                "expected_existing_register_count", "resulting_register_count");
+            var result = new ExistingRecordDecisionPayload
+            {
+                Kind = RequireString(map, "kind", false, 64, false),
+                Action = RequireString(map, "action", false, 32, false),
+                ExpectedTaskCheckCount = RequireInt(
+                    map, "expected_task_check_count"),
+                ExpectedExistingRegisterCount = RequireInt(
+                    map, "expected_existing_register_count"),
+                ResultingRegisterCount = RequireInt(
+                    map, "resulting_register_count"),
+            };
+            if (result.Kind != "append_when_check_count_one"
+                || result.Action != "append"
+                || result.ExpectedTaskCheckCount != 1
+                || result.ExpectedExistingRegisterCount < 1
+                || result.ResultingRegisterCount
+                    != result.ExpectedExistingRegisterCount + 1
+                || package.TaskProject == null
+                || package.TaskProject.CheckCount != 1
+                || package.ExpectedExistingRegisterCount
+                    != result.ExpectedExistingRegisterCount
+                || package.ControlledTestOverride != null)
+            {
+                throw new PackageValidationException(
+                    "existing_record_decision_scope_invalid");
+            }
+            return result;
         }
 
         private static ControlledTestOverridePayload ParseControlledTestOverride(
@@ -542,12 +604,16 @@ namespace LegacyFibreCheckFinalEntryWriter
                     || !string.Equals(
                         expectedMapping,
                         result.ExpectedMappingConfigSha256,
-                        StringComparison.OrdinalIgnoreCase);
+                    StringComparison.OrdinalIgnoreCase);
             }
+            bool registerIdentityInvalid = schemaVersion == 1
+                ? !string.IsNullOrEmpty(result.Register.SampleIdentity)
+                : result.Register.SampleIdentity
+                    != result.ExpectedKeyIdentities[0];
             if (templateInvalid || result.KeyResultCount != 1
                 || result.ExpectedKeyIdentities.Count != 1 || identityInvalid
                 || !string.IsNullOrEmpty(result.Register.Level)
-                || !string.IsNullOrEmpty(result.Register.SampleIdentity)
+                || registerIdentityInvalid
                 || !string.IsNullOrEmpty(result.Register.EquipmentNo)
                 || !string.IsNullOrEmpty(result.Register.CheckBasis)
                 || Path.GetExtension(result.Workbook.Filename).ToLowerInvariant() != ".xls")
@@ -812,5 +878,14 @@ namespace LegacyFibreCheckFinalEntryWriter
         public int ExpectedExistingRegisterCount;
         public int ResultingRegisterCount;
         public string Reason;
+    }
+
+    internal sealed class ExistingRecordDecisionPayload
+    {
+        public string Kind;
+        public string Action;
+        public int ExpectedTaskCheckCount;
+        public int ExpectedExistingRegisterCount;
+        public int ResultingRegisterCount;
     }
 }

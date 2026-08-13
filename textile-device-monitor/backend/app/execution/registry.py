@@ -495,6 +495,7 @@ def _register_builtins() -> None:
                         "const": "microscopy_record_input",
                     },
                     "inspection_number": {"type": "string"},
+                    "task": {"type": "object"},
                     "selected_image_ids": {"type": "array"},
                     "selected_images": {"type": "array"},
                     "projects": {"type": "array", "minItems": 1},
@@ -506,6 +507,7 @@ def _register_builtins() -> None:
                 required=(
                     "task_kind",
                     "inspection_number",
+                    "task",
                     "selected_image_ids",
                     "projects",
                     "sample_name_analysis",
@@ -543,7 +545,12 @@ def _register_builtins() -> None:
                     "sample_identification": {"type": ["string", "null"]},
                     "judgement_required": {"type": ["boolean", "null"]},
                     "judgement_basis": {"type": ["string", "null"]},
+                    "indicator_requirement": {
+                        "type": ["string", "null"]
+                    },
+                    "test_result": {"type": ["string", "null"]},
                     "judgement": {"type": ["string", "null"]},
+                    "remark": {"type": ["string", "null"]},
                 },
                 required=(
                     "inspection_number",
@@ -639,6 +646,7 @@ def _register_builtins() -> None:
                         "maxItems": 1,
                         "items": {"type": "string"},
                     },
+                    "task": {"type": "object"},
                     "selected_project": {"type": "object"},
                     "sample_identification": {"type": ["string", "null"]},
                     "test_method": {"type": ["string", "null"]},
@@ -800,7 +808,7 @@ def _register_builtins() -> None:
             1,
             "旧系统上传-再生纤-根数法",
             "连接器",
-            "生成旧检务系统上传预检单并等待最终人工批准",
+            "生成旧检务系统上传预检单，预检通过后由服务端自动交付连接器",
             execution_kind="external_side_effect",
             required_config=("credential_slot", "selection_node_id"),
             config_schema=_object_schema(
@@ -847,7 +855,7 @@ def _register_builtins() -> None:
                     },
                     "requires_final_approval": {
                         "type": "boolean",
-                        "const": True,
+                        "const": False,
                     },
                     "remote_write_performed": {
                         "type": "boolean",
@@ -971,7 +979,7 @@ def _register_builtins() -> None:
                     "status": {"type": "string"},
                     "requires_final_approval": {
                         "type": "boolean",
-                        "const": True,
+                        "const": False,
                     },
                     "remote_write_performed": {
                         "type": "boolean",
@@ -1029,7 +1037,7 @@ def _register_builtins() -> None:
                     "status": {"type": "string"},
                     "requires_final_approval": {
                         "type": "boolean",
-                        "const": True,
+                        "const": False,
                     },
                     "remote_write_performed": {"type": "boolean"},
                     "receipt": {"type": "object"},
@@ -1111,6 +1119,8 @@ def _register_builtins() -> None:
                         "pattern": r"^task-project:[0-9a-f]{24}$",
                     },
                     "selected_project": {"type": "object"},
+                    "registration_decision": {"type": "object"},
+                    "record_input": {"type": "object"},
                     "review_result": {"type": "object"},
                     "controlled_test_override": {
                         "type": ["object", "null"]
@@ -1138,7 +1148,7 @@ def _register_builtins() -> None:
                     "status": {"type": "string"},
                     "requires_final_approval": {
                         "type": "boolean",
-                        "const": True,
+                        "const": False,
                     },
                     "remote_write_performed": {"type": "boolean"},
                     "target_sample_number": {"type": "string"},
@@ -1205,7 +1215,7 @@ def _register_builtins() -> None:
                     "status": {"type": "string"},
                     "requires_final_approval": {
                         "type": "boolean",
-                        "const": True,
+                        "const": False,
                     },
                     "remote_write_performed": {"type": "boolean"},
                     "target_sample_number": {"type": "string"},
@@ -1254,7 +1264,7 @@ def _register_builtins() -> None:
                     "status": {"type": "string"},
                     "requires_final_approval": {
                         "type": "boolean",
-                        "const": True,
+                        "const": False,
                     },
                     "remote_write_performed": {"type": "boolean"},
                     "receipt": {"type": "object"},
@@ -1316,7 +1326,7 @@ def _register_builtins() -> None:
                     "status": {"type": "string"},
                     "requires_final_approval": {
                         "type": "boolean",
-                        "const": True,
+                        "const": False,
                     },
                     "remote_write_performed": {"type": "boolean"},
                     "target_sample_number": {"type": "string"},

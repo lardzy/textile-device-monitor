@@ -93,6 +93,12 @@
   text-overflow: ellipsis;
 }
 
+.execution-live-sync-status,
+.execution-live-sync-status .ant-badge-status-text {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .execution-account-button {
   display: inline-flex;
   align-items: center;

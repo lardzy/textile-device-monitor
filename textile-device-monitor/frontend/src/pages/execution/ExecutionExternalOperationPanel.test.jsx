@@ -194,8 +194,7 @@ const installHandlers = (onReconcile) => {
 };
 
 describe('ExecutionExternalOperationPanel reconciliation', () => {
-  it('检验记录登记受控例外在卡片和确认弹窗明确展示', async () => {
-    const user = userEvent.setup();
+  it('检验记录登记受控例外在卡片展示且不提供手工批准', async () => {
     const controlledReason = '已获准验证 CheckCount=1 时追加一条登记记录';
     const finalEntryOperation = {
       ...operation,
@@ -248,23 +247,11 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
     expect(
       screen.queryByText('PRIVATE-MACHINE-PAYLOAD-MUST-NOT-RENDER'),
     ).not.toBeInTheDocument();
-
-    await user.click(
-      screen.getByRole('button', { name: '核对并批准预检单' }),
-    );
-
+    expect(screen.getByText('自动交付中')).toBeInTheDocument();
     expect(
-      screen.getByRole('dialog', {
-        name: '最终核对本次检验记录登记与校对预检单',
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText('260111037-1')).toHaveLength(2);
-    expect(screen.getAllByText('1 条 → 2 条')).toHaveLength(2);
-    expect(
-      screen.getByText('请确认旧记录保持不变，本次只新增一条。', {
-        exact: false,
-      }),
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: '核对并批准预检单' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/最终核对本次/)).not.toBeInTheDocument();
     expect(
       screen.queryByText('PRIVATE-MACHINE-PAYLOAD-MUST-NOT-RENDER'),
     ).not.toBeInTheDocument();
@@ -319,8 +306,7 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
     ).toBeInTheDocument();
   });
 
-  it('特种毛图片上传明确展示含最终编号的模板文件名', async () => {
-    const user = userEvent.setup();
+  it('特种毛图片上传明确展示含最终编号的模板文件名并自动交付', async () => {
     const targetFilename = (
       '260111037-2-39-8B-纤维形状截面定量试验-2026.xls'
     );
@@ -360,14 +346,10 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
     );
 
     expect(await screen.findByText(targetFilename)).toBeInTheDocument();
-    await user.click(
-      screen.getByRole('button', { name: '核对并批准预检单' }),
-    );
+    expect(screen.getByText('自动交付中')).toBeInTheDocument();
     expect(
-      screen.getByRole('dialog', {
-        name: '最终核对本次上传预检单',
-      }),
-    ).toHaveTextContent(targetFilename);
+      screen.queryByRole('button', { name: '核对并批准预检单' }),
+    ).not.toBeInTheDocument();
   });
 
   it('普通运行用户只能看到锁定告警，不能录入对账结论', async () => {
@@ -849,6 +831,7 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
         inspection_method: '定量',
         inspection_item: '棉再生纤定性',
         inspection_copies: 1,
+        sample_identity: 'A样',
       },
       safety: { execution_available: true },
     };
@@ -908,7 +891,6 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
         () => HttpResponse.json({ items: paperOperations }),
       ),
     );
-    const user = userEvent.setup();
     render(
       <ExecutionExternalOperationPanel
         runId="run-1"
@@ -920,25 +902,23 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
       .toBeInTheDocument();
     expect(screen.getByText('旧系统-纸类特纤复核')).toBeInTheDocument();
     expect(screen.getByText('检验记录登记-纸类定性结果')).toBeInTheDocument();
-    expect(screen.getByText(/请核对目标编号、前缀文件名/)).toBeInTheDocument();
+    expect(screen.getByText(/服务端自动交付纸类原始记录上传/)).toBeInTheDocument();
     expect(screen.getByText(/正在等待或执行 Windows Bridge/)).toBeInTheDocument();
     expect(screen.getByText(/旧系统回执已核对/)).toBeInTheDocument();
     expect(screen.getByText('26W006687-1-26W006687-纸浆纤维鉴别.xls'))
       .toBeInTheDocument();
     expect(screen.getAllByText('Sheet1!W32')).not.toHaveLength(0);
     expect(screen.getAllByText('木浆 100')).not.toHaveLength(0);
+    expect(screen.getAllByText('样品识别')).not.toHaveLength(0);
+    expect(screen.getAllByText('A样')).not.toHaveLength(0);
     expect(screen.getByText('保存记录，不执行校对')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: '核对并批准预检单' }));
-    const dialog = screen.getByRole('dialog', {
-      name: '最终核对本次纸类原始记录上传预检单',
-    });
-    expect(dialog).toHaveTextContent('26W006687-1');
-    expect(dialog).toHaveTextContent('Sheet1!W32');
-    expect(dialog).toHaveTextContent('木浆 100%');
+    expect(screen.getByText('自动交付中')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: '核对并批准预检单' }),
+    ).not.toBeInTheDocument();
   });
 
-  it('纸类登记批准卡片和弹窗展示人工确认的判定字段', async () => {
+  it('纸类登记自动交付卡片展示人工确认的判定字段', async () => {
     const paperEntry = {
       id: 'paper-entry-judgement',
       status: 'prepared',
@@ -964,6 +944,7 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
           inspection_method: 'GB/T 4688-2020',
           inspection_item: '纸、纸板和纸浆纤维鉴别分析',
           inspection_copies: 1,
+          sample_identity: '浆板正面',
         },
         safety: {
           execution_available: true,
@@ -977,7 +958,6 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
         () => HttpResponse.json({ items: [paperEntry] }),
       ),
     );
-    const user = userEvent.setup();
     render(
       <ExecutionExternalOperationPanel
         runId="run-1"
@@ -992,15 +972,11 @@ describe('ExecutionExternalOperationPanel reconciliation', () => {
     expect(screen.getByText('符合')).toBeInTheDocument();
     expect(screen.getByText('标准值与允差（人工确认）')).toBeInTheDocument();
     expect(screen.getByText('定性，100%木浆')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: '核对并批准预检单' }));
-    const dialog = screen.getByRole('dialog', {
-      name: '最终核对本次纸类定性结果登记预检单',
-    });
-    expect(dialog).toHaveTextContent('260174495');
-    expect(dialog).toHaveTextContent('木浆 100%');
-    expect(dialog).toHaveTextContent('按客户要求');
-    expect(dialog).toHaveTextContent('符合');
-    expect(dialog).toHaveTextContent('定性，100%木浆');
+    expect(screen.getByText('样品识别')).toBeInTheDocument();
+    expect(screen.getAllByText('浆板正面')).not.toHaveLength(0);
+    expect(screen.getByText('自动交付中')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: '核对并批准预检单' }),
+    ).not.toBeInTheDocument();
   });
 });

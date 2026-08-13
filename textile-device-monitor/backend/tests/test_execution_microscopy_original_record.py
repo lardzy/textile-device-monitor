@@ -208,22 +208,31 @@ class MicroscopyOriginalRecordPureFunctionTests(unittest.TestCase):
             judgement_required=False,
             judgement_basis="不应写入",
             judgement="不应写入",
+            indicator_requirement="不应写入",
+            test_result="不应写入",
+            remark="保留备注",
         )
         self.assertEqual(without["B33"], "")
         self.assertEqual(without["I34"], "")
+        self.assertEqual(without["I33"], "")
+        self.assertEqual(without["B34"], "")
+        self.assertEqual(without["B35"], "保留备注")
         with_judgement = _cell_payload(
             inspection_number="260061860",
             sample_name="示例",
             sample_identification="正面",
             judgement_required=True,
             judgement_basis="GB/T 36422-2018",
+            indicator_requirement="纤维表面形貌清晰",
+            test_result="符合指标要求",
             judgement="符合",
+            remark="无",
         )
         self.assertEqual(with_judgement["B33"], "GB/T 36422-2018")
         self.assertEqual(with_judgement["I34"], "符合")
-        self.assertEqual(with_judgement["I33"], "")
-        self.assertEqual(with_judgement["B34"], "")
-        self.assertEqual(with_judgement["B35"], "")
+        self.assertEqual(with_judgement["I33"], "纤维表面形貌清晰")
+        self.assertEqual(with_judgement["B34"], "符合指标要求")
+        self.assertEqual(with_judgement["B35"], "无")
 
     def test_layout_1_to_10_preserves_ratios_and_stays_inside_canvas(self):
         for count in range(1, 11):
@@ -601,7 +610,10 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
                 "sample_identification": "正面",
                 "judgement_required": True,
                 "judgement_basis": "GB/T 36422-2018",
+                "indicator_requirement": "纤维表面形貌清晰",
+                "test_result": "符合指标要求",
                 "judgement": "符合",
+                "remark": "无",
             },
         )
 
@@ -663,7 +675,10 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         self.assertEqual(sheet.cell_value(2, 1), "Surgicel-Fibrillar")
         self.assertEqual(sheet.cell_value(2, 11), "正面")
         self.assertEqual(sheet.cell_value(32, 1), "GB/T 36422-2018")
+        self.assertEqual(sheet.cell_value(32, 8), "纤维表面形貌清晰")
+        self.assertEqual(sheet.cell_value(33, 1), "符合指标要求")
         self.assertEqual(sheet.cell_value(33, 8), "符合")
+        self.assertEqual(sheet.cell_value(34, 1), "无")
 
     def test_executor_rejects_forged_declared_template_binding(self):
         context = self._context()

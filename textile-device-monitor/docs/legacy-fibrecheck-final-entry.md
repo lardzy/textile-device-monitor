@@ -114,7 +114,7 @@ CheckRecordRegister.ID
 
 dry-run 不得构造该服务，也不得调用会创建目录的 `FileDirectoryUtility`。
 
-### v2 多模板与空身份契约
+### v2 多模板、样品识别与多份契约
 
 最终写入器的 schema v2 为 `5103.5 / 纤维微观形貌` 固定登记了七个模板名及各自的
 映射配置 SHA-256，模板与指纹必须成对精确命中。详细清单见
@@ -123,13 +123,15 @@ dry-run 不得构造该服务，也不得调用会创建目录的 `FileDirectory
 `OriginalKeyData_CheckItem.ExcelTemplateName` 与它自己的登记模板比较，不再要求所有历史
 记录与本次新登记使用同一模板。
 
-schema v2 的 `SampleIdentity` 可以为空或重复，因此不再承担唯一性约束。登记 ID、关键结果
-关联、项目范围、行数和登记计数仍必须完全一致。schema v1 的 `微观形貌.xls` 及“纵面/横截面”
-身份规则保持不变。
+schema v2 的登记顶部 `SampleIdentity` 必须与工作簿 `Z7` 导出的唯一
+`expected_key_identities` 值一致，并且严格属于任务单 `SampleIdentify` 按中文逗号、英文逗号、
+顿号拆出的候选；任务单未提供候选时两处才允许同时为空。该字段可在不同登记间重复，不能作为
+唯一键。登记 ID、关键结果关联、项目范围、行数和登记计数仍必须完全一致。schema v1 的
+`微观形貌.xls` 及“纵面/横截面”身份规则保持不变。
 
 schema v2 同时把任务快照中的完整 `task_project` 放入 Bridge 私有包：两个旧系统 ID 只保留
 `sha256:` 单向摘要，并连同 `project_key`、项目编号/名称、测试方法、`seq_num` 和
-`check_count=1` 一起签发。Writer 每次执行都会只读查询当前 `Task_CheckItem`，对原始 ID 使用
+`check_count>=1` 一起签发。Writer 每次执行都会只读查询当前 `Task_CheckItem`，对原始 ID 使用
 与 Python 探针相同的摘要和项目键算法后逐字段比较；合同评审导致的方法、ID、顺序或份数变化
 会在构造旧系统写服务前拒绝。成功 raw receipt 返回 Writer 实测绑定，Bridge 不从公开摘要回显。
 
@@ -138,6 +140,20 @@ schema v2 同时把任务快照中的完整 `task_project` 放入 Bridge 私有�
 `FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO` 与包内目标样品号完全一致。只有远端任务
 `CheckCount=1`、已有登记数为 1、预期追加后为 2 时才可继续。回执记录覆盖是否激活以及联网
 预检是否实际应用；该机制不得作为普通超份数写入入口。
+
+### schema v2 通用/电镜登记扩展
+
+`generic_item_record` 与 `excel_check_record` 都允许任务 `check_count>=1`。任务快照同时携带当前
+`register_count`；多份项目（`check_count>1`）不设登记容量上限，已有登记数达到或
+超过任务份数时仍允许继续新增。只有
+`check_count=1` 且已有登记时，才必须由人工选择“直接新增”，并在包内携带校验和绑定的
+`existing_record_decision`。Writer 会在联网只读预检中重新核对任务份数与已有数量，
+不接受 Bridge 临时放宽。
+
+任务单 `SampleIdentify` 按中文逗号、英文逗号和顿号拆分。前端确认的单个值在通用登记中写入
+`generic_record.header.sample_description`，在电镜登记中同时写入模板 `Z7`、
+`expected_key_identities[0]` 和登记顶部 `register.sample_identity`；Writer 要求它严格属于当前
+任务单选项并执行写后回读。任务单没有样品识别时，相应字段必须为空。
 
 ### 样本 26A045793
 
@@ -188,9 +204,8 @@ Excel 模板的配置指纹已成功生成，配置行数为 9，`mapped_table_e
 
 许可令牌之前只能执行登录、权限校验、参数化只读解析、计数对账、模板/映射检查和源文件哈希检查。越过副作用边界后发生的异常统一返回 `reconciliation_required=true`，禁止自动重试；后续只能使用读取模块核对远端登记、文件引用、关键结果、保存人与校对人。
 
-当前模块尚未接到未完成的前置流程节点，也尚未执行首次真实写入。Probe 离线测试
-22 项通过；x86 writer 离线测试 26 项通过，覆盖 v1 兼容、七模板精确映射、v2 空身份与受控
-覆盖三重绑定。
-下一阶段应使用一份尚未录入的新任务和用户
-确认的工作簿执行 dry-run，再进行一次受控实写验证。当前 Windows 11 ARM64 虚拟机已用
+当前模块已接入执行系统，但仍受部署能力开关和 Bridge 副作用许可保护。本轮 x86 Writer
+离线测试 56 项通过，覆盖 v1 兼容、七模板精确映射、v2 多份/样品识别、单份已有登记确认与
+受控覆盖三重绑定；没有连接 Oracle 执行真实写入。后续真实任务仍应先执行 dry-run 和最终
+变更清单核对。当前 Windows 11 ARM64 虚拟机已用
 32 位调用进程实际完成 Excel 16.0 COM 激活与退出冒烟测试，Excel 位数不再是当前阻塞项。

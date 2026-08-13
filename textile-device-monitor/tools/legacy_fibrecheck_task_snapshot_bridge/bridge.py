@@ -27,7 +27,7 @@ DEFAULT_POLL_SECONDS = 15.0
 # 后端默认领取租约为 180 秒；探针必须更早超时，才能给完成回传和
 # 短暂网络抖动保留足够余量。
 DEFAULT_PROBE_TIMEOUT_SECONDS = 90.0
-TASK_SNAPSHOT_SCHEMA_VERSION = 4
+TASK_SNAPSHOT_SCHEMA_VERSION = 5
 MICROSCOPY_PROJECT_NAMES = frozenset({"纤维微观形貌", "膜平面形貌"})
 PUBLIC_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{16}$")
 
@@ -162,6 +162,19 @@ def _compact_text(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
 
 
+def _nonnegative_int(value: Any, *, error_code: str, message: str) -> int:
+    if isinstance(value, bool):
+        raise SnapshotBridgeError(error_code, message)
+    try:
+        text = str(value).strip()
+        result = int(text)
+    except (TypeError, ValueError):
+        raise SnapshotBridgeError(error_code, message) from None
+    if result < 0 or text != str(result):
+        raise SnapshotBridgeError(error_code, message)
+    return result
+
+
 def _project_key(item: Mapping[str, Any]) -> str:
     """Build a stable public key without exposing FibreCheck record IDs."""
 
@@ -218,6 +231,7 @@ def build_snapshot(
     tasks = _query_rows(results, "tasks")
     task_samples = _query_rows(results, "task_samples")
     task_items = _query_rows(results, "task_check_items")
+    register_counts = _query_rows(results, "task_project_register_counts")
     occupied_numbers = _special_wool_occupied_numbers(
         _query_rows(results, "task_special_wool_family"),
         inspection_number,
@@ -225,7 +239,7 @@ def build_snapshot(
 
     # 旧系统中不存在对应 Task 是可缓存的正常事实，避免后端不断重复查询。
     if not tasks:
-        if task_samples or task_items:
+        if task_samples or task_items or register_counts:
             raise SnapshotBridgeError(
                 "probe_task_link_invalid",
                 "任务不存在但返回了样品或任务项目",
@@ -265,7 +279,25 @@ def build_snapshot(
             sample_names.append(sample_name)
             seen_sample_names.add(folded)
 
+    count_by_project: dict[tuple[str, str], int] = {}
+    for row in register_counts:
+        key = (
+            str(row.get("TaskCheckItemID") or "").strip(),
+            str(row.get("CheckItemID") or "").strip(),
+        )
+        if not all(key) or key in count_by_project:
+            raise SnapshotBridgeError(
+                "probe_project_register_count_invalid",
+                "任务项目登记数量查询返回了重复或无效的项目绑定",
+            )
+        count_by_project[key] = _nonnegative_int(
+            row.get("RegisterCount"),
+            error_code="probe_project_register_count_invalid",
+            message="任务项目登记数量查询返回了无效计数",
+        )
+
     projects = []
+    consumed_count_keys: set[tuple[str, str]] = set()
     for item in task_items:
         # 探针查询已由 Task join 限定；仍再次按 TaskID 过滤，避免把其它任务的
         # 项目误写进当前编号的缓存。ID 可能已由探针做脱敏，故只做可比时过滤。
@@ -281,6 +313,16 @@ def build_snapshot(
                 "probe_project_identity_missing",
                 "纤维微观形貌任务项目缺少完整的脱敏项目标识",
             )
+        count_key = (
+            str(item.get("ID") or "").strip(),
+            str(item.get("CheckItemID") or "").strip(),
+        )
+        if count_key not in count_by_project:
+            raise SnapshotBridgeError(
+                "probe_project_register_count_missing",
+                "任务项目缺少当前检验记录登记数量",
+            )
+        consumed_count_keys.add(count_key)
         projects.append(
             {
                 "project_key": _project_key(item),
@@ -293,11 +335,18 @@ def build_snapshot(
                 "check_item_name": item.get("CheckItemName"),
                 "check_method": item.get("CheckMethod"),
                 "check_count": item.get("CheckCount"),
+                "register_count": count_by_project[count_key],
                 "seq_num": item.get("SeqNum"),
                 "sample_identify": item.get("SampleIdentify"),
                 "remark": item.get("Remark"),
                 "give_judgement": item.get("GiveJudgement"),
             }
+        )
+
+    if consumed_count_keys != set(count_by_project):
+        raise SnapshotBridgeError(
+            "probe_project_register_count_orphaned",
+            "任务项目登记数量查询返回了无法绑定的项目",
         )
 
     return {

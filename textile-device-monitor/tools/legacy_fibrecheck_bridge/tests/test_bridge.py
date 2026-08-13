@@ -392,7 +392,7 @@ def final_entry_machine_payload(*, controlled=False):
             "expected_key_identities": ["纵向"],
             "register": {
                 "level": "",
-                "sample_identity": "",
+                "sample_identity": "纵向",
                 "equipment_no": "",
                 "check_basis": "",
             },
@@ -446,6 +446,13 @@ def final_entry_claim(*, controlled=False):
                     "local_asset_name": "microscopy-7.xls",
                     "local_asset_sha256": "d" * 64,
                     "mapping_config_sha256": "b" * 64,
+                },
+                "sample_identity_contract": {
+                    "selected": "纵向",
+                    "options": ["纵向"],
+                    "option_count": 1,
+                    "check_count": 1,
+                    "count_mismatch": False,
                 },
                 "execution_capability": {"available": True},
             },
@@ -1187,6 +1194,7 @@ class BridgeProtocolTests(unittest.TestCase):
                 "template_binding",
                 "final_entry",
                 "controlled_test_override",
+                "existing_record_decision",
                 "stages",
                 "reconciliation_required",
             },
@@ -1296,6 +1304,102 @@ class BridgeProtocolTests(unittest.TestCase):
                     api.calls[-1][1]["error_code"],
                     "final_entry_machine_payload_rejected",
                 )
+
+    def test_final_entry_rejects_register_identity_drift_before_writer(self):
+        claim = final_entry_claim()
+        claim["operation"]["machine_payload"]["excel_record"]["register"][
+            "sample_identity"
+        ] = "横向"
+        api = ApiStub(claim=claim)
+        with patch.object(
+            bridge, "api_request", side_effect=api
+        ), patch.object(bridge.subprocess, "Popen") as popen:
+            bridge.run_one_cycle(
+                self.args,
+                "bridge-token",
+                ACCOUNT,
+                "secret",
+                self.root_map,
+            )
+        popen.assert_not_called()
+        self.assertEqual(
+            api.calls[-1][1]["error_code"],
+            "final_entry_machine_payload_rejected",
+        )
+
+    def test_final_entry_multi_copy_allows_append_at_or_beyond_task_count(self):
+        for existing_count in (4, 5):
+            with self.subTest(existing_count=existing_count):
+                claim = final_entry_claim()
+                operation = claim["operation"]
+                payload = operation["machine_payload"]
+                summary = operation["request_summary"]
+                payload["task_project"]["check_count"] = 4
+                summary["task_project"]["check_count"] = 4
+                payload["expected_existing_register_count"] = existing_count
+                payload["excel_record"]["expected_key_identities"] = ["浴巾"]
+                payload["excel_record"]["register"]["sample_identity"] = "浴巾"
+                summary["sample_identity_contract"] = {
+                    "selected": "浴巾",
+                    "options": ["浴巾", "枕套", "床单", "被套"],
+                    "option_count": 4,
+                    "check_count": 4,
+                    "count_mismatch": False,
+                }
+                validated, _ = bridge.validate_final_entry_machine_payload(
+                    operation, summary
+                )
+                self.assertIs(validated, payload)
+
+    def test_final_entry_single_copy_existing_record_requires_signed_decision(self):
+        claim = final_entry_claim()
+        operation = claim["operation"]
+        payload = operation["machine_payload"]
+        summary = operation["request_summary"]
+        payload["expected_existing_register_count"] = 1
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_final_entry_machine_payload(operation, summary)
+
+        decision = {
+            "kind": "append_when_check_count_one",
+            "action": "append",
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": 1,
+            "resulting_register_count": 2,
+        }
+        payload["existing_record_decision"] = dict(decision)
+        summary["existing_record_decision"] = dict(decision)
+        validated, _ = bridge.validate_final_entry_machine_payload(
+            operation, summary
+        )
+        self.assertIs(validated, payload)
+
+    def test_final_entry_multi_copy_receipt_allows_count_overrun(self):
+        claim = final_entry_claim()
+        operation = claim["operation"]
+        payload = operation["machine_payload"]
+        summary = operation["request_summary"]
+        payload["task_project"]["check_count"] = 4
+        summary["task_project"]["check_count"] = 4
+        payload["expected_existing_register_count"] = 4
+        summary["sample_identity_contract"]["check_count"] = 4
+        summary["sample_identity_contract"]["count_mismatch"] = True
+
+        raw = final_entry_raw_receipt()
+        raw["task_project"]["check_count"] = 4
+        for stage in raw["stages"]:
+            detail = stage.get("detail", {})
+            if "expected_existing_register_count" in detail:
+                detail["expected_existing_register_count"] = 4
+            if "existing_register_count" in detail:
+                detail["existing_register_count"] = 4
+            if "expected_result_count" in detail:
+                detail["expected_result_count"] = 4
+        receipt = bridge.convert_final_entry_receipt(
+            operation, summary, payload, summary["files"][0], raw
+        )
+        self.assertEqual(receipt["final_entry"]["resulting_register_count"], 5)
+        self.assertIsNone(receipt["existing_record_decision"])
 
     def test_final_entry_controlled_override_requires_cli_and_existing_env(self):
         claim = final_entry_claim(controlled=True)
@@ -1602,6 +1706,82 @@ class BridgeProtocolTests(unittest.TestCase):
             bridge.validate_generic_final_entry_machine_payload(
                 {"machine_payload": no_override}, summary
             )
+
+    def test_generic_final_entry_multi_copy_ignores_capacity_without_decision(self):
+        for existing_count in (4, 5):
+            with self.subTest(existing_count=existing_count):
+                payload = generic_final_entry_machine_payload("100")
+                payload["task_project"]["check_count"] = 4
+                payload["expected_existing_register_count"] = existing_count
+                summary = {
+                    "operation_type": bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+                    "target_sample_number": payload["sample_number"],
+                    "task_project": dict(payload["task_project"]),
+                    "result_contract": {
+                        "worksheet": "Sheet1",
+                        "cell": "W32",
+                        "value": "100",
+                        "unit": "%",
+                    },
+                }
+                validated = bridge.validate_generic_final_entry_machine_payload(
+                    {"machine_payload": payload}, summary
+                )
+                self.assertIs(validated, payload)
+
+    def test_generic_single_copy_existing_record_requires_signed_decision(self):
+        payload = generic_final_entry_machine_payload("100")
+        payload["expected_existing_register_count"] = 1
+        summary = {
+            "operation_type": bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+            "target_sample_number": payload["sample_number"],
+            "task_project": dict(payload["task_project"]),
+            "result_contract": {
+                "worksheet": "Sheet1",
+                "cell": "W32",
+                "value": "100",
+                "unit": "%",
+            },
+        }
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_generic_final_entry_machine_payload(
+                {"machine_payload": payload}, summary
+            )
+
+    def test_generic_multi_copy_receipt_allows_count_overrun(self):
+        payload = generic_final_entry_machine_payload("100")
+        payload["task_project"]["check_count"] = 4
+        payload["expected_existing_register_count"] = 4
+        summary = {
+            "operation_type": bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+            "target_sample_number": payload["sample_number"],
+            "task_project": dict(payload["task_project"]),
+            "result_contract": {
+                "worksheet": "Sheet1",
+                "cell": "W32",
+                "value": "100",
+                "unit": "%",
+            },
+        }
+        raw = generic_final_entry_raw_receipt(payload)
+        for stage in raw["stages"]:
+            detail = stage.get("detail", {})
+            if "expected_existing_register_count" in detail:
+                detail["expected_existing_register_count"] = 4
+            if "existing_register_count" in detail:
+                detail["existing_register_count"] = 4
+            if "expected_result_count" in detail:
+                detail["expected_result_count"] = 4
+        operation = {
+            "id": "generic-operation-multi",
+            "payload_checksum": "8" * 64,
+            "machine_payload": payload,
+        }
+        receipt = bridge.convert_generic_final_entry_receipt(
+            operation, summary, payload, raw
+        )
+        self.assertEqual(receipt["final_entry"]["resulting_register_count"], 5)
+        self.assertIsNone(receipt["existing_record_decision"])
 
     @staticmethod
     def _override_generic_raw_receipt(payload, override):

@@ -747,6 +747,20 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         self.assertEqual(operation.status, "approved")
         self.assertEqual(self.db.query(ExecutionExternalAttempt).count(), 0)
 
+    def test_claim_accepts_automatic_approval_without_countdown(self):
+        _run, operation = self._approved_run()
+        operation.approval_expires_at = None
+        self.db.commit()
+
+        claimed = self._claim()
+
+        self.assertTrue(claimed["claimed"])
+        self.assertIsNone(
+            claimed["operation"]["approval"]["expires_at"]
+        )
+        self.db.refresh(operation)
+        self.assertEqual(operation.status, "in_progress")
+
     def test_claim_rejects_credential_revision_drift(self):
         _run, operation = self._approved_run()
         self.credential.revision += 1

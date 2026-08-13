@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import re
+import time
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.electron_microscopy import (
     _task_project_conditions,
     cached_task_snapshot,
+    request_task_snapshot_refresh,
 )
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
@@ -25,6 +27,7 @@ from app.execution.external_operations import (
     LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE,
     LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE,
     LEGACY_SPECIAL_WOOL_REVIEW_NODE,
+    approve_prepared_external_operation,
     prepare_legacy_generic_check_record_entry_operation,
     prepare_legacy_microscopy_check_record_entry_operation,
     prepare_legacy_regenerated_count_operation,
@@ -738,14 +741,26 @@ def _normalize_human_submission(
         )
         if len(identities) == 1:
             sample_identity = identities[0]
+            if data.get("sample_identity_confirmed") is not True:
+                raise ExecutionApiError(
+                    422,
+                    "microscopy_sample_identity_confirmation_required",
+                    "请确认自动填入的样品识别",
+                )
         elif identities:
             if submitted_identity not in identities:
                 raise ExecutionApiError(
-                    422,
+                    409,
                     "microscopy_sample_identity_invalid",
-                    "请选择任务单中提供的样品识别",
+                    "填写的样品识别不在任务单列表中，无法对应旧系统下拉框",
                 )
             sample_identity = submitted_identity
+        elif submitted_identity:
+            raise ExecutionApiError(
+                409,
+                "microscopy_sample_identity_invalid",
+                "任务单未提供样品识别，不能写入旧系统下拉框",
+            )
         else:
             sample_identity = None
 
@@ -784,7 +799,31 @@ def _normalize_human_submission(
                     )
                 judge_basis = submitted_basis
             else:
-                judge_basis = submitted_basis or None
+                if not submitted_basis:
+                    raise ExecutionApiError(
+                        422,
+                        "microscopy_judge_basis_required",
+                        "任务单要求判定，请填写判定依据",
+                    )
+                judge_basis = submitted_basis
+            indicator_requirement = " ".join(
+                str(data.get("indicator_requirement") or "").strip().split()
+            )
+            if not indicator_requirement:
+                raise ExecutionApiError(
+                    422,
+                    "microscopy_indicator_requirement_required",
+                    "任务单要求判定，请填写指标要求",
+                )
+            test_result = " ".join(
+                str(data.get("test_result") or "").strip().split()
+            )
+            if not test_result:
+                raise ExecutionApiError(
+                    422,
+                    "microscopy_test_result_required",
+                    "任务单要求判定，请填写测试结果",
+                )
             judgement = " ".join(
                 str(data.get("judgement") or "").strip().split()
             )
@@ -798,16 +837,47 @@ def _normalize_human_submission(
                 )
         else:
             judge_basis = None
+            indicator_requirement = None
+            test_result = None
             judgement = None
+
+        remark = " ".join(str(data.get("remark") or "").strip().split())
+        if any(
+            len(value or "") > 1000
+            for value in (
+                judge_basis,
+                indicator_requirement,
+                test_result,
+                remark,
+            )
+        ):
+            raise ExecutionApiError(
+                422,
+                "microscopy_record_field_too_long",
+                "判定信息、测试结果或备注不能超过 1000 个字符",
+            )
+        check_count = selected_project.get("check_count")
+        identity_count_mismatch = bool(
+            identities
+            and isinstance(check_count, int)
+            and not isinstance(check_count, bool)
+            and len(identities) != check_count
+        )
 
         return {
             "selected_project_key": selected_key,
             "selected_project": selected_project,
             "sample_name": sample_name,
             "sample_identity": sample_identity,
+            "sample_identity_confirmed": bool(identities),
+            "sample_identity_options": identities,
+            "identity_count_mismatch": identity_count_mismatch,
             "judgement_required": judgement_required,
             "judge_basis": judge_basis,
+            "indicator_requirement": indicator_requirement,
+            "test_result": test_result,
             "judgement": judgement,
+            "remark": remark,
         }
     if task_kind == "microscopy_print_confirmation":
         artifact = node_run.input_data.get("artifact") or {}
@@ -859,25 +929,152 @@ def _normalize_human_submission(
         if node_run.node_type == "human.input":
             node = _definition_node_map(run).get(node_run.node_id) or {}
             config = node.get("config") or {}
-            if config.get("paper_judgement"):
+            if config.get("paper_existing_record_decision") or config.get(
+                "legacy_existing_record_decision"
+            ):
+                selected_project = node_run.input_data.get("selected_project")
+                task = node_run.input_data.get("task")
+                if not isinstance(selected_project, dict) or not isinstance(
+                    task, dict
+                ):
+                    raise ExecutionApiError(
+                        409,
+                        "paper_registration_context_changed",
+                        "检验记录登记上下文已变化，请重新运行流程",
+                    )
+                check_count = selected_project.get("check_count")
+                register_count = selected_project.get("register_count")
+                if (
+                    not isinstance(check_count, int)
+                    or isinstance(check_count, bool)
+                    or check_count < 1
+                    or not isinstance(register_count, int)
+                    or isinstance(register_count, bool)
+                    or register_count < 0
+                ):
+                    raise ExecutionApiError(
+                        409,
+                        "paper_registration_count_invalid",
+                        "旧系统返回的检测份数或已有登记数量无效，请刷新后重试",
+                    )
+                confirmation_required = check_count == 1 and register_count > 0
+                action = str(
+                    data.get("existing_record_action") or ""
+                ).strip()
+                if confirmation_required and action not in {"append", "cancel"}:
+                    raise ExecutionApiError(
+                        422,
+                        "paper_existing_record_decision_required",
+                        "当前项目已有登记，请选择直接新增或取消",
+                    )
+                if not confirmation_required:
+                    action = "continue"
+                return {
+                    "existing_record_action": action,
+                    "registration_cancelled": action == "cancel",
+                    "expected_existing_register_count": register_count,
+                    "selected_project": selected_project,
+                    "selected_project_key": selected_project.get("project_key"),
+                    "task": task,
+                }
+            if config.get("paper_judgement") or config.get(
+                "legacy_generic_record_input"
+            ):
+                selected_project = node_run.input_data.get("selected_project")
+                if not isinstance(selected_project, dict):
+                    raise ExecutionApiError(
+                        409,
+                        "paper_registration_context_changed",
+                        "纸浆项目登记上下文已变化，请重新运行流程",
+                    )
+                identities = _compact_text_options(
+                    selected_project.get("sample_identify")
+                )
+                sample_identity = " ".join(
+                    str(data.get("sample_identity") or "").strip().split()
+                )
+                if identities:
+                    if not sample_identity:
+                        raise ExecutionApiError(
+                            422,
+                            "paper_sample_identity_required",
+                            "请确认当前录入的样品识别",
+                        )
+                    if sample_identity not in identities:
+                        raise ExecutionApiError(
+                            409,
+                            "paper_sample_identity_not_offered",
+                            "填写的样品识别不在任务单列表中，无法对应旧系统下拉框",
+                        )
+                    if len(identities) == 1 and data.get(
+                        "sample_identity_confirmed"
+                    ) is not True:
+                        raise ExecutionApiError(
+                            422,
+                            "paper_sample_identity_confirmation_required",
+                            "请确认自动填入的样品识别",
+                        )
+                elif sample_identity:
+                    raise ExecutionApiError(
+                        409,
+                        "paper_sample_identity_not_offered",
+                        "任务单未提供样品识别，不能写入旧系统下拉框",
+                    )
+
+                judgement_required = _truthy_judgement_flag(
+                    selected_project.get("give_judgement")
+                )
+                judge_basis = " ".join(
+                    str(data.get("judge_basis") or "").strip().split()
+                )
+                judgement = " ".join(
+                    str(data.get("judgement") or "").strip().split()
+                )
                 standard_value = " ".join(
                     str(data.get("standard_value") or "").strip().split()
                 )
-                if not standard_value:
+                standard_value_required = bool(
+                    config.get(
+                        "require_standard_value",
+                        config.get("paper_judgement") is True,
+                    )
+                )
+                if (
+                    judgement_required
+                    and standard_value_required
+                    and not standard_value
+                ):
                     raise ExecutionApiError(
                         422,
                         "paper_standard_value_required",
                         "请填写标准值与允差",
                     )
+                if judgement_required and (not judge_basis or not judgement):
+                    raise ExecutionApiError(
+                        422,
+                        "paper_judgement_required",
+                        "请确认判定依据与判定结果",
+                    )
+                if not judgement_required:
+                    judge_basis = ""
+                    judgement = ""
+                    standard_value = ""
+                check_count = selected_project.get("check_count")
+                identity_count_mismatch = bool(
+                    identities
+                    and isinstance(check_count, int)
+                    and not isinstance(check_count, bool)
+                    and len(identities) != check_count
+                )
                 return {
-                    "judgement_required": True,
-                    "judge_basis": " ".join(
-                        str(data.get("judge_basis") or "").strip().split()
-                    ),
-                    "judgement": " ".join(
-                        str(data.get("judgement") or "").strip().split()
-                    ),
+                    "judgement_required": judgement_required,
+                    "judge_basis": judge_basis,
+                    "judgement": judgement,
                     "standard_value": standard_value,
+                    "sample_identity": sample_identity or None,
+                    "sample_identity_confirmed": bool(identities),
+                    "sample_identity_options": identities,
+                    "identity_count_mismatch": identity_count_mismatch,
                 }
         return data
     selected = data.get("selected_files")
@@ -1023,12 +1220,17 @@ def _auto_submit_single_candidate(
 
 
 def _paper_judgement_node_config(context: "NodeExecutionContext") -> dict[str, Any]:
-    """纸类判定信息确认节点的 config（仅 human.input 且显式标记）。"""
+    """通用登记人工确认节点的 config（保留纸类旧标记兼容性）。"""
 
     if context.node_run.node_type != "human.input":
         return {}
     config = context.node.get("config") or {}
-    return config if config.get("paper_judgement") else {}
+    return (
+        config
+        if config.get("paper_judgement")
+        or config.get("legacy_generic_record_input")
+        else {}
+    )
 
 
 def _truthy_judgement_flag(value: Any) -> bool:
@@ -1089,6 +1291,204 @@ def _compact_text_options(value: Any) -> list[str]:
     return result
 
 
+def _paper_existing_record_node_config(
+    context: "NodeExecutionContext",
+) -> dict[str, Any]:
+    if context.node_run.node_type != "human.input":
+        return {}
+    config = context.node.get("config") or {}
+    return (
+        config
+        if config.get("paper_existing_record_decision")
+        or config.get("legacy_existing_record_decision")
+        else {}
+    )
+
+
+def _refresh_paper_registration_context(
+    context: "NodeExecutionContext",
+) -> None:
+    """Refresh current legacy counts immediately before record entry.
+
+    The ordinary task snapshot is cached for recommendations.  A second paper
+    or microscopy run may therefore start while that cache still predates the
+    first run's record entry.  The one-copy decision path therefore forces a
+    read-only refresh after upload/review and refuses to continue until the
+    exact task-project key is present in the new snapshot.  Multi-copy projects
+    append their selected sample identity without consulting this path.
+    """
+
+    if not _paper_existing_record_node_config(context):
+        return
+    selected = context.input_data.get("selected_project")
+    project_key = str(
+        (selected or {}).get("project_key")
+        if isinstance(selected, dict)
+        else ""
+    ).strip()
+    if not project_key:
+        raise ExecutionApiError(
+            409,
+            "paper_registration_context_changed",
+            "检验记录项目缺少稳定任务绑定，请重新运行流程",
+        )
+
+    row, _queued = request_task_snapshot_refresh(
+        context.db,
+        inspection_number=context.run.inspection_number,
+        force=True,
+    )
+    baseline_revision = int(row.revision or 0)
+    # The Bridge is a separate process and cannot see this queue row until the
+    # current transaction commits.  The node lease remains active while polling.
+    context.db.commit()
+    deadline = time.monotonic() + max(
+        0, int(settings.EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS)
+    )
+    snapshot: dict[str, Any] | None = None
+    refresh_status = str(row.status or "")
+    while True:
+        context.db.expire_all()
+        cached = cached_task_snapshot(
+            context.db,
+            inspection_number=context.run.inspection_number,
+        )
+        refresh_status = str(cached.get("refresh_status") or "")
+        revision = int(cached.get("revision") or 0)
+        candidate = cached.get("snapshot")
+        if (
+            refresh_status == "ready"
+            and revision > baseline_revision
+            and isinstance(candidate, dict)
+        ):
+            snapshot = candidate
+            break
+        if refresh_status == "failed":
+            raise ExecutionApiError(
+                422,
+                "paper_registration_snapshot_failed",
+                "录入前读取旧系统已有登记数量失败，请检查快照连接器后重试",
+            )
+        if time.monotonic() >= deadline:
+            raise ExecutionApiError(
+                422,
+                "paper_registration_snapshot_pending",
+                "录入前正在读取旧系统已有登记数量，请稍后重试该节点",
+            )
+        time.sleep(2)
+
+    fresh_project = next(
+        (
+            value
+            for value in snapshot.get("projects") or []
+            if isinstance(value, dict)
+            and str(value.get("project_key") or "").strip() == project_key
+        ),
+        None,
+    )
+    if fresh_project is None:
+        raise ExecutionApiError(
+            409,
+            "paper_registration_project_changed",
+            "录入前任务项目已变化，请重新运行流程",
+        )
+    context.input_data = {
+        **context.input_data,
+        "selected_project_key": project_key,
+        "selected_project": dict(fresh_project),
+        "task": snapshot,
+    }
+    context.node_run.input_data = context.input_data
+
+
+def _auto_complete_paper_existing_record_decision(
+    context: "NodeExecutionContext",
+) -> Optional[dict[str, Any]]:
+    """Pause only when a one-copy project has an existing record.
+
+    A multi-copy project always appends the sample identity selected earlier in
+    the run.  Its task count is not a hard cap on legacy record rows, so neither
+    a fresh occupancy lookup nor a user decision is needed here.  For a
+    one-copy project the decision depends on current occupancy, therefore that
+    path still refreshes the read-only task snapshot immediately before entry.
+    """
+
+    if not _paper_existing_record_node_config(context):
+        return None
+    selected = context.input_data.get("selected_project") or {}
+    check_count = selected.get("check_count")
+    if (
+        not isinstance(check_count, int)
+        or isinstance(check_count, bool)
+        or check_count < 1
+    ):
+        raise ExecutionApiError(
+            409,
+            "paper_registration_count_invalid",
+            "旧系统返回的检测份数无效，请刷新后重试",
+        )
+    if check_count == 1:
+        _refresh_paper_registration_context(context)
+        selected = context.input_data.get("selected_project") or {}
+        check_count = selected.get("check_count")
+    register_count = selected.get("register_count")
+    if (
+        not isinstance(check_count, int)
+        or isinstance(check_count, bool)
+        or check_count < 1
+        or not isinstance(register_count, int)
+        or isinstance(register_count, bool)
+        or register_count < 0
+    ):
+        raise ExecutionApiError(
+            409,
+            "paper_registration_count_invalid",
+            "旧系统返回的检测份数或已有登记数量无效，请刷新后重试",
+        )
+    if check_count == 1 and register_count > 0:
+        return None
+    return {
+        "existing_record_action": "continue",
+        "registration_cancelled": False,
+        "expected_existing_register_count": register_count,
+        "selected_project": selected,
+        "selected_project_key": selected.get("project_key"),
+        "task": context.input_data.get("task"),
+        "auto_submitted": True,
+        "auto_submit_reason": (
+            "multi_copy_capacity_is_informational"
+            if register_count >= check_count
+            else "registration_capacity_available"
+        ),
+    }
+
+
+def _paper_existing_record_form_schema(
+    context: "NodeExecutionContext",
+) -> Optional[dict[str, Any]]:
+    if not _paper_existing_record_node_config(context):
+        return None
+    selected = context.input_data.get("selected_project") or {}
+    register_count = selected.get("register_count")
+    return {
+        "type": "object",
+        "properties": {
+            "existing_record_action": {
+                "type": "string",
+                "title": "当前项目已有登记，如何处理",
+                "description": (
+                    f"旧系统当前已有 {register_count} 条登记。"
+                    "选择直接新增将再写入一条；选择取消则结束本次录入分支。"
+                ),
+                "enum": ["append", "cancel"],
+                "enumNames": ["直接新增", "取消"],
+            }
+        },
+        "required": ["existing_record_action"],
+        "additionalProperties": False,
+    }
+
+
 def _auto_complete_paper_judgement(
     context: "NodeExecutionContext",
 ) -> Optional[dict[str, Any]]:
@@ -1107,13 +1507,22 @@ def _auto_complete_paper_judgement(
         if isinstance(selected_project, dict)
         else None
     )
-    if _truthy_judgement_flag(give_judgement):
+    identities = _compact_text_options(
+        selected_project.get("sample_identify")
+        if isinstance(selected_project, dict)
+        else None
+    )
+    if _truthy_judgement_flag(give_judgement) or identities:
         return None
     return {
         "judgement_required": False,
         "judge_basis": None,
         "judgement": None,
         "standard_value": None,
+        "sample_identity": None,
+        "sample_identity_confirmed": False,
+        "sample_identity_options": [],
+        "identity_count_mismatch": False,
         "auto_submitted": True,
         "auto_submit_reason": "judgement_not_required",
     }
@@ -1122,11 +1531,12 @@ def _auto_complete_paper_judgement(
 def _paper_judgement_form_schema(
     context: "NodeExecutionContext",
 ) -> Optional[dict[str, Any]]:
-    """为纸类判定节点动态生成表单：判定依据选项取自任务单快照。
+    """为纸类录入确认节点生成样品识别与判定字段。
 
     “标准值与允差”默认填入所选原始记录的 Sheet1!W32 结果（与人工登记的
     同文样式一致），并提供任务单说明列与 Sheet1!M32 作为可复制/填入的
-    数据源，人工可按实际要求修改后提交。
+    数据源。样品识别按中英文逗号及顿号拆分：单值自动填入并要求确认，
+    多值提供可输入的候选列表；检测份数不一致只警告、不阻断。
     """
 
     if not _paper_judgement_node_config(context):
@@ -1149,9 +1559,20 @@ def _paper_judgement_form_schema(
             "maxLength": 500,
         }
     selected_project = input_data.get("selected_project")
+    selected_project = (
+        selected_project if isinstance(selected_project, dict) else {}
+    )
+    identities = _compact_text_options(selected_project.get("sample_identify"))
+    check_count = selected_project.get("check_count")
+    identity_count_mismatch = bool(
+        identities
+        and isinstance(check_count, int)
+        and not isinstance(check_count, bool)
+        and len(identities) != check_count
+    )
     remark = " ".join(
         str(
-            (selected_project or {}).get("remark") or ""
+            selected_project.get("remark") or ""
         ).strip().split()
     )
     record_result = _paper_selected_record_result(context)
@@ -1166,6 +1587,13 @@ def _paper_judgement_form_schema(
         copy_sources.append({"label": "任务单说明列", "text": remark})
     if m32_value:
         copy_sources.append({"label": "Sheet1!M32", "text": m32_value})
+    standard_value_required = bool(
+        _paper_judgement_node_config(context).get(
+            "require_standard_value",
+            _paper_judgement_node_config(context).get("paper_judgement")
+            is True,
+        )
+    )
     standard_field: dict[str, Any] = {
         "type": "string",
         "title": "标准值与允差",
@@ -1180,20 +1608,70 @@ def _paper_judgement_form_schema(
         standard_field["default"] = w32_value
     if copy_sources:
         standard_field["x-copy-sources"] = copy_sources
-    return {
-        "type": "object",
-        "properties": {
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    if identities:
+        identity_field: dict[str, Any] = {
+            "type": "string",
+            "title": "样品识别",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": (
+                "必须与任务单样品识别及旧系统顶部下拉框中的一项严格一致。"
+            ),
+        }
+        if len(identities) == 1:
+            identity_field.update(
+                {
+                    "default": identities[0],
+                    "const": identities[0],
+                    "readOnly": True,
+                }
+            )
+        else:
+            identity_field["x-suggestions"] = identities
+            identity_field["placeholder"] = "请选择或输入任务单中的样品识别"
+        properties["sample_identity"] = identity_field
+        required.append("sample_identity")
+        if len(identities) == 1:
+            properties["sample_identity_confirmed"] = {
+                "type": "boolean",
+                "const": True,
+                "title": f"确认本次录入的样品识别为“{identities[0]}”",
+            }
+            required.append("sample_identity_confirmed")
+
+    judgement_required = _truthy_judgement_flag(
+        selected_project.get("give_judgement")
+    )
+    if judgement_required:
+        judgement_properties: dict[str, Any] = {
             "judge_basis": basis_field,
             "judgement": {
                 "type": "string",
                 "title": "判定结果",
                 "enum": ["符合", "不符合"],
             },
-            "standard_value": standard_field,
-        },
-        "required": ["judge_basis", "judgement", "standard_value"],
+        }
+        if standard_value_required:
+            judgement_properties["standard_value"] = standard_field
+        properties.update(judgement_properties)
+        required.extend(["judge_basis", "judgement"])
+        if standard_value_required:
+            required.append("standard_value")
+
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "required": required,
         "additionalProperties": False,
     }
+    if identity_count_mismatch:
+        schema["x-warning"] = (
+            f"任务单检测份数为 {check_count}，样品识别拆分后为 "
+            f"{len(identities)} 项；请核对后继续，本提示不会终止流程。"
+        )
+    return schema
 
 
 def effective_human_task_form_schema(
@@ -3048,8 +3526,9 @@ def _prepare_external_operation_wait(
     """Fence an external request and release the ordinary Worker lease.
 
     This transition intentionally stops before any connector call.  The
-    operation remains durable across Worker/server restarts and requires a
-    separate, explicit approval API call.
+    operation remains durable across Worker/server restarts; when the deployed
+    connector capability is enabled, the server approves it immediately so
+    progress never depends on a browser-side countdown.
     """
 
     run, node_run = _lock_run_and_node(db, context.node_run.id)
@@ -3099,6 +3578,36 @@ def _prepare_external_operation_wait(
         node=context.node,
         input_data=context.input_data,
     )
+    execution_available = (
+        (operation.request_summary or {})
+        .get("execution_capability", {"available": True})
+        .get("available")
+        is not False
+    )
+    if (
+        operation.status == "prepared"
+        and execution_available
+        and settings.EXECUTION_EXTERNAL_AUTO_APPROVE_ENABLED
+    ):
+        actor = db.get(ExecutionUser, run.created_by_id)
+        if actor is None:
+            raise conflict(
+                "external_operation_creator_missing",
+                "流程发起人已不存在，无法自动交付旧系统操作",
+            )
+        operation, _duplicate_approval = approve_prepared_external_operation(
+            db,
+            operation=operation,
+            run=run,
+            actor=actor,
+            payload_checksum=operation.payload_checksum,
+            confirmed_sample_number=str(
+                (operation.request_summary or {}).get("target_sample_number")
+                or ""
+            ),
+            note="流程预检通过后由服务端自动批准",
+            automatic=True,
+        )
     if operation.status not in {"prepared", "approved"}:
         raise conflict(
             "external_operation_not_waitable",
@@ -3120,7 +3629,7 @@ def _prepare_external_operation_wait(
             )
             or {"available": True}
         ),
-        "requires_final_approval": True,
+        "requires_final_approval": False,
         "remote_write_performed": False,
     }
     node_run.status = "waiting_external"
@@ -3782,6 +4291,10 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
         if node_run.node_type in HUMAN_NODE_TYPES:
             auto_output = _auto_submit_single_candidate(db, context)
             if auto_output is None:
+                auto_output = _auto_complete_paper_existing_record_decision(
+                    context
+                )
+            if auto_output is None:
                 auto_output = _auto_complete_paper_judgement(context)
             if auto_output is not None:
                 complete_node(
@@ -3791,10 +4304,13 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                     output_data=auto_output,
                 )
             else:
+                form_schema = _paper_existing_record_form_schema(context)
+                if form_schema is None:
+                    form_schema = _paper_judgement_form_schema(context)
                 _create_human_task(
                     db,
                     context,
-                    form_schema_override=_paper_judgement_form_schema(context),
+                    form_schema_override=form_schema,
                 )
             return
         if node_run.node_type in EXTERNAL_NODE_TYPES:

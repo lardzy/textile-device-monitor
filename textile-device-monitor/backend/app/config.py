@@ -124,6 +124,9 @@ class Settings(BaseSettings):
     EXECUTION_SSE_MAX_SECONDS: int = 300
     EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES: int = 30
     EXECUTION_EXTERNAL_APPROVAL_TTL_MINUTES: int = 15
+    # Browser-independent handoff: once preflight succeeds and the connector
+    # capability is enabled, the Worker approves the durable operation itself.
+    EXECUTION_EXTERNAL_AUTO_APPROVE_ENABLED: bool = True
     # Consecutive pre-boundary failures tolerated before an external operation
     # is settled as failed instead of being re-armed for another claim.
     EXECUTION_EXTERNAL_MAX_ATTEMPTS: int = 5

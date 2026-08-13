@@ -1,4 +1,14 @@
-import { Button, Checkbox, Form, Input, InputNumber, Select, Typography } from 'antd';
+import {
+  Alert,
+  AutoComplete,
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Typography,
+} from 'antd';
 
 const formItemRules = (name, schema, required = []) => {
   const rules = [];
@@ -68,7 +78,7 @@ export default function SchemaFields({
   const properties = schema?.properties || {};
   const required = schema?.required || [];
 
-  return Object.entries(properties).map(([name, field]) => {
+  const fields = Object.entries(properties).map(([name, field]) => {
     const fieldName = namePrefix ? [namePrefix, name] : name;
     const common = {
       disabled: disabled || field.readOnly,
@@ -101,6 +111,16 @@ export default function SchemaFields({
         >
           <Checkbox disabled={common.disabled}>{field.title || name}</Checkbox>
         </Form.Item>
+      );
+    } else if (Array.isArray(field['x-suggestions'])) {
+      control = (
+        <AutoComplete
+          {...common}
+          options={field['x-suggestions'].map(value => ({ value }))}
+          filterOption={(inputValue, option) => String(option?.value || '')
+            .toLowerCase()
+            .includes(String(inputValue || '').toLowerCase())}
+        />
       );
     } else if (field.type === 'number' || field.type === 'integer') {
       control = (
@@ -156,4 +176,19 @@ export default function SchemaFields({
       </Form.Item>
     );
   });
+
+  return (
+    <>
+      {schema?.['x-warning'] && (
+        <Alert
+          showIcon
+          type="warning"
+          message="任务单份数与样品识别数量不一致"
+          description={schema['x-warning']}
+          style={{ marginBottom: 12 }}
+        />
+      )}
+      {fields}
+    </>
+  );
 }

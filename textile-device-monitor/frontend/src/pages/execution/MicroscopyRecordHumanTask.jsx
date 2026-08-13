@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import {
   Alert,
+  AutoComplete,
   Button,
   Checkbox,
   Descriptions,
@@ -159,6 +160,11 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
     ?? input.judgement_options
     ?? ['符合', '不符合'],
   );
+  const checkCount = Number(selectedProject?.check_count);
+  const identityCountMismatch = identities.length > 0
+    && Number.isInteger(checkCount)
+    && checkCount >= 1
+    && identities.length !== checkCount;
 
   useEffect(() => {
     if (projects.length === 1 && form.getFieldValue('selected_project_key') !== projects[0]._key) {
@@ -167,21 +173,46 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
   }, [form, projects]);
 
   useEffect(() => {
+    const currentSampleName = form.getFieldValue('sample_name');
     const currentIdentity = form.getFieldValue('sample_identity');
+    const currentIdentityConfirmed = form.getFieldValue('sample_identity_confirmed');
     const currentBasis = form.getFieldValue('judge_basis');
     const currentJudgement = form.getFieldValue('judgement');
+    const currentIndicator = form.getFieldValue('indicator_requirement');
+    const currentResult = form.getFieldValue('test_result');
+    const currentRemark = form.getFieldValue('remark');
     form.setFieldsValue({
+      sample_name: currentSampleName || rawSampleName || undefined,
       sample_identity: identities.length === 1
         ? identities[0]
         : identities.includes(currentIdentity) ? currentIdentity : undefined,
+      sample_identity_confirmed: identities.length === 1
+        && currentIdentity === identities[0]
+        ? currentIdentityConfirmed
+        : undefined,
       judge_basis: judgementRequired && basisOptions.length === 1
         ? basisOptions[0]
         : basisOptions.includes(currentBasis) ? currentBasis : undefined,
+      indicator_requirement: judgementRequired
+        ? currentIndicator || selectedProject?.indicator_requirement || undefined
+        : undefined,
+      test_result: judgementRequired
+        ? currentResult || selectedProject?.test_result || undefined
+        : undefined,
       judgement: judgementRequired && judgementOptions.includes(currentJudgement)
         ? currentJudgement
         : undefined,
+      remark: currentRemark ?? selectedProject?.remark ?? undefined,
     });
-  }, [basisOptions, form, identities, judgementOptions, judgementRequired, selectedProjectKey]);
+  }, [
+    basisOptions,
+    form,
+    identities,
+    judgementOptions,
+    judgementRequired,
+    rawSampleName,
+    selectedProjectKey,
+  ]);
 
   const projectOptions = projects.map(project => ({
     value: project._key,
@@ -275,37 +306,77 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
       </div>
 
       {identities.length === 1 ? (
-        <Descriptions size="small" bordered column={1}>
-          <Descriptions.Item label="样品识别">
-            {identities[0]}
-            <Tag color="green" className="execution-microscopy-record__automatic">已自动选用</Tag>
-          </Descriptions.Item>
-        </Descriptions>
+        <div className="execution-microscopy-record__section">
+          <Descriptions size="small" bordered column={1}>
+            <Descriptions.Item label="样品识别">
+              {identities[0]}
+              <Tag color="green" className="execution-microscopy-record__automatic">已自动填入</Tag>
+            </Descriptions.Item>
+          </Descriptions>
+          <Form.Item name="sample_identity" hidden>
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="sample_identity_confirmed"
+            valuePropName="checked"
+            rules={[{
+              validator: (_, value) => (
+                value === true
+                  ? Promise.resolve()
+                  : Promise.reject(new Error('请确认自动填入的样品识别'))
+              ),
+            }]}
+          >
+            <Checkbox disabled={disabled}>
+              确认本次录入的样品识别为“{identities[0]}”
+            </Checkbox>
+          </Form.Item>
+        </div>
       ) : identities.length > 1 ? (
         <Form.Item
           name="sample_identity"
           label="样品识别"
-          rules={[{ required: true, message: '请选择样品识别' }]}
+          extra="可从任务单候选中选择，也可输入后核对；提交值必须与旧系统下拉框严格一致。"
+          rules={[{ required: true, whitespace: true, message: '请选择或填写样品识别' }]}
         >
-          <Radio.Group disabled={disabled} options={identities} />
+          <AutoComplete
+            disabled={disabled}
+            options={identities.map(value => ({ value }))}
+            filterOption={(value, option) => String(option?.value || '').includes(value)}
+            placeholder="请选择或填写当前录入的样品识别"
+          />
         </Form.Item>
       ) : null}
+
+      {identityCountMismatch && (
+        <Alert
+          showIcon
+          type="warning"
+          message="任务单份数与样品识别数量不一致"
+          description={`检测份数为 ${checkCount}，样品识别拆分后为 ${identities.length} 项；请核对后继续，本提示不会终止流程。`}
+        />
+      )}
 
       {judgementRequired && (
         <div className="execution-microscopy-record__section is-judgement">
           <div className="execution-microscopy-record__heading">
             <div>
               <strong>判定信息</strong>
-              <Text type="secondary">任务单已要求判否</Text>
+              <Text type="secondary">任务单已要求判定</Text>
             </div>
           </div>
           {basisOptions.length === 1 ? (
-            <Descriptions size="small" bordered column={1}>
-              <Descriptions.Item label="判定依据">
-                {basisOptions[0]}
-                <Tag color="green" className="execution-microscopy-record__automatic">已自动选用</Tag>
-              </Descriptions.Item>
-            </Descriptions>
+            <>
+              <Descriptions size="small" bordered column={1}>
+                <Descriptions.Item label="判定依据">
+                  {basisOptions[0]}
+                  <Tag color="green" className="execution-microscopy-record__automatic">已自动填入</Tag>
+                </Descriptions.Item>
+              </Descriptions>
+              <Form.Item name="judge_basis" hidden>
+                <Input />
+              </Form.Item>
+            </>
           ) : basisOptions.length > 1 ? (
             <Form.Item
               name="judge_basis"
@@ -318,8 +389,29 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
               />
             </Form.Item>
           ) : (
-            <Alert showIcon type="warning" message="任务单未提供判定依据" />
+            <Form.Item
+              name="judge_basis"
+              label="判定依据"
+              extra="任务单未提供可选值，请核对任务单后填写。"
+              rules={[{ required: true, whitespace: true, message: '请填写判定依据' }]}
+            >
+              <Input disabled={disabled} />
+            </Form.Item>
           )}
+          <Form.Item
+            name="indicator_requirement"
+            label="指标要求"
+            rules={[{ required: true, whitespace: true, message: '请填写指标要求' }]}
+          >
+            <Input.TextArea disabled={disabled} rows={2} />
+          </Form.Item>
+          <Form.Item
+            name="test_result"
+            label="测试结果"
+            rules={[{ required: true, whitespace: true, message: '请填写测试结果' }]}
+          >
+            <Input.TextArea disabled={disabled} rows={2} />
+          </Form.Item>
           <Form.Item
             name="judgement"
             label="判定"
@@ -332,21 +424,12 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
               options={judgementOptions}
             />
           </Form.Item>
-          <Alert
-            showIcon
-            type="info"
-            message="指标要求与测试结果将在后续版本完善"
-            description="本轮不要求录入，也不会写入模板。"
-          />
         </div>
       )}
 
-      <Alert
-        showIcon
-        type="info"
-        message="备注字段将在后续版本完善"
-        description="本轮不要求录入，也不会写入模板。"
-      />
+      <Form.Item name="remark" label="备注">
+        <Input.TextArea disabled={disabled} rows={2} placeholder="无备注可留空" />
+      </Form.Item>
     </section>
   );
 };

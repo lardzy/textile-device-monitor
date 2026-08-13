@@ -19,6 +19,7 @@ namespace LegacyFibreCheckFinalEntryWriter
         public string OriginalDataInputUiClassName;
         public string TaskCheckBasis;
         public string TaskCheckMethod;
+        public string TaskSampleIdentify;
         public int GiveJudgement;
         public string DelegateOrgName;
         public string ReportLanguage;
@@ -61,7 +62,9 @@ namespace LegacyFibreCheckFinalEntryWriter
             "tci.\"CheckItemID\" \"TaskCheckItemCatalogID\", " +
             "tci.\"CheckItemNo\" \"TaskCheckItemNo\", " +
             "tci.\"CheckItemName\" \"TaskCheckItemName\", " +
-            "tci.\"CheckMethod\" \"TaskCheckMethod\", tci.\"CheckCount\" \"CheckCount\", " +
+            "tci.\"CheckMethod\" \"TaskCheckMethod\", " +
+            "tci.\"SampleIdentify\" \"TaskSampleIdentify\", " +
+            "tci.\"CheckCount\" \"CheckCount\", " +
             "tci.\"SeqNum\" \"TaskSeqNum\", " +
             "tci.\"GiveJudgement\" \"GiveJudgement\", " +
             "ci.ID \"CheckItemID\", ci.\"PositionID\" \"CheckItemPositionID\", " +
@@ -205,6 +208,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                         snapshot.OriginalDataInputUiClassName = Text(row, "OriginalDataInputUIClassName");
                         snapshot.TaskCheckBasis = Text(row, "TaskCheckBasis");
                         snapshot.TaskCheckMethod = Text(row, "TaskCheckMethod");
+                        snapshot.TaskSampleIdentify = Text(
+                            row, "TaskSampleIdentify");
                         snapshot.DelegateOrgName = Text(row, "DelegateOrgName");
                         snapshot.SampleReceiveTime = Date(row, "SampleReceiveTime");
                         snapshot.ExpectedResultCount = NonNegativeInt(row, "CheckCount");
@@ -234,20 +239,32 @@ namespace LegacyFibreCheckFinalEntryWriter
                     {
                         throw new PackageValidationException("task_check_count_would_be_exceeded");
                     }
-                    if (package.ControlledTestOverrideActive)
-                    {
-                        if (!package.AllowsOneAdditionalRegistration(
-                            snapshot.ExpectedResultCount))
-                        {
-                            throw new PackageValidationException(
-                                "controlled_test_override_remote_scope_mismatch");
-                        }
-                    }
-                    else if (package.ExpectedExistingRegisterCount
-                        >= snapshot.ExpectedResultCount)
+                    bool additionalRegistrationAllowed =
+                        package.AllowsConfirmedSingleCopyAppend(
+                            snapshot.ExpectedResultCount);
+                    if (package.ControlledTestOverrideActive
+                        && !additionalRegistrationAllowed)
                     {
                         throw new PackageValidationException(
-                            "task_check_count_would_be_exceeded");
+                            "controlled_test_override_remote_scope_mismatch");
+                    }
+                    if (package.ExistingRecordDecision != null
+                        && !additionalRegistrationAllowed)
+                    {
+                        throw new PackageValidationException(
+                            "existing_record_decision_remote_scope_mismatch");
+                    }
+                    if (additionalRegistrationAllowed)
+                    {
+                        // Both single-copy exceptions are checksum-bound in the
+                        // package. The live count is verified below before either
+                        // contract is marked as applied.
+                    }
+                    else if (snapshot.ExpectedResultCount == 1
+                        && package.ExpectedExistingRegisterCount > 0)
+                    {
+                        throw new PackageValidationException(
+                            "existing_record_decision_required_for_single_copy");
                     }
 
                     if (package.OperationType == FinalEntryPackage.GenericOperation)
@@ -271,6 +288,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                         {
                             throw new PackageValidationException("existing_generic_records_incomplete");
                         }
+                        VerifyGenericSampleIdentity(package, snapshot);
                     }
                     else
                     {
@@ -298,6 +316,10 @@ namespace LegacyFibreCheckFinalEntryWriter
                         // Failed preflight receipts must not imply that an exception was used.
                         package.ControlledTestOverrideApplied = true;
                     }
+                    if (package.ExistingRecordDecision != null)
+                    {
+                        package.ExistingRecordDecisionApplied = true;
+                    }
                 }
                 finally
                 {
@@ -305,6 +327,35 @@ namespace LegacyFibreCheckFinalEntryWriter
                 }
             }
             return snapshot;
+        }
+
+        private static void VerifySelectedSampleIdentity(
+            string selected, PreflightSnapshot snapshot)
+        {
+            var offered = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string part in Regex.Split(
+                snapshot.TaskSampleIdentify ?? string.Empty, "[，,、]"))
+            {
+                string value = CompactText(part);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    offered.Add(value);
+                }
+            }
+            if ((offered.Count == 0 && !string.IsNullOrEmpty(selected))
+                || (offered.Count > 0 && !offered.Contains(selected)))
+            {
+                throw new PackageValidationException(
+                    "selected_sample_identity_not_available");
+            }
+        }
+
+        private static void VerifyGenericSampleIdentity(
+            FinalEntryPackage package, PreflightSnapshot snapshot)
+        {
+            VerifySelectedSampleIdentity(
+                package.GenericRecord.Header.SampleDescription ?? string.Empty,
+                snapshot);
         }
 
         private static void ResolveExcel(
@@ -447,6 +498,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                     throw new PackageValidationException("key_identity_already_exists");
                 }
             }
+            VerifySelectedSampleIdentity(
+                package.ExcelRecord.ExpectedKeyIdentities[0], snapshot);
 
             // This explicit SELECT is a mandatory safety boundary.  The official
             // OriginalKeyDataConfigUtility inserts a mapping when it cannot find one.
@@ -617,7 +670,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                     actual.CheckMethod, expected.CheckMethod, StringComparison.Ordinal)
                 || actual.SeqNum != expected.SeqNum
                 || actual.CheckCount != expected.CheckCount
-                || actual.CheckCount != 1)
+                || actual.CheckCount < 1)
             {
                 throw new PackageValidationException(
                     "task_project_binding_changed");

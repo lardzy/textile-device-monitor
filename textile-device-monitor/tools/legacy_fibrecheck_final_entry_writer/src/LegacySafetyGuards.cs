@@ -264,12 +264,28 @@ namespace LegacyFibreCheckFinalEntryWriter
                     package.ControlledTestOverride.ResultingRegisterCount.ToString());
                 AppendCanonical(canonical, package.ControlledTestOverride.Reason);
             }
+            AppendCanonical(canonical,
+                (package.ExistingRecordDecision != null).ToString());
+            AppendCanonical(canonical,
+                package.ExistingRecordDecisionApplied.ToString());
+            if (package.ExistingRecordDecision != null)
+            {
+                AppendCanonical(canonical, package.ExistingRecordDecision.Kind);
+                AppendCanonical(canonical, package.ExistingRecordDecision.Action);
+                AppendCanonical(canonical,
+                    package.ExistingRecordDecision.ExpectedTaskCheckCount.ToString());
+                AppendCanonical(canonical,
+                    package.ExistingRecordDecision.ExpectedExistingRegisterCount.ToString());
+                AppendCanonical(canonical,
+                    package.ExistingRecordDecision.ResultingRegisterCount.ToString());
+            }
             AppendCanonical(canonical, snapshot.TaskId);
             AppendCanonical(canonical, snapshot.CheckItemId);
             AppendCanonical(canonical, snapshot.CheckItemPositionId);
             AppendCanonical(canonical, snapshot.OriginalDataInputUiClassName);
             AppendCanonical(canonical, snapshot.TaskCheckBasis);
             AppendCanonical(canonical, snapshot.TaskCheckMethod);
+            AppendCanonical(canonical, snapshot.TaskSampleIdentify);
             AppendCanonical(canonical, snapshot.GiveJudgement.ToString());
             AppendCanonical(canonical, snapshot.DelegateOrgName);
             AppendCanonical(canonical, snapshot.ReportLanguage);

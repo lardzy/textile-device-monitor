@@ -231,20 +231,20 @@ namespace LegacyFibreCheckWriter
                     return PackageFailure(result, emit, projectError);
                 }
 
-                var inspector = LegacyLoginFlow.ResolveInspector(
-                    db,
-                    inspectorName);
-                if (inspector.Value != "unique")
+                if (!SpecialWoolContracts.TryBindImageInspectorToAuthenticatedStaff(
+                    inspectorName,
+                    staff.ChineseName,
+                    staff.Id,
+                    out inspectorName,
+                    out inspectorId))
                 {
-                    result.Receipt["error"] =
-                        "inspector_not_unique:" + inspector.Value;
+                    result.Receipt["error"] = "authenticated_inspector_missing";
                     return UploadExecutor.Finish(
                         result,
                         ExitCodes.InspectorMappingFailed,
                         null,
                         emit);
                 }
-                inspectorId = inspector.Key;
                 if (!SpecialWoolContracts.MatchesLoginInspector(
                     inspectorName,
                     inspectorId,
@@ -591,14 +591,39 @@ namespace LegacyFibreCheckWriter
                     { "check_item_id", Redact.HashId(project.CheckItemId) },
                 });
 
-                var inspector = LegacyLoginFlow.ResolveInspector(db, inspectorName);
-                if (inspector.Value != "unique")
+                if (imageUpload)
                 {
-                    result.Receipt["error"] = "inspector_not_unique:" + inspector.Value;
-                    return UploadExecutor.Finish(
-                        result, ExitCodes.InspectorMappingFailed, null, emit);
+                    if (!SpecialWoolContracts.TryBindImageInspectorToAuthenticatedStaff(
+                        inspectorName,
+                        staff.ChineseName,
+                        staff.Id,
+                        out inspectorName,
+                        out inspectorId))
+                    {
+                        result.Receipt["error"] = "authenticated_inspector_missing";
+                        return UploadExecutor.Finish(
+                            result,
+                            ExitCodes.InspectorMappingFailed,
+                            null,
+                            emit);
+                    }
                 }
-                inspectorId = inspector.Key;
+                else
+                {
+                    var inspector = LegacyLoginFlow.ResolveInspector(
+                        db, inspectorName);
+                    if (inspector.Value != "unique")
+                    {
+                        result.Receipt["error"] =
+                            "inspector_not_unique:" + inspector.Value;
+                        return UploadExecutor.Finish(
+                            result,
+                            ExitCodes.InspectorMappingFailed,
+                            null,
+                            emit);
+                    }
+                    inspectorId = inspector.Key;
+                }
                 if (!SpecialWoolContracts.MatchesLoginInspector(
                     inspectorName,
                     inspectorId,
@@ -1654,7 +1679,7 @@ namespace LegacyFibreCheckWriter
                     && SameExpected(row, "CheckItemName", expected, "check_item_name")
                     && SameExpected(row, "CheckMethod", expected, "check_method")
                     && SameExpected(row, "SeqNum", expected, "seq_num")
-                    && SpecialWoolContracts.IsExpectedSingleCheckCount(
+                    && SpecialWoolContracts.MatchesExpectedPositiveCheckCount(
                         row["CheckCount"], expectedCheckCount))
                 {
                     matches.Add(new TaskProject
@@ -1900,7 +1925,11 @@ namespace LegacyFibreCheckWriter
                 "CheckWay",
                 Text(row, "CheckWay"),
                 imageUpload ? string.Empty : "定量");
-            Check(mismatches, "CheckUser1", Text(row, "CheckUser1"), inspectorId);
+            if (!SpecialWoolContracts.MatchesBusinessText(
+                Text(row, "CheckUser1"), inspectorId))
+            {
+                mismatches.Add("CheckUser1");
+            }
             string expectedItem = imageUpload ? "图片" : "棉再生纤定性";
             Check(
                 mismatches,

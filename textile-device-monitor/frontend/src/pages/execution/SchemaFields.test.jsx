@@ -41,4 +41,34 @@ describe('SchemaFields copy sources', () => {
     await user.click(fillButtons[1]);
     expect(input).toHaveValue('100%木浆');
   });
+
+  it('样品识别支持可编辑候选并显示份数不一致警告', async () => {
+    const user = userEvent.setup();
+    render(
+      <Form>
+        <SchemaFields
+          schema={{
+            type: 'object',
+            'x-warning': '任务单检测份数为 3，样品识别拆分后为 2 项。',
+            properties: {
+              sample_identity: {
+                type: 'string',
+                title: '样品识别',
+                'x-suggestions': ['正面', '反面'],
+              },
+            },
+            required: ['sample_identity'],
+          }}
+        />
+      </Form>,
+    );
+
+    expect(screen.getByText('任务单份数与样品识别数量不一致')).toBeInTheDocument();
+    const input = screen.getByRole('combobox', { name: '样品识别' });
+    await user.click(input);
+    expect((await screen.findAllByText('正面')).length).toBeGreaterThan(0);
+    await user.clear(input);
+    await user.type(input, '反面');
+    expect(input).toHaveValue('反面');
+  });
 });

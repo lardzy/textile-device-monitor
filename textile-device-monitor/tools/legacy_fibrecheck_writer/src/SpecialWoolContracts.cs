@@ -168,25 +168,63 @@ namespace LegacyFibreCheckWriter
         {
             return !string.IsNullOrWhiteSpace(inspectorId)
                 && !string.IsNullOrWhiteSpace(loginStaffId)
-                && string.Equals(inspectorId, loginStaffId, StringComparison.Ordinal)
+                && string.Equals(
+                    NormalizeBusinessText(inspectorId),
+                    NormalizeBusinessText(loginStaffId),
+                    StringComparison.Ordinal)
                 && string.Equals(
                     NormalizeBusinessText(inspectorName),
                     NormalizeBusinessText(loginChineseName),
                     StringComparison.Ordinal);
         }
 
-        internal static bool IsExpectedSingleCheckCount(
+        internal static bool TryBindImageInspectorToAuthenticatedStaff(
+            string executionActorDisplayName,
+            string loginChineseName,
+            string loginStaffId,
+            out string inspectorName,
+            out string inspectorId)
+        {
+            // 图片类原始记录由当前凭据登录旧系统后写入。执行系统账号的
+            // display_name 只用于审计，不能拿它去旧库 User.ChineseName 做二次
+            // 映射；二者并不要求同名（例如内置“执行系统管理员”账号）。
+            // 已认证的旧系统 Staff 是实际 CheckUser1 的唯一权威来源。
+            inspectorName = NormalizeBusinessText(loginChineseName);
+            inspectorId = NormalizeBusinessText(loginStaffId);
+            return !string.IsNullOrWhiteSpace(executionActorDisplayName)
+                && !string.IsNullOrWhiteSpace(inspectorName)
+                && !string.IsNullOrWhiteSpace(inspectorId);
+        }
+
+        internal static bool MatchesExpectedPositiveCheckCount(
             object actual,
             object expected)
         {
-            return string.Equals(
-                    NormalizeBusinessText(actual),
-                    "1",
-                    StringComparison.Ordinal)
-                && string.Equals(
-                    NormalizeBusinessText(expected),
-                    "1",
-                    StringComparison.Ordinal);
+            decimal actualCount;
+            decimal expectedCount;
+            return TryReadPositiveIntegerCount(actual, out actualCount)
+                && TryReadPositiveIntegerCount(expected, out expectedCount)
+                && actualCount == expectedCount;
+        }
+
+        private static bool TryReadPositiveIntegerCount(
+            object value,
+            out decimal count)
+        {
+            count = 0m;
+            string text = NormalizeBusinessText(value);
+            if (!Regex.IsMatch(
+                text,
+                @"^[1-9][0-9]*(?:\.0+)?$",
+                RegexOptions.CultureInvariant))
+            {
+                return false;
+            }
+            return decimal.TryParse(
+                text,
+                NumberStyles.AllowDecimalPoint,
+                CultureInfo.InvariantCulture,
+                out count);
         }
 
         internal static bool MatchesLegacyOriginalDataFileName(
@@ -288,6 +326,14 @@ namespace LegacyFibreCheckWriter
             string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
             string[] parts = Regex.Split(text.Trim(), @"\s+");
             return string.Join(" ", Array.FindAll(parts, item => item.Length > 0));
+        }
+
+        internal static bool MatchesBusinessText(object actual, object expected)
+        {
+            return string.Equals(
+                NormalizeBusinessText(actual),
+                NormalizeBusinessText(expected),
+                StringComparison.Ordinal);
         }
 
         internal static string FingerprintRow(DataRow row, ISet<string> excludedColumns)

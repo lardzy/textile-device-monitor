@@ -18,7 +18,6 @@ import {
 } from 'antd';
 import dayjs from 'dayjs';
 import {
-  approveExecutionExternalOperation,
   getExecutionExternalOperationReconciliation,
   getExecutionRunExternalOperations,
   reconcileExecutionExternalOperation,
@@ -27,8 +26,8 @@ import {
 const { Paragraph, Text } = Typography;
 
 const STATUS = {
-  prepared: { label: '待最终确认', color: 'warning' },
-  approved: { label: '已批准，等待连接器', color: 'processing' },
+  prepared: { label: '预检已生成', color: 'processing' },
+  approved: { label: '已交付，等待连接器', color: 'processing' },
   in_progress: { label: '旧系统处理中', color: 'processing' },
   completed: { label: '已完成并核对', color: 'success' },
   reused: { label: '已复用既有回执', color: 'success' },
@@ -87,18 +86,18 @@ const paperOperationGuidance = (operation) => {
   }
   if (status === 'prepared') {
     if (type === 'legacy_special_wool_qualitative_upload') {
-      return '请核对目标编号、前缀文件名、检验员和 Sheet1!W32 结果后批准上传。';
+      return '预检已生成；写入能力开启时由服务端自动交付纸类原始记录上传。';
     }
     if (type === 'legacy_special_wool_qualitative_review') {
-      return '请核对已上传的特纤记录后批准复核；本步骤不会重复上传文件。';
+      return '预检已生成；写入能力开启时由服务端自动交付纸类特纤复核，本步骤不会重复上传文件。';
     }
     if (operation?.request_summary?.judgement_contract?.required === true) {
-      return '请核对 Sheet1!W32 实测值、判定依据、判定结果及人工确认的“标准值与允差”后批准登记；本步骤只保存，不执行校对。';
+      return '样品识别、Sheet1!W32 实测值、判定结果及人工确认的“标准值与允差”已绑定预检；服务端会自动交付登记，本步骤只保存，不执行校对。';
     }
-    return '请核对 Sheet1!W32 的实际值和单位后批准登记；本步骤只保存，不执行校对。';
+    return '样品识别及 Sheet1!W32 实际值已绑定预检；服务端会自动交付登记，本步骤只保存，不执行校对。';
   }
   if (['approved', 'in_progress'].includes(status)) {
-    return '预检单已批准，正在等待或执行 Windows Bridge 旧系统操作。';
+    return '预检单已交付，正在等待或执行 Windows Bridge 旧系统操作。';
   }
   if (['completed', 'reused'].includes(status)) {
     return '旧系统回执已核对，本步骤可以继续推进流程。';
@@ -192,16 +191,12 @@ const shouldRefreshReconciliation = error => (
 export default function ExecutionExternalOperationPanel({
   runId,
   refreshKey,
-  canApprove = false,
   canReconcile = false,
   onChanged,
 }) {
   const [operations, setOperations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
-  const [confirming, setConfirming] = useState(null);
-  const [confirmText, setConfirmText] = useState('');
-  const [confirmNote, setConfirmNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [reconciliationLoadingId, setReconciliationLoadingId] = useState(null);
   const [reconciling, setReconciling] = useState(null);
@@ -246,46 +241,6 @@ export default function ExecutionExternalOperationPanel({
       cancelled = true;
     };
   }, [refreshKey, runId]);
-
-  const openConfirmation = (operation) => {
-    setConfirming(operation);
-    setConfirmText('');
-    setConfirmNote('');
-  };
-
-  const submitApproval = async () => {
-    const sampleNumber = String(
-      confirming?.request_summary?.target_sample_number || '',
-    );
-    if (confirmText.trim() !== sampleNumber) {
-      message.warning(`请输入完整样品编号 ${sampleNumber} 以确认`);
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await approveExecutionExternalOperation(
-        confirming.id,
-        confirming.payload_checksum,
-        confirmText.trim(),
-        confirmNote,
-      );
-      message.success('预检单已批准；已启用的 Windows Bridge 现在可以领取任务');
-      setConfirming(null);
-      await load();
-      await onChanged?.();
-    } catch (error) {
-      if ([404, 409].includes(error?.status)) {
-        message.warning('预检单已变化，正在刷新最新状态');
-        setConfirming(null);
-        await load();
-        await onChanged?.();
-      } else {
-        message.error(requestErrorMessage(error));
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const openReconciliation = async (operation) => {
     const requestId = reconciliationContextRequestRef.current + 1;
@@ -579,14 +534,6 @@ export default function ExecutionExternalOperationPanel({
   const reconciliationActionExpected = (
     reconciliationExpected?.[reconciliationForm.action] || {}
   );
-  const confirmingSummary = confirming?.request_summary || {};
-  const confirmingFinalEntry = (
-    confirmingSummary.operation_type === 'legacy_microscopy_check_record_entry'
-    && confirmingSummary.final_entry_summary
-  ) || null;
-  const confirmingPaper = isPaperOperation(confirming);
-  const confirmingPaperResult = confirmingSummary.result_contract || {};
-  const confirmingJudgement = confirmingSummary.judgement_contract || {};
 
   return (
     <>
@@ -599,14 +546,14 @@ export default function ExecutionExternalOperationPanel({
               ? '存在执行结果未知的旧系统操作，禁止重试'
               : hasUnavailableOperation
                 ? '当前仅开放预检，不会写入旧系统'
-              : '批准可能触发真实的旧系统写入'
+              : '旧系统操作由服务端自动交付'
           }
           description={
             hasReconciliationRequired
               ? '业务围栏仍保持锁定。必须先用只读探针核对远端记录和文件，再由管理员录入明确结论。'
               : hasUnavailableOperation
-                ? '相关字段、制品和目标编号仍会形成可核对的预检单；实机子记录与复核语义验证完成前，批准按钮保持禁用。'
-              : '批准后任务进入连接器队列；若 Windows Bridge 已启用，它可以立即领取、复制文件并通过 FibreCheck 写入旧检务系统。'
+                ? '相关字段、制品和目标编号仍会形成可核对的预检单；当前部署未开放对应写入能力。'
+                : '预检通过后，服务端会直接交付连接器队列；离开当前页面不会中断上传、复核或登记。'
           }
         />
         {operations.map((operation) => {
@@ -628,12 +575,8 @@ export default function ExecutionExternalOperationPanel({
           const judgementContract = summary.judgement_contract || {};
           const executionAvailable = summary?.safety?.execution_available !== false;
           let cardAction = null;
-          if (operation.status === 'prepared' && canApprove && executionAvailable) {
-            cardAction = (
-              <Button type="primary" onClick={() => openConfirmation(operation)}>
-                核对并批准预检单
-              </Button>
-            );
+          if (operation.status === 'prepared' && executionAvailable) {
+            cardAction = <Tag color="processing">自动交付中</Tag>;
           } else if (operation.status === 'prepared' && !executionAvailable) {
             cardAction = <Tag color="blue">仅预检</Tag>;
           } else if (operation.status === 'reconciliation_required') {
@@ -708,6 +651,11 @@ export default function ExecutionExternalOperationPanel({
                         children: summary.source_inspection_number,
                       }]
                     : []),
+                  ...(business.sample_identity ? [{
+                    key: 'sample-identity',
+                    label: '样品识别',
+                    children: business.sample_identity,
+                  }] : []),
                   ...(finalEntry ? [{
                     key: 'special-wool-source',
                     label: '来源特纤号',
@@ -786,6 +734,7 @@ export default function ExecutionExternalOperationPanel({
                       business.fiber_category,
                       business.inspection_method,
                       business.inspection_item,
+                      business.sample_identity,
                       business.review_action,
                       business.review_item,
                       business.inspection_copies
@@ -819,25 +768,27 @@ export default function ExecutionExternalOperationPanel({
                   },
                   {
                     key: 'approved',
-                    label: '批准时间',
+                    label: '自动交付时间',
                     children: operation.approval?.approved_at
                       ? dayjs(operation.approval.approved_at).format('YYYY-MM-DD HH:mm:ss')
-                      : '尚未批准',
+                      : '等待服务端交付',
                   },
                   {
                     key: 'expires',
-                    label: operation.approval?.expires_at
-                      ? '批准有效至'
+                    label: operation.approval?.approved_at
+                      ? '交付时限'
                       : '预检有效至',
-                    children: (
-                      operation.approval?.expires_at
-                      || operation.preflight_expires_at
-                    )
-                      ? dayjs(
+                    children: operation.approval?.approved_at
+                      ? (
                         operation.approval?.expires_at
-                        || operation.preflight_expires_at,
-                      ).format('YYYY-MM-DD HH:mm:ss')
-                      : '—',
+                          ? dayjs(operation.approval.expires_at).format('YYYY-MM-DD HH:mm:ss')
+                          : '服务端自动交付，不设倒计时'
+                      )
+                      : (
+                        operation.preflight_expires_at
+                          ? dayjs(operation.preflight_expires_at).format('YYYY-MM-DD HH:mm:ss')
+                          : '—'
+                      ),
                   },
                 ]}
               />
@@ -890,149 +841,6 @@ export default function ExecutionExternalOperationPanel({
           );
         })}
       </Space>
-
-      <Modal
-        title={`最终核对本次${operationMeta(confirming).subject}预检单`}
-        open={Boolean(confirming)}
-        okText="批准并进入连接器队列"
-        cancelText="返回检查"
-        confirmLoading={submitting}
-        onCancel={() => !submitting && setConfirming(null)}
-        onOk={submitApproval}
-        destroyOnHidden
-      >
-        <Alert
-          showIcon
-          type="warning"
-          message={confirmingPaper
-            ? `请最终核对${operationMeta(confirming).subject}的编号、结果和业务字段`
-            : confirmingFinalEntry
-            ? '请逐项核对原编号、来源特纤号、记录数量和文件摘要'
-            : '请逐项核对样品编号、检验员、业务字段和文件摘要'}
-          description="批准后，已启用的 Windows Bridge 可以立即执行真实写入。请确认目标编号、账号、文件及摘要均正确。"
-        />
-        {!confirmingPaper && confirmingSummary.target_filename && (
-          <Descriptions
-            style={{ marginTop: 16 }}
-            size="small"
-            column={1}
-            items={[{
-              key: 'target-filename',
-              label: '上传文件名',
-              children: confirmingSummary.target_filename,
-            }]}
-          />
-        )}
-        {confirmingPaper && (
-          <Descriptions
-            style={{ marginTop: 16 }}
-            size="small"
-            column={1}
-            items={[
-              {
-                key: 'paper-target',
-                label: '目标编号',
-                children: confirmingSummary.target_sample_number || '—',
-              },
-              ...(confirmingSummary.target_filename ? [{
-                key: 'paper-filename',
-                label: '上传文件名',
-                children: confirmingSummary.target_filename,
-              }] : []),
-              ...(confirmingPaperResult.value ? [{
-                key: 'paper-result',
-                label: `${confirmingPaperResult.worksheet || 'Sheet1'}!${confirmingPaperResult.cell || 'W32'}`,
-                children: `${confirmingPaperResult.value}${confirmingPaperResult.unit || ''}`,
-              }] : []),
-              ...(confirmingJudgement.required === true ? [{
-                key: 'paper-judge-basis',
-                label: '判定依据',
-                children: confirmingJudgement.judge_basis || '—',
-              }, {
-                key: 'paper-judgement',
-                label: '判定结果',
-                children: confirmingJudgement.judgement || '—',
-              }, {
-                key: 'paper-standard-value',
-                label: '标准值与允差（人工确认）',
-                children: (
-                  <Text strong>{confirmingJudgement.standard_value || '—'}</Text>
-                ),
-              }] : []),
-              ...(confirmingSummary.operation_type === 'legacy_generic_check_record_entry'
-                ? [{
-                    key: 'paper-proof',
-                    label: '校对策略',
-                    children: confirmingSummary.safety?.proof_required === false
-                      ? '仅保存，不校对'
-                      : '按预检单执行',
-                  }]
-                : []),
-            ]}
-          />
-        )}
-        {confirmingFinalEntry && (
-          <Descriptions
-            style={{ marginTop: 16 }}
-            size="small"
-            column={1}
-            items={[
-              {
-                key: 'special-wool-source',
-                label: '来源特纤号',
-                children: (
-                  confirmingFinalEntry.source_review_target_sample_number
-                  || '—'
-                ),
-              },
-              {
-                key: 'register-count-transition',
-                label: '登记记录数',
-                children: recordCountTransition(confirmingFinalEntry),
-              },
-            ]}
-          />
-        )}
-        {confirmingFinalEntry?.controlled_test && (
-          <Alert
-            style={{ marginTop: 16 }}
-            showIcon
-            type="error"
-            message={(
-              '受控例外：现有记录将从 '
-              + recordCountTransition(confirmingFinalEntry)
-                .replace(' → ', ' 增加到 ')
-            )}
-            description={(
-              `${confirmingFinalEntry.controlled_test_reason}。`
-              + '请确认旧记录保持不变，本次只新增一条。'
-            )}
-          />
-        )}
-        <Paragraph style={{ marginTop: 16, marginBottom: 6 }}>
-          请输入完整样品编号
-          <Text strong>
-            {' '}
-            {confirming?.request_summary?.target_sample_number}
-            {' '}
-          </Text>
-          以确认：
-        </Paragraph>
-        <Input
-          aria-label="确认样品编号"
-          autoComplete="off"
-          value={confirmText}
-          onChange={event => setConfirmText(event.target.value)}
-        />
-        <Paragraph style={{ marginTop: 12, marginBottom: 6 }}>审核备注（可选）</Paragraph>
-        <Input.TextArea
-          aria-label="审核备注"
-          rows={2}
-          maxLength={1000}
-          value={confirmNote}
-          onChange={event => setConfirmNote(event.target.value)}
-        />
-      </Modal>
 
       <Modal
         width={680}

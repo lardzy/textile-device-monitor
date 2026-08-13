@@ -79,6 +79,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 { "target_filename", targetFilename },
                 { "controlled_test_override_applied",
                     package.ControlledTestOverrideApplied },
+                { "existing_record_decision_applied",
+                    package.ExistingRecordDecisionApplied },
             });
             if (awaitPermit == null || !awaitPermit())
             {
@@ -182,6 +184,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 { "existing_register_count", snapshot.ExistingRegisterCount },
                 { "controlled_test_override_applied",
                     package.ControlledTestOverrideApplied },
+                { "existing_record_decision_applied",
+                    package.ExistingRecordDecisionApplied },
             };
             if (package.OperationType == FinalEntryPackage.ExcelOperation)
             {

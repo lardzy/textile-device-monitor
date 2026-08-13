@@ -374,6 +374,24 @@ QUERIES: tuple[QueryDefinition, ...] = (
         """,
     ),
     QueryDefinition(
+        key="task_project_register_counts",
+        purpose="按任务项目读取当前检验记录登记数量",
+        sql="""
+            SELECT
+                ci."ID" AS "TaskCheckItemID",
+                ci."CheckItemID" AS "CheckItemID",
+                COUNT(crr."ID") AS "RegisterCount"
+            FROM "Task_CheckItem" ci
+            JOIN "Task" t ON t."ID" = ci."TaskID"
+            LEFT JOIN "CheckRecordRegister" crr
+              ON crr."SampleNo" = t."ReportNo"
+             AND crr."CheckItemID" = ci."CheckItemID"
+            WHERE t."ReportNo" = :sample_no
+            GROUP BY ci."ID", ci."CheckItemID"
+            ORDER BY ci."ID"
+        """,
+    ),
+    QueryDefinition(
         key="task_special_wool_family",
         purpose="读取任务编号对应的特种毛底单及数字后缀占用事实",
         sql="""
@@ -468,6 +486,7 @@ TASK_SNAPSHOT_QUERY_KEYS = (
     "tasks",
     "task_samples",
     "task_check_items",
+    "task_project_register_counts",
     "task_special_wool_family",
 )
 TASK_SNAPSHOT_QUERIES: tuple[QueryDefinition, ...] = tuple(

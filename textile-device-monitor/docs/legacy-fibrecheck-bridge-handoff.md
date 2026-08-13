@@ -35,7 +35,7 @@
   FinalEntry 能力；源工作簿仍必须通过 `--source-root root_id=路径` 显式映射；
 - Bridge 写给 FinalEntry Writer 的临时 JSON 只包含服务端签发的
   `operation.machine_payload`，不会把 claim、凭据或公开摘要混入 Writer 包；私有包内含完整
-  `task_project`（项目键、两个脱敏 ID、项目编号/名称、方法、顺序、`CheckCount=1`）；
+  `task_project`（项目键、两个脱敏 ID、项目编号/名称、方法、顺序、`CheckCount>=1`）；
 - Writer 的本地阶段会转换为服务端固定阶段，并在 `excel_write_ready` 后先由服务端
   持久化 `excel_collection_started`，成功后才经 stdin 发出一次性副作用许可；
 - `completed` 不直接信任 stdout：Bridge 会先严格核对完整 raw receipt、Writer 从当前
@@ -344,7 +344,9 @@ legacy_special_wool_image_upload
 legacy_special_wool_review
 ```
 
-- 图片上传固定为 `FibreSort=图片`、`CheckWay=''`、`CheckItem=图片`、`CheckCount=1`；
+- 图片上传固定为 `FibreSort=图片`、`CheckWay=''`、`CheckItem=图片`，本次检验记录
+  `CheckCount=1`；任务项目总 `CheckCount` 可大于 1，但必须为正整数并与服务端
+  签发值精确一致；
   检验员使用执行系统当前用户显示名。源文件必须是同一运行中生成、登记并重新
   核对 SHA-256 的 `编号-39-8B-纤维形状截面定量试验-2026.xls`。服务器端文件名
   必须按最终分配编号重新生成，例如 `260111037-1-39-8B-纤维形状截面定量试验-2026.xls`，

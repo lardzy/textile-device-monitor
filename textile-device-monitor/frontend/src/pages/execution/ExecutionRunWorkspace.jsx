@@ -156,7 +156,7 @@ export default function ExecutionRunWorkspace() {
   const [actionLoading, setActionLoading] = useState(null);
   const [connection, setConnection] = useState('connecting');
   const [detailOpen, setDetailOpen] = useState(false);
-  const [approvalPresent, setApprovalPresent] = useState(false);
+  const [externalOperationPresent, setExternalOperationPresent] = useState(false);
   const [eventHistory, setEventHistory] = useState({
     runId: null,
     initialized: false,
@@ -389,9 +389,9 @@ export default function ExecutionRunWorkspace() {
       .startsWith('external.legacy_')
   ));
 
-  // 批准卡片始终挂载（自行感知刷新并回报有无内容），
-  // 有人工任务或待批准操作时才加宽左栏。
-  const hasActionItems = activeHumanTasks.length > 0 || approvalPresent;
+  // 外部操作卡片始终挂载（自行感知刷新并回报有无内容），
+  // 有人工任务或进行中的外部操作时才加宽左栏。
+  const hasActionItems = activeHumanTasks.length > 0 || externalOperationPresent;
 
   const isTerminalRun = terminalStatuses.has(run.status);
   const actions = (
@@ -402,6 +402,7 @@ export default function ExecutionRunWorkspace() {
           : connection === 'connected' ? '实时连接正常' : '实时连接正在恢复'}
       >
         <Badge
+          className="execution-live-sync-status"
           status={isTerminalRun
             ? 'default'
             : connection === 'connected' ? 'success' : 'processing'}
@@ -521,7 +522,6 @@ export default function ExecutionRunWorkspace() {
         <ExecutionExternalOperationPanel
           runId={runId}
           refreshKey={run.updated_at}
-          canApprove={false}
           canReconcile={canReconcileExternalOperations}
           onChanged={() => loadSnapshot({ quiet: true })}
         />
@@ -698,9 +698,7 @@ export default function ExecutionRunWorkspace() {
                   <ExecutionAutoApprovalCard
                     runId={runId}
                     refreshKey={run.updated_at}
-                    canApprove={canRunWorkflow}
-                    onChanged={() => loadSnapshot({ quiet: true })}
-                    onPresenceChange={setApprovalPresent}
+                    onPresenceChange={setExternalOperationPresent}
                   />
                 )}
               </Space>

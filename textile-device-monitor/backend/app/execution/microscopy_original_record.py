@@ -459,6 +459,7 @@ def _microscopy_record_context_executor(context) -> dict[str, Any]:
     return {
         "task_kind": "microscopy_record_input",
         "inspection_number": inspection_number,
+        "task": task_snapshot,
         "selected_image_ids": selected_ids,
         "selected_images": input_data.get("selected_images") or [],
         "template_binding": template_binding,
@@ -917,13 +918,25 @@ def _cell_payload(
     judgement_required: bool,
     judgement_basis: object,
     judgement: object,
+    indicator_requirement: object = None,
+    test_result: object = None,
+    remark: object = None,
 ) -> dict[str, str]:
     name = _normalized_text(sample_name)
     if not name:
         raise ExecutionApiError(422, "sample_name_required", "请选择样品名称")
     identification = _normalized_text(sample_identification)
     basis = _normalized_text(judgement_basis)
+    indicator = _normalized_text(indicator_requirement)
+    result = _normalized_text(test_result)
     decision = _normalized_text(judgement)
+    note = _normalized_text(remark)
+    if judgement_required and not basis:
+        raise ExecutionApiError(422, "judgement_basis_required", "请填写判定依据")
+    if judgement_required and not indicator:
+        raise ExecutionApiError(422, "indicator_requirement_required", "请填写指标要求")
+    if judgement_required and not result:
+        raise ExecutionApiError(422, "test_result_required", "请填写测试结果")
     if judgement_required and not decision:
         raise ExecutionApiError(422, "judgement_required", "请选择判定结果")
     return {
@@ -931,11 +944,10 @@ def _cell_payload(
         "B3": name,
         "L3": identification,
         "B33": basis if judgement_required else "",
-        # I33=指标要求、B34=测试结果、B35=备注 are deliberately blank in v1.
-        "I33": "",
-        "B34": "",
+        "I33": indicator if judgement_required else "",
+        "B34": result if judgement_required else "",
         "I34": decision if judgement_required else "",
-        "B35": "",
+        "B35": note,
     }
 
 
@@ -1353,7 +1365,10 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         judgement_basis=input_data.get(
             "judgement_basis", input_data.get("judge_basis")
         ),
+        indicator_requirement=input_data.get("indicator_requirement"),
+        test_result=input_data.get("test_result"),
         judgement=input_data.get("judgement"),
+        remark=input_data.get("remark"),
     )
     selected = _resolve_selected_images(
         context.db,

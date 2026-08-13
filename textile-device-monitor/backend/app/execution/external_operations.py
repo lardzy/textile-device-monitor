@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -405,12 +405,12 @@ def _validated_microscopy_project_binding(
         or seq_num < 0
         or not isinstance(check_count, int)
         or isinstance(check_count, bool)
-        or check_count != 1
+        or check_count < 1
     ):
         raise ExecutionApiError(
             422,
             "legacy_special_wool_task_project_count_invalid",
-            "微观形貌任务项目的顺序或检验份数已变化；检验份数必须恰好为 1",
+            "微观形貌任务项目的顺序或检验份数已变化；检验份数必须至少为 1",
         )
     expected_project_key = "task-project:" + hashlib.sha256(
         "\0".join(
@@ -478,12 +478,12 @@ def _validated_paper_project_binding(
         or seq_num < 0
         or not isinstance(check_count, int)
         or isinstance(check_count, bool)
-        or check_count != 1
+        or check_count < 1
     ):
         raise ExecutionApiError(
             422,
             "paper_fiber_task_project_mismatch",
-            "任务项目必须是 GB/T 4688-2020 纸、纸板和纸浆纤维鉴别分析且份数为 1",
+            "任务项目必须是 GB/T 4688-2020 纸、纸板和纸浆纤维鉴别分析且份数大于 0",
         )
     expected_project_key = "task-project:" + hashlib.sha256(
         "\0".join(
@@ -563,6 +563,40 @@ def _required_count(value: Any, *, path: str) -> int:
     return value
 
 
+def _validate_existing_record_decision_receipt(
+    actual: Any,
+    *,
+    expected: Any,
+    path: str = "$.existing_record_decision",
+) -> None:
+    if expected is None:
+        if actual is not None:
+            raise _machine_document_error(
+                path, "普通业务回执不得声明已有登记追加确认"
+            )
+        return
+    if not isinstance(expected, dict):
+        raise _machine_document_error(
+            "$.request_summary.existing_record_decision",
+            "预检单中的已有登记追加确认无效",
+        )
+    decision = _strict_object(
+        actual,
+        path=path,
+        required={
+            "kind",
+            "action",
+            "expected_task_check_count",
+            "expected_existing_register_count",
+            "resulting_register_count",
+        },
+    )
+    if decision != expected:
+        raise _machine_document_error(
+            path, "已有登记追加确认回执与已批准的任务包不一致"
+        )
+
+
 def _validate_bound_project_document(
     value: Any,
     *,
@@ -611,12 +645,14 @@ def _validate_bound_project_document(
         raise _machine_document_error(
             f"{path}.match_count", "任务项目必须且只能匹配一条旧系统记录"
         )
-    if require_check_count and _required_count(
-        project.get("check_count"), path=f"{path}.check_count"
-    ) != 1:
-        raise _machine_document_error(
-            f"{path}.check_count", "任务项目检验份数必须恰好为 1"
+    if require_check_count:
+        check_count = _required_count(
+            project.get("check_count"), path=f"{path}.check_count"
         )
+        if check_count < 1:
+            raise _machine_document_error(
+                f"{path}.check_count", "任务项目检验份数必须大于 0"
+            )
     for key in (
         "project_key",
         "task_check_item_id",
@@ -767,6 +803,7 @@ def validate_special_wool_machine_observation(
             expected=dict(summary.get("task_project") or {}),
             path="$.task_project",
             require_match_count=True,
+            require_check_count=True,
         )
         readback = _strict_object(
             document.get("picture_readback"),
@@ -1096,6 +1133,7 @@ def validate_external_receipt(
                 "final_entry",
                 "controlled_test_override",
             },
+            optional={"existing_record_decision"},
         )
         expected_type = MICROSCOPY_CHECK_RECORD_ENTRY_RECEIPT_TYPE
     else:
@@ -1103,6 +1141,7 @@ def validate_external_receipt(
             receipt,
             path="$",
             required=common | {"task_project", "final_entry", "controlled_test_override"},
+            optional={"existing_record_decision"},
         )
         expected_type = GENERIC_CHECK_RECORD_ENTRY_RECEIPT_TYPE
     if document.get("schema_version") != 1 or document.get(
@@ -1279,6 +1318,10 @@ def validate_external_receipt(
                     "$.controlled_test_override.applied",
                     "受控测试三重门禁未全部激活并通过远端预检",
                 )
+        _validate_existing_record_decision_receipt(
+            document.get("existing_record_decision"),
+            expected=package.get("existing_record_decision"),
+        )
         return document
 
     if operation_type == LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION:
@@ -1420,6 +1463,10 @@ def validate_external_receipt(
                     "$.controlled_test_override.applied",
                     "受控测试三重门禁未全部激活并通过远端预检",
                 )
+        _validate_existing_record_decision_receipt(
+            document.get("existing_record_decision"),
+            expected=expected_package.get("existing_record_decision"),
+        )
         return document
 
     if operation_type in {
@@ -1473,6 +1520,7 @@ def validate_external_receipt(
             expected=dict(summary.get("task_project") or {}),
             path="$.task_project",
             require_match_count=False,
+            require_check_count=True,
         )
         server_file = _strict_object(
             document.get("server_file"),
@@ -2265,7 +2313,7 @@ def _generated_microscopy_check_record_artifact(
     *,
     run: ExecutionRun,
     input_data: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any], str]:
+) -> tuple[dict[str, Any], dict[str, Any], str, dict[str, Any]]:
     """Bind final-entry preflight to one immutable generated Sheet1 workbook."""
 
     declared = input_data.get("registration_workbook")
@@ -2388,8 +2436,11 @@ def _generated_microscopy_check_record_artifact(
         "size_bytes": artifact.size_bytes,
         "content_sha256": artifact.content_sha256,
     }
-    return file_row, dict(stored_binding), _normalized_business_text(
-        cells.get("Z7")
+    return (
+        file_row,
+        dict(stored_binding),
+        _normalized_business_text(cells.get("Z7")),
+        dict(cells),
     )
 
 
@@ -2567,13 +2618,15 @@ def _reverify_microscopy_final_entry_sources(
             "检验记录登记预检单缺少制品或模板绑定",
             operation_id=operation.id,
         )
-    _generated_microscopy_check_record_artifact(
-        db,
-        run=run,
-        input_data={
-            "registration_workbook": dict(files[0]),
-            "template_binding": dict(summary["template_binding"]),
-        },
+    _file, _binding, _identity, _cells = (
+        _generated_microscopy_check_record_artifact(
+            db,
+            run=run,
+            input_data={
+                "registration_workbook": dict(files[0]),
+                "template_binding": dict(summary["template_binding"]),
+            },
+        )
     )
 
     source_ref = summary.get("source_review_operation")
@@ -2613,6 +2666,17 @@ def _reverify_microscopy_final_entry_sources(
         )
     validate_external_receipt(source, source.receipt)
     package = summary.get("final_entry_package")
+    source_project = (source.request_summary or {}).get("task_project")
+    if (
+        not isinstance(package, dict)
+        or package.get("task_project") != summary.get("task_project")
+        or source_project != summary.get("task_project")
+    ):
+        raise conflict(
+            "microscopy_final_entry_binding_changed",
+            "检验记录登记的任务项目或检验份数绑定已变化",
+            operation_id=operation.id,
+        )
     override = (
         package.get("controlled_test_override")
         if isinstance(package, dict)
@@ -3239,7 +3303,11 @@ def _ensure_approval_not_expired(
     now: datetime,
 ) -> None:
     expires_at = operation.approval_expires_at
-    if expires_at is None or _aware_utc(expires_at) <= _aware_utc(now):
+    # 服务端自动批准不依赖浏览器停留，也不设倒计时。NULL 表示该自动
+    # 交付可一直等待 Bridge；人工批准仍写入明确 TTL 并按原规则校验。
+    if expires_at is None:
+        return
+    if _aware_utc(expires_at) <= _aware_utc(now):
         raise conflict(
             "external_operation_approval_expired",
             "本次批准已过期，系统将自动结束本次运行，请重新执行并再次确认",
@@ -3970,7 +4038,7 @@ def prepare_legacy_regenerated_count_operation(
         "files": files,
         "safety": {
             "remote_write_performed": False,
-            "requires_final_approval": True,
+            "requires_final_approval": False,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
         },
@@ -4093,7 +4161,7 @@ def prepare_legacy_special_wool_image_operation(
         ),
         "safety": {
             "remote_write_performed": False,
-            "requires_final_approval": True,
+            "requires_final_approval": False,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
             "remote_target_allocation_verified": False,
@@ -4275,7 +4343,7 @@ def prepare_legacy_special_wool_review_operation(
         ),
         "safety": {
             "remote_write_performed": False,
-            "requires_final_approval": True,
+            "requires_final_approval": False,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
         },
@@ -4357,15 +4425,193 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         db, run=run, input_data=input_data
     )
     source_review_summary = source_review.request_summary or {}
-    file_row, template_binding, key_identity = (
+    source_task_project = source_review_summary.get("task_project")
+    if (
+        not isinstance(source_task_project, dict)
+        or source_task_project != project
+    ):
+        raise conflict(
+            "microscopy_task_project_changed_after_upload",
+            "检验记录登记前任务项目或检验份数已与图片上传时不一致，请重新运行流程",
+        )
+    file_row, template_binding, key_identity, generated_cells = (
         _generated_microscopy_check_record_artifact(
             db, run=run, input_data=input_data
         )
     )
+    selected_project = input_data.get("selected_project")
+    if not isinstance(selected_project, dict):
+        raise conflict(
+            "microscopy_registration_context_changed",
+            "检验记录登记项目上下文已变化，请重新运行流程",
+        )
+    record_input = input_data.get("record_input")
+    record_input = record_input if isinstance(record_input, dict) else {}
+
+    identity_options: list[str] = []
+    seen_identities: set[str] = set()
+    for part in re.split(
+        r"[，,、]", str(selected_project.get("sample_identify") or "")
+    ):
+        identity = _normalized_business_text(part)
+        if identity and identity.casefold() not in seen_identities:
+            identity_options.append(identity)
+            seen_identities.add(identity.casefold())
+    sample_identity = _normalized_business_text(
+        record_input.get("sample_identity") or key_identity
+    )
+    if key_identity != sample_identity:
+        raise conflict(
+            "microscopy_sample_identity_workbook_mismatch",
+            "检验记录登记工作簿中的样品识别与人工确认结果不一致",
+        )
+    if identity_options and sample_identity not in identity_options:
+        raise conflict(
+            "microscopy_sample_identity_not_offered",
+            "样品识别与录入前刷新到的任务单选项不一致，请重新确认",
+        )
+    if not identity_options and sample_identity:
+        raise conflict(
+            "microscopy_sample_identity_not_offered",
+            "任务单未提供样品识别，不能写入旧系统下拉框",
+        )
+    if (
+        len(identity_options) == 1
+        and record_input
+        and record_input.get("sample_identity_confirmed") is not True
+    ):
+        raise conflict(
+            "microscopy_sample_identity_confirmation_required",
+            "请先确认自动填入的样品识别",
+        )
+
+    raw_judgement_flag = selected_project.get("give_judgement")
+    judgement_required = not (
+        raw_judgement_flag is None
+        or raw_judgement_flag is False
+        or raw_judgement_flag == 0
+        or str(raw_judgement_flag).strip().casefold()
+        in {"", "0", "false", "no", "否", "否定"}
+    )
+    judgement_fields = {
+        "judge_basis": _normalized_business_text(
+            record_input.get("judge_basis") or generated_cells.get("I9")
+        ),
+        "indicator_requirement": _normalized_business_text(
+            record_input.get("indicator_requirement")
+            or generated_cells.get("I10")
+        ),
+        "test_result": _normalized_business_text(
+            record_input.get("test_result") or generated_cells.get("I11")
+        ),
+        "judgement": _normalized_business_text(
+            record_input.get("judgement") or generated_cells.get("G13")
+        ),
+        "remark": _normalized_business_text(
+            record_input.get("remark") or generated_cells.get("G12")
+        ),
+    }
+    generated_field_map = {
+        "judge_basis": "I9",
+        "indicator_requirement": "I10",
+        "test_result": "I11",
+        "judgement": "G13",
+        "remark": "G12",
+    }
+    if any(
+        _normalized_business_text(generated_cells.get(cell))
+        != judgement_fields[field]
+        for field, cell in generated_field_map.items()
+    ):
+        raise conflict(
+            "microscopy_judgement_workbook_mismatch",
+            "检验记录登记工作簿中的判定字段与人工确认结果不一致",
+        )
+    if judgement_required and any(
+        not judgement_fields[field]
+        for field in (
+            "judge_basis",
+            "indicator_requirement",
+            "test_result",
+            "judgement",
+        )
+    ):
+        raise conflict(
+            "microscopy_judgement_fields_required",
+            "任务单要求判定，请先填写判定依据、指标要求、测试结果和判定",
+        )
+    if not judgement_required and any(
+        judgement_fields[field]
+        for field in (
+            "judge_basis",
+            "indicator_requirement",
+            "test_result",
+            "judgement",
+        )
+    ):
+        raise conflict(
+            "microscopy_judgement_fields_unexpected",
+            "任务单未要求判定，检验记录登记工作簿不应包含判定字段",
+        )
+
     override = _controlled_final_entry_override(
         input_data, sample_number=source_number
     )
-    expected_existing = 1 if override is not None else 0
+    registration_decision = input_data.get("registration_decision")
+    register_count = selected_project.get("register_count")
+    check_count = project["check_count"]
+    append_existing = False
+    if isinstance(registration_decision, dict):
+        expected_existing = registration_decision.get(
+            "expected_existing_register_count"
+        )
+        action = _normalized_business_text(
+            registration_decision.get("existing_record_action")
+        )
+        if (
+            not isinstance(expected_existing, int)
+            or isinstance(expected_existing, bool)
+            or expected_existing < 0
+            or expected_existing != register_count
+            or registration_decision.get("registration_cancelled") is True
+        ):
+            raise conflict(
+                "microscopy_registration_decision_changed",
+                "录入前已有登记核对结果已变化，请重新运行流程",
+            )
+        append_existing = check_count == 1 and expected_existing > 0
+        if append_existing and action != "append":
+            raise conflict(
+                "microscopy_existing_record_confirmation_required",
+                "当前单份项目已有登记，必须由用户确认直接新增",
+            )
+        if not append_existing and action != "continue":
+            raise conflict(
+                "microscopy_registration_decision_changed",
+                "已有登记处理选择与当前任务份数不一致，请重新运行流程",
+            )
+    elif override is not None:
+        # Compatibility for an already-running controlled validation snapshot.
+        expected_existing = 1
+    elif register_count == 0:
+        # Compatibility for an already-running workflow published before the
+        # shared registration-decision node was introduced.
+        expected_existing = 0
+    else:
+        raise conflict(
+            "microscopy_registration_decision_missing",
+            "缺少录入前已有登记核对结果，请重新运行流程",
+        )
+
+    existing_record_decision = None
+    if append_existing and override is None:
+        existing_record_decision = {
+            "kind": "append_when_check_count_one",
+            "action": "append",
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": expected_existing,
+            "resulting_register_count": expected_existing + 1,
+        }
     final_entry_package: dict[str, Any] = {
         "schema_version": 2,
         "operation_type": "excel_check_record",
@@ -4386,7 +4632,7 @@ def prepare_legacy_microscopy_check_record_entry_operation(
             "expected_key_identities": [key_identity],
             "register": {
                 "level": "",
-                "sample_identity": "",
+                "sample_identity": sample_identity,
                 "equipment_no": "",
                 "check_basis": "",
             },
@@ -4401,6 +4647,10 @@ def prepare_legacy_microscopy_check_record_entry_operation(
             },
         },
     }
+    if existing_record_decision is not None:
+        final_entry_package["existing_record_decision"] = (
+            existing_record_decision
+        )
     if override is not None:
         final_entry_package["controlled_test_override"] = override
     request_summary = {
@@ -4420,15 +4670,40 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         },
         "files": [file_row],
         "template_binding": template_binding,
+        "sample_identity_contract": {
+            "selected": sample_identity,
+            "options": identity_options,
+            "option_count": len(identity_options),
+            "check_count": check_count,
+            "count_mismatch": bool(
+                identity_options and len(identity_options) != check_count
+            ),
+        },
+        "judgement_contract": {
+            "required": judgement_required,
+            **judgement_fields,
+        },
+        "existing_record_decision": existing_record_decision,
         "final_entry_package": final_entry_package,
         "final_entry_summary": {
             "source_review_target_sample_number": str(
                 source_review_summary.get("target_sample_number") or ""
             ),
             "image_count": template_binding["image_count"],
-            "expected_task_check_count": 1,
+            "expected_task_check_count": check_count,
             "expected_existing_register_count": expected_existing,
             "resulting_register_count": expected_existing + 1,
+            "registration_capacity_mode": (
+                "informational_for_multi_copy"
+                if check_count > 1
+                else "single_copy_confirmation_required"
+            ),
+            "registration_capacity_exceeded": (
+                expected_existing + 1 > check_count
+            ),
+            "existing_record_append_confirmed": (
+                existing_record_decision is not None
+            ),
             "controlled_test": override is not None,
             "controlled_test_reason": (
                 override.get("reason") if override is not None else None
@@ -4437,7 +4712,8 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         "business_fields": {
             "inspection_item": MICROSCOPY_CHECK_ITEM_NAME,
             "inspection_method": ELECTRON_TEST_METHOD,
-            "inspection_copies": 1,
+            "inspection_copies": check_count,
+            "sample_identity": sample_identity,
         },
         "execution_capability": {
             "available": bool(
@@ -4456,7 +4732,7 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         },
         "safety": {
             "remote_write_performed": False,
-            "requires_final_approval": True,
+            "requires_final_approval": False,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
         },
@@ -4584,7 +4860,7 @@ def prepare_legacy_special_wool_qualitative_upload_operation(
         ),
         "safety": {
             "remote_write_performed": False,
-            "requires_final_approval": True,
+            "requires_final_approval": False,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
             "expected_picture_count": 0,
@@ -4711,7 +4987,7 @@ def prepare_legacy_special_wool_qualitative_review_operation(
         ),
         "safety": {
             "remote_write_performed": False,
-            "requires_final_approval": True,
+            "requires_final_approval": False,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
             "expected_picture_count": 0,
@@ -4868,10 +5144,75 @@ def prepare_legacy_generic_check_record_entry_operation(
         judge_basis = ""
         judgement = ""
         standard_value = ""
+
+    identity_options: list[str] = []
+    seen_identities: set[str] = set()
+    for part in re.split(
+        r"[，,、]", str(selected_project.get("sample_identify") or "")
+    ):
+        identity = " ".join(part.strip().split())
+        if identity and identity.casefold() not in seen_identities:
+            identity_options.append(identity)
+            seen_identities.add(identity.casefold())
+    sample_identity = " ".join(
+        str(judgement_input.get("sample_identity") or "").strip().split()
+    )
+    if identity_options and sample_identity not in identity_options:
+        raise conflict(
+            "paper_sample_identity_not_offered",
+            "样品识别与录入前刷新到的任务单选项不一致，请重新确认",
+        )
+    if not identity_options and sample_identity:
+        raise conflict(
+            "paper_sample_identity_not_offered",
+            "任务单未提供样品识别，不能写入旧系统下拉框",
+        )
+
     override = _controlled_final_entry_override(
         input_data, sample_number=source_number
     )
-    expected_existing = 1 if override is not None else 0
+    registration_decision = input_data.get("registration_decision")
+    legacy_controlled_override = bool(
+        override is not None and not isinstance(registration_decision, dict)
+    )
+    if not isinstance(registration_decision, dict) and not legacy_controlled_override:
+        raise conflict(
+            "paper_registration_decision_missing",
+            "缺少录入前已有登记核对结果，请重新运行流程",
+        )
+    check_count = project["check_count"]
+    if legacy_controlled_override:
+        expected_existing = 1
+        append_existing = False
+    else:
+        expected_existing = registration_decision.get(
+            "expected_existing_register_count"
+        )
+        action = str(
+            registration_decision.get("existing_record_action") or ""
+        ).strip()
+        if (
+            not isinstance(expected_existing, int)
+            or isinstance(expected_existing, bool)
+            or expected_existing < 0
+            or expected_existing != selected_project.get("register_count")
+            or registration_decision.get("registration_cancelled") is True
+        ):
+            raise conflict(
+                "paper_registration_decision_changed",
+                "录入前已有登记核对结果已变化，请重新运行流程",
+            )
+        append_existing = check_count == 1 and expected_existing > 0
+        if append_existing and action != "append":
+            raise conflict(
+                "paper_existing_record_confirmation_required",
+                "当前单份项目已有登记，必须由用户确认直接新增",
+            )
+        if not append_existing and action != "continue":
+            raise conflict(
+                "paper_registration_decision_changed",
+                "已有登记处理选择与当前任务份数不一致，请重新运行流程",
+            )
     final_entry_package = {
         "schema_version": 2,
         "operation_type": "generic_item_record",
@@ -4886,7 +5227,7 @@ def prepare_legacy_generic_check_record_entry_operation(
                 "unit": unit,
                 "judge_basis": judge_basis,
                 "test_method": PAPER_FIBER_TEST_METHOD,
-                "sample_description": "",
+                "sample_description": sample_identity,
                 "standard_type": "",
                 "report_check_item_name": (
                     project["check_item_name"] if judgement_required else ""
@@ -4907,6 +5248,18 @@ def prepare_legacy_generic_check_record_entry_operation(
             ],
         },
     }
+    existing_record_decision = None
+    if append_existing:
+        existing_record_decision = {
+            "kind": "append_when_check_count_one",
+            "action": "append",
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": expected_existing,
+            "resulting_register_count": expected_existing + 1,
+        }
+        final_entry_package["existing_record_decision"] = (
+            existing_record_decision
+        )
     if override is not None:
         final_entry_package["controlled_test_override"] = override
     request_summary = {
@@ -4933,9 +5286,19 @@ def prepare_legacy_generic_check_record_entry_operation(
             "judgement": judgement,
             "standard_value": standard_value,
         },
+        "sample_identity_contract": {
+            "selected": sample_identity,
+            "options": identity_options,
+            "option_count": len(identity_options),
+            "check_count": check_count,
+            "count_mismatch": bool(
+                identity_options and len(identity_options) != check_count
+            ),
+        },
+        "existing_record_decision": existing_record_decision,
         "final_entry_package": final_entry_package,
         "final_entry_summary": {
-            "expected_task_check_count": 1,
+            "expected_task_check_count": check_count,
             "expected_existing_register_count": expected_existing,
             "resulting_register_count": expected_existing + 1,
             "detail_count": 1,
@@ -4949,7 +5312,8 @@ def prepare_legacy_generic_check_record_entry_operation(
         "business_fields": {
             "inspection_item": project["check_item_name"],
             "inspection_method": project["check_method"],
-            "inspection_copies": 1,
+            "inspection_copies": check_count,
+            "sample_identity": sample_identity,
         },
         "execution_capability": {
             "available": bool(
@@ -4968,7 +5332,7 @@ def prepare_legacy_generic_check_record_entry_operation(
         },
         "safety": {
             "remote_write_performed": False,
-            "requires_final_approval": True,
+            "requires_final_approval": False,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
             "proof_required": False,
@@ -5053,6 +5417,7 @@ def approve_prepared_external_operation(
     payload_checksum: str,
     confirmed_sample_number: str,
     note: str | None = None,
+    automatic: bool = False,
 ) -> tuple[ExecutionExternalOperation, bool]:
     if payload_checksum != operation.payload_checksum:
         raise conflict(
@@ -5101,8 +5466,13 @@ def approve_prepared_external_operation(
     operation.status = "approved"
     operation.approved_by_id = actor.id
     operation.approved_at = now
-    operation.approval_expires_at = now + timedelta(
-        minutes=settings.EXECUTION_EXTERNAL_APPROVAL_TTL_MINUTES
+    operation.approval_expires_at = (
+        None
+        if automatic
+        else now
+        + timedelta(
+            minutes=settings.EXECUTION_EXTERNAL_APPROVAL_TTL_MINUTES
+        )
     )
     operation.approval_note = note.strip() if note and note.strip() else None
     node_run = db.get(ExecutionNodeRun, operation.node_run_id)
@@ -5110,25 +5480,26 @@ def approve_prepared_external_operation(
         output = dict(node_run.output_data or {})
         output["status"] = "approved"
         output["approved_at"] = now.isoformat()
-        output["approval_expires_at"] = (
-            operation.approval_expires_at.isoformat()
+        output["approval_expires_at"] = _isoformat(
+            operation.approval_expires_at
         )
         node_run.output_data = output
     append_run_event(
         db,
         run_id=operation.run_id,
         event_type="external_operation.approved",
-        actor_type="user",
-        actor_id=actor.id,
+        actor_type="system" if automatic else "user",
+        actor_id=None if automatic else actor.id,
         payload={
             "operation_id": operation.id,
             "node_id": node_run.node_id if node_run is not None else None,
             "status": operation.status,
             "payload_checksum": operation.payload_checksum,
-            "approval_expires_at": (
-                operation.approval_expires_at.isoformat()
+            "approval_expires_at": _isoformat(
+                operation.approval_expires_at
             ),
             "remote_write_performed": False,
+            "automatic": automatic,
         },
     )
     append_audit_log(
@@ -5140,10 +5511,11 @@ def approve_prepared_external_operation(
         details={
             "run_id": operation.run_id,
             "payload_checksum": operation.payload_checksum,
-            "approval_expires_at": (
-                operation.approval_expires_at.isoformat()
+            "approval_expires_at": _isoformat(
+                operation.approval_expires_at
             ),
             "remote_write_performed": False,
+            "automatic": automatic,
         },
     )
     return operation, False
@@ -5225,6 +5597,7 @@ def public_external_operation(
                 "inspection_method",
                 "inspection_item",
                 "inspection_copies",
+                "sample_identity",
                 "review_action",
                 "review_item",
                 "review_copies",
@@ -5257,15 +5630,29 @@ def public_external_operation(
         ),
         "judgement_contract": (
             {
-                key: judgement_contract.get(key)
+                key: judgement_contract[key]
                 for key in (
                     "required",
                     "judge_basis",
+                    "indicator_requirement",
+                    "test_result",
                     "judgement",
                     "standard_value",
+                    "remark",
                 )
+                if key in judgement_contract
             }
             if isinstance(judgement_contract, dict)
+            else None
+        ),
+        "sample_identity_contract": (
+            dict(summary.get("sample_identity_contract"))
+            if isinstance(summary.get("sample_identity_contract"), dict)
+            else None
+        ),
+        "existing_record_decision": (
+            dict(summary.get("existing_record_decision"))
+            if isinstance(summary.get("existing_record_decision"), dict)
             else None
         ),
         "final_entry_summary": (
@@ -5285,7 +5672,7 @@ def public_external_operation(
         ),
         "safety": {
             "remote_write_performed": remote_write_performed,
-            "requires_final_approval": True,
+            "requires_final_approval": False,
             "requires_source_reverification": True,
             "overwrite_allowed": False,
             "execution_available": _operation_execution_capability(
@@ -5379,6 +5766,15 @@ def _final_entry_reconciliation_expectations(
     expected_task_count = final_entry_summary.get(
         "expected_task_check_count"
     )
+    exceptional_append = bool(
+        final_entry_summary.get("controlled_test") is True
+        or isinstance(summary.get("existing_record_decision"), dict)
+        or (
+            isinstance(expected_task_count, int)
+            and not isinstance(expected_task_count, bool)
+            and expected_task_count > 1
+        )
+    )
     if (
         not isinstance(expected_existing, int)
         or isinstance(expected_existing, bool)
@@ -5386,7 +5782,10 @@ def _final_entry_reconciliation_expectations(
         or not isinstance(resulting, int)
         or isinstance(resulting, bool)
         or resulting != expected_existing + 1
-        or expected_task_count != 1
+        or not isinstance(expected_task_count, int)
+        or isinstance(expected_task_count, bool)
+        or expected_task_count < 1
+        or (resulting > expected_task_count and not exceptional_append)
     ):
         raise ExecutionApiError(
             422,
@@ -6609,10 +7008,11 @@ def claim_approved_external_operation(
 ):
     """Claim the oldest approved operation for a Bridge client.
 
-    Returns None when nothing is claimable; expired approvals are skipped and
-    left to the regular expiry maintenance.  The selected operation passes
-    the same approval-TTL, credential-revision and source-content
-    re-verification as the approval itself before any state flips.
+    Returns None when nothing is claimable; expired manual approvals are
+    skipped and left to regular expiry maintenance.  Automatic approvals have
+    no countdown (``approval_expires_at IS NULL``), while every selected
+    operation still passes credential-revision and source-content
+    re-verification before any state flips.
     """
 
     current_time = now or utcnow()
@@ -6642,8 +7042,11 @@ def claim_approved_external_operation(
             ExecutionExternalOperation.status == "approved",
             ExecutionExternalOperation.account_scope_key
             == account_scope_key,
-            ExecutionExternalOperation.approval_expires_at.is_not(None),
-            ExecutionExternalOperation.approval_expires_at > current_time,
+            or_(
+                ExecutionExternalOperation.approval_expires_at.is_(None),
+                ExecutionExternalOperation.approval_expires_at
+                > current_time,
+            ),
         )
         .order_by(
             ExecutionExternalOperation.created_at.asc(),

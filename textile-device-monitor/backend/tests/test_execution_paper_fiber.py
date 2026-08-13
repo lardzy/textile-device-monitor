@@ -24,8 +24,10 @@ from app.execution.catalog import (
 )
 from app.execution.engine import (
     NodeExecutionContext,
+    _auto_complete_paper_existing_record_decision,
     _auto_complete_paper_judgement,
     _normalize_human_submission,
+    _paper_existing_record_form_schema,
     _paper_judgement_form_schema,
     _reopen_paper_judgement_for_standard_value,
     claim_human_task,
@@ -194,12 +196,15 @@ class PaperFiberBackendTests(unittest.TestCase):
                 inspection_number=number,
                 status="ready",
                 snapshot={
-                    "schema_version": 4,
+                    "schema_version": 5,
                     "inspection_number": number,
                     "sample_name": None,
                     "sample_names": [],
                     "check_basis": None,
-                    "projects": projects
+                    "projects": [
+                        {**project, "register_count": project.get("register_count", 0)}
+                        for project in projects
+                    ]
                     if projects is not None
                     else [
                         {
@@ -210,6 +215,7 @@ class PaperFiberBackendTests(unittest.TestCase):
                             "check_item_name": PAPER_FIBER_PROJECT_NAME,
                             "check_method": PAPER_FIBER_TEST_METHOD,
                             "check_count": 1,
+                            "register_count": 0,
                             "seq_num": 1,
                             "sample_identify": None,
                             "remark": None,
@@ -440,14 +446,35 @@ class PaperFiberBackendTests(unittest.TestCase):
         select = next(node for node in definition["nodes"] if node["id"] == "select")
         self.assertIs(select["config"]["allow_multiple"], False)
         self.assertEqual(
-            [node["id"] for node in definition["nodes"][-5:]],
+            [node["id"] for node in definition["nodes"][3:]],
             [
                 "upload-record",
                 "review-record",
+                "registration-decision",
+                "registration-branch",
                 "judgement-input",
                 "register-result",
                 "end",
+                "cancelled-end",
             ],
+        )
+        nodes_by_id = {
+            node["id"]: node
+            for node in definition["nodes"]
+        }
+        self.assertTrue(
+            all(
+                nodes_by_id[node_id]["type"].startswith("external.")
+                for node_id in (
+                    "upload-record",
+                    "review-record",
+                    "register-result",
+                )
+            )
+        )
+        self.assertNotIn(
+            "human.confirm",
+            {node["type"] for node in definition["nodes"]},
         )
         self.assertEqual(
             workflow.capabilities,
@@ -701,11 +728,49 @@ class PaperFiberBackendTests(unittest.TestCase):
                 "paper_judgement": True,
             },
         }
+        node_run.input_data = input_data
+        self.db.flush()
         return NodeExecutionContext(
             db=self.db,
             run=run,
             node_run=node_run,
             node=node,
+            input_data=input_data,
+            worker_id="paper-worker",
+            lease_token="",
+        )
+
+    def _registration_context(
+        self,
+        run,
+        selected_project,
+        *,
+        allow_multi_copy_over_capacity=False,
+    ):
+        node_run = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="registration-decision")
+            .one()
+        )
+        input_data = {
+            "selected_project": selected_project,
+            "selected_project_key": selected_project["project_key"],
+            "task": {"schema_version": 5, "projects": [selected_project]},
+        }
+        node_run.input_data = input_data
+        self.db.flush()
+        config = {"paper_existing_record_decision": True}
+        if allow_multi_copy_over_capacity:
+            config["allow_multi_copy_over_capacity"] = True
+        return NodeExecutionContext(
+            db=self.db,
+            run=run,
+            node_run=node_run,
+            node={
+                "id": "registration-decision",
+                "type": "human.input",
+                "config": config,
+            },
             input_data=input_data,
             worker_id="paper-worker",
             lease_token="",
@@ -728,6 +793,109 @@ class PaperFiberBackendTests(unittest.TestCase):
         )
         self.db.commit()
         return run
+
+    def test_one_copy_existing_record_pauses_for_append_or_cancel(self):
+        run = self._paper_run("paper-existing-record-decision")
+        project = {
+            "project_key": "task-project:paper-existing",
+            "check_count": 1,
+            "register_count": 2,
+        }
+        context = self._registration_context(run, project)
+
+        with patch(
+            "app.execution.engine._refresh_paper_registration_context"
+        ) as refresh:
+            self.assertIsNone(
+                _auto_complete_paper_existing_record_decision(context)
+            )
+        refresh.assert_called_once_with(context)
+        schema = _paper_existing_record_form_schema(context)
+        self.assertEqual(
+            schema["properties"]["existing_record_action"]["enum"],
+            ["append", "cancel"],
+        )
+        self.assertEqual(
+            schema["properties"]["existing_record_action"]["enumNames"],
+            ["直接新增", "取消"],
+        )
+
+        appended = _normalize_human_submission(
+            self.db,
+            run=run,
+            node_run=context.node_run,
+            data={"existing_record_action": "append"},
+        )
+        self.assertFalse(appended["registration_cancelled"])
+        self.assertEqual(appended["expected_existing_register_count"], 2)
+        cancelled = _normalize_human_submission(
+            self.db,
+            run=run,
+            node_run=context.node_run,
+            data={"existing_record_action": "cancel"},
+        )
+        self.assertTrue(cancelled["registration_cancelled"])
+
+    def test_multi_copy_project_with_capacity_continues_automatically(self):
+        run = self._paper_run("paper-multi-copy-capacity")
+        project = {
+            "project_key": "task-project:paper-multi",
+            "check_count": 3,
+            "register_count": 1,
+        }
+        context = self._registration_context(run, project)
+
+        with patch(
+            "app.execution.engine._refresh_paper_registration_context"
+        ):
+            output = _auto_complete_paper_existing_record_decision(context)
+        self.assertEqual(output["existing_record_action"], "continue")
+        self.assertEqual(output["expected_existing_register_count"], 1)
+        self.assertEqual(
+            output["auto_submit_reason"], "registration_capacity_available"
+        )
+
+        project["register_count"] = 3
+        context = self._registration_context(run, project)
+        with patch(
+            "app.execution.engine._refresh_paper_registration_context",
+            side_effect=AssertionError("multi-copy must not refresh"),
+        ):
+            output = _auto_complete_paper_existing_record_decision(context)
+        self.assertEqual(
+            output["auto_submit_reason"],
+            "multi_copy_capacity_is_informational",
+        )
+
+    def test_microscopy_multi_copy_legacy_snapshot_continues_without_refresh(self):
+        run = self._paper_run("microscopy-multi-copy-over-capacity")
+        project = {
+            "project_key": "task-project:microscopy-multi",
+            "check_count": 4,
+            "register_count": 4,
+        }
+        # Older published workflow snapshots do not carry the optional
+        # allow_multi_copy_over_capacity marker.  Runtime behavior must still
+        # follow the one-copy-only decision contract.
+        context = self._registration_context(run, project)
+
+        with patch(
+            "app.execution.engine._refresh_paper_registration_context",
+            side_effect=ExecutionApiError(
+                422,
+                "paper_registration_snapshot_pending",
+                "snapshot bridge unavailable",
+            ),
+        ):
+            output = _auto_complete_paper_existing_record_decision(context)
+
+        self.assertEqual(output["existing_record_action"], "continue")
+        self.assertFalse(output["registration_cancelled"])
+        self.assertEqual(output["expected_existing_register_count"], 4)
+        self.assertEqual(
+            output["auto_submit_reason"],
+            "multi_copy_capacity_is_informational",
+        )
 
     def test_judgement_node_auto_completes_when_task_waives_judgement(self):
         self._task_snapshot("26W006701")
@@ -794,6 +962,72 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertNotIn("enum", basis_field)
         self.assertEqual(basis_field["minLength"], 1)
 
+    def test_sample_identities_support_all_delimiters_and_warn_on_count_mismatch(self):
+        run = self._paper_run("paper-sample-identities")
+        context = self._judgement_context(
+            run,
+            {
+                "selected_project": {
+                    "give_judgement": 0,
+                    "check_count": 3,
+                    "sample_identify": "正面，反面,中层、夹层",
+                },
+                "task": {"check_basis": None},
+            },
+        )
+
+        self.assertIsNone(_auto_complete_paper_judgement(context))
+        schema = _paper_judgement_form_schema(context)
+        self.assertEqual(
+            schema["properties"]["sample_identity"]["x-suggestions"],
+            ["正面", "反面", "中层", "夹层"],
+        )
+        self.assertIn("检测份数为 3", schema["x-warning"])
+        self.assertEqual(schema["required"], ["sample_identity"])
+
+    def test_single_sample_identity_is_prefilled_and_requires_confirmation(self):
+        run = self._paper_run("paper-single-sample-identity")
+        context = self._judgement_context(
+            run,
+            {
+                "selected_project": {
+                    "give_judgement": 0,
+                    "check_count": 1,
+                    "sample_identify": " 正面 ",
+                },
+                "task": {"check_basis": None},
+            },
+        )
+        schema = _paper_judgement_form_schema(context)
+        identity = schema["properties"]["sample_identity"]
+        self.assertEqual(identity["default"], "正面")
+        self.assertEqual(identity["const"], "正面")
+        self.assertTrue(identity["readOnly"])
+
+        with self.assertRaises(ExecutionApiError) as raised:
+            _normalize_human_submission(
+                self.db,
+                run=run,
+                node_run=context.node_run,
+                data={"sample_identity": "正面"},
+            )
+        self.assertEqual(
+            raised.exception.code,
+            "paper_sample_identity_confirmation_required",
+        )
+        output = _normalize_human_submission(
+            self.db,
+            run=run,
+            node_run=context.node_run,
+            data={
+                "sample_identity": "正面",
+                "sample_identity_confirmed": True,
+            },
+        )
+        self.assertEqual(output["sample_identity"], "正面")
+        self.assertEqual(output["sample_identity_options"], ["正面"])
+        self.assertFalse(output["judgement_required"])
+
     def test_judgement_submission_is_shaped_with_uniform_keys(self):
         run = self._paper_run("paper-judgement-shape")
         context = self._judgement_context(
@@ -820,6 +1054,10 @@ class PaperFiberBackendTests(unittest.TestCase):
                 "judge_basis": "按客户要求",
                 "judgement": "符合",
                 "standard_value": "定性，100%木浆",
+                "sample_identity": None,
+                "sample_identity_confirmed": False,
+                "sample_identity_options": [],
+                "identity_count_mismatch": False,
             },
         )
 

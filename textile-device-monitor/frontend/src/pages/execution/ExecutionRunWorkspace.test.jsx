@@ -97,7 +97,9 @@ describe('ExecutionRunWorkspace', () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /^取\s*消$/ }));
+    const cancelButton = await screen.findByRole('button', { name: /^取\s*消$/ });
+    expect(document.querySelector('.execution-live-sync-status')).not.toBeNull();
+    await user.click(cancelButton);
     const confirmDialog = await screen.findByRole('dialog');
     expect(within(confirmDialog).getAllByText('取消本次执行？')).not.toHaveLength(0);
     await user.click(within(confirmDialog).getByRole('button', { name: '确认取消' }));
@@ -250,9 +252,9 @@ describe('ExecutionRunWorkspace', () => {
     expect(screen.queryByText(/selected_files/)).not.toBeInTheDocument();
   });
 
-  it('展示旧系统上传预检清单并用完整编号确认本地批准', async () => {
-    let operationStatus = 'prepared';
-    let approvalBody = null;
+  it('展示服务端自动交付状态且不依赖工作台页面确认', async () => {
+    const operationStatus = 'approved';
+    let approvalCalls = 0;
     const operation = () => ({
       id: 'external-operation-1',
       run_id: 'run-1',
@@ -323,9 +325,8 @@ describe('ExecutionRunWorkspace', () => {
         HttpResponse.json({ items: [operation()] })),
       http.post(
         '/api/execution/v1/external-operations/external-operation-1/approve',
-        async ({ request }) => {
-          approvalBody = await request.json();
-          operationStatus = 'approved';
+        () => {
+          approvalCalls += 1;
           return HttpResponse.json({
             duplicate: false,
             operation: operation(),
@@ -349,23 +350,17 @@ describe('ExecutionRunWorkspace', () => {
     );
 
     const user = userEvent.setup();
-    // 左侧“本次执行信息”中的自动批准卡片展示预检信息
-    expect(await screen.findByText('260187115-1')).toBeInTheDocument();
-    expect(screen.getByText('260187115-根数法.xls')).toBeInTheDocument();
-    expect((await screen.findAllByText('辜惠珊')).length).toBeGreaterThan(0);
-    expect(screen.getByText(/秒后自动批准/)).toBeInTheDocument();
-    // 人工立即批准（不等 5 秒倒计时）
-    await user.click(screen.getByRole('button', { name: '立即批准' }));
+    expect(await screen.findByText('服务端已交付，等待连接器领取')).toBeInTheDocument();
+    expect(screen.getByText(/无需停留在当前页面/)).toBeInTheDocument();
+    expect(screen.queryByText(/秒后自动批准/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /批准/ })).not.toBeInTheDocument();
+    expect(approvalCalls).toBe(0);
 
-    await waitFor(() => expect(approvalBody).toEqual({
-      approved: true,
-      payload_checksum: 'a'.repeat(64),
-      confirmed_sample_number: '260187115-1',
-      note: '人工立即批准',
-    }));
     // 右侧标签页仅保留状态与历史，不再提供批准按钮
     await user.click(await screen.findByRole('tab', { name: '旧系统上传' }));
-    expect(await screen.findByText('已批准，等待连接器')).toBeInTheDocument();
+    expect(await screen.findByText('已交付，等待连接器')).toBeInTheDocument();
+    expect(screen.getByText('260187115-1')).toBeInTheDocument();
+    expect(screen.getByText('260187115-根数法.xls')).toBeInTheDocument();
     expect(screen.getByText('源检验编号')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '核对并批准预检单' })).not.toBeInTheDocument();
   });

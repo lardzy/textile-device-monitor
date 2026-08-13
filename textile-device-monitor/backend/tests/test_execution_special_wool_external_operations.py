@@ -22,6 +22,7 @@ from app.execution.external_operations import (
     LEGACY_SPECIAL_WOOL_REVIEW_NODE,
     SPECIAL_WOOL_QUALITATIVE_UPLOAD_ATTEMPT_STAGES,
     SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES,
+    _final_entry_reconciliation_expectations,
     _operation_stage_profile,
     _rearm_expired_external_operation,
     _rearm_reconciled_no_side_effect_operation,
@@ -133,12 +134,12 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             inspection_number=self.run.inspection_number,
             status="ready",
             snapshot={
-                "schema_version": 4,
+                "schema_version": 5,
                 "inspection_number": self.run.inspection_number,
                 "sample_name": "测试样品",
                 "sample_names": ["测试样品"],
                 "check_basis": "---",
-                "projects": [project],
+                "projects": [{**project, "register_count": 0}],
                 "special_wool_occupied_numbers": [],
             },
             fetched_at=datetime.now(timezone.utc),
@@ -270,6 +271,10 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             "check_method": "GB/T 36422-2018",
             "seq_num": 1,
             "check_count": 1,
+            "register_count": 0,
+            "sample_identify": "纵向",
+            "give_judgement": 0,
+            "remark": "",
         }
         identity = "\0".join(
             str(project[key])
@@ -457,7 +462,8 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             evidence["receipt"] = receipt
         return evidence
 
-    def _completed_review(self):
+    def _completed_review(self, *, project_input: dict | None = None):
+        project_input = project_input or self._project_input()
         _artifact, original_record = self._artifact()
         upload_node = self._node_run(
             LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
@@ -468,7 +474,7 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             run=self.run,
             node_run=upload_node,
             node={"config": {"credential_slot": "legacy_account"}},
-            input_data={"original_record": original_record, **self._project_input()},
+            input_data={"original_record": original_record, **project_input},
         )
         upload.receipt = self._image_receipt(upload)
         upload.status = "completed"
@@ -528,7 +534,7 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         validate_external_receipt(review, review.receipt)
         return review
 
-    def _check_record_artifact(self):
+    def _check_record_artifact(self, *, sample_identity: str = "纵向"):
         binding = resolve_microscopy_legacy_template_binding(1)
         filename = "260061860-纤维微观形貌-检验记录登记.xls"
         content = OLE_MAGIC + b"controlled-check-record"
@@ -548,11 +554,11 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             metadata_json={
                 "generator_version": MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
                 "template_binding": binding,
-                "expected_key_identities": ["纵向"],
+                "expected_key_identities": [sample_identity],
                 "verification": {
                     "cells": {
                         "AS4": "260061860",
-                        "Z7": "纵向",
+                        "Z7": sample_identity,
                         "I8": "GB/T 36422-2018",
                     }
                 },
@@ -922,6 +928,43 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         )
         self.assertEqual(operation.status, "prepared")
 
+    def test_image_preflight_accepts_four_copy_task_project(self):
+        _artifact, original_record = self._artifact()
+        node_run = self._node_run(
+            LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+            "upload-four-copy-project",
+        )
+        project_input = self._project_input()
+        project_input["selected_project"].update(
+            {
+                "check_count": 4,
+                "sample_identify": "浴巾，枕套，床单，被套",
+            }
+        )
+
+        operation, reused = prepare_legacy_special_wool_image_operation(
+            self.db,
+            run=self.run,
+            node_run=node_run,
+            node={"config": {"credential_slot": "legacy_account"}},
+            input_data={
+                "original_record": original_record,
+                **project_input,
+            },
+        )
+
+        self.assertFalse(reused)
+        self.assertEqual(
+            operation.request_summary["task_project"]["check_count"],
+            4,
+        )
+        # A single run uploads one workbook even when the task project has
+        # multiple copies; the selected identity is consumed by final entry.
+        self.assertEqual(
+            operation.request_summary["business_fields"]["inspection_copies"],
+            1,
+        )
+
     def test_special_wool_write_capability_is_deployment_controlled(self):
         _artifact, original_record = self._artifact()
         node_run = self._node_run(
@@ -1083,6 +1126,24 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             invalid.exception.code,
             "legacy_special_wool_machine_document_invalid",
         )
+        count_drift_observation = {
+            **observation,
+            "task_project": {
+                **observation["task_project"],
+                "check_count": (
+                    observation["task_project"]["check_count"] + 1
+                ),
+            },
+        }
+        with self.assertRaises(ExecutionApiError) as observation_drifted:
+            validate_special_wool_machine_observation(
+                operation,
+                count_drift_observation,
+            )
+        self.assertEqual(
+            observation_drifted.exception.code,
+            "legacy_special_wool_machine_document_invalid",
+        )
 
         receipt = self._image_receipt(operation)
         self.assertIs(validate_external_receipt(operation, receipt), receipt)
@@ -1095,6 +1156,19 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         }
         with self.assertRaises(ExecutionApiError):
             validate_external_receipt(operation, changed)
+        count_drift = {
+            **receipt,
+            "task_project": {
+                **receipt["task_project"],
+                "check_count": receipt["task_project"]["check_count"] + 1,
+            },
+        }
+        with self.assertRaises(ExecutionApiError) as drifted:
+            validate_external_receipt(operation, count_drift)
+        self.assertEqual(
+            drifted.exception.code,
+            "legacy_special_wool_machine_document_invalid",
+        )
         wrong_filename = {
             **receipt,
             "server_file": {
@@ -1233,6 +1307,19 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         project = self._project_input(
             name="纸、纸板和纸浆纤维鉴别分析"
         )["selected_project"]
+        project = {
+            key: project[key]
+            for key in (
+                "project_key",
+                "task_check_item_id",
+                "check_item_id",
+                "check_item_no",
+                "check_item_name",
+                "check_method",
+                "seq_num",
+                "check_count",
+            )
+        }
         requested_filename = f"{requested}-{source['filename']}"
         actual_filename = f"{actual}-{source['filename']}"
         operation = ExecutionExternalOperation(
@@ -2108,6 +2195,10 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             package["excel_record"]["expected_key_identities"], ["纵向"]
         )
         self.assertEqual(
+            package["excel_record"]["register"]["sample_identity"],
+            "纵向",
+        )
+        self.assertEqual(
             package["excel_record"]["template_name"], "微观形貌.xls"
         )
         self.assertEqual(
@@ -2138,6 +2229,11 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                 "expected_task_check_count": 1,
                 "expected_existing_register_count": 0,
                 "resulting_register_count": 1,
+                "registration_capacity_mode": (
+                    "single_copy_confirmation_required"
+                ),
+                "registration_capacity_exceeded": False,
+                "existing_record_append_confirmed": False,
                 "controlled_test": False,
                 "controlled_test_reason": None,
             },
@@ -2172,6 +2268,224 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                     captured.exception.code,
                     "legacy_special_wool_machine_document_invalid",
                 )
+
+    def test_final_entry_multi_copy_uses_refreshed_capacity_and_sample_identity(self):
+        project_input = self._project_input()
+        project = project_input["selected_project"]
+        project.update(
+            {
+                "check_count": 4,
+                "register_count": 4,
+                "sample_identify": "浴巾，枕套，床单，被套",
+            }
+        )
+        review = self._completed_review(project_input=project_input)
+        _artifact, binding, registration_workbook = self._check_record_artifact(
+            sample_identity="浴巾"
+        )
+        node_run = self._node_run(
+            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
+            "final-entry-multi-copy",
+        )
+        operation, reused = prepare_legacy_microscopy_check_record_entry_operation(
+            self.db,
+            run=self.run,
+            node_run=node_run,
+            node={"config": {"credential_slot": "legacy_account"}},
+            input_data={
+                "registration_workbook": registration_workbook,
+                "template_binding": binding,
+                "review_result": {"operation_id": review.id},
+                "registration_decision": {
+                    "existing_record_action": "continue",
+                    "registration_cancelled": False,
+                    "expected_existing_register_count": 4,
+                    "auto_submitted": True,
+                    "auto_submit_reason": (
+                        "multi_copy_capacity_is_informational"
+                    ),
+                },
+                "record_input": {"sample_identity": "浴巾"},
+                **project_input,
+            },
+        )
+        self.assertFalse(reused)
+        package = operation.request_summary["final_entry_package"]
+        self.assertEqual(package["task_project"]["check_count"], 4)
+        self.assertEqual(package["expected_existing_register_count"], 4)
+        self.assertNotIn("existing_record_decision", package)
+        self.assertEqual(
+            package["excel_record"]["register"]["sample_identity"],
+            "浴巾",
+        )
+        self.assertEqual(
+            operation.request_summary["sample_identity_contract"],
+            {
+                "selected": "浴巾",
+                "options": ["浴巾", "枕套", "床单", "被套"],
+                "option_count": 4,
+                "check_count": 4,
+                "count_mismatch": False,
+            },
+        )
+        self.assertEqual(
+            operation.request_summary["final_entry_summary"][
+                "resulting_register_count"
+            ],
+            5,
+        )
+        self.assertEqual(
+            operation.request_summary["final_entry_summary"][
+                "registration_capacity_mode"
+            ],
+            "informational_for_multi_copy",
+        )
+        self.assertTrue(
+            operation.request_summary["final_entry_summary"][
+                "registration_capacity_exceeded"
+            ]
+        )
+        expectations = _final_entry_reconciliation_expectations(operation)
+        self.assertEqual(expectations["expected_existing_register_count"], 4)
+        self.assertEqual(expectations["resulting_register_count"], 5)
+
+    def test_final_entry_rejects_check_count_changed_after_upload(self):
+        project_input = self._project_input()
+        project = project_input["selected_project"]
+        project.update(
+            {
+                "check_count": 4,
+                "sample_identify": "浴巾，枕套，床单，被套",
+            }
+        )
+        review = self._completed_review(project_input=project_input)
+        project["check_count"] = 3
+        _artifact, binding, registration_workbook = self._check_record_artifact(
+            sample_identity="浴巾"
+        )
+        node_run = self._node_run(
+            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
+            "final-entry-count-drift",
+        )
+
+        with self.assertRaises(ExecutionApiError) as drifted:
+            prepare_legacy_microscopy_check_record_entry_operation(
+                self.db,
+                run=self.run,
+                node_run=node_run,
+                node={"config": {"credential_slot": "legacy_account"}},
+                input_data={
+                    "registration_workbook": registration_workbook,
+                    "template_binding": binding,
+                    "review_result": {"operation_id": review.id},
+                    "registration_decision": {
+                        "existing_record_action": "continue",
+                        "registration_cancelled": False,
+                        "expected_existing_register_count": 0,
+                    },
+                    "record_input": {"sample_identity": "浴巾"},
+                    **project_input,
+                },
+            )
+        self.assertEqual(
+            drifted.exception.code,
+            "microscopy_task_project_changed_after_upload",
+        )
+
+    def test_final_entry_approval_rechecks_uploaded_project_binding(self):
+        review = self._completed_review()
+        _artifact, binding, registration_workbook = self._check_record_artifact()
+        node_run = self._node_run(
+            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
+            "final-entry-approval-project-drift",
+        )
+        with patch(
+            "app.execution.external_operations.settings."
+            "EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED",
+            True,
+        ):
+            operation, _reused = (
+                prepare_legacy_microscopy_check_record_entry_operation(
+                    self.db,
+                    run=self.run,
+                    node_run=node_run,
+                    node={"config": {"credential_slot": "legacy_account"}},
+                    input_data={
+                        "registration_workbook": registration_workbook,
+                        "template_binding": binding,
+                        "review_result": {"operation_id": review.id},
+                        **self._project_input(),
+                    },
+                )
+            )
+            review.request_summary = {
+                **review.request_summary,
+                "task_project": {
+                    **review.request_summary["task_project"],
+                    "check_count": 2,
+                },
+            }
+            with self.assertRaises(ExecutionApiError) as drifted:
+                approve_prepared_external_operation(
+                    self.db,
+                    operation=operation,
+                    run=self.run,
+                    actor=self.user,
+                    payload_checksum=operation.payload_checksum,
+                    confirmed_sample_number=self.run.inspection_number,
+                )
+        self.assertEqual(
+            drifted.exception.code,
+            "microscopy_final_entry_binding_changed",
+        )
+
+    def test_final_entry_single_copy_existing_record_binds_append_confirmation(self):
+        review = self._completed_review()
+        _artifact, binding, registration_workbook = self._check_record_artifact()
+        node_run = self._node_run(
+            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
+            "final-entry-existing-confirmed",
+        )
+        project_input = self._project_input()
+        project_input["selected_project"]["register_count"] = 1
+        operation, reused = prepare_legacy_microscopy_check_record_entry_operation(
+            self.db,
+            run=self.run,
+            node_run=node_run,
+            node={"config": {"credential_slot": "legacy_account"}},
+            input_data={
+                "registration_workbook": registration_workbook,
+                "template_binding": binding,
+                "review_result": {"operation_id": review.id},
+                "registration_decision": {
+                    "existing_record_action": "append",
+                    "registration_cancelled": False,
+                    "expected_existing_register_count": 1,
+                },
+                "record_input": {
+                    "sample_identity": "纵向",
+                    "sample_identity_confirmed": True,
+                },
+                **project_input,
+            },
+        )
+        self.assertFalse(reused)
+        expected_decision = {
+            "kind": "append_when_check_count_one",
+            "action": "append",
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": 1,
+            "resulting_register_count": 2,
+        }
+        self.assertEqual(
+            operation.request_summary["final_entry_package"][
+                "existing_record_decision"
+            ],
+            expected_decision,
+        )
+        receipt = self._final_entry_receipt(operation)
+        receipt["existing_record_decision"] = expected_decision
+        self.assertIs(validate_external_receipt(operation, receipt), receipt)
 
     def test_final_entry_controlled_override_and_receipt_are_fail_closed(self):
         review = self._completed_review()

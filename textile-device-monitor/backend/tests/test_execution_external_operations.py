@@ -161,6 +161,13 @@ def external_definition() -> dict:
 
 class ExecutionExternalOperationTests(unittest.TestCase):
     def setUp(self):
+        self.auto_approve_patcher = patch(
+            "app.execution.engine.settings."
+            "EXECUTION_EXTERNAL_AUTO_APPROVE_ENABLED",
+            False,
+        )
+        self.auto_approve_patcher.start()
+        self.addCleanup(self.auto_approve_patcher.stop)
         register_persistence_executors()
         self.engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(self.engine)
@@ -484,6 +491,43 @@ class ExecutionExternalOperationTests(unittest.TestCase):
         self.assertIsNone(operation.fence_token)
         self.assertEqual(operation.receipt, {})
         self.assertIsNone(operation.remote_record_id)
+
+    def test_worker_auto_approves_without_browser_when_enabled(self):
+        _path, entry, candidate = self._workbook()
+
+        with patch(
+            "app.execution.engine.settings."
+            "EXECUTION_EXTERNAL_AUTO_APPROVE_ENABLED",
+            True,
+        ):
+            run = self._prepare_run(
+                candidates=[candidate],
+                selected_ids=[entry.id],
+                primary_file_id=entry.id,
+            )
+
+        operation = self.db.query(ExecutionExternalOperation).one()
+        node = (
+            self.db.query(ExecutionNodeRun)
+            .filter_by(run_id=run.id, node_id="upload")
+            .one()
+        )
+        self.assertEqual(operation.status, "approved")
+        self.assertEqual(operation.approved_by_id, self.user.id)
+        self.assertIsNone(operation.approval_expires_at)
+        self.assertEqual(node.status, "waiting_external")
+        self.assertEqual(node.output_data["status"], "approved")
+        approved_event = (
+            self.db.query(ExecutionEvent)
+            .filter_by(
+                run_id=run.id,
+                event_type="external_operation.approved",
+            )
+            .one()
+        )
+        self.assertEqual(approved_event.actor_type, "system")
+        self.assertIsNone(approved_event.actor_id)
+        self.assertTrue(approved_event.payload["automatic"])
 
     def test_updating_credential_increments_revision(self):
         original_revision = self.credential.revision

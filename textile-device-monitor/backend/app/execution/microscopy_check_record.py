@@ -134,6 +134,14 @@ def microscopy_check_record_cells(
         "I11": _normalized_text(test_result),
         "G13": _normalized_text(judgement),
     }
+    if judgement_enabled is True and any(
+        not value for value in judgement_values.values()
+    ):
+        raise ExecutionApiError(
+            422,
+            "microscopy_check_record_judgement_fields_required",
+            "任务单要求判定，请填写判定依据、指标要求、测试结果和判定",
+        )
     if judgement_enabled is False:
         judgement_values = {cell: "" for cell in judgement_values}
 

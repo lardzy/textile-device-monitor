@@ -1273,6 +1273,21 @@ def validate_definition(
                 )
             )
         mapping = entry_node.get("input_mapping") or {}
+        registration_decision_node = node_by_id.get(
+            "registration-decision"
+        )
+        uses_registration_decision = bool(
+            isinstance(registration_decision_node, dict)
+            and registration_decision_node.get("type") == "human.input"
+            and (
+                registration_decision_node.get("config") or {}
+            ).get("legacy_existing_record_decision") is True
+        )
+        project_source = (
+            "$.nodes.registration-decision.output"
+            if uses_registration_decision
+            else "$.nodes.record-input.output"
+        )
         expected_mappings = {
             "registration_workbook": (
                 f"$.nodes.{generation_id}.output.legacy_registration_workbook"
@@ -1282,10 +1297,20 @@ def validate_definition(
             ),
             "review_result": f"$.nodes.{review_id}.output",
             "selected_project_key": (
-                "$.nodes.record-input.output.selected_project_key"
+                f"{project_source}.selected_project_key"
             ),
             "selected_project": (
-                "$.nodes.record-input.output.selected_project"
+                f"{project_source}.selected_project"
+            ),
+            **(
+                {
+                    "registration_decision": (
+                        "$.nodes.registration-decision.output"
+                    ),
+                    "record_input": "$.nodes.record-input.output",
+                }
+                if uses_registration_decision
+                else {}
             ),
         }
         for key, expected in expected_mappings.items():

@@ -28,7 +28,11 @@ namespace LegacyFibreCheckWriter
             Run("qualitative_filename_preserves_source_name", QualitativeFilenamePreservesSourceName);
             Run("review_main_id_binding_rejects_replacement", ReviewMainIdBindingRejectsReplacement);
             Run("inspector_must_match_login_staff", InspectorMustMatchLoginStaff);
-            Run("project_check_count_must_remain_one", ProjectCheckCountMustRemainOne);
+            Run("business_text_comparison_trims_edges", BusinessTextComparisonTrimsEdges);
+            Run("image_inspector_uses_authenticated_staff", ImageInspectorUsesAuthenticatedStaff);
+            Run("project_check_count_accepts_matching_multicopy_task", ProjectCheckCountAcceptsMatchingMulticopyTask);
+            Run("project_check_count_rejects_signed_drift", ProjectCheckCountRejectsSignedDrift);
+            Run("project_check_count_rejects_invalid_values", ProjectCheckCountRejectsInvalidValues);
             Run("legacy_original_path_accepts_exact_value", LegacyOriginalPathAcceptsExactValue);
             Run("legacy_original_path_length_boundaries", LegacyOriginalPathLengthBoundaries);
             Run("legacy_original_path_accepts_only_deterministic_truncation", LegacyOriginalPathAcceptsOnlyDeterministicTruncation);
@@ -208,18 +212,69 @@ namespace LegacyFibreCheckWriter
         {
             True(SpecialWoolContracts.MatchesLoginInspector(
                 "李舒洋", "staff-lisy", " 李舒洋 ", "staff-lisy"));
+            True(SpecialWoolContracts.MatchesLoginInspector(
+                "李舒洋", "staff-lisy", "李舒洋", " staff-lisy "));
             True(!SpecialWoolContracts.MatchesLoginInspector(
                 "李舒洋", "staff-other", "李舒洋", "staff-lisy"));
             True(!SpecialWoolContracts.MatchesLoginInspector(
                 "其他人", "staff-lisy", "李舒洋", "staff-lisy"));
         }
 
-        private static void ProjectCheckCountMustRemainOne()
+        private static void BusinessTextComparisonTrimsEdges()
         {
-            True(SpecialWoolContracts.IsExpectedSingleCheckCount(1m, 1L));
-            True(!SpecialWoolContracts.IsExpectedSingleCheckCount(2m, 1L));
-            True(!SpecialWoolContracts.IsExpectedSingleCheckCount(1m, 2L));
-            True(!SpecialWoolContracts.IsExpectedSingleCheckCount(null, 1L));
+            True(SpecialWoolContracts.MatchesBusinessText(
+                " staff-lisy ", "staff-lisy"));
+            True(SpecialWoolContracts.MatchesBusinessText(
+                "staff-lisy", "\tstaff-lisy\r\n"));
+            True(!SpecialWoolContracts.MatchesBusinessText(
+                "staff-other", "staff-lisy"));
+            True(!SpecialWoolContracts.MatchesBusinessText(
+                string.Empty, "staff-lisy"));
+        }
+
+        private static void ImageInspectorUsesAuthenticatedStaff()
+        {
+            string name;
+            string id;
+            True(SpecialWoolContracts.TryBindImageInspectorToAuthenticatedStaff(
+                "执行系统管理员",
+                " 李舒洋 ",
+                "staff-lisy",
+                out name,
+                out id));
+            Equal("李舒洋", name);
+            Equal("staff-lisy", id);
+            True(SpecialWoolContracts.MatchesLoginInspector(
+                name, id, "李舒洋", "staff-lisy"));
+            True(!SpecialWoolContracts.TryBindImageInspectorToAuthenticatedStaff(
+                "执行系统管理员",
+                "",
+                "staff-lisy",
+                out name,
+                out id));
+        }
+
+        private static void ProjectCheckCountAcceptsMatchingMulticopyTask()
+        {
+            True(SpecialWoolContracts.MatchesExpectedPositiveCheckCount(1m, 1L));
+            True(SpecialWoolContracts.MatchesExpectedPositiveCheckCount(4m, 4L));
+            True(SpecialWoolContracts.MatchesExpectedPositiveCheckCount(4.0m, "4.0"));
+        }
+
+        private static void ProjectCheckCountRejectsSignedDrift()
+        {
+            True(!SpecialWoolContracts.MatchesExpectedPositiveCheckCount(4m, 1L));
+            True(!SpecialWoolContracts.MatchesExpectedPositiveCheckCount(1m, 4L));
+            True(!SpecialWoolContracts.MatchesExpectedPositiveCheckCount(4m, 3L));
+            True(!SpecialWoolContracts.MatchesExpectedPositiveCheckCount(5m, 4L));
+        }
+
+        private static void ProjectCheckCountRejectsInvalidValues()
+        {
+            True(!SpecialWoolContracts.MatchesExpectedPositiveCheckCount(null, 1L));
+            True(!SpecialWoolContracts.MatchesExpectedPositiveCheckCount(0m, 0L));
+            True(!SpecialWoolContracts.MatchesExpectedPositiveCheckCount(-1m, -1L));
+            True(!SpecialWoolContracts.MatchesExpectedPositiveCheckCount(1.5m, 1.5m));
         }
 
         private static void LegacyOriginalPathAcceptsExactValue()

@@ -1,5 +1,77 @@
 # 头脑风暴变更日志
 
+## 2026-08-13：纸类多份登记门禁移除、print-confirm 拓扑变化口径记录
+
+- 纸类通用登记 prepare 阶段删除多份容量门禁（原
+  `paper_registration_count_exhausted`）：多份项目已有登记数达到或超过任务份数时
+  不再拒绝新增，与电镜链路、FinalEntry Writer 联网预检和桥回执转换的既有口径
+  一致；对账侧本就对 `expected_task_count>1` 按超量追加放行。单份项目已有登记仍
+  必须人工选择“直接新增”，并携带校验和绑定的 `existing_record_decision`。
+- 记录一处此前未落文档的流程拓扑变化：电镜默认流程（v3）不再包含
+  print-confirm 人工节点，原始记录生成后直接进入上传节点；旧版定义经
+  `include_print_confirmation` 保留该节点，引擎对在途旧版运行仍强制打印确认。
+- `docs/legacy-fibrecheck-final-entry.md` 的多份容量描述同步修正为与代码一致
+  （原文误写“多份项目已有登记数小于任务份数才可新增”）。
+
+## 2026-08-13：特种毛图片上传/复核支持任务多份数并完成真实链路验收
+
+- 修复图片上传/复核 Writer 将任务项目总 `CheckCount` 错当成单次记录份数、硬性
+  要求为 1 的问题。现在任务总份数必须为正整数并与服务端签发值精确一致；单次
+  上传/复核仍严格只处理 1 条记录，不放宽单次副作用边界。
+- 使用 `260190894` 在 Windows 11 VM 对真实旧系统完成端到端验收：纤维微观形貌
+  `CheckCount=4`、样品识别为“浴巾，枕套，床单，被套”，本次选择“被套”；
+  图片上传使用新编号 `260190894-4`，随后完成复核和检验记录登记。
+- Writer 离线契约自测 27 项通过，完整 x86 构建产物
+  `FibreCheckWriter.exe` SHA256 为
+  `3bd826efcf2f606b9c15d3e77900de4d713c8ef6f49d0bee659cc6152c791b41`，
+  已部署到 VM，安装自检通过，仓库打包钉值已同步。图片类写入使用实际登录的
+  旧系统 Staff 身份；回读 `CheckUser1` 时归一化旧库定长字段的首尾空白。
+- FinalEntry 登记链路同步取消多份项目的登记容量上限：`CheckCount>1` 时即使
+  实时登记数已经达到或超过任务份数，也允许继续新增；仅单份项目已有登记时
+  保留服务端签发的明确追加决定。Windows VM 离线自测 62 项通过，新
+  `FibreCheckFinalEntryWriter.exe` SHA256 为
+  `a8349314c8116c499e751872e2948d8a4fdb53788113cf43dee043f2d0127a8b`，
+  仓库打包钉值已同步，且已部署到 VM 并完成本次真实登记验收。
+- 本地 Docker 已重建并发布电镜/纸类默认流程 v3；Windows Bridge 安装目录已
+  更新新版写桥、快照桥、probe 与两份 Writer，安装自检通过。使用新版
+  Snapshot Bridge 对 `260190894` 做写后只读刷新，确认 `register_count` 从 4
+  增加到 5。
+- 上传首次写后因旧库 `CheckUser1` 定长空白被严格比较误判，系统没有盲目重试；
+  修正 Writer 后用 `--reconcile-existing-upload` 只读采用既有主记录、图片子记录
+  和服务器文件，确认没有重复上传，再继续复核与登记。最终运行
+  `e26bed37-1cca-45b5-989c-3a520d685da0` 全部节点完成，最终登记回执证明
+  `expected_existing_register_count=4`、`resulting_register_count=5`、
+  `sample_identity=被套`、`proofed=true`。
+- 上传、复核、登记的自动批准不再设置过期时间，也不依赖浏览器倒计时。多份项目
+  不再为登记数量强制刷新或打断用户；仅单份项目已有登记时保留“直接新增/取消”
+  业务选择。验收结束后服务端三项真实写入开关已恢复关闭，VM 写入桥计划任务
+  保持停止，只读任务快照桥继续运行。
+- 先前生成的 `textile-execution-bridge-setup-1.0.0.exe` 使用旧 Writer 钉值，不再
+  作为本轮最终安装包；下次发布安装包须使用上述 `3bd826ef...` 产物重新构建。
+
+## 2026-08-11：通用/电镜多份登记、样品识别与外部操作自动交付
+
+- 任务快照升级为 schema v5：只读探针按任务项目统计当前
+  `CheckRecordRegister` 数量，Snapshot Bridge 将 `register_count` 与稳定
+  `project_key` 一起签发；登记前再强制刷新一次，避免并发流程使用过期计数。
+- 检测份数为 1 且已有登记时，流程暂停并要求用户选择“直接新增”或“取消”；
+  其它尚有份数容量的项目自动继续，达到任务份数则在写入前拒绝。
+- 样品识别按中文逗号、英文逗号和顿号拆分。单值自动填入并要求确认；多值提供
+  可编辑候选；识别数量与检测份数不同只警告。Backend、Bridge 与 Writer 均要求
+  最终值属于任务单选项，Writer 在联网只读预检中再次核对后才允许保存。
+- `CurrencyItemRecord.SampleDescription` 与登记表顶部 `SampleIdentity` 使用同一个
+  已确认值，并纳入写后回读。单份已有记录的追加选择以校验和绑定的
+  `existing_record_decision` 传至 Writer，不能由 Bridge 临时伪造。
+- 纤维微观形貌在生成原始记录前收集判定依据、指标要求、测试结果、判定和备注；
+  原始记录写入 `B33/I33/B34/I34/B35`，登记模板 `Z7` 与旧系统顶部
+  `SampleIdentity` 均使用同一个经任务单校验的样品识别。
+- 旧系统上传、复核、登记不再等待浏览器倒计时：部署能力开启时由 Worker 在预检
+  成功后自动批准，离开运行工作台不会中断交付；页面只展示进行状态与异常对账入口。
+- Windows 11 Parallels VM 完成 x86 Writer 编译及 56 项离线自测；新
+  `FibreCheckFinalEntryWriter.exe` SHA256 为
+  `c70baeeba114f7cdd6fa95be3f73d902d3f84d5f1fc6e86e814f7b6167f4934f`，
+  仓库打包钉值已同步。本轮没有连接 Oracle 执行真实写入。
+
 ## 2026-08-11：纸类判定步骤人工确认“标准值与允差”（数据源：说明列/M32）
 
 - 背景：此前判定变体的标准值列由后端直接镜像 W32 实测值（Writer 强校验

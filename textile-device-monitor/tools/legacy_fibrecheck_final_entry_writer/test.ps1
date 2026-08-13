@@ -176,6 +176,69 @@ try {
         @('--offline-validate', '--package', $paperGenericPath) 0 `
         @('package_validated', 'generic_details_validated', 'offline_validation_completed')
 
+    $paperIdentityPath = Join-Path $fixtureDir 'paper-generic-identity.json'
+    Write-Utf8NoBom $paperIdentityPath ($paperGeneric.Replace(
+        '"check_count": 1', '"check_count": 2').Replace(
+        '"sample_description": ""', '"sample_description": "正面"'))
+    Assert-Case 'valid paper multi-copy sample identity' `
+        @('--offline-validate', '--package', $paperIdentityPath) 0 `
+        @('package_validated', 'generic_details_validated', 'offline_validation_completed')
+
+    $paperMultiFullPath = Join-Path $fixtureDir 'paper-generic-multi-full.json'
+    Write-Utf8NoBom $paperMultiFullPath ($paperGeneric.Replace(
+        '"expected_existing_register_count": 0',
+        '"expected_existing_register_count": 2').Replace(
+        '"check_count": 1', '"check_count": 2').Replace(
+        '"sample_description": ""', '"sample_description": "正面"'))
+    Assert-Case 'multi-copy project may append at declared count' `
+        @('--offline-validate', '--package', $paperMultiFullPath) 0 `
+        @('package_validated', 'offline_validation_completed')
+
+    $paperMultiOverPath = Join-Path $fixtureDir 'paper-generic-multi-over.json'
+    Write-Utf8NoBom $paperMultiOverPath ((
+        Get-Content -Raw -LiteralPath $paperMultiFullPath -Encoding UTF8).Replace(
+        '"expected_existing_register_count": 2',
+        '"expected_existing_register_count": 3'))
+    Assert-Case 'multi-copy project may append beyond declared count' `
+        @('--offline-validate', '--package', $paperMultiOverPath) 0 `
+        @('package_validated', 'offline_validation_completed')
+
+    $paperSingleWithoutDecisionPath = Join-Path $fixtureDir `
+        'paper-generic-single-existing-without-decision.json'
+    Write-Utf8NoBom $paperSingleWithoutDecisionPath ($paperGeneric.Replace(
+        '"expected_existing_register_count": 0',
+        '"expected_existing_register_count": 1'))
+    Assert-Case 'single-copy existing record requires append decision' `
+        @('--offline-validate', '--package', $paperSingleWithoutDecisionPath) 21 `
+        @('existing_record_decision_required_for_single_copy')
+
+    $paperExisting = $paperGeneric.Replace(
+        '"expected_existing_register_count": 0,',
+        @'
+"expected_existing_register_count": 2,
+  "existing_record_decision": {
+    "kind": "append_when_check_count_one",
+    "action": "append",
+    "expected_task_check_count": 1,
+    "expected_existing_register_count": 2,
+    "resulting_register_count": 3
+  },
+'@).Replace(
+        '"sample_description": ""', '"sample_description": "正面"')
+    $paperExistingPath = Join-Path $fixtureDir 'paper-generic-existing.json'
+    Write-Utf8NoBom $paperExistingPath $paperExisting
+    Assert-Case 'valid signed one-copy append decision' `
+        @('--offline-validate', '--package', $paperExistingPath) 0 `
+        @('"existing_record_decision_present": true', 'offline_validation_completed')
+
+    $paperExistingMismatchPath = Join-Path $fixtureDir `
+        'paper-generic-existing-mismatch.json'
+    Write-Utf8NoBom $paperExistingMismatchPath ($paperExisting.Replace(
+        '"resulting_register_count": 3', '"resulting_register_count": 4'))
+    Assert-Case 'reject mismatched one-copy append decision' `
+        @('--offline-validate', '--package', $paperExistingMismatchPath) 21 `
+        @('existing_record_decision_scope_invalid')
+
     $paperHundredPath = Join-Path $fixtureDir 'paper-generic-hundred.json'
     Write-Utf8NoBom $paperHundredPath ($paperGeneric.Replace(
         '"sample_number": "26W006701"',
@@ -365,6 +428,8 @@ try {
         "\u7ea4\u7ef4\u5fae\u89c2\u5f62\u8c8c-GB T 36422-2018-10\u5f20\u56fe.xls" = '976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74'
     }
     $v2Base = $excel.Replace('"schema_version": 1', '"schema_version": 2').Replace(
+        '"sample_identity":""',
+        '"sample_identity":"\u7eb5\u9762"').Replace(
         '"expected_existing_register_count": 0,',
         @'
 "expected_existing_register_count": 0,
@@ -394,11 +459,14 @@ try {
             @('"schema_version": 2', 'offline_validation_completed')
     }
 
-    $v2EmptyIdentity = $v2Base.Replace(
+    $v2ValidIdentity = $v2Base.Replace(
         '"expected_mapping_config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
-        '"expected_mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"').Replace(
+        '"expected_mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"')
+    $v2EmptyIdentity = $v2ValidIdentity.Replace(
         '"expected_key_identities": ["\u7eb5\u9762"]',
-        '"expected_key_identities": [""]')
+        '"expected_key_identities": [""]').Replace(
+        '"sample_identity":"\u7eb5\u9762"',
+        '"sample_identity":""')
     $v2EmptyIdentityPath = Join-Path $fixtureDir 'excel-v2-empty-identity.json'
     Write-Utf8NoBom $v2EmptyIdentityPath $v2EmptyIdentity
     Assert-Case 'v2 empty key identity' `
@@ -429,9 +497,81 @@ try {
     $v2ChangedCountPath = Join-Path $fixtureDir 'excel-v2-project-count-changed.json'
     Write-Utf8NoBom $v2ChangedCountPath ($v2EmptyIdentity.Replace(
         '"check_count": 1', '"check_count": 2'))
-    Assert-Case 'v2 project count must be one' `
-        @('--offline-validate', '--package', $v2ChangedCountPath, '--source-root', $sourceDir) 21 `
-        @('task_project_binding_invalid')
+    Assert-Case 'v2 project supports multiple copies' `
+        @('--offline-validate', '--package', $v2ChangedCountPath, '--source-root', $sourceDir) 0 `
+        @('workbook_verified', 'offline_validation_completed')
+
+    $v2MultiFullPath = Join-Path $fixtureDir 'excel-v2-multi-full.json'
+    Write-Utf8NoBom $v2MultiFullPath ($v2ValidIdentity.Replace(
+        '"expected_existing_register_count": 0',
+        '"expected_existing_register_count": 4').Replace(
+        '"check_count": 1', '"check_count": 4').Replace(
+        '"sample_number": "26A045793"',
+        '"sample_number": "260190894"'))
+    Assert-Case 'v2 multi-copy project may append at declared count' `
+        @('--offline-validate', '--package', $v2MultiFullPath,
+          '--source-root', $sourceDir) 0 `
+        @('workbook_verified', 'offline_validation_completed')
+
+    $v2MultiOverPath = Join-Path $fixtureDir 'excel-v2-multi-over.json'
+    Write-Utf8NoBom $v2MultiOverPath ((
+        Get-Content -Raw -LiteralPath $v2MultiFullPath -Encoding UTF8).Replace(
+        '"expected_existing_register_count": 4',
+        '"expected_existing_register_count": 5'))
+    Assert-Case 'v2 multi-copy project may append beyond declared count' `
+        @('--offline-validate', '--package', $v2MultiOverPath,
+          '--source-root', $sourceDir) 0 `
+        @('workbook_verified', 'offline_validation_completed')
+
+    $v2SingleWithoutDecisionPath = Join-Path $fixtureDir `
+        'excel-v2-single-existing-without-decision.json'
+    Write-Utf8NoBom $v2SingleWithoutDecisionPath ($v2ValidIdentity.Replace(
+        '"expected_existing_register_count": 0',
+        '"expected_existing_register_count": 1'))
+    Assert-Case 'v2 single-copy existing record requires append decision' `
+        @('--offline-validate', '--package', $v2SingleWithoutDecisionPath,
+          '--source-root', $sourceDir) 21 `
+        @('existing_record_decision_required_for_single_copy')
+
+    $v2IdentityMismatchPath = Join-Path $fixtureDir `
+        'excel-v2-register-identity-mismatch.json'
+    Write-Utf8NoBom $v2IdentityMismatchPath ($v2ValidIdentity.Replace(
+        '"sample_identity":"\u7eb5\u9762"',
+        '"sample_identity":"\u6a2a\u622a\u9762"'))
+    Assert-Case 'v2 register identity must match workbook identity' `
+        @('--offline-validate', '--package', $v2IdentityMismatchPath,
+          '--source-root', $sourceDir) 21 `
+        @('excel_scope_not_supported_in_v2')
+
+    $v2Existing = $v2ValidIdentity.Replace(
+        '"expected_existing_register_count": 0,',
+        @'
+"expected_existing_register_count": 1,
+  "existing_record_decision": {
+    "kind": "append_when_check_count_one",
+    "action": "append",
+    "expected_task_check_count": 1,
+    "expected_existing_register_count": 1,
+    "resulting_register_count": 2
+  },
+'@)
+    $v2ExistingPath = Join-Path $fixtureDir 'excel-v2-existing.json'
+    Write-Utf8NoBom $v2ExistingPath $v2Existing
+    Assert-Case 'v2 signed one-copy append decision' `
+        @('--offline-validate', '--package', $v2ExistingPath,
+          '--source-root', $sourceDir) 0 `
+        @('"existing_record_decision_present": true',
+          'offline_validation_completed')
+
+    $v2ExistingMismatchPath = Join-Path $fixtureDir `
+        'excel-v2-existing-mismatch.json'
+    Write-Utf8NoBom $v2ExistingMismatchPath ($v2Existing.Replace(
+        '"expected_task_check_count": 1',
+        '"expected_task_check_count": 2'))
+    Assert-Case 'v2 rejects mismatched append decision' `
+        @('--offline-validate', '--package', $v2ExistingMismatchPath,
+          '--source-root', $sourceDir) 21 `
+        @('existing_record_decision_scope_invalid')
 
     $v2WrongMappingPath = Join-Path $fixtureDir 'excel-v2-wrong-mapping.json'
     Write-Utf8NoBom $v2WrongMappingPath $v2Base

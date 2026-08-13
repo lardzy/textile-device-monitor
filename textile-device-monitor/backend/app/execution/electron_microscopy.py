@@ -32,7 +32,7 @@ ELECTRON_IMAGE_SUFFIXES = frozenset(
     {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 )
 MAX_INDEXED_IMAGES = 2_000
-TASK_SNAPSHOT_SCHEMA_VERSION = 4
+TASK_SNAPSHOT_SCHEMA_VERSION = 5
 PUBLIC_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{16}$")
 
 
@@ -91,6 +91,13 @@ def _snapshot_contract_is_current(snapshot: object) -> bool:
         return False
     for project in projects:
         if not isinstance(project, dict):
+            return False
+        register_count = project.get("register_count")
+        if (
+            not isinstance(register_count, int)
+            or isinstance(register_count, bool)
+            or register_count < 0
+        ):
             return False
         if _is_microscopy_project(project) and not all(
             _public_identifier(project.get(key))
@@ -291,6 +298,17 @@ def _normalize_snapshot(
         check_method = str(
             value.get("check_method") or value.get("test_method") or ""
         ).strip()
+        register_count = value.get("register_count")
+        if (
+            not isinstance(register_count, int)
+            or isinstance(register_count, bool)
+            or register_count < 0
+        ):
+            raise ExecutionApiError(
+                422,
+                "task_snapshot_invalid",
+                "任务快照中的检测项目缺少有效的当前登记数量",
+            )
         project_key = str(value.get("project_key") or "").strip()
         if not project_key:
             identity = "\0".join(
@@ -326,6 +344,7 @@ def _normalize_snapshot(
                 "check_item_name": check_item_name,
                 "check_method": check_method,
                 "check_count": value.get("check_count"),
+                "register_count": register_count,
                 "seq_num": value.get("seq_num"),
                 "sample_identify": value.get("sample_identify"),
                 "remark": value.get("remark"),

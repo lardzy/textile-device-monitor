@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -32,6 +33,7 @@ from app.execution.paper_fiber import (
     PAPER_FIBER_TEST_METHOD,
 )
 from app.execution.engine import (
+    _normalize_human_submission,
     claim_human_task,
     claim_next_node,
     create_run,
@@ -45,6 +47,7 @@ from app.execution.microscopy_original_record import (
 from app.execution.models import (
     ExecutionFileIndexEntry,
     ExecutionHumanTask,
+    ExecutionNodeRun,
     ExecutionStorageRoot,
     ExecutionTaskSnapshotCache,
     ExecutionUser,
@@ -62,7 +65,6 @@ from app.execution.security import hash_password
 from app.execution.validation import (
     definition_checksum,
     validate_definition,
-    validate_json_instance,
     workflow_contract_checksum,
 )
 
@@ -152,6 +154,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                         "check_item_name": project_name,
                         "check_method": "GB/T 36422-2018",
                         "check_count": 1,
+                        "register_count": 0,
                         "seq_num": 1,
                     }
                 ],
@@ -162,7 +165,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         cached = cached_task_snapshot(
             self.db, inspection_number="26A029794"
         )["snapshot"]
-        self.assertEqual(cached["schema_version"], 4)
+        self.assertEqual(cached["schema_version"], 5)
         self.assertEqual(
             cached["special_wool_occupied_numbers"], ["26A029794"]
         )
@@ -178,6 +181,79 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.db.commit()
         return node
 
+    def _normalize_record_input(self, project, data):
+        return _normalize_human_submission(
+            self.db,
+            run=SimpleNamespace(),
+            node_run=SimpleNamespace(
+                node_type="human.input",
+                input_data={
+                    "record_context": {
+                        "task_kind": "microscopy_record_input",
+                        "projects": [project],
+                        "check_basis_options": ["GB/T 36422-2018"],
+                    }
+                },
+            ),
+            data={"selected_project_key": project["project_key"], **data},
+        )
+
+    def test_record_input_requires_single_identity_confirmation_and_judgement_fields(self):
+        project = {
+            "project_key": "project-one",
+            "check_count": 1,
+            "sample_identify": "正面",
+            "give_judgement": 1,
+        }
+        payload = {
+            "sample_name": "示例样品",
+            "sample_identity": "正面",
+            "judge_basis": "GB/T 36422-2018",
+            "indicator_requirement": "纤维表面形貌清晰",
+            "test_result": "符合指标要求",
+            "judgement": "符合",
+            "remark": "无",
+        }
+        with self.assertRaises(ExecutionApiError) as raised:
+            self._normalize_record_input(project, payload)
+        self.assertEqual(
+            raised.exception.code,
+            "microscopy_sample_identity_confirmation_required",
+        )
+        normalized = self._normalize_record_input(
+            project,
+            {**payload, "sample_identity_confirmed": True},
+        )
+        self.assertEqual(normalized["sample_identity"], "正面")
+        self.assertEqual(
+            normalized["indicator_requirement"], "纤维表面形貌清晰"
+        )
+        self.assertEqual(normalized["test_result"], "符合指标要求")
+        self.assertEqual(normalized["remark"], "无")
+
+    def test_record_input_splits_three_delimiters_and_warns_without_stopping(self):
+        project = {
+            "project_key": "project-many",
+            "check_count": 2,
+            "sample_identify": "正面，背面,截面、边缘",
+            "give_judgement": 0,
+        }
+        normalized = self._normalize_record_input(
+            project,
+            {"sample_name": "示例样品", "sample_identity": "截面"},
+        )
+        self.assertEqual(
+            normalized["sample_identity_options"],
+            ["正面", "背面", "截面", "边缘"],
+        )
+        self.assertTrue(normalized["identity_count_mismatch"])
+        with self.assertRaises(ExecutionApiError) as raised:
+            self._normalize_record_input(
+                project,
+                {"sample_name": "示例样品", "sample_identity": "任务单之外"},
+            )
+        self.assertEqual(raised.exception.code, "microscopy_sample_identity_invalid")
+
     def test_default_catalog_publishes_the_full_microscopy_workflow(self):
         workflow = self.db.query(ExecutionWorkflow).filter_by(
             slug="electron-microscopy-gbt36422"
@@ -191,7 +267,6 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                 "data.microscopy_record_context",
                 "human.input",
                 "workbook.microscopy_original_record",
-                "human.confirm",
                 "external.legacy_special_wool_image_upload",
                 "external.legacy_special_wool_review",
                 "workbook.microscopy_check_record",
@@ -200,17 +275,29 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         )
         definition = workflow.draft_definition
         self.assertTrue(validate_definition(definition, for_publish=True).valid)
+        self.assertNotIn(
+            "print-confirm",
+            {node["id"] for node in definition["nodes"]},
+        )
         self.assertIn(
             {
-                "id": "e9",
-                "source": "review-record",
-                "target": "generate-check-record",
+                "id": "e6",
+                "source": "generate-record",
+                "target": "upload-record",
             },
             definition["edges"],
         )
         self.assertIn(
             {
-                "id": "e10",
+                "id": "e9",
+                "source": "review-record",
+                "target": "registration-decision",
+            },
+            definition["edges"],
+        )
+        self.assertIn(
+            {
+                "id": "e13",
                 "source": "generate-check-record",
                 "target": "final-entry",
             },
@@ -230,6 +317,25 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.assertEqual(
             final_entry["input_mapping"]["controlled_test_override"],
             "$.inputs.controlled_test_override",
+        )
+        self.assertEqual(
+            final_entry["input_mapping"]["registration_decision"],
+            "$.nodes.registration-decision.output",
+        )
+        registration_decision = next(
+            node
+            for node in definition["nodes"]
+            if node["id"] == "registration-decision"
+        )
+        self.assertTrue(
+            registration_decision["config"][
+                "legacy_existing_record_decision"
+            ]
+        )
+        self.assertTrue(
+            registration_decision["config"][
+                "allow_multi_copy_over_capacity"
+            ]
         )
         invalid_definition = _electron_microscopy_gbt36422_definition()
         invalid_final_entry = next(
@@ -253,29 +359,6 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             workflow.capabilities,
             {"read": True, "write": True, "external_write": True},
         )
-        print_node = next(
-            node
-            for node in workflow.draft_definition["nodes"]
-            if node["id"] == "print-confirm"
-        )
-        print_schema = print_node["config"]["form_schema"]
-        self.assertEqual(
-            print_schema["properties"]["print_decision"]["enum"],
-            ["print", "skip"],
-        )
-        self.assertEqual(
-            print_schema["required"],
-            ["print_decision", "artifact_sha256"],
-        )
-        self.assertEqual(
-            print_schema["properties"]["print_completed"],
-            {"type": "boolean"},
-        )
-        self.assertEqual(
-            print_schema["allOf"][0]["then"]["required"],
-            ["print_completed"],
-        )
-        self.assertNotIn("printed", print_schema["properties"])
         prepare_node = next(
             node
             for node in workflow.draft_definition["nodes"]
@@ -294,38 +377,6 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             generate_node["input_mapping"]["task"],
             "$.nodes.select-images.output.task",
         )
-        sha256 = "a" * 64
-        self.assertTrue(
-            validate_json_instance(
-                print_schema,
-                {
-                    "print_decision": "print",
-                    "print_completed": True,
-                    "artifact_sha256": sha256,
-                },
-                path_prefix="$.data",
-            ).valid
-        )
-        self.assertTrue(
-            validate_json_instance(
-                print_schema,
-                {
-                    "print_decision": "skip",
-                    "artifact_sha256": sha256,
-                },
-                path_prefix="$.data",
-            ).valid
-        )
-        self.assertFalse(
-            validate_json_instance(
-                print_schema,
-                {
-                    "print_decision": "print",
-                    "artifact_sha256": sha256,
-                },
-                path_prefix="$.data",
-            ).valid
-        )
         validation = validate_definition(
             workflow.draft_definition,
             for_publish=True,
@@ -333,6 +384,78 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.assertTrue(
             validation.valid,
             [issue.as_dict() for issue in validation.issues],
+        )
+
+    def test_multi_copy_registration_node_auto_completes_without_human_task(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        run, _duplicate = create_run(
+            self.db,
+            workflow=workflow,
+            actor=self.user,
+            inspection_number="260190894",
+            input_data={},
+            global_data={},
+            idempotency_key="electron-multi-copy-registration-auto",
+        )
+        project = {
+            "project_key": "task-project:microscopy-multi",
+            "check_count": 4,
+            "register_count": 4,
+        }
+        node_runs = {
+            node.node_id: node
+            for node in self.db.query(ExecutionNodeRun).filter_by(
+                run_id=run.id
+            )
+        }
+        for node_run in node_runs.values():
+            node_run.status = "pending"
+        node_runs["record-input"].output_data = {
+            "selected_project": project,
+            "selected_project_key": project["project_key"],
+        }
+        node_runs["prepare-record"].output_data = {
+            "task": {"schema_version": 5, "projects": [project]},
+        }
+        decision = node_runs["registration-decision"]
+        decision.status = "ready"
+        self.db.commit()
+
+        claimed = claim_next_node(
+            self.db,
+            worker_id="electron-worker",
+            lease_seconds=30,
+        )
+        self.assertEqual(claimed.id, decision.id)
+        decision_id = claimed.id
+        lease_token = claimed.lease_token
+        self.db.commit()
+        with patch(
+            "app.execution.engine._refresh_paper_registration_context",
+            side_effect=ExecutionApiError(
+                422,
+                "paper_registration_snapshot_pending",
+                "snapshot bridge unavailable",
+            ),
+        ):
+            execute_claimed_node(self.db, decision_id, lease_token)
+        self.db.commit()
+
+        self.db.refresh(decision)
+        self.assertEqual(decision.status, "succeeded")
+        self.assertTrue(decision.output_data["auto_submitted"])
+        self.assertEqual(
+            decision.output_data["auto_submit_reason"],
+            "multi_copy_capacity_is_informational",
+        )
+        self.assertEqual(
+            self.db.query(ExecutionHumanTask).filter_by(
+                run_id=run.id,
+                node_run_id=decision.id,
+            ).count(),
+            0,
         )
 
     def test_untouched_image_only_workflow_is_upgraded_to_version_two(self):
@@ -480,15 +603,68 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflow.draft_revision, 2)
         self.assertEqual(workflow.published_version_number, 2)
-        print_node = next(
+        self.assertNotIn(
+            "print-confirm",
+            {node["id"] for node in workflow.draft_definition["nodes"]},
+        )
+        self.assertIn(
+            {
+                "id": "e6",
+                "source": "generate-record",
+                "target": "upload-record",
+            },
+            workflow.draft_definition["edges"],
+        )
+
+    def test_previous_full_workflow_is_upgraded_without_print_pause(self):
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug="electron-microscopy-gbt36422"
+        ).one()
+        previous_definition = _electron_microscopy_gbt36422_definition(
+            legacy_registration_capacity_contract=True
+        )
+        self.assertIn(
+            "print-confirm",
+            {node["id"] for node in previous_definition["nodes"]},
+        )
+        capabilities = {"read": True, "write": True, "external_write": True}
+        version_one = self.db.query(ExecutionWorkflowVersion).filter_by(
+            workflow_id=workflow.id,
+            version_number=1,
+        ).one()
+        workflow.draft_definition = previous_definition
+        workflow.draft_revision = 1
+        workflow.published_version_number = 1
+        workflow.capabilities = capabilities
+        workflow.created_by_id = None
+        workflow.updated_by_id = None
+        version_one.definition = previous_definition
+        version_one.checksum = definition_checksum(previous_definition)
+        version_one.capabilities = capabilities
+        version_one.contract_checksum = workflow_contract_checksum(
+            previous_definition,
+            capabilities,
+        )
+        self.db.commit()
+
+        ensure_default_catalog(self.db)
+        self.db.commit()
+        self.db.refresh(workflow)
+
+        self.assertEqual(workflow.draft_revision, 2)
+        self.assertEqual(workflow.published_version_number, 2)
+        self.assertNotIn(
+            "print-confirm",
+            {node["id"] for node in workflow.draft_definition["nodes"]},
+        )
+        registration = next(
             node
             for node in workflow.draft_definition["nodes"]
-            if node["id"] == "print-confirm"
+            if node["id"] == "registration-decision"
         )
-        print_schema = print_node["config"]["form_schema"]
-        self.assertIn("print_decision", print_schema["properties"])
-        self.assertIn("print_completed", print_schema["properties"])
-        self.assertNotIn("printed", print_schema["properties"])
+        self.assertTrue(
+            registration["config"]["allow_multi_copy_over_capacity"]
+        )
 
     def test_system_owned_print_choice_without_completion_is_upgraded(self):
         workflow = self.db.query(ExecutionWorkflow).filter_by(
@@ -522,14 +698,18 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.db.refresh(workflow)
 
         self.assertEqual(workflow.draft_revision, 2)
-        print_node = next(
-            node
-            for node in workflow.draft_definition["nodes"]
-            if node["id"] == "print-confirm"
+        self.assertNotIn(
+            "print-confirm",
+            {node["id"] for node in workflow.draft_definition["nodes"]},
         )
-        print_schema = print_node["config"]["form_schema"]
-        self.assertIn("print_completed", print_schema["properties"])
-        self.assertIn("allOf", print_schema)
+        self.assertIn(
+            {
+                "id": "e6",
+                "source": "generate-record",
+                "target": "upload-record",
+            },
+            workflow.draft_definition["edges"],
+        )
 
     def test_system_owned_head_v3_project_contract_is_upgraded(self):
         workflow = self.db.query(ExecutionWorkflow).filter_by(
@@ -795,13 +975,14 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                 inspection_number="26W006701",
                 status="ready",
                 snapshot={
-                    "schema_version": 4,
+                    "schema_version": 5,
                     "inspection_number": "26W006701",
                     "projects": [
                         {
                             "project_key": "task-project:paper-status",
                             "check_item_name": PAPER_FIBER_PROJECT_NAME,
                             "check_method": PAPER_FIBER_TEST_METHOD,
+                            "register_count": 0,
                         }
                     ],
                     "special_wool_occupied_numbers": [],
@@ -826,13 +1007,14 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                 inspection_number="26A029799",
                 status="ready",
                 snapshot={
-                    "schema_version": 4,
+                    "schema_version": 5,
                     "inspection_number": "26A029799",
                     "projects": [
                         {
                             "project_key": "task-project:unrelated",
                             "check_item_name": "耐洗色牢度",
                             "check_method": "GB/T 3921-2008",
+                            "register_count": 0,
                         }
                     ],
                     "special_wool_occupied_numbers": [],
@@ -908,12 +1090,13 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                 bridge_id="bridge-invalid",
                 claim_token=row.claim_token,
                 snapshot={
-                    "schema_version": 4,
+                    "schema_version": 5,
                     "special_wool_occupied_numbers": [],
                     "projects": [
                         {
                             "check_item_name": "纤维微观形貌",
                             "check_method": "GB/T 36422-2018",
+                            "register_count": 0,
                         }
                     ],
                 },
@@ -938,6 +1121,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                     {
                         "check_item_name": "纤维平均直径",
                         "check_method": "其它方法",
+                        "register_count": 0,
                     }
                 ],
             },
@@ -948,7 +1132,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             self.db, inspection_number="26A029799"
         )
         self.assertEqual(cached["cache_state"], "ready")
-        self.assertEqual(cached["snapshot"]["schema_version"], 4)
+        self.assertEqual(cached["snapshot"]["schema_version"], 5)
         self.assertIsNone(
             cached["snapshot"]["projects"][0]["task_check_item_id"]
         )
@@ -970,10 +1154,12 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                         "check_item_id": "sha256:4444444444444444",
                         "check_item_name": "纤维微观形貌",
                         "check_method": "按客户要求",
+                        "register_count": 0,
                     },
                     {
                         "check_item_name": "纤维平均直径",
                         "check_method": "GB/T 36422-2018",
+                        "register_count": 0,
                     },
                 ]
             },
@@ -1138,7 +1324,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.db.refresh(task.node_run)
         self.assertEqual(
             task.node_run.output_data["task"]["schema_version"],
-            4,
+            5,
         )
         self.assertEqual(
             task.node_run.output_data["selected_folder_ids"],

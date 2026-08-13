@@ -797,6 +797,7 @@ describe('ExecutionTaskInbox', () => {
                 project_key: 'project-morphology',
                 project_name: '纤维微观形貌',
                 test_method: 'GB/T 36422-2018',
+                check_count: 2,
                 sample_identify: '膜外侧，膜内侧、截面',
                 give_judgement: '1',
               }],
@@ -820,17 +821,28 @@ describe('ExecutionTaskInbox', () => {
     expect(await screen.findByText('260061860')).toBeInTheDocument();
     expect(screen.getByText('已选图片').parentElement).toHaveTextContent('3 张');
     expect(screen.getByText('Surgicel-Fibrillar 止血纱布')).toBeInTheDocument();
-    expect(screen.getByText('指标要求与测试结果将在后续版本完善'))
+    expect(screen.getByText('任务单份数与样品识别数量不一致'))
       .toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '氧化再生纤维素纤维' }));
     const sampleName = screen.getByRole('textbox', { name: '写入样品名称' });
     expect(sampleName).toHaveValue('氧化再生纤维素纤维');
     await user.type(sampleName, '（纱布）');
-    await user.click(screen.getByRole('radio', { name: '膜内侧' }));
+    const sampleIdentity = screen.getByRole('combobox', { name: '样品识别' });
+    await user.click(sampleIdentity);
+    await user.click((await screen.findAllByText('膜内侧')).at(-1));
     await user.click(screen.getByRole('combobox', { name: '判定依据' }));
     await user.click((await screen.findAllByText('客户要求')).at(-1));
+    await user.type(
+      screen.getByRole('textbox', { name: '指标要求' }),
+      '纤维表面形貌清晰',
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: '测试结果' }),
+      '符合指标要求',
+    );
     await user.click(screen.getByRole('radio', { name: '符合' }).closest('label'));
+    await user.type(screen.getByRole('textbox', { name: '备注' }), '无');
     await user.click(screen.getByRole('button', { name: '确认提交' }));
 
     await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
@@ -839,11 +851,15 @@ describe('ExecutionTaskInbox', () => {
       sample_name: '氧化再生纤维素纤维（纱布）',
       sample_identity: '膜内侧',
       judge_basis: '客户要求',
+      indicator_requirement: '纤维表面形貌清晰',
+      test_result: '符合指标要求',
       judgement: '符合',
+      remark: '无',
     });
   });
 
   it('样品识别单值自动选用，不判否时隐藏判定区', async () => {
+    const submitted = vi.fn();
     const recordTask = {
       ...openTask,
       title: '核对微观形貌信息',
@@ -875,15 +891,37 @@ describe('ExecutionTaskInbox', () => {
             },
           },
         })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({ ...recordTask, status: 'completed', revision: 3 });
+      }),
     );
     const user = userEvent.setup();
     renderInbox();
 
     await user.click(await screen.findByText('核对微观形貌信息'));
     expect(await screen.findByText('正面')).toBeInTheDocument();
-    expect(screen.getAllByText('已自动选用')).toHaveLength(2);
+    expect(screen.getByText('已自动填入')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', {
+      name: '确认本次录入的样品识别为“正面”',
+    })).not.toBeChecked();
+    expect(screen.getByRole('textbox', { name: '写入样品名称' }))
+      .toHaveValue('止血材料');
     expect(screen.queryByText('判定信息')).not.toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: '符合' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '止血材料' }));
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+    expect(await screen.findByText('请确认自动填入的样品识别')).toBeInTheDocument();
+    expect(submitted).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('checkbox', {
+      name: '确认本次录入的样品识别为“正面”',
+    }));
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+    expect(submitted.mock.calls[0][0].data).toMatchObject({
+      sample_identity: '正面',
+      sample_identity_confirmed: true,
+    });
   });
 
   it('选择打印时会明确提示人工打印并绑定文件 SHA-256', async () => {

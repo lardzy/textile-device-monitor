@@ -179,6 +179,7 @@ def test_index_interval_safe_default_is_five_minutes() -> None:
     assert settings.execution_auto_index_root_ids() == [
         "regenerated_fiber_records",
         "electron_microscopy_records",
+        "paper_fiber_records",
     ]
     assert settings.EXECUTION_TASK_SNAPSHOT_TTL_MINUTES == 15
     assert settings.EXECUTION_TASK_SNAPSHOT_RETRY_SECONDS == 60

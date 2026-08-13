@@ -112,8 +112,12 @@ export default function HumanTaskCard({
       delete properties.selected_project_key;
       delete properties.sample_name;
       delete properties.sample_identity;
+      delete properties.sample_identity_confirmed;
       delete properties.judge_basis;
+      delete properties.indicator_requirement;
+      delete properties.test_result;
       delete properties.judgement;
+      delete properties.remark;
       delete properties.artifact_sha256;
       delete properties.print_decision;
       delete properties.print_completed;

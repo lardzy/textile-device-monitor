@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from app.execution.registry import node_registry
 from app.execution.validation import validate_definition
 
 
@@ -34,6 +35,26 @@ def valid_definition():
 
 
 class WorkflowValidationTests(unittest.TestCase):
+    def test_legacy_external_nodes_do_not_require_final_approval(self):
+        external_types = (
+            "external.legacy_regenerated_fiber_count_upload",
+            "external.legacy_special_wool_image_upload",
+            "external.legacy_special_wool_review",
+            "external.legacy_microscopy_check_record_entry",
+            "external.legacy_special_wool_qualitative_upload",
+            "external.legacy_special_wool_qualitative_review",
+            "external.legacy_generic_check_record_entry",
+        )
+
+        for node_type in external_types:
+            with self.subTest(node_type=node_type):
+                definition = node_registry.get(node_type, 1)
+                self.assertIsNotNone(definition)
+                approval_schema = definition.output_schema["properties"][
+                    "requires_final_approval"
+                ]
+                self.assertIs(approval_schema["const"], False)
+
     def test_valid_minimal_dag(self):
         result = validate_definition(valid_definition(), for_publish=True)
         self.assertTrue(result.valid, result.as_dict())

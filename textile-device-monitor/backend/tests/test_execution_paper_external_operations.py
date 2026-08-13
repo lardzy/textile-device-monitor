@@ -159,7 +159,7 @@ class PaperExternalOperationTests(unittest.TestCase):
                 inspection_number=self.run.inspection_number,
                 status="ready",
                 snapshot={
-                    "schema_version": 4,
+                    "schema_version": 5,
                     "inspection_number": self.run.inspection_number,
                     "projects": [project],
                     "special_wool_occupied_numbers": [],
@@ -200,6 +200,8 @@ class PaperExternalOperationTests(unittest.TestCase):
             "check_method": PAPER_FIBER_TEST_METHOD,
             "seq_num": 2,
             "check_count": 1,
+            "register_count": 0,
+            "sample_identify": None,
         }
         identity = "\0".join(
             str(project[key])
@@ -257,6 +259,16 @@ class PaperExternalOperationTests(unittest.TestCase):
 
     def _node_config(self):
         return {"config": {"credential_slot": "legacy_account"}}
+
+    def _registration_decision(self, project, *, action="continue"):
+        return {
+            "existing_record_action": action,
+            "registration_cancelled": action == "cancel",
+            "expected_existing_register_count": project["register_count"],
+            "selected_project": project,
+            "selected_project_key": project["project_key"],
+            "task": {},
+        }
 
     def _upload_receipt(self, operation):
         summary = operation.request_summary
@@ -425,6 +437,7 @@ class PaperExternalOperationTests(unittest.TestCase):
                 "selected_project_key": project["project_key"],
                 "selected_project": project,
                 "review_result": {"operation_id": review.id},
+                "registration_decision": self._registration_decision(project),
             },
         )
         payload = entry.request_summary["final_entry_package"]
@@ -488,6 +501,7 @@ class PaperExternalOperationTests(unittest.TestCase):
             "selected_project_key": project["project_key"],
             "selected_project": project,
             "review_result": {"operation_id": review.id},
+            "registration_decision": self._registration_decision(project),
         }
         if judgement_input is not None:
             input_data["judgement_input"] = judgement_input
@@ -630,6 +644,93 @@ class PaperExternalOperationTests(unittest.TestCase):
             input_data=data,
         )
         self.assertEqual(upload.request_summary["result_contract"]["unit"], "")
+
+    def test_multi_copy_project_binds_selected_sample_identity(self):
+        project = self._project()
+        project.update(
+            {
+                "check_count": 2,
+                "register_count": 1,
+                "sample_identify": "正面，反面",
+            }
+        )
+        entry = self._prepare_generic_entry(
+            project,
+            judgement_input={"sample_identity": "反面"},
+        )
+        summary = entry.request_summary
+        package = summary["final_entry_package"]
+        self.assertEqual(package["expected_existing_register_count"], 1)
+        self.assertEqual(package["task_project"]["check_count"], 2)
+        self.assertEqual(
+            package["generic_record"]["header"]["sample_description"],
+            "反面",
+        )
+        self.assertNotIn("existing_record_decision", package)
+        self.assertEqual(
+            summary["sample_identity_contract"]["options"],
+            ["正面", "反面"],
+        )
+
+    def test_multi_copy_project_at_capacity_still_prepares(self):
+        project = self._project()
+        project.update(
+            {
+                "check_count": 2,
+                "register_count": 2,
+                "sample_identify": "正面，反面",
+            }
+        )
+        entry = self._prepare_generic_entry(
+            project,
+            judgement_input={"sample_identity": "反面"},
+        )
+        package = entry.request_summary["final_entry_package"]
+        self.assertEqual(package["expected_existing_register_count"], 2)
+        self.assertEqual(package["task_project"]["check_count"], 2)
+        self.assertNotIn("existing_record_decision", package)
+
+    def test_one_copy_existing_record_requires_signed_append_decision(self):
+        project = self._project()
+        project.update(
+            {
+                "register_count": 2,
+                "sample_identify": "正面",
+            }
+        )
+        review = self._completed_review()
+        entry, _ = prepare_legacy_generic_check_record_entry_operation(
+            self.db,
+            run=self.run,
+            node_run=self._node(
+                LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE, "entry"
+            ),
+            node=self._node_config(),
+            input_data={
+                "selected_project_key": project["project_key"],
+                "selected_project": project,
+                "review_result": {"operation_id": review.id},
+                "registration_decision": self._registration_decision(
+                    project, action="append"
+                ),
+                "judgement_input": {
+                    "sample_identity": "正面",
+                    "sample_identity_confirmed": True,
+                },
+            },
+        )
+        package = entry.request_summary["final_entry_package"]
+        self.assertEqual(package["expected_existing_register_count"], 2)
+        self.assertEqual(
+            package["existing_record_decision"],
+            {
+                "kind": "append_when_check_count_one",
+                "action": "append",
+                "expected_task_check_count": 1,
+                "expected_existing_register_count": 2,
+                "resulting_register_count": 3,
+            },
+        )
 
     def test_qualitative_review_approve_uses_paper_source_reverifier(self):
         upload, _ = prepare_legacy_special_wool_qualitative_upload_operation(

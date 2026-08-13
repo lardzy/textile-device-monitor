@@ -656,27 +656,67 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
             "ui": {"x": 1040, "y": 180},
         },
         {
-            "id": "judgement-input",
+            "id": "registration-decision",
             "type": "human.input",
             "type_version": 1,
-            "name": "确认判定信息",
+            "name": "核对已有登记",
             "config": {
-                "title": "确认纸类定性判定信息",
+                "title": "确认是否新增检验记录",
                 "description": (
-                    "任务单要求对本项目给出判定：请选择判定依据与本次"
-                    "判定结果。任务单未要求判定时本步骤自动跳过。"
+                    "系统会在录入前重新读取旧系统登记数量。检测份数为 1 "
+                    "且已有记录时，请选择直接新增或取消；其余情况自动继续。"
                 ),
-                # engine 识别该标记：任务单未要求判定时自动完成
-                # （零人工干预）；要求判定时动态生成带选项的表单。
-                "paper_judgement": True,
+                "paper_existing_record_decision": True,
             },
             "input_mapping": {
                 "selected_project": (
                     "$.nodes.query.output.matched_task_project"
                 ),
+                "selected_project_key": (
+                    "$.nodes.query.output.matched_task_project.project_key"
+                ),
                 "task": "$.nodes.query.output.task",
             },
             "ui": {"x": 1280, "y": 180},
+        },
+        {
+            "id": "registration-branch",
+            "type": "branch.condition",
+            "type_version": 1,
+            "name": "是否继续录入",
+            "config": {},
+            "input_mapping": {
+                "registration_cancelled": (
+                    "$.nodes.registration-decision.output.registration_cancelled"
+                )
+            },
+            "ui": {"x": 1500, "y": 180},
+        },
+        {
+            "id": "judgement-input",
+            "type": "human.input",
+            "type_version": 1,
+            "name": "确认样品识别与判定信息",
+            "config": {
+                "title": "确认样品识别与纸类定性判定信息",
+                "description": (
+                    "请确认本次录入的样品识别；任务单要求判定时，同时"
+                    "确认判定依据、判定结果以及标准值与允差。"
+                ),
+                "paper_judgement": True,
+                # Shared contract for future workflows that enter the legacy
+                # 通用项目记录登记 screen.  The paper marker remains for
+                # already-running definition snapshots.
+                "legacy_generic_record_input": True,
+                "require_standard_value": True,
+            },
+            "input_mapping": {
+                "selected_project": (
+                    "$.nodes.registration-decision.output.selected_project"
+                ),
+                "task": "$.nodes.registration-decision.output.task",
+            },
+            "ui": {"x": 1720, "y": 100},
         },
         {
             "id": "register-result",
@@ -690,14 +730,17 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
             "input_mapping": {
                 "review_result": "$.nodes.review-record.output",
                 "judgement_input": "$.nodes.judgement-input.output",
+                "registration_decision": (
+                    "$.nodes.registration-decision.output"
+                ),
                 "selected_project_key": (
-                    "$.nodes.query.output.matched_task_project.project_key"
+                    "$.nodes.registration-decision.output.selected_project_key"
                 ),
                 "selected_project": (
-                    "$.nodes.query.output.matched_task_project"
+                    "$.nodes.registration-decision.output.selected_project"
                 ),
             },
-            "ui": {"x": 1520, "y": 180},
+            "ui": {"x": 1940, "y": 100},
         },
         {
             "id": "end",
@@ -713,10 +756,28 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
                 ),
                 "upload": "$.nodes.upload-record.output",
                 "review": "$.nodes.review-record.output",
+                "registration_decision": (
+                    "$.nodes.registration-decision.output"
+                ),
                 "judgement": "$.nodes.judgement-input.output",
                 "final_entry": "$.nodes.register-result.output",
             },
-            "ui": {"x": 1760, "y": 180},
+            "ui": {"x": 2160, "y": 100},
+        },
+        {
+            "id": "cancelled-end",
+            "type": "core.end",
+            "type_version": 1,
+            "name": "已取消本次录入",
+            "config": {},
+            "input_mapping": {
+                "registration_decision": (
+                    "$.nodes.registration-decision.output"
+                ),
+                "upload": "$.nodes.upload-record.output",
+                "review": "$.nodes.review-record.output",
+            },
+            "ui": {"x": 1720, "y": 300},
         },
     ]
     definition["edges"] = [
@@ -731,14 +792,38 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
         {
             "id": "e5",
             "source": "review-record",
-            "target": "judgement-input",
+            "target": "registration-decision",
         },
         {
             "id": "e6",
+            "source": "registration-decision",
+            "target": "registration-branch",
+        },
+        {
+            "id": "e7",
+            "source": "registration-branch",
+            "target": "judgement-input",
+            "condition": {
+                "path": (
+                    "$.nodes.registration-decision.output."
+                    "registration_cancelled"
+                ),
+                "operator": "eq",
+                "value": False,
+            },
+        },
+        {
+            "id": "e8",
+            "source": "registration-branch",
+            "target": "cancelled-end",
+            "condition": "default",
+        },
+        {
+            "id": "e9",
             "source": "judgement-input",
             "target": "register-result",
         },
-        {"id": "e7", "source": "register-result", "target": "end"},
+        {"id": "e10", "source": "register-result", "target": "end"},
     ]
     return definition
 
@@ -757,6 +842,8 @@ def _paper_fiber_default_checksums() -> set[str]:
         "30f80623f97c9e15f9ac6ad865addeb43eecda70b8a1c8f15f292f9559e738e3",
         # 完整定义 v3（判定分支 judgement-input 节点）
         "cebf82bb4abad019f3f36837a671d7e267042a2768c34beef3a05f0028e39e7c",
+        # 完整定义 v4（标准值与允差由人工确认）
+        "a13ae3eda6513cd57ed451594e807a34bc3b5924a646ae7df7967be23a7b3d5e",
     }
 
 
@@ -788,10 +875,19 @@ def _electron_microscopy_gbt36422_definition(
     legacy_project_contract: bool = False,
     legacy_task_source_contract: bool = False,
     legacy_final_entry_contract: bool = False,
+    legacy_registration_capacity_contract: bool = False,
 ) -> dict[str, Any]:
     """Current full workflow; keep the image-only v1 reproducible above."""
 
     definition = _electron_microscopy_gbt36422_image_selection_definition()
+    include_print_confirmation = bool(
+        legacy_print_contract
+        or legacy_print_choice_contract
+        or legacy_project_contract
+        or legacy_task_source_contract
+        or legacy_final_entry_contract
+        or legacy_registration_capacity_contract
+    )
     start, discover, select_images = deepcopy(definition["nodes"][:3])
     task_output_path = (
         "$.nodes.discover.output.task"
@@ -888,7 +984,7 @@ def _electron_microscopy_gbt36422_definition(
                 "title": "确认微观形貌原始记录信息",
                 "description": (
                     "请选择任务项目、样品名称和样品识别；"
-                    "只有任务单要求判否时才显示判定信息。"
+                    "只有任务单要求判定时才显示并要求填写判定信息。"
                 ),
                 "form_schema": {
                     "type": "object",
@@ -904,8 +1000,16 @@ def _electron_microscopy_gbt36422_definition(
                             "maxLength": 500,
                         },
                         "sample_identity": {"type": ["string", "null"]},
+                        "sample_identity_confirmed": {
+                            "type": ["boolean", "null"]
+                        },
                         "judge_basis": {"type": ["string", "null"]},
+                        "indicator_requirement": {
+                            "type": ["string", "null"]
+                        },
+                        "test_result": {"type": ["string", "null"]},
                         "judgement": {"type": ["string", "null"]},
+                        "remark": {"type": ["string", "null"]},
                     },
                     "required": ["selected_project_key", "sample_name"],
                     "additionalProperties": False,
@@ -941,7 +1045,12 @@ def _electron_microscopy_gbt36422_definition(
                 "judgement_basis": (
                     "$.nodes.record-input.output.judge_basis"
                 ),
+                "indicator_requirement": (
+                    "$.nodes.record-input.output.indicator_requirement"
+                ),
+                "test_result": "$.nodes.record-input.output.test_result",
                 "judgement": "$.nodes.record-input.output.judgement",
+                "remark": "$.nodes.record-input.output.remark",
             },
             "ui": {"x": 1260, "y": 180},
         },
@@ -1093,14 +1202,40 @@ def _electron_microscopy_gbt36422_definition(
             "ui": {"x": 1980, "y": 180},
         },
     ]
+    if not include_print_confirmation:
+        definition["nodes"] = [
+            node
+            for node in definition["nodes"]
+            if node.get("id") != "print-confirm"
+        ]
     definition["edges"] = [
         {"id": "e1", "source": "start", "target": "discover"},
         {"id": "e2", "source": "discover", "target": "select-images"},
         {"id": "e3", "source": "select-images", "target": "prepare-record"},
         {"id": "e4", "source": "prepare-record", "target": "record-input"},
         {"id": "e5", "source": "record-input", "target": "generate-record"},
-        {"id": "e6", "source": "generate-record", "target": "print-confirm"},
-        {"id": "e7", "source": "print-confirm", "target": "upload-record"},
+        *(
+            [
+                {
+                    "id": "e6",
+                    "source": "generate-record",
+                    "target": "print-confirm",
+                },
+                {
+                    "id": "e7",
+                    "source": "print-confirm",
+                    "target": "upload-record",
+                },
+            ]
+            if include_print_confirmation
+            else [
+                {
+                    "id": "e6",
+                    "source": "generate-record",
+                    "target": "upload-record",
+                }
+            ]
+        ),
         {"id": "e8", "source": "upload-record", "target": "review-record"},
     ]
     end_mapping = {
@@ -1116,6 +1251,56 @@ def _electron_microscopy_gbt36422_definition(
     else:
         definition["nodes"].extend(
             [
+                {
+                    "id": "registration-decision",
+                    "type": "human.input",
+                    "type_version": 1,
+                    "name": "核对已有登记",
+                    "config": {
+                        "title": "确认是否新增检验记录",
+                        "description": (
+                            "系统会在录入前重新读取旧系统登记数量。检测份数为 1 "
+                            "且已有记录时，请选择直接新增或取消；其余情况自动继续。"
+                        ),
+                        "legacy_existing_record_decision": True,
+                        # Retain the shipped marker so the system-owned
+                        # workflow checksum stays stable.  Runtime behavior no
+                        # longer depends on it: every multi-copy project
+                        # auto-continues, including already pinned snapshots.
+                        **(
+                            {}
+                            if (
+                                legacy_registration_capacity_contract
+                                or include_print_confirmation
+                            )
+                            else {"allow_multi_copy_over_capacity": True}
+                        ),
+                    },
+                    "input_mapping": {
+                        "selected_project": (
+                            "$.nodes.record-input.output.selected_project"
+                        ),
+                        "selected_project_key": (
+                            "$.nodes.record-input.output.selected_project_key"
+                        ),
+                        "task": "$.nodes.prepare-record.output.task",
+                    },
+                    "ui": {"x": 2220, "y": 180},
+                },
+                {
+                    "id": "registration-branch",
+                    "type": "branch.condition",
+                    "type_version": 1,
+                    "name": "是否继续录入",
+                    "config": {},
+                    "input_mapping": {
+                        "registration_cancelled": (
+                            "$.nodes.registration-decision.output."
+                            "registration_cancelled"
+                        )
+                    },
+                    "ui": {"x": 2440, "y": 180},
+                },
                 {
                     "id": "generate-check-record",
                     "type": "workbook.microscopy_check_record",
@@ -1134,13 +1319,16 @@ def _electron_microscopy_gbt36422_definition(
                             "$.nodes.generate-record.output.template_binding"
                         ),
                         "selected_project": (
-                            "$.nodes.record-input.output.selected_project"
+                            "$.nodes.registration-decision.output."
+                            "selected_project"
                         ),
+                        "task": "$.nodes.registration-decision.output.task",
                         "sample_identification": (
                             "$.nodes.record-input.output.sample_identity"
                         ),
                         "test_method": (
-                            "$.nodes.record-input.output.selected_project."
+                            "$.nodes.registration-decision.output."
+                            "selected_project."
                             "check_method"
                         ),
                         "judgement_required": (
@@ -1150,21 +1338,18 @@ def _electron_microscopy_gbt36422_definition(
                             "$.nodes.record-input.output.judge_basis"
                         ),
                         "indicator_requirement": (
-                            "$.nodes.record-input.output.selected_project."
+                            "$.nodes.record-input.output."
                             "indicator_requirement"
                         ),
                         "test_result": (
-                            "$.nodes.record-input.output.selected_project."
-                            "test_result"
+                            "$.nodes.record-input.output.test_result"
                         ),
-                        "remark": (
-                            "$.nodes.record-input.output.selected_project.remark"
-                        ),
+                        "remark": "$.nodes.record-input.output.remark",
                         "judgement": (
                             "$.nodes.record-input.output.judgement"
                         ),
                     },
-                    "ui": {"x": 2220, "y": 180},
+                    "ui": {"x": 2660, "y": 100},
                 },
                 {
                     "id": "final-entry",
@@ -1186,17 +1371,41 @@ def _electron_microscopy_gbt36422_definition(
                             "template_binding"
                         ),
                         "selected_project_key": (
-                            "$.nodes.record-input.output.selected_project_key"
+                            "$.nodes.registration-decision.output."
+                            "selected_project_key"
                         ),
                         "selected_project": (
-                            "$.nodes.record-input.output.selected_project"
+                            "$.nodes.registration-decision.output."
+                            "selected_project"
                         ),
+                        "registration_decision": (
+                            "$.nodes.registration-decision.output"
+                        ),
+                        "record_input": "$.nodes.record-input.output",
                         "review_result": "$.nodes.review-record.output",
                         "controlled_test_override": (
                             "$.inputs.controlled_test_override"
                         ),
                     },
-                    "ui": {"x": 2460, "y": 180},
+                    "ui": {"x": 2880, "y": 100},
+                },
+                {
+                    "id": "cancelled-end",
+                    "type": "core.end",
+                    "type_version": 1,
+                    "name": "已取消本次录入",
+                    "config": {},
+                    "input_mapping": {
+                        "registration_decision": (
+                            "$.nodes.registration-decision.output"
+                        ),
+                        "original_record": (
+                            "$.nodes.generate-record.output.original_record"
+                        ),
+                        "upload": "$.nodes.upload-record.output",
+                        "review": "$.nodes.review-record.output",
+                    },
+                    "ui": {"x": 2660, "y": 300},
                 },
             ]
         )
@@ -1205,14 +1414,38 @@ def _electron_microscopy_gbt36422_definition(
                 {
                     "id": "e9",
                     "source": "review-record",
-                    "target": "generate-check-record",
+                    "target": "registration-decision",
                 },
                 {
                     "id": "e10",
+                    "source": "registration-decision",
+                    "target": "registration-branch",
+                },
+                {
+                    "id": "e11",
+                    "source": "registration-branch",
+                    "target": "generate-check-record",
+                    "condition": {
+                        "path": (
+                            "$.nodes.registration-decision.output."
+                            "registration_cancelled"
+                        ),
+                        "operator": "eq",
+                        "value": False,
+                    },
+                },
+                {
+                    "id": "e12",
+                    "source": "registration-branch",
+                    "target": "cancelled-end",
+                    "condition": "default",
+                },
+                {
+                    "id": "e13",
                     "source": "generate-check-record",
                     "target": "final-entry",
                 },
-                {"id": "e11", "source": "final-entry", "target": "end"},
+                {"id": "e14", "source": "final-entry", "target": "end"},
             ]
         )
         end_mapping.update(
@@ -1222,9 +1455,12 @@ def _electron_microscopy_gbt36422_definition(
                     "legacy_registration_workbook"
                 ),
                 "final_entry": "$.nodes.final-entry.output",
+                "registration_decision": (
+                    "$.nodes.registration-decision.output"
+                ),
             }
         )
-        end_x = 2700
+        end_x = 3100
     definition["nodes"].append(
         {
             "id": "end",
@@ -1721,6 +1957,14 @@ def ensure_default_catalog(db: Session) -> None:
         else:
             full_definition = _electron_microscopy_gbt36422_definition()
             full_checksum = definition_checksum(full_definition)
+            previous_full_definition = (
+                _electron_microscopy_gbt36422_definition(
+                    legacy_registration_capacity_contract=True
+                )
+            )
+            previous_full_checksum = definition_checksum(
+                previous_full_definition
+            )
             legacy_full_definition = _electron_microscopy_gbt36422_definition(
                 legacy_print_contract=True,
                 legacy_final_entry_contract=True,
@@ -1789,6 +2033,12 @@ def ensure_default_catalog(db: Session) -> None:
             }
             compatible_full_checksums = {
                 full_checksum,
+                # 上一版完整定义仍包含固定打印确认节点，且多份项目达到
+                # 检测份数时会被登记容量门禁阻断。
+                previous_full_checksum,
+                # 已发布完整定义：登记前尚未复核份数、样品识别单值未要求确认，
+                # 判定字段中的指标/结果/备注仍留空。
+                "76733a4b0568321c78d55831f33beba5dca743af87ebb5a9dfe238778c2e9c86",
                 legacy_full_checksum,
                 legacy_print_choice_checksum,
                 legacy_project_checksum,

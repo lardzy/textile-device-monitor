@@ -148,21 +148,6 @@ export const getExecutionRunExternalOperations = async runId =>
     ['items', 'external_operations'],
   );
 
-export const approveExecutionExternalOperation = (
-  operationId,
-  payloadChecksum,
-  confirmedSampleNumber,
-  note,
-) => executionClient.post(
-  `/external-operations/${encodeURIComponent(operationId)}/approve`,
-  {
-    approved: true,
-    payload_checksum: payloadChecksum,
-    confirmed_sample_number: confirmedSampleNumber,
-    ...(note?.trim() ? { note: note.trim() } : {}),
-  },
-);
-
 export const getExecutionExternalOperationReconciliation = operationId =>
   executionClient.get(
     '/external-operations/'

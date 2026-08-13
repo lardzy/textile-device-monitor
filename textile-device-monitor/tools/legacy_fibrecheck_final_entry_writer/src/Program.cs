@@ -197,6 +197,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                     { "expected_existing_register_count", package.ExpectedExistingRegisterCount },
                     { "controlled_test_override_active",
                         package.ControlledTestOverrideActive },
+                    { "existing_record_decision_present",
+                        package.ExistingRecordDecision != null },
                 });
                 if (package.OperationType == FinalEntryPackage.GenericOperation)
                 {

@@ -2,7 +2,8 @@
 
 这是“检验过程管理 → 检验记录登记(Excel)”最终录入阶段的独立 x86 .NET Framework
 适配器。它复用旧客户端的官方 DAL/BLL，但把定位、权限、并发、文件和写后对账放在一组
-fail-closed 门禁之后。当前尚未接入上游流程，也没有对旧系统执行过真实写入。
+fail-closed 门禁之后。它已接入执行系统，只有部署能力和 Bridge 副作用许可均满足时才会写入；
+本轮验证没有对旧系统执行真实写入。
 
 读取现有结果使用相邻的 `legacy_fibrecheck_probe`；本目录只负责验证任务包，以及在 Bridge
 明确许可后执行一次写入。
@@ -37,8 +38,10 @@ Excel v2 的模板白名单为：
 
 模板名和映射指纹必须成对精确命中，不能混用。schema v2 在核对同一项目的既有记录时，
 允许不同登记使用白名单中的不同模板；每条关键结果仍必须按自己的 `OriginalRecordID` 关联，
-且其 `ExcelTemplateName` 必须等于对应登记的模板。`SampleIdentity` 可以为空或重复，不能作为
-唯一键；登记 ID、项目范围和计数仍按原门禁严格校验。
+且其 `ExcelTemplateName` 必须等于对应登记的模板。schema v2 的登记顶部
+`SampleIdentity` 必须等于唯一的 `expected_key_identities` 值，并在联网预检中确认属于当前
+任务单选项；任务单没有候选时才允许两者同时为空。该值可在不同登记间重复，不能作为唯一键；
+登记 ID、项目范围和计数仍按原门禁严格校验。
 
 ## 构建与离线测试
 
@@ -57,7 +60,9 @@ Excel 16.0 COM 实例并正常退出；测试没有打开工作簿，也没有�
 
 `test.ps1` 从全新临时输出目录运行，不连接 Oracle、不访问文件服务器、不启动 Excel，当前
 覆盖任务包字段、单引号、工作簿路径/长度/SHA-256、v1 兼容、七模板精确映射、v2
-空身份、任务项目绑定漂移和受控测试覆盖的三重绑定。它还会单独编译纯分支规则 SelfTest，
+多份/样品识别、多份项目超出任务份数后继续新增、单份已有登记确认、任务项目绑定漂移和
+受控测试覆盖的三重绑定。它还会单独
+编译纯分支规则 SelfTest，
 覆盖固定附件模板计数为 0 和 2 时与 GAP、新中英/FILA、CLOTHING 的组合行为；计数为 2
 不会因记录不唯一而拒绝，并按旧客户端 `FirstOrDefault` 的存在性语义参与真实分支顺序。
 会话规则 SelfTest 另行覆盖非交互会话、Session 0、正常登录用户会话，以及通用操作和离线
@@ -74,18 +79,29 @@ Excel 验证的豁免行为。
 - 所有头部字段，即使值为空也必须出现；
 - 至少一条、按最终显示顺序排列的四列明细。
 
+登记份数规则：
+
+- `CheckCount` 是任务单的检测份数，不作为多份项目的登记容量上限；当
+  `CheckCount>1` 时，即使实时登记数量已经达到或超过该值，也允许继续新增，不额外暂停；
+- `expected_existing_register_count` 仍必须与写入前、项目锁内重查得到的实时数量精确一致，
+  因此放宽容量不会放宽并发漂移或幂等校验；
+- 仅当 `CheckCount=1` 且已有登记时，schema v2 必须携带服务端签发的
+  `existing_record_decision`，其 `kind=append_when_check_count_one`、`action=append`，
+  且任务份数、已有数量和新增后数量必须逐项匹配；普通任务包不能自行构造该例外。
+
 Excel 包额外要求：
 
 - schema v2 必须携带完整 `task_project`：`project_key`、两个脱敏 ID、项目编号/名称、
-  `GB/T 36422-2018`、`seq_num` 以及严格等于 `1` 的 `check_count`；`project_key` 必须能由
+  `GB/T 36422-2018`、`seq_num` 以及大于等于 `1` 的 `check_count`；`project_key` 必须能由
   其余字段按只读探针的同一算法重算；
 - 模板名、`collection_mode=standard` 和精确的映射配置 SHA-256；
 - 一个工作簿相对路径、文件名、字节数和内容 SHA-256；
 - `key_result_count=1`，以及精确的 `expected_key_identities`；
-- v1 的四个登记字段均为空；采集后若工作簿试图改变这些字段或检验员，写入前即拒绝。
+- v1 的四个登记字段均为空；v2 的 `sample_identity` 必须精确等于唯一关键结果身份，其余三个
+  登记字段仍为空。采集后若工作簿试图改变这些字段或检验员，写入前即拒绝。
 
 schema v2 示例见 `examples/excel-package-v2.example.json`。它仍要求恰好一个关键结果，
-但允许 `expected_key_identities` 中的唯一元素为空字符串。
+但仅在任务单没有样品识别候选时允许唯一身份及登记顶部身份同时为空字符串。
 
 映射配置指纹由相邻的只读 probe 生成。`mapped_table_exists=false` 不是错误：现网
 `微观形貌.xls` 的映射和 9 行采集配置均存在，但可选动态 DataTable 不存在；旧 DAL 的
@@ -144,7 +160,7 @@ CLOTHING，最后进入标准分支。因此固定模板匹配数为任意正数
 精确收到一行 `PERMIT_REMOTE_WRITE` 才继续。许可后它会：
 
 1. 只读查询当前 `Task_CheckItem`，对原始 ID 重新做单向散列并重算 `project_key`，逐字段核对
-   项目编号、名称、方法、顺序和 `CheckCount=1`；任一合同评审变更都会在副作用前拒绝；
+   项目编号、名称、方法、顺序和 `CheckCount>=1`；任一合同评审变更都会在副作用前拒绝；
 2. 对同一 `Task_CheckItem` 获取 Oracle `SELECT ... FOR UPDATE` 协作锁；
 3. 重新登录并比对账号、岗位、部门和父部门；
 4. 在锁内重新执行全部只读预检、完整安全指纹、任务项目绑定和源文件哈希；
