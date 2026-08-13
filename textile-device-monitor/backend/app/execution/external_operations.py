@@ -5381,6 +5381,15 @@ def _reverify_special_wool_review_source(
         (operation.request_summary or {}).get("target_sample_number") or ""
     )
     expected_main_id = str(source_ref.get("main_id") or "")
+    # 上传可能按旧系统实况顺号改写（如人工删除后顺号回退）；
+    # 与 prepare 对称，以来源回执中的实际写入编号为准。
+    source_target = ""
+    if source is not None:
+        source_target = str(
+            (source.receipt or {}).get("target_sample_number") or ""
+        ).strip() or str(
+            (source.request_summary or {}).get("target_sample_number") or ""
+        ).strip()
     if (
         source is None
         or source.status != "completed"
@@ -5389,10 +5398,7 @@ def _reverify_special_wool_review_source(
         or not isinstance(source.receipt, dict)
         or _canonical_checksum(source.receipt)
         != source_ref.get("receipt_checksum")
-        or str(
-            (source.request_summary or {}).get("target_sample_number") or ""
-        )
-        != target
+        or source_target != target
     ):
         raise conflict(
             "special_wool_upload_result_changed",

@@ -1894,6 +1894,78 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             "special_wool_upload_result_changed",
         )
 
+    def test_review_approval_follows_renumbered_upload_target(self):
+        # 人工删除旧记录后 Writer 顺号回退：回执 target 为实际写入号，
+        # 复核跟随回执，不应再与上传预检单上的请求编号比较。
+        _artifact, original_record = self._artifact()
+        upload_node = self._node_run(
+            LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE,
+            "upload-renumber-review-approve",
+        )
+        with patch(
+            "app.execution.external_operations.settings."
+            "EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED",
+            True,
+        ):
+            upload, _reused = prepare_legacy_special_wool_image_operation(
+                self.db,
+                run=self.run,
+                node_run=upload_node,
+                node={"config": {"credential_slot": "legacy_account"}},
+                input_data={
+                    "original_record": original_record,
+                    **self._project_input(),
+                },
+            )
+            requested = upload.request_summary["target_sample_number"]
+            actual = f"{self.run.inspection_number}-3"
+            self.assertNotEqual(requested, actual)
+            receipt = self._image_receipt(upload)
+            actual_filename = receipt["target_filename"].replace(
+                requested, actual, 1
+            )
+            receipt.update(
+                {
+                    "target_sample_number": actual,
+                    "requested_sample_number": requested,
+                    "renumbered": True,
+                    "target_filename": actual_filename,
+                }
+            )
+            receipt["server_file"]["filename"] = actual_filename
+            receipt["main_record"]["file_path"] = actual_filename
+            receipt["picture_records"][0]["filename"] = actual_filename
+            receipt["picture_records"][0][
+                "original_data_filename"
+            ] = actual_filename
+            receipt["readback"]["target_filename"] = actual_filename
+            receipt["readback"]["original_data_filename"] = actual_filename
+            upload.receipt = receipt
+            upload.status = "completed"
+            review_node = self._node_run(
+                LEGACY_SPECIAL_WOOL_REVIEW_NODE,
+                "review-renumber-approve",
+            )
+            review, _reused = prepare_legacy_special_wool_review_operation(
+                self.db,
+                run=self.run,
+                node_run=review_node,
+                node={"config": {"credential_slot": "legacy_account"}},
+                input_data={"upload_result": {"operation_id": upload.id}},
+            )
+            self.assertEqual(
+                review.request_summary["target_sample_number"], actual
+            )
+            approved, _auto = approve_prepared_external_operation(
+                self.db,
+                operation=review,
+                run=self.run,
+                actor=self.user,
+                payload_checksum=review.payload_checksum,
+                confirmed_sample_number=actual,
+            )
+        self.assertEqual(approved.status, "approved")
+
     def test_final_entry_rearm_uses_excel_collection_write_boundary(self):
         now = utcnow()
         safe_node, safe_operation = self._expired_final_entry_operation(
