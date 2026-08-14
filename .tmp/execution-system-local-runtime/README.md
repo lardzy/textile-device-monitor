@@ -8,6 +8,10 @@
 - staging、publish、TLS 和 Area 占位目录互相独立。
 - Area Infer 不启动。
 - 登录账号及临时密码保存在权限为 `0600` 的 `local.env` 中。
+- Windows 写入桥读取 `~/Downloads/exec-stage-sync` 依赖
+  `stage-sync-downloads-loop.sh` 常驻镜像；Mac 重启或休眠后需重新启动
+  （`nohup zsh stage-sync-downloads-loop.sh &`），否则旧系统写入会报
+  `source_unreadable:DirectoryNotFoundException`。
 
 启动命令：
 

@@ -847,8 +847,9 @@ class PaperFiberBackendTests(unittest.TestCase):
 
         with patch(
             "app.execution.engine._refresh_paper_registration_context"
-        ):
+        ) as refresh:
             output = _auto_complete_paper_existing_record_decision(context)
+        refresh.assert_called_once_with(context)
         self.assertEqual(output["existing_record_action"], "continue")
         self.assertEqual(output["expected_existing_register_count"], 1)
         self.assertEqual(
@@ -857,17 +858,29 @@ class PaperFiberBackendTests(unittest.TestCase):
 
         project["register_count"] = 3
         context = self._registration_context(run, project)
+        refreshed = dict(project, register_count=3)
+
+        def _apply_refresh(ctx):
+            ctx.input_data = {
+                **ctx.input_data,
+                "selected_project": refreshed,
+                "task": {"schema_version": 5, "projects": [refreshed]},
+            }
+            ctx.node_run.input_data = ctx.input_data
+
         with patch(
             "app.execution.engine._refresh_paper_registration_context",
-            side_effect=AssertionError("multi-copy must not refresh"),
-        ):
+            side_effect=_apply_refresh,
+        ) as refresh:
             output = _auto_complete_paper_existing_record_decision(context)
+        refresh.assert_called_once_with(context)
+        self.assertEqual(output["expected_existing_register_count"], 3)
         self.assertEqual(
             output["auto_submit_reason"],
             "multi_copy_capacity_is_informational",
         )
 
-    def test_microscopy_multi_copy_legacy_snapshot_continues_without_refresh(self):
+    def test_microscopy_multi_copy_legacy_snapshot_requires_fresh_snapshot(self):
         run = self._paper_run("microscopy-multi-copy-over-capacity")
         project = {
             "project_key": "task-project:microscopy-multi",
@@ -876,7 +889,7 @@ class PaperFiberBackendTests(unittest.TestCase):
         }
         # Older published workflow snapshots do not carry the optional
         # allow_multi_copy_over_capacity marker.  Runtime behavior must still
-        # follow the one-copy-only decision contract.
+        # follow the same refresh-before-entry contract.
         context = self._registration_context(run, project)
 
         with patch(
@@ -887,14 +900,10 @@ class PaperFiberBackendTests(unittest.TestCase):
                 "snapshot bridge unavailable",
             ),
         ):
-            output = _auto_complete_paper_existing_record_decision(context)
-
-        self.assertEqual(output["existing_record_action"], "continue")
-        self.assertFalse(output["registration_cancelled"])
-        self.assertEqual(output["expected_existing_register_count"], 4)
+            with self.assertRaises(ExecutionApiError) as raised:
+                _auto_complete_paper_existing_record_decision(context)
         self.assertEqual(
-            output["auto_submit_reason"],
-            "multi_copy_capacity_is_informational",
+            raised.exception.code, "paper_registration_snapshot_pending"
         )
 
     def test_judgement_node_auto_completes_when_task_waives_judgement(self):

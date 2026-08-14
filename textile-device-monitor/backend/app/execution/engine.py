@@ -1312,10 +1312,11 @@ def _refresh_paper_registration_context(
 
     The ordinary task snapshot is cached for recommendations.  A second paper
     or microscopy run may therefore start while that cache still predates the
-    first run's record entry.  The one-copy decision path therefore forces a
-    read-only refresh after upload/review and refuses to continue until the
-    exact task-project key is present in the new snapshot.  Multi-copy projects
-    append their selected sample identity without consulting this path.
+    first run's record entry.  Every registration decision forces a read-only
+    refresh after upload/review and refuses to continue until the exact
+    task-project key is present in the new snapshot, so the frozen expected
+    register count equals the live count the Writer verifies.  Multi-copy
+    projects then append their selected sample identity without pausing.
     """
 
     if not _paper_existing_record_node_config(context):
@@ -1406,11 +1407,14 @@ def _auto_complete_paper_existing_record_decision(
 ) -> Optional[dict[str, Any]]:
     """Pause only when a one-copy project has an existing record.
 
-    A multi-copy project always appends the sample identity selected earlier in
-    the run.  Its task count is not a hard cap on legacy record rows, so neither
-    a fresh occupancy lookup nor a user decision is needed here.  For a
-    one-copy project the decision depends on current occupancy, therefore that
-    path still refreshes the read-only task snapshot immediately before entry.
+    Every registration decision first refreshes the read-only task snapshot:
+    the frozen ``expected_existing_register_count`` must equal the live legacy
+    count the Writer verifies at execution time, and the recommendation cache
+    may still predate a previous run's record entry.  A multi-copy project
+    then always appends the sample identity selected earlier in the run — its
+    task count is not a hard cap on legacy record rows, so no user decision is
+    needed.  For a one-copy project the decision depends on current occupancy,
+    so it pauses when a record already exists.
     """
 
     if not _paper_existing_record_node_config(context):
@@ -1427,10 +1431,9 @@ def _auto_complete_paper_existing_record_decision(
             "paper_registration_count_invalid",
             "旧系统返回的检测份数无效，请刷新后重试",
         )
-    if check_count == 1:
-        _refresh_paper_registration_context(context)
-        selected = context.input_data.get("selected_project") or {}
-        check_count = selected.get("check_count")
+    _refresh_paper_registration_context(context)
+    selected = context.input_data.get("selected_project") or {}
+    check_count = selected.get("check_count")
     register_count = selected.get("register_count")
     if (
         not isinstance(check_count, int)

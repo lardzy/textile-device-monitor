@@ -432,13 +432,20 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         decision_id = claimed.id
         lease_token = claimed.lease_token
         self.db.commit()
+
+        refreshed = dict(project, register_count=5)
+
+        def _apply_refresh(ctx):
+            ctx.input_data = {
+                **ctx.input_data,
+                "selected_project": refreshed,
+                "task": {"schema_version": 5, "projects": [refreshed]},
+            }
+            ctx.node_run.input_data = ctx.input_data
+
         with patch(
             "app.execution.engine._refresh_paper_registration_context",
-            side_effect=ExecutionApiError(
-                422,
-                "paper_registration_snapshot_pending",
-                "snapshot bridge unavailable",
-            ),
+            side_effect=_apply_refresh,
         ):
             execute_claimed_node(self.db, decision_id, lease_token)
         self.db.commit()
@@ -446,6 +453,10 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.db.refresh(decision)
         self.assertEqual(decision.status, "succeeded")
         self.assertTrue(decision.output_data["auto_submitted"])
+        self.assertEqual(
+            decision.output_data["expected_existing_register_count"],
+            5,
+        )
         self.assertEqual(
             decision.output_data["auto_submit_reason"],
             "multi_copy_capacity_is_informational",
