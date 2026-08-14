@@ -256,6 +256,52 @@ class SnapshotMappingTests(unittest.TestCase):
         self.assertIsNone(snapshot["projects"][0]["task_check_item_id"])
         self.assertIsNone(snapshot["projects"][0]["check_item_id"])
 
+    def test_package_header_rows_without_check_item_binding_are_skipped(self):
+        bound_item = dict(probe_document()["results"]["task_check_items"]["rows"][0])
+        package_item = {
+            "ID": "sha256:3333333333333333",
+            "TaskID": "task-1",
+            "CheckItemID": None,
+            "CheckItemNo": None,
+            "CheckItemName": "GB/T 27728.1-2024 套餐A（成人湿巾物理）",
+            "CheckMethod": None,
+            "CheckCount": 1,
+            "SeqNum": 1,
+            "SampleIdentify": None,
+            "Remark": None,
+            "GiveJudgement": 0,
+        }
+        register_counts = [
+            {
+                "TaskCheckItemID": bound_item["ID"],
+                "CheckItemID": bound_item["CheckItemID"],
+                "RegisterCount": 2,
+            },
+            {
+                "TaskCheckItemID": package_item["ID"],
+                "CheckItemID": None,
+                "RegisterCount": 0,
+            },
+            # 第二个空绑定行：多套套餐行不得被误判为“重复绑定”。
+            {
+                "TaskCheckItemID": "sha256:4444444444444444",
+                "CheckItemID": None,
+                "RegisterCount": 0,
+            },
+        ]
+        snapshot = bridge.build_snapshot(
+            probe_document(
+                items=[bound_item, package_item],
+                register_counts=register_counts,
+            ),
+            INSPECTION_NUMBER,
+        )
+        self.assertEqual(len(snapshot["projects"]), 1)
+        self.assertEqual(
+            snapshot["projects"][0]["check_item_name"], "纤维微观形貌"
+        )
+        self.assertEqual(snapshot["projects"][0]["register_count"], 2)
+
     def test_duplicate_task_is_rejected(self):
         task = probe_document()["results"]["tasks"]["rows"][0]
         with self.assertRaisesRegex(bridge.SnapshotBridgeError, "多个任务"):

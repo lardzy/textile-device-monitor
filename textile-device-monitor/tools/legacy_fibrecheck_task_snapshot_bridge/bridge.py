@@ -285,7 +285,12 @@ def build_snapshot(
             str(row.get("TaskCheckItemID") or "").strip(),
             str(row.get("CheckItemID") or "").strip(),
         )
-        if not all(key) or key in count_by_project:
+        if not key[1]:
+            # 套餐/分组标题行没有 CheckItemID 绑定。登记记录按 CheckItemID
+            # 关联，NULL 永远关联不上（计数恒为 0），此类行不是可登记项目，
+            # 直接跳过，不参与绑定唯一性校验。
+            continue
+        if not key[0] or key in count_by_project:
             raise SnapshotBridgeError(
                 "probe_project_register_count_invalid",
                 "任务项目登记数量查询返回了重复或无效的项目绑定",
@@ -313,6 +318,10 @@ def build_snapshot(
                 "probe_project_identity_missing",
                 "纤维微观形貌任务项目缺少完整的脱敏项目标识",
             )
+        if not str(item.get("CheckItemID") or "").strip():
+            # 与登记计数循环同一规则：套餐/分组标题行没有 CheckItemID 绑定，
+            # 不是可登记项目，不进入快照项目列表。
+            continue
         count_key = (
             str(item.get("ID") or "").strip(),
             str(item.get("CheckItemID") or "").strip(),
