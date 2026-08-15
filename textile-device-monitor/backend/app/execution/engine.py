@@ -18,6 +18,7 @@ from app.execution.electron_microscopy import (
     cached_task_snapshot,
     request_task_snapshot_refresh,
 )
+from app.execution.microscopy_families import microscopy_family_from_config
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
     LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
@@ -641,7 +642,12 @@ def _normalize_human_submission(
                     ),
                     cache_state=cache_state or "pending",
                 )
-            matched_task_conditions = _task_project_conditions(task_snapshot)
+            matched_task_conditions = _task_project_conditions(
+                task_snapshot,
+                family=microscopy_family_from_config(
+                    {"record_family": node_run.input_data.get("record_family")}
+                ),
+            )
             missing_task_conditions = [
                 item
                 for item in ("task_item_name", "test_method")
@@ -741,12 +747,6 @@ def _normalize_human_submission(
         )
         if len(identities) == 1:
             sample_identity = identities[0]
-            if data.get("sample_identity_confirmed") is not True:
-                raise ExecutionApiError(
-                    422,
-                    "microscopy_sample_identity_confirmation_required",
-                    "请确认自动填入的样品识别",
-                )
         elif identities:
             if submitted_identity not in identities:
                 raise ExecutionApiError(
@@ -863,7 +863,6 @@ def _normalize_human_submission(
             "selected_project": selected_project,
             "sample_name": sample_name,
             "sample_identity": sample_identity,
-            "sample_identity_confirmed": bool(identities),
             "sample_identity_options": identities,
             "identity_count_mismatch": identity_count_mismatch,
             "judgement_required": judgement_required,
@@ -1000,14 +999,6 @@ def _normalize_human_submission(
                             "paper_sample_identity_not_offered",
                             "填写的样品识别不在任务单列表中，无法对应旧系统下拉框",
                         )
-                    if len(identities) == 1 and data.get(
-                        "sample_identity_confirmed"
-                    ) is not True:
-                        raise ExecutionApiError(
-                            422,
-                            "paper_sample_identity_confirmation_required",
-                            "请确认自动填入的样品识别",
-                        )
                 elif sample_identity:
                     raise ExecutionApiError(
                         409,
@@ -1066,7 +1057,6 @@ def _normalize_human_submission(
                     "judgement": judgement,
                     "standard_value": standard_value,
                     "sample_identity": sample_identity or None,
-                    "sample_identity_confirmed": bool(identities),
                     "sample_identity_options": identities,
                     "identity_count_mismatch": identity_count_mismatch,
                 }
@@ -1517,7 +1507,6 @@ def _auto_complete_paper_judgement(
         "judgement": None,
         "standard_value": None,
         "sample_identity": None,
-        "sample_identity_confirmed": False,
         "sample_identity_options": [],
         "identity_count_mismatch": False,
         "auto_submitted": True,
@@ -1532,7 +1521,7 @@ def _paper_judgement_form_schema(
 
     “标准值与允差”默认填入所选原始记录的 Sheet1!W32 结果（与人工登记的
     同文样式一致），并提供任务单说明列与 Sheet1!M32 作为可复制/填入的
-    数据源。样品识别按中英文逗号及顿号拆分：单值自动填入并要求确认，
+    数据源。样品识别按中英文逗号及顿号拆分：单值自动填入并直接展示，
     多值提供可输入的候选列表；检测份数不一致只警告、不阻断。
     """
 
@@ -1630,13 +1619,6 @@ def _paper_judgement_form_schema(
             identity_field["placeholder"] = "请选择或输入任务单中的样品识别"
         properties["sample_identity"] = identity_field
         required.append("sample_identity")
-        if len(identities) == 1:
-            properties["sample_identity_confirmed"] = {
-                "type": "boolean",
-                "const": True,
-                "title": f"确认本次录入的样品识别为“{identities[0]}”",
-            }
-            required.append("sample_identity_confirmed")
 
     judgement_required = _truthy_judgement_flag(
         selected_project.get("give_judgement")

@@ -24,7 +24,7 @@
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
         'FibreCheckWriter.exe'           = 'e99da7ea028c93dad5f13934e7c5a0f90525092264b199cbb9e80d8b9a633108'
-        'FibreCheckFinalEntryWriter.exe' = 'a8349314c8116c499e751872e2948d8a4fdb53788113cf43dee043f2d0127a8b'
+        'FibreCheckFinalEntryWriter.exe' = '29e5a8e4569b7a8f42320255ac80e3fe83e75872e4988ae249726dc39a86cf9e'
     }
 
     # probe 离线依赖打包时的 pip 源（构建机需要能访问；--no-input）

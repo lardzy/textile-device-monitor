@@ -47,6 +47,14 @@ LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION = (
     "legacy_special_wool_qualitative_review"
 )
 LEGACY_GENERIC_FINAL_ENTRY_OPERATION = "legacy_generic_check_record_entry"
+# 电镜 Excel 登记路线已证明的任务项目（编号, 名称, 测试方法）三元组：
+# 5103.5 / 纤维微观形貌（26A045793）与 5103.426 / 纤维横截面（260191285）。
+SUPPORTED_EXCEL_PROJECTS = frozenset(
+    {
+        ("5103.5", "纤维微观形貌", "GB/T 36422-2018"),
+        ("5103.426", "纤维横截面", "GB/T 36422-2018"),
+    }
+)
 SUPPORTED_OPERATION_TYPES = (
     LEGACY_REGENERATED_COUNT_OPERATION,
     LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
@@ -674,11 +682,11 @@ def _validated_final_entry_task_project(value, *, path: str) -> dict:
             project.get(key), path=f"{path}.{key}", pattern=_REDACTED_ID_RE
         )
     if (
-        project.get("check_item_no") != "5103.5"
-        or project.get("check_item_name") != "纤维微观形貌"
-        or project.get("check_method") != "GB/T 36422-2018"
-    ):
-        raise BridgeError(f"{path} 不是受支持的 GB/T 36422-2018 微观形貌项目")
+        project.get("check_item_no"),
+        project.get("check_item_name"),
+        project.get("check_method"),
+    ) not in SUPPORTED_EXCEL_PROJECTS:
+        raise BridgeError(f"{path} 不是受支持的 GB/T 36422-2018 电镜项目")
     _required_int(project.get("seq_num"), path=f"{path}.seq_num")
     if _required_int(
         project.get("check_count"), path=f"{path}.check_count"
@@ -734,9 +742,10 @@ def validate_final_entry_machine_payload(
     )
     if payload.get("sample_number") != target:
         raise BridgeError("FinalEntry machine_payload 样品号与签发目标不一致")
-    if payload.get("check_item_no") != "5103.5" or payload.get(
-        "check_item_name"
-    ) != "纤维微观形貌":
+    if (
+        payload.get("check_item_no"),
+        payload.get("check_item_name"),
+    ) not in {(no, name) for no, name, _method in SUPPORTED_EXCEL_PROJECTS}:
         raise BridgeError("FinalEntry machine_payload 任务项目不受支持")
     expected_existing = _required_int(
         payload.get("expected_existing_register_count"),

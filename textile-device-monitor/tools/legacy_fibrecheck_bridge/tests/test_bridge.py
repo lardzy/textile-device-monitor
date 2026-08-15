@@ -1374,6 +1374,64 @@ class BridgeProtocolTests(unittest.TestCase):
         )
         self.assertIs(validated, payload)
 
+    def test_final_entry_accepts_cross_section_project(self):
+        # 5103.426 / 纤维横截面（260191285）与微观形貌同为受支持电镜项目。
+        claim = final_entry_claim()
+        operation = claim["operation"]
+        payload = operation["machine_payload"]
+        summary = operation["request_summary"]
+        project = {
+            "task_check_item_id": "sha256:" + "2" * 16,
+            "check_item_id": "sha256:" + "3" * 16,
+            "check_item_no": "5103.426",
+            "check_item_name": "纤维横截面",
+            "check_method": "GB/T 36422-2018",
+            "seq_num": 7,
+            "check_count": 1,
+        }
+        identity = "\0".join(
+            str(project[key])
+            for key in (
+                "task_check_item_id",
+                "check_item_id",
+                "check_item_no",
+                "check_item_name",
+                "check_method",
+                "seq_num",
+            )
+        )
+        project["project_key"] = "task-project:" + hashlib.sha256(
+            identity.encode("utf-8")
+        ).hexdigest()[:24]
+        payload["check_item_no"] = "5103.426"
+        payload["check_item_name"] = "纤维横截面"
+        payload["task_project"] = dict(project)
+        summary["task_project"] = dict(project)
+        payload["excel_record"]["template_name"] = "纤维横截面-3张图"
+        payload["expected_existing_register_count"] = 1
+        decision = {
+            "kind": "append_when_check_count_one",
+            "action": "append",
+            "expected_task_check_count": 1,
+            "expected_existing_register_count": 1,
+            "resulting_register_count": 2,
+        }
+        payload["existing_record_decision"] = dict(decision)
+        summary["existing_record_decision"] = dict(decision)
+        validated, _ = bridge.validate_final_entry_machine_payload(
+            operation, summary
+        )
+        self.assertIs(validated, payload)
+
+    def test_final_entry_rejects_unsupported_project_name(self):
+        claim = final_entry_claim()
+        operation = claim["operation"]
+        payload = operation["machine_payload"]
+        summary = operation["request_summary"]
+        payload["check_item_name"] = "膜平面形貌"
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_final_entry_machine_payload(operation, summary)
+
     def test_final_entry_multi_copy_receipt_allows_count_overrun(self):
         claim = final_entry_claim()
         operation = claim["operation"]

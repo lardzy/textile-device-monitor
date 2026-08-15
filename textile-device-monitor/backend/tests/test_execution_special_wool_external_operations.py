@@ -42,6 +42,7 @@ from app.execution.external_operations import (
 from app.execution.microscopy_check_record import (
     MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
 )
+from app.execution.microscopy_families import MICROSCOPY_RECORD_FAMILIES
 from app.execution.microscopy_original_record import (
     MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME,
     resolve_microscopy_legacy_template_binding,
@@ -262,11 +263,13 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         self.db.flush()
         return node, operation
 
-    def _project_input(self, *, name: str = "纤维微观形貌") -> dict:
+    def _project_input(
+        self, *, name: str = "纤维微观形貌", no: str = "5103.5"
+    ) -> dict:
         project = {
             "task_check_item_id": "sha256:" + "1" * 16,
             "check_item_id": "sha256:" + "2" * 16,
-            "check_item_no": "5103.5",
+            "check_item_no": no,
             "check_item_name": name,
             "check_method": "GB/T 36422-2018",
             "seq_num": 1,
@@ -534,9 +537,17 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         validate_external_receipt(review, review.receipt)
         return review
 
-    def _check_record_artifact(self, *, sample_identity: str = "纵向"):
-        binding = resolve_microscopy_legacy_template_binding(1)
-        filename = "260061860-纤维微观形貌-检验记录登记.xls"
+    def _check_record_artifact(
+        self,
+        *,
+        sample_identity: str = "纵向",
+        binding: dict | None = None,
+        filename: str | None = None,
+    ):
+        if binding is None:
+            binding = resolve_microscopy_legacy_template_binding(1)
+        if filename is None:
+            filename = "260061860-纤维微观形貌-检验记录登记.xls"
         content = OLE_MAGIC + b"controlled-check-record"
         path = self.staging / filename
         path.write_bytes(content)
@@ -2018,6 +2029,109 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         )
         self.assertEqual(boundary_operation.status, "expired")
 
+    def test_final_entry_rearm_accepts_attempts_exhausted_pre_boundary(self):
+        # 确定性预检拒绝连续封顶后以 failed+external_attempts_exhausted 收尾；
+        # 由于每次 attempt 都可证明停在写边界之前，显式重试节点时必须能复活。
+        now = utcnow()
+        node, operation = self._expired_final_entry_operation(
+            node_id="final-entry-exhausted-rearm",
+            stages=["authenticated", "permission_verified"],
+        )
+        operation.status = "failed"
+        operation.error_code = "external_attempts_exhausted"
+        self.db.flush()
+        self.assertTrue(
+            _rearm_expired_external_operation(
+                self.db,
+                operation=operation,
+                run=self.run,
+                node_run=node,
+                prepared_at=now,
+                preflight_expires_at=now + timedelta(minutes=15),
+            )
+        )
+        self.assertEqual(operation.status, "prepared")
+
+        boundary_node, boundary_operation = self._expired_final_entry_operation(
+            node_id="final-entry-exhausted-boundary",
+            stages=["excel_collection_started"],
+        )
+        boundary_operation.status = "failed"
+        boundary_operation.error_code = "external_attempts_exhausted"
+        self.db.flush()
+        with self.assertRaises(ExecutionApiError) as blocked:
+            _rearm_expired_external_operation(
+                self.db,
+                operation=boundary_operation,
+                run=self.run,
+                node_run=boundary_node,
+                prepared_at=now,
+                preflight_expires_at=now + timedelta(minutes=15),
+            )
+        self.assertEqual(
+            blocked.exception.details["reason"],
+            "write_boundary_reached",
+        )
+
+    def test_final_entry_rearm_rejects_failed_with_other_error(self):
+        now = utcnow()
+        node, operation = self._expired_final_entry_operation(
+            node_id="final-entry-failed-other",
+            stages=["authenticated"],
+        )
+        operation.status = "failed"
+        operation.error_code = "some_other_failure"
+        self.db.flush()
+        # 结构性门禁只看“未写入证据”：空 verification/receipt、无远端记录，
+        # 且全部 attempt 停在写边界之前，因此同样允许复活。
+        self.assertTrue(
+            _rearm_expired_external_operation(
+                self.db,
+                operation=operation,
+                run=self.run,
+                node_run=node,
+                prepared_at=now,
+                preflight_expires_at=now + timedelta(minutes=15),
+            )
+        )
+
+    def test_final_entry_rearm_failed_with_reconciliation_falls_through(self):
+        now = utcnow()
+        node, operation = self._expired_final_entry_operation(
+            node_id="final-entry-failed-reconciled",
+            stages=["authenticated"],
+        )
+        operation.status = "failed"
+        operation.error_code = "external_reconciliation_no_side_effect"
+        operation.verification = {
+            "reconciliation": {"action": "confirm_no_side_effect"}
+        }
+        self.db.flush()
+        # 人工对账过的失败操作必须继续走对账复活路径（证据不全时拒绝）。
+        self.assertFalse(
+            _rearm_expired_external_operation(
+                self.db,
+                operation=operation,
+                run=self.run,
+                node_run=node,
+                prepared_at=now,
+                preflight_expires_at=now + timedelta(minutes=15),
+            )
+        )
+        with self.assertRaises(ExecutionApiError) as blocked:
+            _rearm_reconciled_no_side_effect_operation(
+                self.db,
+                operation=operation,
+                run=self.run,
+                node_run=node,
+                prepared_at=now,
+                preflight_expires_at=now + timedelta(minutes=15),
+            )
+        self.assertEqual(
+            blocked.exception.code,
+            "external_operation_not_rearmable",
+        )
+
     def test_final_entry_no_side_effect_reconciliation_binds_existing_state(self):
         operation, attempt, node = self._final_entry_reconciliation_case()
         context = public_external_reconciliation_context(operation)
@@ -2341,6 +2455,121 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                     "legacy_special_wool_machine_document_invalid",
                 )
 
+    def test_final_entry_accepts_cross_section_project_and_templates(self):
+        project_input = self._project_input(
+            name="纤维横截面", no="5103.426"
+        )
+        project_input["selected_project"]["sample_identify"] = "贴肤层面料"
+        review = self._completed_review(project_input=project_input)
+        cross_section = MICROSCOPY_RECORD_FAMILIES["cross_section"]
+        binding = resolve_microscopy_legacy_template_binding(
+            1, family=cross_section
+        )
+        self.assertEqual(binding["legacy_template_name"], "纤维横截面.xls")
+        artifact, binding, registration_workbook = self._check_record_artifact(
+            sample_identity="贴肤层面料",
+            binding=binding,
+            filename="260061860-纤维横截面-检验记录登记.xls",
+        )
+        node_run = self._node_run(
+            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
+            "final-entry-cross-section",
+        )
+        operation, reused = prepare_legacy_microscopy_check_record_entry_operation(
+            self.db,
+            run=self.run,
+            node_run=node_run,
+            node={"config": {"credential_slot": "legacy_account"}},
+            input_data={
+                "registration_workbook": registration_workbook,
+                "template_binding": binding,
+                "review_result": {"operation_id": review.id},
+                **project_input,
+            },
+        )
+        self.assertFalse(reused)
+        package = operation.request_summary["final_entry_package"]
+        self.assertEqual(package["check_item_no"], "5103.426")
+        self.assertEqual(package["check_item_name"], "纤维横截面")
+        self.assertEqual(
+            package["task_project"]["check_item_name"], "纤维横截面"
+        )
+        self.assertEqual(
+            package["excel_record"]["template_name"], "纤维横截面.xls"
+        )
+        self.assertEqual(
+            package["excel_record"]["expected_mapping_config_sha256"],
+            binding["mapping_config_sha256"],
+        )
+        self.assertEqual(
+            package["excel_record"]["expected_key_identities"], ["贴肤层面料"]
+        )
+        self.assertEqual(
+            operation.request_summary["business_fields"]["inspection_item"],
+            "纤维横截面",
+        )
+        self.assertEqual(
+            operation.request_summary["files"][0]["artifact_id"], artifact.id
+        )
+
+    def test_final_entry_rejects_cross_family_template(self):
+        project_input = self._project_input(
+            name="纤维横截面", no="5103.426"
+        )
+        review = self._completed_review(project_input=project_input)
+        # 横截面项目钉上了微观形貌家族的模板绑定：必须在开具预检单前拒绝。
+        _artifact, binding, registration_workbook = self._check_record_artifact(
+            sample_identity="贴肤层面料",
+        )
+        node_run = self._node_run(
+            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
+            "final-entry-cross-family-template",
+        )
+        with self.assertRaises(ExecutionApiError) as captured:
+            prepare_legacy_microscopy_check_record_entry_operation(
+                self.db,
+                run=self.run,
+                node_run=node_run,
+                node={"config": {"credential_slot": "legacy_account"}},
+                input_data={
+                    "registration_workbook": registration_workbook,
+                    "template_binding": binding,
+                    "review_result": {"operation_id": review.id},
+                    **project_input,
+                },
+            )
+        self.assertEqual(
+            captured.exception.code,
+            "microscopy_final_entry_template_family_mismatch",
+        )
+
+    def test_final_entry_rejects_project_without_exact_registration_pin(self):
+        # 膜平面形貌是图片上传的合法别名，但检验记录登记没有精确项目钉值。
+        project_input = self._project_input(name="膜平面形貌")
+        review = self._completed_review(project_input=project_input)
+        _artifact, binding, registration_workbook = self._check_record_artifact()
+        node_run = self._node_run(
+            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
+            "final-entry-unpinned-project",
+        )
+        with self.assertRaises(ExecutionApiError) as captured:
+            prepare_legacy_microscopy_check_record_entry_operation(
+                self.db,
+                run=self.run,
+                node_run=node_run,
+                node={"config": {"credential_slot": "legacy_account"}},
+                input_data={
+                    "registration_workbook": registration_workbook,
+                    "template_binding": binding,
+                    "review_result": {"operation_id": review.id},
+                    **project_input,
+                },
+            )
+        self.assertEqual(
+            captured.exception.code,
+            "microscopy_final_entry_project_mismatch",
+        )
+
     def test_final_entry_multi_copy_uses_refreshed_capacity_and_sample_identity(self):
         project_input = self._project_input()
         project = project_input["selected_project"]
@@ -2536,7 +2765,6 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                 },
                 "record_input": {
                     "sample_identity": "纵向",
-                    "sample_identity_confirmed": True,
                 },
                 **project_input,
             },

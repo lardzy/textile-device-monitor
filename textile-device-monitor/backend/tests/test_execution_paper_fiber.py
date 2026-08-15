@@ -994,7 +994,7 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertIn("检测份数为 3", schema["x-warning"])
         self.assertEqual(schema["required"], ["sample_identity"])
 
-    def test_single_sample_identity_is_prefilled_and_requires_confirmation(self):
+    def test_single_sample_identity_is_prefilled_without_confirmation(self):
         run = self._paper_run("paper-single-sample-identity")
         context = self._judgement_context(
             run,
@@ -1012,26 +1012,14 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertEqual(identity["default"], "正面")
         self.assertEqual(identity["const"], "正面")
         self.assertTrue(identity["readOnly"])
+        self.assertNotIn("sample_identity_confirmed", schema["properties"])
+        self.assertEqual(schema["required"], ["sample_identity"])
 
-        with self.assertRaises(ExecutionApiError) as raised:
-            _normalize_human_submission(
-                self.db,
-                run=run,
-                node_run=context.node_run,
-                data={"sample_identity": "正面"},
-            )
-        self.assertEqual(
-            raised.exception.code,
-            "paper_sample_identity_confirmation_required",
-        )
         output = _normalize_human_submission(
             self.db,
             run=run,
             node_run=context.node_run,
-            data={
-                "sample_identity": "正面",
-                "sample_identity_confirmed": True,
-            },
+            data={"sample_identity": "正面"},
         )
         self.assertEqual(output["sample_identity"], "正面")
         self.assertEqual(output["sample_identity_options"], ["正面"])
@@ -1064,7 +1052,6 @@ class PaperFiberBackendTests(unittest.TestCase):
                 "judgement": "符合",
                 "standard_value": "定性，100%木浆",
                 "sample_identity": None,
-                "sample_identity_confirmed": False,
                 "sample_identity_options": [],
                 "identity_count_mismatch": False,
             },

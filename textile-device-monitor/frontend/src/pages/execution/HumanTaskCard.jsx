@@ -152,6 +152,9 @@ export default function HumanTaskCard({
     : [];
   const folderSelectionRequired = Boolean(candidatePayload.folder_selection_required);
   const imageListTruncated = Boolean(candidatePayload.truncated);
+  const maxSelectedImages = Number(candidatePayload.max_selected_images) > 0
+    ? Number(candidatePayload.max_selected_images)
+    : 10;
   const taskSnapshotStatus = taskSnapshotStatusProp || polledTaskSnapshotStatus;
   const taskRefreshStatus = taskSnapshotStatus?.refresh_status;
   const taskSnapshotAvailable = taskSnapshotStatus?.snapshot_available === true;
@@ -656,8 +659,8 @@ export default function HumanTaskCard({
                     if (!Array.isArray(value) || value.length === 0) {
                       return Promise.reject(new Error('请至少选择一张结果图片'));
                     }
-                    if (value.length > 10) {
-                      return Promise.reject(new Error('最多选择 10 张结果图片'));
+                    if (value.length > maxSelectedImages) {
+                      return Promise.reject(new Error(`最多选择 ${maxSelectedImages} 张结果图片`));
                     }
                     return Promise.resolve();
                   },
@@ -672,6 +675,7 @@ export default function HumanTaskCard({
                 folders={imageFolders}
                 images={imageCandidates}
                 disabled={working}
+                maxImages={maxSelectedImages}
                 selectedFolderIds={Array.isArray(selectedFolderIds) ? selectedFolderIds : []}
                 selectedImageIds={Array.isArray(selectedImageIds) ? selectedImageIds : []}
                 onSelectedFolderIdsChange={(value) => {

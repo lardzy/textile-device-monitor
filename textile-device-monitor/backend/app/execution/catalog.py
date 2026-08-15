@@ -1475,6 +1475,57 @@ def _electron_microscopy_gbt36422_definition(
     return definition
 
 
+def _electron_cross_section_gbt36422_definition() -> dict[str, Any]:
+    """电镜—纤维横截面（5103.426）流程。
+
+    与纤维微观形貌流程同链；唯一差异是各节点 config 钉住
+    ``record_family=cross_section``：任务项目匹配 纤维横截面 /
+    GB/T 36422-2018，生成原始记录时 A1 写入“纤维横截面原始记录”，
+    检验记录登记使用旧系统的 纤维横截面 模板族（仅 1/2/3 张图）。
+    """
+
+    definition = _electron_microscopy_gbt36422_definition()
+    definition["metadata"]["slug"] = ELECTRON_CROSS_SECTION_WORKFLOW[0]
+    definition["metadata"]["name"] = ELECTRON_CROSS_SECTION_WORKFLOW[1]
+    for node in definition["nodes"]:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        config = node.setdefault("config", {})
+        if node_id == "discover":
+            node["name"] = "查找横截面图片"
+            config["record_family"] = "cross_section"
+        elif node_id == "select-images":
+            node["name"] = "选择横截面图片"
+            config["title"] = "请选择用于纤维横截面结果的图片"
+            config["description"] = (
+                "可选择一个或多个编号目录，图片总数为 1 至 3 张。"
+            )
+            config["maximum"] = 3
+            node.setdefault("input_mapping", {})["record_family"] = (
+                "$.nodes.discover.output.record_family"
+            )
+            node["input_mapping"]["max_selected_images"] = (
+                "$.nodes.discover.output.max_selected_images"
+            )
+        elif node_id == "prepare-record":
+            config["record_family"] = "cross_section"
+        elif node_id == "record-input":
+            config["title"] = "确认纤维横截面原始记录信息"
+        elif node_id == "generate-record":
+            node["name"] = "生成横截面原始记录"
+            config["record_family"] = "cross_section"
+        elif node_id == "generate-check-record":
+            config["record_family"] = "cross_section"
+    return definition
+
+
+ELECTRON_CROSS_SECTION_WORKFLOW = (
+    "electron-cross-section-gbt36422",
+    "电镜—纤维横截面 GB/T 36422-2018",
+)
+
+
 def _controlled_write_test_definition() -> dict[str, Any]:
     node_specs = (
         ("start", "core.start", "开始", {}),
@@ -2176,6 +2227,51 @@ def ensure_default_catalog(db: Session) -> None:
                             ),
                         )
                     )
+
+    cross_section_slug, cross_section_name = ELECTRON_CROSS_SECTION_WORKFLOW
+    if cross_section_slug not in workflows_by_slug:
+        definition = _electron_cross_section_gbt36422_definition()
+        capabilities = {
+            "read": True,
+            "write": True,
+            "external_write": True,
+        }
+        workflow = ExecutionWorkflow(
+            slug=cross_section_slug,
+            category_id=categories_by_key["electron_microscopy"].id,
+            name=cross_section_name,
+            description=(
+                "按编号目录与旧系统任务项目识别 GB/T 36422-2018 "
+                "纤维横截面流程，选图后生成 A1 为“纤维横截面原始记录”的"
+                "原始记录，完成旧系统图片上传、特纤复核及检验记录登记校对。"
+            ),
+            draft_definition=deepcopy(definition),
+            draft_revision=1,
+            published_version_number=1,
+            capabilities=deepcopy(capabilities),
+            required_input_count=1,
+            is_enabled=True,
+        )
+        db.add(workflow)
+        db.flush()
+        db.add(
+            ExecutionWorkflowVersion(
+                workflow_id=workflow.id,
+                version_number=1,
+                schema_version="1.0",
+                definition=deepcopy(definition),
+                checksum=definition_checksum(definition),
+                capabilities=deepcopy(capabilities),
+                contract_checksum=workflow_contract_checksum(
+                    definition, capabilities
+                ),
+                release_note=(
+                    "电镜纤维横截面原始记录、图片上传复核及"
+                    "检验记录登记校对首版"
+                ),
+            )
+        )
+        workflows_by_slug[cross_section_slug] = workflow
 
     legacy_electron = workflows_by_slug.get(LEGACY_ELECTRON_WORKFLOW)
     if legacy_electron is not None:

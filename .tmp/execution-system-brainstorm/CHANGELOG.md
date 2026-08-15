@@ -1,5 +1,40 @@
 # 头脑风暴变更日志
 
+## 2026-08-15：移除样品识别单值确认勾选
+
+- 电镜/横截面“确认原始记录信息”与纸类“确认样品识别与判定信息”在任务单
+  样品识别只有 1 个候选时，不再渲染“确认本次录入的样品识别为…”勾选框：
+  前端只读展示“已自动填入”，查看即确认，减少一次无效点击。
+- 后端同步移除 `sample_identity_confirmed` 提交校验与输出字段
+  （`microscopy_sample_identity_confirmation_required`、
+  `paper_sample_identity_confirmation_required` 及 final-entry 准备门禁
+  一并删除）；多候选交互不变：候选列表可选择/编辑，提交值仍必须严格属于
+  任务单候选，份数不一致只警告不阻断。
+- 既有发布定义与校验和不变；catalog 静态 schema 仍容忍旧前端提交该字段
+  （可选、忽略），纸类开放任务经 `effective_human_task_form_schema`
+  自动获得新 schema。
+
+## 2026-08-15：电镜—纤维横截面流程变体（260191285）
+
+- 新增 `electron-cross-section-gbt36422` 工作流：与微观形貌同一 DAG，各节点
+  config 钉住 `record_family=cross_section`；家族注册表
+  `microscopy_families.py` 是唯一事实源，写门禁按任务项目编号+名称精确复核。
+- 差异点：任务项目匹配 5103.426 / 纤维横截面 / GB/T 36422-2018；生成原始
+  记录 A1 写“纤维横截面原始记录”；登记模板族为旧系统配置的三个横截面
+  模板（1/2/3 张图，映射指纹由 260191285 只读探针签发），选图上限 3；
+  登记工作簿文件名 `…-纤维横截面-检验记录登记.xls`。
+- Writer（final-entry）放行 5103.426 三元组并新增三个横截面模板白名单；
+  新增跨家族模板绑定拒绝门禁
+  `microscopy_final_entry_template_family_mismatch`。
+- 首验中同步修复：写桥 `SUPPORTED_EXCEL_PROJECTS` 三元组集合（原硬编码
+  5103.5 微观形貌）；封顶失败外部操作的复活路径
+  （`_rearm_expired_external_operation` 接受 failed+空 verification 的
+  结构性未写入状态，逐 attempt 校验写边界，重试节点可重新预检）；
+  VM 桥写 Writer 钉值补齐（检验员绑定重编译后漏更导致写桥无法启动）。
+- 260191285 真实链路首验通过：上传 260191285-1、复核、登记 1→2 并校对；
+  探针事后核对既有 08-08 人工登记未受影响。
+- 细节与模板指纹清单见 `13_电镜纤维横截面首版.md`。
+
 ## 2026-08-13：登记工作簿格式继承修复、顺号复核校验修正与桥运行环境根因记录
 
 - 复核批准前校验与 prepare 对称，跟随上传回执的实际写入编号，修复人工删除

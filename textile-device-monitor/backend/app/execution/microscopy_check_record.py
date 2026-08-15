@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.execution.electron_microscopy import ELECTRON_TEST_METHOD
 from app.execution.errors import ExecutionApiError
+from app.execution.microscopy_families import microscopy_family_from_config
 from app.execution.microscopy_original_record import (
     _normalized_text,
     _safe_inspection_number,
@@ -561,6 +562,10 @@ def _result(
 def microscopy_check_record_executor(context) -> dict[str, Any]:
     """Generate the Sheet1 workbook consumed by CheckRecord registration."""
 
+    node = getattr(context, "node", None)
+    family = microscopy_family_from_config(
+        (node or {}).get("config") if isinstance(node, dict) else None
+    )
     input_data = context.input_data or {}
     inspection_number = _safe_inspection_number(
         input_data.get("inspection_number") or context.run.inspection_number
@@ -569,6 +574,7 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
     template_binding = resolve_microscopy_legacy_template_binding(
         image_count,
         declared_binding=input_data.get("template_binding"),
+        family=family,
     )
     cells = _cell_payload(input_data, inspection_number)
     request_digest = _request_digest(
@@ -577,7 +583,10 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
         cells=cells,
         template_binding=template_binding,
     )
-    filename = f"{inspection_number}-纤维微观形貌-检验记录登记.xls"
+    filename = (
+        f"{inspection_number}-{family.check_record_filename_segment}"
+        "-检验记录登记.xls"
+    )
     relative_path = (
         f"check-records/{context.run.id}/{context.node_run.id}/{filename}"
     )
@@ -605,7 +614,7 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
         raise ExecutionApiError(
             503,
             "microscopy_legacy_template_asset_invalid",
-            "旧系统微观形貌模板资产缺失或版本校验失败",
+            f"旧系统{family.check_item_name}模板资产缺失或版本校验失败",
             details={
                 "image_count": image_count,
                 "local_asset_name": template_binding["local_asset_name"],

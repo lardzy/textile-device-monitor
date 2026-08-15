@@ -21,12 +21,11 @@ from sqlalchemy.orm import Session
 
 from app.execution.electron_microscopy import (
     ELECTRON_IMAGE_SUFFIXES,
-    ELECTRON_PROJECT_NAME_ALIASES,
     ELECTRON_ROOT_ID,
-    ELECTRON_TEST_METHOD,
     cached_task_snapshot,
 )
 from app.execution.errors import ExecutionApiError
+from app.execution import microscopy_families as _families
 from app.execution.models import (
     ExecutionArtifact,
     ExecutionFileIndexEntry,
@@ -51,95 +50,14 @@ MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME = (
 MICROSCOPY_TEMPLATE_SHA256 = (
     "d2b70e114cb85c89e4961ba2acb1b0cb451656f7a12b5dd5bdbacba1d50f88ba"
 )
+# 模板绑定表已迁入 microscopy_families（家族注册表），此处保留原名的
+# 兼容别名，既有调用方和测试不需要跟随修改。
 MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION = (
-    "gbt36422-2018-legacy-template-binding-v1"
+    _families.MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION
 )
-MICROSCOPY_LEGACY_TEMPLATE_BINDINGS: dict[int, dict[str, Any]] = {
-    1: {
-        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
-        "image_count": 1,
-        "legacy_template_name": "微观形貌.xls",
-        "local_asset_name": "gbt36422-2018-microscopy-1-image-v1.xls",
-        "local_asset_sha256": (
-            "b169fb5cf236004058f0666ee28979836266168311172efc01c7ec7d5906c6fe"
-        ),
-        "mapping_config_sha256": (
-            "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"
-        ),
-    },
-    2: {
-        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
-        "image_count": 2,
-        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-2张图.xls",
-        "local_asset_name": "gbt36422-2018-microscopy-2-images-v1.xls",
-        "local_asset_sha256": (
-            "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
-        ),
-        "mapping_config_sha256": (
-            "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23"
-        ),
-    },
-    3: {
-        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
-        "image_count": 3,
-        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-3张图.xls",
-        "local_asset_name": "gbt36422-2018-microscopy-3-images-v1.xls",
-        "local_asset_sha256": (
-            "4a4e7b69a5dba7684fe837779929b4d093fe509cbf398ae37114cd22071b70b4"
-        ),
-        "mapping_config_sha256": (
-            "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268"
-        ),
-    },
-    5: {
-        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
-        "image_count": 5,
-        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-5张图.xls",
-        "local_asset_name": "gbt36422-2018-microscopy-5-images-v1.xls",
-        "local_asset_sha256": (
-            "3b148fd8ccbb28b8fe8e60ceee0e4898c144c1fbe15b8a451ed44e0d2141d38d"
-        ),
-        "mapping_config_sha256": (
-            "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d"
-        ),
-    },
-    6: {
-        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
-        "image_count": 6,
-        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-6张图.xls",
-        "local_asset_name": "gbt36422-2018-microscopy-6-images-v1.xls",
-        "local_asset_sha256": (
-            "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
-        ),
-        "mapping_config_sha256": (
-            "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304"
-        ),
-    },
-    7: {
-        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
-        "image_count": 7,
-        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-7张图.xls",
-        "local_asset_name": "gbt36422-2018-microscopy-7-images-v1.xls",
-        "local_asset_sha256": (
-            "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
-        ),
-        "mapping_config_sha256": (
-            "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01"
-        ),
-    },
-    10: {
-        "binding_version": MICROSCOPY_LEGACY_TEMPLATE_BINDING_VERSION,
-        "image_count": 10,
-        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-10张图.xls",
-        "local_asset_name": "gbt36422-2018-microscopy-10-images-v1.xls",
-        "local_asset_sha256": (
-            "85627e8ca9824274fe61f13276b390a75288a119987053e3a244157ee0f46e8c"
-        ),
-        "mapping_config_sha256": (
-            "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
-        ),
-    },
-}
+MICROSCOPY_LEGACY_TEMPLATE_BINDINGS: dict[int, dict[str, Any]] = (
+    _families.MICROSCOPY_LEGACY_TEMPLATE_BINDINGS
+)
 MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS = tuple(
     sorted(MICROSCOPY_LEGACY_TEMPLATE_BINDINGS)
 )
@@ -334,8 +252,14 @@ def _truthy_judgement_flag(value: object) -> bool:
 
 def _matching_projects(
     task_snapshot: Optional[dict[str, Any]],
+    *,
+    family: "_families.MicroscopyRecordFamily | None" = None,
 ) -> list[dict[str, Any]]:
-    aliases = {_normalized_text(value) for value in ELECTRON_PROJECT_NAME_ALIASES}
+    resolved_family = family or _families.microscopy_family_from_config(None)
+    aliases = {
+        _normalized_text(value)
+        for value in resolved_family.project_name_aliases
+    }
     matches: list[dict[str, Any]] = []
     for raw_project in (task_snapshot or {}).get("projects") or []:
         if not isinstance(raw_project, dict):
@@ -345,14 +269,18 @@ def _matching_projects(
             _normalized_text(project.get("check_item_name")) in aliases
             and
             _normalized_text(project.get("check_method"))
-            == _normalized_text(ELECTRON_TEST_METHOD)
+            == _normalized_text(resolved_family.test_method)
         ):
             matches.append(project)
     return matches
 
 
-def _relevant_project(task_snapshot: Optional[dict[str, Any]]) -> dict[str, Any]:
-    matches = _matching_projects(task_snapshot)
+def _relevant_project(
+    task_snapshot: Optional[dict[str, Any]],
+    *,
+    family: "_families.MicroscopyRecordFamily | None" = None,
+) -> dict[str, Any]:
+    matches = _matching_projects(task_snapshot, family=family)
     return matches[0] if matches else {}
 
 
@@ -360,11 +288,12 @@ def prepare_original_record_choices(
     task_snapshot: Optional[dict[str, Any]],
     *,
     jieba_cut: Optional[Callable[[str], Iterable[str]]] = None,
+    family: "_families.MicroscopyRecordFamily | None" = None,
 ) -> dict[str, Any]:
     """Build the human-form choices without accessing Oracle or shared files."""
 
     snapshot = task_snapshot or {}
-    project = _relevant_project(snapshot)
+    project = _relevant_project(snapshot, family=family)
     raw_sample_names = snapshot.get("sample_names")
     if not raw_sample_names:
         raw_sample_names = snapshot.get("sample_name")
@@ -418,32 +347,42 @@ def _current_task_snapshot(context, input_data: dict[str, Any]) -> dict[str, Any
     return task_snapshot
 
 
+def _node_family(context) -> "_families.MicroscopyRecordFamily":
+    node = getattr(context, "node", None)
+    return _families.microscopy_family_from_config(
+        (node or {}).get("config") if isinstance(node, dict) else None
+    )
+
+
 def _microscopy_record_context_executor(context) -> dict[str, Any]:
     """Turn cached task facts and image-selection output into a UI contract."""
 
+    family = _node_family(context)
+    max_images = family.max_selected_images
     input_data = context.input_data or {}
     inspection_number = _safe_inspection_number(
         input_data.get("inspection_number") or context.run.inspection_number
     )
     task_snapshot = _current_task_snapshot(context, input_data)
-    choices = prepare_original_record_choices(task_snapshot)
+    choices = prepare_original_record_choices(task_snapshot, family=family)
     selected_ids = input_data.get("selected_image_ids")
-    if not isinstance(selected_ids, list) or not 1 <= len(selected_ids) <= 10:
+    if not isinstance(selected_ids, list) or not 1 <= len(selected_ids) <= max_images:
         raise ExecutionApiError(
-            422, "selected_images_required", "请选择 1 至 10 张图片"
+            422, "selected_images_required", f"请选择 1 至 {max_images} 张图片"
         )
     selected_ids = list(
         dict.fromkeys(str(value) for value in selected_ids if value)
     )
-    if not 1 <= len(selected_ids) <= 10:
+    if not 1 <= len(selected_ids) <= max_images:
         raise ExecutionApiError(
-            422, "selected_images_required", "请选择 1 至 10 张图片"
+            422, "selected_images_required", f"请选择 1 至 {max_images} 张图片"
         )
     template_binding = resolve_microscopy_legacy_template_binding(
-        len(selected_ids)
+        len(selected_ids),
+        family=family,
     )
     projects = []
-    for project in _matching_projects(task_snapshot):
+    for project in _matching_projects(task_snapshot, family=family):
         normalized_project = dict(project)
         # Keep legacy field names and add the frontend's established alias.
         normalized_project.setdefault(
@@ -454,7 +393,7 @@ def _microscopy_record_context_executor(context) -> dict[str, Any]:
         raise ExecutionApiError(
             422,
             "microscopy_task_project_not_found",
-            "任务单中没有纤维微观形貌 GB/T 36422-2018 检测项目",
+            f"任务单中没有{family.check_item_name} {family.test_method} 检测项目",
         )
     return {
         "task_kind": "microscopy_record_input",
@@ -839,29 +778,33 @@ def resolve_microscopy_legacy_template_binding(
     image_count: object,
     *,
     declared_binding: object = None,
+    family: "_families.MicroscopyRecordFamily | None" = None,
 ) -> dict[str, Any]:
     """Resolve and verify the old-system template selected by image count.
 
     These assets describe which Sheet1 template the old system must select
     during final registration.  They are deliberately separate from
     ``_template_path()``, which remains the source for the generated printable
-    original record.
+    original record.  ``family`` selects the code-defined 微观形貌/横截面
+    binding table; the default keeps the original microscopy behaviour.
     """
 
+    resolved_family = family or _families.microscopy_family_from_config(None)
+    bindings = resolved_family.template_bindings
     if isinstance(image_count, bool) or not isinstance(image_count, int):
         binding = None
     else:
-        binding = MICROSCOPY_LEGACY_TEMPLATE_BINDINGS.get(image_count)
+        binding = bindings.get(image_count)
     if binding is None:
         raise ExecutionApiError(
             422,
             "microscopy_template_image_count_unsupported",
-            "旧系统没有与当前选图数量对应的微观形貌 Excel 模板",
+            "旧系统没有与当前选图数量对应的"
+            f"{resolved_family.check_item_name} Excel 模板",
             details={
                 "image_count": image_count,
-                "supported_image_counts": list(
-                    MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS
-                ),
+                "record_family": resolved_family.key,
+                "supported_image_counts": list(sorted(bindings)),
             },
         )
 
@@ -874,7 +817,7 @@ def resolve_microscopy_legacy_template_binding(
         raise ExecutionApiError(
             503,
             "microscopy_legacy_template_asset_invalid",
-            "旧系统微观形貌模板资产缺失或版本校验失败",
+            f"旧系统{resolved_family.check_item_name}模板资产缺失或版本校验失败",
             details={
                 "image_count": image_count,
                 "local_asset_name": resolved["local_asset_name"],
@@ -890,7 +833,7 @@ def resolve_microscopy_legacy_template_binding(
             raise ExecutionApiError(
                 409,
                 "microscopy_template_binding_mismatch",
-                "微观形貌模板绑定已变化，请刷新流程后重试",
+                f"{resolved_family.check_item_name}模板绑定已变化，请刷新流程后重试",
                 details={
                     "image_count": image_count,
                     "expected_binding": resolved,
@@ -1343,12 +1286,13 @@ def _existing_artifact_output(
 
 
 def _microscopy_original_record_executor(context) -> dict[str, Any]:
+    family = _node_family(context)
     input_data = context.input_data or {}
     inspection_number = _safe_inspection_number(
         input_data.get("inspection_number") or context.run.inspection_number
     )
     task_snapshot = _current_task_snapshot(context, input_data)
-    choices = prepare_original_record_choices(task_snapshot)
+    choices = prepare_original_record_choices(task_snapshot, family=family)
     submitted_judgement_flag = input_data.get("judgement_required")
     judgement_required = (
         choices["judgement_required"]
@@ -1370,6 +1314,10 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         judgement=input_data.get("judgement"),
         remark=input_data.get("remark"),
     )
+    if family.record_title:
+        # 39-8B 模板 A1 是记录类别下拉框；横截面家族必须选“纤维横截面原始
+        # 记录”，微观形貌家族保持模板原文（微观形貌原始记录）不动。
+        cells["A1"] = family.record_title
     selected = _resolve_selected_images(
         context.db,
         selected_image_ids=input_data.get("selected_image_ids"),
@@ -1378,6 +1326,7 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
     template_binding = resolve_microscopy_legacy_template_binding(
         len(selected),
         declared_binding=input_data.get("template_binding"),
+        family=family,
     )
     request_digest = _request_digest(
         inspection_number=inspection_number,

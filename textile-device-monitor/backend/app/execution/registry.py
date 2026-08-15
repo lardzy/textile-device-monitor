@@ -332,7 +332,17 @@ def _register_builtins() -> None:
             "文件",
             "按编号目录与旧系统任务信息查找可选电镜图片",
             required_config=("root_id",),
-            config_schema=ROOT_QUERY_CONFIG_SCHEMA,
+            config_schema=_object_schema(
+                {
+                    **ROOT_QUERY_CONFIG_SCHEMA["properties"],
+                    "require_full_task_match": {"type": "boolean"},
+                    "record_family": {
+                        "type": "string",
+                        "enum": ["microscopy", "cross_section"],
+                    },
+                },
+                required=("root_id",),
+            ),
             input_schema=_object_schema(
                 {"inspection_number": {"type": "string"}},
             ),
@@ -344,6 +354,8 @@ def _register_builtins() -> None:
                     "selected_folder_ids": {"type": "array"},
                     "image_count": {"type": "integer"},
                     "truncated": {"type": "boolean"},
+                    "record_family": {"type": "string"},
+                    "max_selected_images": {"type": "integer"},
                     "task": {"type": ["object", "null"]},
                     "task_validation_state": {"type": "string"},
                     "task_cache_state": {"type": "string"},
@@ -475,6 +487,14 @@ def _register_builtins() -> None:
             "准备微观形貌原始记录字段",
             "数据",
             "从旧系统任务快照和已选图片生成受控人工确认上下文",
+            config_schema=_object_schema(
+                {
+                    "record_family": {
+                        "type": "string",
+                        "enum": ["microscopy", "cross_section"],
+                    },
+                }
+            ),
             input_schema=_object_schema(
                 {
                     "inspection_number": {"type": "string", "minLength": 1},
@@ -527,7 +547,11 @@ def _register_builtins() -> None:
                     "staging_root_id": {
                         "type": "string",
                         "const": "execution_staging",
-                    }
+                    },
+                    "record_family": {
+                        "type": "string",
+                        "enum": ["microscopy", "cross_section"],
+                    },
                 },
                 required=("staging_root_id",),
             ),
@@ -626,7 +650,11 @@ def _register_builtins() -> None:
                     "staging_root_id": {
                         "type": "string",
                         "const": "execution_staging",
-                    }
+                    },
+                    "record_family": {
+                        "type": "string",
+                        "enum": ["microscopy", "cross_section"],
+                    },
                 },
                 required=("staging_root_id",),
             ),

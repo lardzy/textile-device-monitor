@@ -902,26 +902,21 @@ describe('ExecutionTaskInbox', () => {
     await user.click(await screen.findByText('核对微观形貌信息'));
     expect(await screen.findByText('正面')).toBeInTheDocument();
     expect(screen.getByText('已自动填入')).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', {
+    expect(screen.queryByRole('checkbox', {
       name: '确认本次录入的样品识别为“正面”',
-    })).not.toBeChecked();
+    })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '写入样品名称' }))
       .toHaveValue('止血材料');
     expect(screen.queryByText('判定信息')).not.toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: '符合' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '止血材料' }));
     await user.click(screen.getByRole('button', { name: '确认提交' }));
-    expect(await screen.findByText('请确认自动填入的样品识别')).toBeInTheDocument();
-    expect(submitted).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('checkbox', {
-      name: '确认本次录入的样品识别为“正面”',
-    }));
-    await user.click(screen.getByRole('button', { name: '确认提交' }));
     await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
     expect(submitted.mock.calls[0][0].data).toMatchObject({
       sample_identity: '正面',
-      sample_identity_confirmed: true,
     });
+    expect(submitted.mock.calls[0][0].data)
+      .not.toHaveProperty('sample_identity_confirmed');
   });
 
   it('选择打印时会明确提示人工打印并绑定文件 SHA-256', async () => {

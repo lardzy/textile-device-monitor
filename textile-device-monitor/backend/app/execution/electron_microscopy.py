@@ -15,6 +15,12 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.execution.errors import ExecutionApiError, conflict
 from app.execution.index_metadata import inspection_numbers_in_text
+from app.execution.microscopy_families import (
+    ALL_PROJECT_NAME_ALIASES,
+    MICROSCOPY_FAMILY_KEY,
+    MICROSCOPY_RECORD_FAMILIES,
+    microscopy_family_from_config,
+)
 from app.execution.models import (
     ExecutionFileIndexEntry,
     ExecutionStorageRoot,
@@ -26,8 +32,12 @@ from app.execution.registry import node_registry
 
 ELECTRON_ROOT_ID = "electron_microscopy_records"
 ELECTRON_NODE_TYPE = "file.electron_microscopy_gbt36422"
-ELECTRON_PROJECT_NAME_ALIASES = frozenset({"纤维微观形貌", "膜平面形貌"})
-ELECTRON_TEST_METHOD = "GB/T 36422-2018"
+ELECTRON_PROJECT_NAME_ALIASES = MICROSCOPY_RECORD_FAMILIES[
+    MICROSCOPY_FAMILY_KEY
+].project_name_aliases
+ELECTRON_TEST_METHOD = MICROSCOPY_RECORD_FAMILIES[
+    MICROSCOPY_FAMILY_KEY
+].test_method
 ELECTRON_IMAGE_SUFFIXES = frozenset(
     {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 )
@@ -65,7 +75,7 @@ def _escaped_contains(value: str) -> str:
 
 def _is_microscopy_project(value: dict[str, Any]) -> bool:
     return _normalized_fact(value.get("check_item_name")) in {
-        _normalized_fact(alias) for alias in ELECTRON_PROJECT_NAME_ALIASES
+        _normalized_fact(alias) for alias in ALL_PROJECT_NAME_ALIASES
     }
 
 
@@ -333,7 +343,7 @@ def _normalize_snapshot(
             raise ExecutionApiError(
                 422,
                 "task_snapshot_project_identity_missing",
-                "纤维微观形貌任务项目缺少完整的脱敏项目标识，请刷新旧系统任务信息",
+                f"{check_item_name or '电镜'}任务项目缺少完整的脱敏项目标识，请刷新旧系统任务信息",
             )
         normalized_projects.append(
             {
@@ -642,18 +652,26 @@ def _indexed_electron_images(
     }
 
 
-def _task_project_conditions(snapshot: Optional[dict[str, Any]]) -> list[str]:
+def _task_project_conditions(
+    snapshot: Optional[dict[str, Any]],
+    *,
+    family=None,
+) -> list[str]:
+    resolved_family = family or MICROSCOPY_RECORD_FAMILIES[
+        MICROSCOPY_FAMILY_KEY
+    ]
     best: list[str] = []
     for project in (snapshot or {}).get("projects") or []:
         if not isinstance(project, dict):
             continue
         conditions: list[str] = []
         if _normalized_fact(project.get("check_item_name")) in {
-            _normalized_fact(value) for value in ELECTRON_PROJECT_NAME_ALIASES
+            _normalized_fact(value)
+            for value in resolved_family.project_name_aliases
         }:
             conditions.append("task_item_name")
         if _normalized_fact(project.get("check_method")) == _normalized_fact(
-            ELECTRON_TEST_METHOD
+            resolved_family.test_method
         ):
             conditions.append("test_method")
         if len(conditions) > len(best):
@@ -679,6 +697,10 @@ def task_snapshot_status(
     cached = cached_task_snapshot(db, inspection_number=inspection_number)
     snapshot = cached.get("snapshot")
     matched = _task_project_conditions(snapshot)
+    for family in MICROSCOPY_RECORD_FAMILIES.values():
+        conditions = _task_project_conditions(snapshot, family=family)
+        if len(conditions) > len(matched):
+            matched = conditions
     from app.execution.paper_fiber import paper_task_project_match
 
     paper_conditions, _matched_project = paper_task_project_match(snapshot)
@@ -708,7 +730,11 @@ def electron_microscopy_match(
     db: Session,
     *,
     inspection_number: str,
+    family=None,
 ) -> dict[str, Any]:
+    resolved_family = family or MICROSCOPY_RECORD_FAMILIES[
+        MICROSCOPY_FAMILY_KEY
+    ]
     images = _indexed_electron_images(db, inspection_number=inspection_number)
     task = cached_task_snapshot(db, inspection_number=inspection_number)
     conditions: list[str] = []
@@ -717,13 +743,16 @@ def electron_microscopy_match(
         conditions.append("source_root")
     if images["folder_match_count"] > 0:
         conditions.append("folder")
-    conditions.extend(_task_project_conditions(task.get("snapshot")))
+    conditions.extend(
+        _task_project_conditions(task.get("snapshot"), family=resolved_family)
+    )
     full_match = all(
         item in conditions
         for item in ("source_root", "folder", "task_item_name", "test_method")
     )
     return {
         **images,
+        "record_family": resolved_family.key,
         "matched_conditions": conditions,
         "full_match": full_match,
         "task_cache_state": task["cache_state"],
@@ -733,12 +762,16 @@ def electron_microscopy_match(
 
 
 def _electron_microscopy_executor(context) -> dict[str, Any]:
+    family = microscopy_family_from_config(
+        (context.node or {}).get("config")
+    )
     match = electron_microscopy_match(
         context.db,
         inspection_number=str(
             context.input_data.get("inspection_number")
             or context.run.inspection_number
         ),
+        family=family,
     )
     missing = [
         item
@@ -752,7 +785,7 @@ def _electron_microscopy_executor(context) -> dict[str, Any]:
         raise ExecutionApiError(
             422,
             "electron_microscopy_rule_not_matched",
-            "当前编号不满足纤维微观形貌 GB/T 36422-2018 流程条件",
+            f"当前编号不满足{family.check_item_name} {family.test_method} 流程条件",
             details={"missing_conditions": missing},
         )
     if not match["images"]:
@@ -770,6 +803,8 @@ def _electron_microscopy_executor(context) -> dict[str, Any]:
         ),
         "image_count": len(match["images"]),
         "truncated": match["truncated"],
+        "record_family": family.key,
+        "max_selected_images": family.max_selected_images,
         "task": match["task_snapshot"],
         "task_validation_state": (
             "matched"

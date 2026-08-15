@@ -556,6 +556,23 @@ def _specialized_node_type(
     return None
 
 
+def _specialized_record_family(
+    definition: dict[str, Any],
+    node_type: str,
+) -> Optional[str]:
+    """Return the discover node's pinned ``record_family``, if any."""
+
+    for node in definition.get("nodes") or []:
+        if (
+            isinstance(node, dict)
+            and node.get("disabled") is not True
+            and node.get("type") == node_type
+        ):
+            value = (node.get("config") or {}).get("record_family")
+            return str(value).strip() if value else None
+    return None
+
+
 def _safe_candidate_preview(
     *,
     name: object,
@@ -759,12 +776,21 @@ def catalog_recommendations(
             from app.execution.electron_microscopy import (
                 electron_microscopy_match,
             )
+            from app.execution.microscopy_families import (
+                microscopy_family_for_key,
+            )
 
-            if node_type not in match_cache:
-                match_cache[node_type] = electron_microscopy_match(
-                    db, inspection_number=inspection_number
+            family = microscopy_family_for_key(
+                _specialized_record_family(definition, node_type)
+            )
+            cache_key = (node_type, family.key if family else None)
+            if cache_key not in match_cache:
+                match_cache[cache_key] = electron_microscopy_match(
+                    db,
+                    inspection_number=inspection_number,
+                    family=family,
                 )
-            match = match_cache[node_type]
+            match = match_cache[cache_key]
             any_cache_updated = any_cache_updated or bool(
                 match["cache_updated"]
             )

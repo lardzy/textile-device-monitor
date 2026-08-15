@@ -175,7 +175,6 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
   useEffect(() => {
     const currentSampleName = form.getFieldValue('sample_name');
     const currentIdentity = form.getFieldValue('sample_identity');
-    const currentIdentityConfirmed = form.getFieldValue('sample_identity_confirmed');
     const currentBasis = form.getFieldValue('judge_basis');
     const currentJudgement = form.getFieldValue('judgement');
     const currentIndicator = form.getFieldValue('indicator_requirement');
@@ -186,10 +185,6 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
       sample_identity: identities.length === 1
         ? identities[0]
         : identities.includes(currentIdentity) ? currentIdentity : undefined,
-      sample_identity_confirmed: identities.length === 1
-        && currentIdentity === identities[0]
-        ? currentIdentityConfirmed
-        : undefined,
       judge_basis: judgementRequired
         ? currentBasis || (basisOptions.length === 1 ? basisOptions[0] : undefined)
         : undefined,
@@ -315,21 +310,6 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
           </Descriptions>
           <Form.Item name="sample_identity" hidden>
             <Input />
-          </Form.Item>
-          <Form.Item
-            name="sample_identity_confirmed"
-            valuePropName="checked"
-            rules={[{
-              validator: (_, value) => (
-                value === true
-                  ? Promise.resolve()
-                  : Promise.reject(new Error('请确认自动填入的样品识别'))
-              ),
-            }]}
-          >
-            <Checkbox disabled={disabled}>
-              确认本次录入的样品识别为“{identities[0]}”
-            </Checkbox>
           </Form.Item>
         </div>
       ) : identities.length > 1 ? (

@@ -117,8 +117,11 @@ dry-run 不得构造该服务，也不得调用会创建目录的 `FileDirectory
 ### v2 多模板、样品识别与多份契约
 
 最终写入器的 schema v2 为 `5103.5 / 纤维微观形貌` 固定登记了七个模板名及各自的
-映射配置 SHA-256，模板与指纹必须成对精确命中。详细清单见
-`tools/legacy_fibrecheck_final_entry_writer/README.md`。同一项目的既有登记可以分别使用七个
+映射配置 SHA-256，模板与指纹必须成对精确命中。2026-08-15 起新增第二条已证明数据链
+`5103.426 / 纤维横截面`（对账样本 260191285）及其三个模板（`纤维横截面.xls`、
+`纤维横截面-2张图.xls`、`纤维横截面-3张图.xls`，采集配置同为 9 行、馈送单元格与微观形貌
+一致）；任务包的项目编号/名称/方法必须与两个已登记三元组之一完全一致。详细清单见
+`tools/legacy_fibrecheck_final_entry_writer/README.md`。同一项目的既有登记可以分别使用
 受支持模板中的任意一个；核对时以 `CheckRecordRegister.ID` 为主键，将每条
 `OriginalKeyData_CheckItem.ExcelTemplateName` 与它自己的登记模板比较，不再要求所有历史
 记录与本次新登记使用同一模板。

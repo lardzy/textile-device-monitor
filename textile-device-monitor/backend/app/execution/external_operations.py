@@ -19,9 +19,12 @@ from app.config import settings
 from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.electron_microscopy import (
-    ELECTRON_PROJECT_NAME_ALIASES,
     ELECTRON_TEST_METHOD,
     cached_task_snapshot,
+)
+from app.execution.microscopy_families import (
+    ALL_PROJECT_NAME_ALIASES,
+    microscopy_family_for_project,
 )
 from app.execution.microscopy_check_record import (
     MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
@@ -297,8 +300,6 @@ SPECIAL_WOOL_QUALITATIVE_REVIEW_RECEIPT_TYPE = (
 GENERIC_CHECK_RECORD_ENTRY_RECEIPT_TYPE = (
     "legacy_generic_check_record_entry"
 )
-MICROSCOPY_CHECK_ITEM_NO = "5103.5"
-MICROSCOPY_CHECK_ITEM_NAME = "纤维微观形貌"
 CONTROLLED_FINAL_ENTRY_OVERRIDE_KIND = (
     "append_one_when_check_count_one"
 )
@@ -383,12 +384,12 @@ def _validated_microscopy_project_binding(
     )
     check_item_no = _normalized_business_text(selected.get("check_item_no"))
     check_method = _normalized_business_text(selected.get("check_method"))
-    if check_item_name not in ELECTRON_PROJECT_NAME_ALIASES:
+    if check_item_name not in ALL_PROJECT_NAME_ALIASES:
         raise ExecutionApiError(
             422,
             "legacy_special_wool_task_project_name_mismatch",
-            "图片上传仅支持“纤维微观形貌”或“膜平面形貌”任务项目",
-            details={"expected": sorted(ELECTRON_PROJECT_NAME_ALIASES)},
+            "图片上传仅支持“纤维微观形貌”“膜平面形貌”或“纤维横截面”任务项目",
+            details={"expected": sorted(ALL_PROJECT_NAME_ALIASES)},
         )
     if check_method != ELECTRON_TEST_METHOD:
         raise ExecutionApiError(
@@ -3440,16 +3441,33 @@ def _rearm_expired_external_operation(
     prepared_at,
     preflight_expires_at,
 ) -> bool:
-    """Reuse an expired pre-side-effect fence after an explicit node retry.
+    """Reuse a pre-side-effect fence after an explicit node retry.
 
     The operation row is unique per node, so a retry must reuse the same fence.
     Claims made before approval expiry are not by themselves remote writes:
     rearming remains safe when *every* durable attempt ended before the
     operation-specific write boundary.  Unknown/inconsistent history and any
     completion or reconciliation evidence fail closed.
+
+    Besides ``expired`` operations, a ``failed`` operation settled by the
+    attempts-exhausted path is accepted: settlement only marks an operation
+    ``failed`` without reconciliation evidence when every attempt provably
+    stopped before the write boundary, which is the same pre-side-effect
+    situation.  Reconciled operations keep their non-empty verification and
+    therefore still fall through to the dedicated reconciled rearm path.
     """
 
-    if operation.status != "expired":
+    if operation.status == "expired":
+        pass
+    elif (
+        operation.status == "failed"
+        and operation.error_code != "external_reconciliation_no_side_effect"
+        and not operation.verification
+        and not operation.receipt
+        and operation.remote_record_id is None
+    ):
+        pass
+    else:
         return False
 
     def reject(reason: str, **details: Any) -> None:
@@ -3482,7 +3500,10 @@ def _rearm_expired_external_operation(
     attempt_stages, write_boundary, _verified_stage = stage_profile
     boundary_index = attempt_stages.index(write_boundary)
 
-    if operation.error_code not in EXTERNAL_OPERATION_EXPIRY_ERROR_CODES:
+    if (
+        operation.status == "expired"
+        and operation.error_code not in EXTERNAL_OPERATION_EXPIRY_ERROR_CODES
+    ):
         reject(
             "not_a_system_expiry",
             operation_error_code=operation.error_code,
@@ -4411,15 +4432,15 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         db, sample_number=source_number
     )
     project = _validated_microscopy_project_binding(input_data)
-    if (
-        _normalized_business_text(project.get("check_item_no"))
-        != MICROSCOPY_CHECK_ITEM_NO
-        or project.get("check_item_name") != MICROSCOPY_CHECK_ITEM_NAME
-    ):
+    project_family = microscopy_family_for_project(
+        project.get("check_item_no"), project.get("check_item_name")
+    )
+    if project_family is None:
         raise ExecutionApiError(
             422,
             "microscopy_final_entry_project_mismatch",
-            "检验记录登记节点仅支持 5103.5 / 纤维微观形貌",
+            "检验记录登记节点仅支持 5103.5 / 纤维微观形貌 或"
+            " 5103.426 / 纤维横截面",
         )
     source_review = _completed_special_wool_review_source(
         db, run=run, input_data=input_data
@@ -4439,6 +4460,18 @@ def prepare_legacy_microscopy_check_record_entry_operation(
             db, run=run, input_data=input_data
         )
     )
+    family_binding = project_family.template_bindings.get(
+        template_binding.get("image_count")
+    )
+    if family_binding is None or any(
+        template_binding.get(key) != expected
+        for key, expected in family_binding.items()
+    ):
+        raise ExecutionApiError(
+            422,
+            "microscopy_final_entry_template_family_mismatch",
+            f"检验记录登记模板不属于{project_family.check_item_name}家族，请重新生成",
+        )
     selected_project = input_data.get("selected_project")
     if not isinstance(selected_project, dict):
         raise conflict(
@@ -4474,15 +4507,6 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         raise conflict(
             "microscopy_sample_identity_not_offered",
             "任务单未提供样品识别，不能写入旧系统下拉框",
-        )
-    if (
-        len(identity_options) == 1
-        and record_input
-        and record_input.get("sample_identity_confirmed") is not True
-    ):
-        raise conflict(
-            "microscopy_sample_identity_confirmation_required",
-            "请先确认自动填入的样品识别",
         )
 
     raw_judgement_flag = selected_project.get("give_judgement")
@@ -4616,8 +4640,8 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         "schema_version": 2,
         "operation_type": "excel_check_record",
         "sample_number": source_number,
-        "check_item_no": MICROSCOPY_CHECK_ITEM_NO,
-        "check_item_name": MICROSCOPY_CHECK_ITEM_NAME,
+        "check_item_no": project["check_item_no"],
+        "check_item_name": project["check_item_name"],
         # The Writer re-queries the current Task_CheckItem row and recomputes
         # these one-way identifiers plus project_key before any side effect.
         "task_project": dict(project),
@@ -4710,7 +4734,7 @@ def prepare_legacy_microscopy_check_record_entry_operation(
             ),
         },
         "business_fields": {
-            "inspection_item": MICROSCOPY_CHECK_ITEM_NAME,
+            "inspection_item": project["check_item_name"],
             "inspection_method": ELECTRON_TEST_METHOD,
             "inspection_copies": check_count,
             "sample_identity": sample_identity,

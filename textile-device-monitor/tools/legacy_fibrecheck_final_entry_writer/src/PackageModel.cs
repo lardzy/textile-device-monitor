@@ -33,6 +33,22 @@ namespace LegacyFibreCheckFinalEntryWriter
         internal const string PaperCheckItemName =
             "纸、纸板和纸浆纤维鉴别分析";
         internal const string PaperCheckMethod = "GB/T 4688-2020";
+        internal const string MicroscopyCheckItemNo = "5103.5";
+        internal const string MicroscopyCheckItemName = "纤维微观形貌";
+        internal const string CrossSectionCheckItemNo = "5103.426";
+        internal const string CrossSectionCheckItemName = "纤维横截面";
+        internal const string ElectronCheckMethod = "GB/T 36422-2018";
+
+        // 电镜 Excel 登记路线当前只开放两个已用真实任务单证明的项目：
+        // 5103.5 / 纤维微观形貌 与 5103.426 / 纤维横截面（260191285）。
+        internal static bool IsSupportedExcelProject(
+            string checkItemNo, string checkItemName)
+        {
+            return (checkItemNo == MicroscopyCheckItemNo
+                    && checkItemName == MicroscopyCheckItemName)
+                || (checkItemNo == CrossSectionCheckItemNo
+                    && checkItemName == CrossSectionCheckItemName);
+        }
 
         internal static readonly Dictionary<string, string> SupportedMicroscopyTemplates =
             new Dictionary<string, string>(StringComparer.Ordinal)
@@ -64,6 +80,19 @@ namespace LegacyFibreCheckFinalEntryWriter
                 {
                     "纤维微观形貌-GB T 36422-2018-10张图.xls",
                     "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
+                },
+                // 5103.426 / 纤维横截面的三个配置模板（260191285 只读探针签发指纹）
+                {
+                    "纤维横截面.xls",
+                    "d35d97a79e7b1160d437c67f4b1b21298261cdd08949df8aaa1526f4f8a053b5"
+                },
+                {
+                    "纤维横截面-2张图.xls",
+                    "bffb70d1536917dc76d090d091c0056810738cca02a61351c506861de9ff1ca9"
+                },
+                {
+                    "纤维横截面-3张图.xls",
+                    "52f9cbb73bd50484eff78ebac43a662ec5cb650858a845222d225779dbeaa893"
                 },
             };
 
@@ -175,8 +204,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 }
                 package.ExcelRecord = ParseExcel(
                     RequireMap(root, "excel_record"), schemaVersion);
-                if (package.CheckItemNo != "5103.5"
-                    || package.CheckItemName != "纤维微观形貌")
+                if (!IsSupportedExcelProject(
+                    package.CheckItemNo, package.CheckItemName))
                 {
                     throw new PackageValidationException("excel_project_not_supported_in_v1");
                 }
@@ -247,9 +276,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 CheckCount = RequireInt(map, "check_count"),
             };
             bool supportedProject = package.OperationType == ExcelOperation
-                ? result.CheckItemNo == "5103.5"
-                    && result.CheckItemName == "纤维微观形貌"
-                    && result.CheckMethod == "GB/T 36422-2018"
+                ? IsSupportedExcelProject(result.CheckItemNo, result.CheckItemName)
+                    && result.CheckMethod == ElectronCheckMethod
                 : result.CheckItemNo == PaperCheckItemNo
                     && result.CheckItemName == PaperCheckItemName
                     && result.CheckMethod == PaperCheckMethod;

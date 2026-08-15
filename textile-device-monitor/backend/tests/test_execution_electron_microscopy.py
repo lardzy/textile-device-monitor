@@ -198,7 +198,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             data={"selected_project_key": project["project_key"], **data},
         )
 
-    def test_record_input_requires_single_identity_confirmation_and_judgement_fields(self):
+    def test_record_input_auto_fills_single_identity_and_judgement_fields(self):
         project = {
             "project_key": "project-one",
             "check_count": 1,
@@ -214,17 +214,9 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             "judgement": "符合",
             "remark": "无",
         }
-        with self.assertRaises(ExecutionApiError) as raised:
-            self._normalize_record_input(project, payload)
-        self.assertEqual(
-            raised.exception.code,
-            "microscopy_sample_identity_confirmation_required",
-        )
-        normalized = self._normalize_record_input(
-            project,
-            {**payload, "sample_identity_confirmed": True},
-        )
+        normalized = self._normalize_record_input(project, payload)
         self.assertEqual(normalized["sample_identity"], "正面")
+        self.assertNotIn("sample_identity_confirmed", normalized)
         self.assertEqual(
             normalized["indicator_requirement"], "纤维表面形貌清晰"
         )
@@ -244,7 +236,6 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             {
                 "sample_name": "示例样品",
                 "sample_identity": "正面",
-                "sample_identity_confirmed": True,
                 "judge_basis": "GB/T 36422-2018（客户补充协议）",
                 "indicator_requirement": "纤维表面形貌清晰",
                 "test_result": "符合指标要求",
@@ -267,7 +258,6 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             {
                 "sample_name": "示例样品",
                 "sample_identity": "正面",
-                "sample_identity_confirmed": True,
                 "indicator_requirement": "纤维表面形貌清晰",
                 "test_result": "符合指标要求",
                 "judgement": "符合",

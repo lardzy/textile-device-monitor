@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$FibreCheckDir = "$PSScriptRoot\..\..\..\.tmp\FibreCheck",
     [string]$Odac32Dir = "$PSScriptRoot\..\..\..\.tmp\odac32"
 )
@@ -472,6 +472,41 @@ try {
     Assert-Case 'v2 empty key identity' `
         @('--offline-validate', '--package', $v2EmptyIdentityPath, '--source-root', $sourceDir) 0 `
         @('workbook_verified', 'offline_validation_completed')
+
+    # 5103.426 cross-section project (reconciliation sample 260191285)
+    $csBase = $v2ValidIdentity.Replace(
+        '"check_item_no": "5103.5"', '"check_item_no": "5103.426"').Replace(
+        '"check_item_name": "\u7ea4\u7ef4\u5fae\u89c2\u5f62\u8c8c"',
+        '"check_item_name": "\u7ea4\u7ef4\u6a2a\u622a\u9762"').Replace(
+        'task-project:0dddba88e0b93ac2a58ace0a',
+        'task-project:f67a2ceddbc70bf3ddc56e7d')
+    $csTemplateMappings = [ordered]@{
+        "\u7ea4\u7ef4\u6a2a\u622a\u9762.xls" = 'd35d97a79e7b1160d437c67f4b1b21298261cdd08949df8aaa1526f4f8a053b5'
+        "\u7ea4\u7ef4\u6a2a\u622a\u9762-2\u5f20\u56fe.xls" = 'bffb70d1536917dc76d090d091c0056810738cca02a61351c506861de9ff1ca9'
+        "\u7ea4\u7ef4\u6a2a\u622a\u9762-3\u5f20\u56fe.xls" = '52f9cbb73bd50484eff78ebac43a662ec5cb650858a845222d225779dbeaa893'
+    }
+    $csIndex = 0
+    foreach ($entry in $csTemplateMappings.GetEnumerator()) {
+        $csIndex++
+        $cs = $csBase.Replace(
+            '"template_name": "\u5fae\u89c2\u5f62\u8c8c.xls"',
+            ('"template_name": "' + $entry.Key + '"')).Replace(
+            '"expected_mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"',
+            ('"expected_mapping_config_sha256": "' + $entry.Value + '"'))
+        $csPath = Join-Path $fixtureDir ("excel-v2-cross-section-$csIndex.json")
+        Write-Utf8NoBom $csPath $cs
+        Assert-Case ("v2 cross-section exact template $csIndex") `
+            @('--offline-validate', '--package', $csPath, '--source-root', $sourceDir) 0 `
+            @('"schema_version": 2', 'offline_validation_completed')
+    }
+
+    $csMixedPath = Join-Path $fixtureDir 'excel-v2-cross-family-mapping.json'
+    Write-Utf8NoBom $csMixedPath ($csBase.Replace(
+        '"expected_mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"',
+        '"expected_mapping_config_sha256": "d35d97a79e7b1160d437c67f4b1b21298261cdd08949df8aaa1526f4f8a053b5"'))
+    Assert-Case 'v2 cross-family template mapping pair mismatch' `
+        @('--offline-validate', '--package', $csMixedPath, '--source-root', $sourceDir) 21 `
+        @('excel_scope_not_supported_in_v2')
 
     $v2ChangedMethodPath = Join-Path $fixtureDir 'excel-v2-project-method-changed.json'
     Write-Utf8NoBom $v2ChangedMethodPath ($v2EmptyIdentity.Replace(

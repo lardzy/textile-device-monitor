@@ -715,7 +715,6 @@ class PaperExternalOperationTests(unittest.TestCase):
                 ),
                 "judgement_input": {
                     "sample_identity": "正面",
-                    "sample_identity_confirmed": True,
                 },
             },
         )

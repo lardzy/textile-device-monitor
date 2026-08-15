@@ -365,7 +365,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 ? package.ExcelRecord.TemplateName == "微观形貌.xls"
                 : FinalEntryPackage.SupportedMicroscopyTemplates.ContainsKey(
                     package.ExcelRecord.TemplateName);
-            if (package.CheckItemNo != "5103.5" || package.CheckItemName != "纤维微观形貌"
+            if (!FinalEntryPackage.IsSupportedExcelProject(
+                    package.CheckItemNo, package.CheckItemName)
                 || !string.IsNullOrWhiteSpace(snapshot.OriginalDataInputUiClassName)
                 || !templateSupported)
             {
