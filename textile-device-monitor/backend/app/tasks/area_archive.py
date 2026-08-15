@@ -25,6 +25,7 @@ async def run_area_archive_if_due(force: bool = False) -> dict[str, object]:
                 "enabled": False,
             }
         last_run = area_crud.get_archive_last_run_at(db)
+        db.rollback()  # 归档的文件系统操作可能很慢，先归还连接
         now = datetime.now(timezone.utc)
         due = force or last_run is None or (now - last_run) >= timedelta(hours=ARCHIVE_INTERVAL_HOURS)
         if not due:

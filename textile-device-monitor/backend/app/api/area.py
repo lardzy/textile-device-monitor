@@ -58,6 +58,17 @@ def _ensure_enabled() -> None:
         raise HTTPException(status_code=503, detail="area_disabled")
 
 
+def _read_area_config(db: Session) -> dict[str, object]:
+    """读取配置后立即结束事务归还连接。
+
+    调用方随后进行的文件系统扫描、网络挂载读写、推理服务健康检查等
+    慢速操作都不应占用数据库连接。
+    """
+    config = area_crud.get_area_config(db)
+    db.rollback()
+    return config
+
+
 def _with_artifact_urls(job: dict) -> dict:
     payload = dict(job)
     job_id = payload.get("job_id")
@@ -90,7 +101,7 @@ def _with_editor_image_urls(job_id: str, image_id: int, detail: dict[str, Any]) 
 @router.get("/config")
 def get_area_config(db: Session = Depends(get_db)):
     _ensure_enabled()
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     model_mapping = config.get("model_mapping", {})
     model_options = sorted(model_mapping.keys())
     return {
@@ -158,7 +169,7 @@ def validate_area_config(payload: AreaConfigPayload):
 @router.get("/status")
 def get_area_status(db: Session = Depends(get_db)):
     _ensure_enabled()
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     return area_job_manager.get_system_status(
         root_path=str(config.get("root_path") or ""),
         output_root=str(config.get("result_output_root") or settings.AREA_OUTPUT_DIR),
@@ -171,7 +182,7 @@ def get_area_status(db: Session = Depends(get_db)):
 @router.post("/jobs")
 def create_area_job(payload: AreaJobCreatePayload, db: Session = Depends(get_db)):
     _ensure_enabled()
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         job = area_job_manager.create_job(
             folder_name=payload.folder_name,
@@ -251,7 +262,7 @@ def retry_area_job(job_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="job_not_found")
     if previous.get("status") not in {"failed", "cancelled", "succeeded_with_errors"}:
         raise HTTPException(status_code=409, detail="job_not_retryable")
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         job = area_job_manager.create_job(
             folder_name=str(previous.get("folder_name") or ""),
@@ -464,7 +475,7 @@ def search_area_folders(
     db: Session = Depends(get_db),
 ):
     _ensure_enabled()
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         items = area_job_manager.search_folders(
             str(config.get("root_path") or ""),
@@ -485,7 +496,7 @@ def list_area_recent_folders(
     db: Session = Depends(get_db),
 ):
     _ensure_enabled()
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         return area_job_manager.list_recent_folders(
             str(config.get("root_path") or ""),
@@ -507,7 +518,7 @@ def list_area_folder_preview_images(
     _ensure_enabled()
     if "/" in folder_name or "\\" in folder_name:
         raise HTTPException(status_code=400, detail="invalid_folder_name")
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         payload = area_job_manager.list_folder_preview_images(
             str(config.get("root_path") or ""),
@@ -541,7 +552,7 @@ def list_area_folder_images(
     _ensure_enabled()
     if "/" in folder_name or "\\" in folder_name:
         raise HTTPException(status_code=400, detail="invalid_folder_name")
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         payload = area_job_manager.list_folder_images(
             str(config.get("root_path") or ""),
@@ -575,7 +586,7 @@ def get_area_folder_image(folder_name: str, filename: str, db: Session = Depends
         raise HTTPException(status_code=400, detail="invalid_folder_name")
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="invalid_filename")
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         path = area_job_manager.get_folder_image_path(
             str(config.get("root_path") or ""),
@@ -600,7 +611,7 @@ def cleanup_area_folder(
     _ensure_enabled()
     if "/" in folder_name or "\\" in folder_name:
         raise HTTPException(status_code=400, detail="invalid_folder_name")
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         return area_job_manager.cleanup_folder(
             root_path=str(config.get("root_path") or ""),
@@ -627,7 +638,7 @@ def preview_area_folder_cleanup(
     _ensure_enabled()
     if "/" in folder_name or "\\" in folder_name:
         raise HTTPException(status_code=400, detail="invalid_folder_name")
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         return area_job_manager.preview_cleanup_folder(
             root_path=str(config.get("root_path") or ""),
@@ -642,7 +653,7 @@ def preview_area_folder_cleanup(
 @router.get("/archive/preview")
 def preview_area_archive(db: Session = Depends(get_db)):
     _ensure_enabled()
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         return area_job_manager.preview_archive(
             root_path=str(config.get("root_path") or ""),
@@ -656,7 +667,7 @@ def preview_area_archive(db: Session = Depends(get_db)):
 @router.get("/archive/status")
 def get_area_archive_status(db: Session = Depends(get_db)):
     _ensure_enabled()
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     enabled = bool(config.get("archive_enabled"))
     last_run = area_crud.get_archive_last_run_at(db)
     now = datetime.now(timezone.utc)
@@ -673,7 +684,7 @@ def get_area_archive_status(db: Session = Depends(get_db)):
 @router.post("/archive/run")
 def run_area_archive(db: Session = Depends(get_db)):
     _ensure_enabled()
-    config = area_crud.get_area_config(db)
+    config = _read_area_config(db)
     try:
         result = area_job_manager.run_archive(
             root_path=str(config.get("root_path") or ""),

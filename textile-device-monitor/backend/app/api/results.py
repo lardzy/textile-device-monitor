@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Query, Response
 import requests
 from urllib.parse import quote
-from app.database import get_db
+from app.database import SessionLocal
 from app.crud import devices as device_crud
 from app.config import settings
 from threading import Lock, Event
@@ -98,21 +97,27 @@ def _extract_client_error(resp: requests.Response) -> str:
     return "Client error"
 
 
-def _get_client_base_url(db: Session, device_id: int) -> str:
-    device = device_crud.get_device(db, device_id)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-    base_url = device.client_base_url
-    if base_url is None:
-        raise HTTPException(status_code=404, detail="Client base URL not configured")
-    if not str(base_url).strip():  # type: ignore[arg-type]
-        raise HTTPException(status_code=404, detail="Client base URL not configured")
-    return base_url.rstrip("/")
+def _get_client_base_url(device_id: int) -> str:
+    # 对设备客户端的代理 HTTP 调用可能阻塞数十秒。只用短生命周期会话取出
+    # base_url 并立即归还连接，绝不在持有数据库连接时等待客户端响应。
+    db = SessionLocal()
+    try:
+        device = device_crud.get_device(db, device_id)
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+        base_url = device.client_base_url
+        if base_url is None:
+            raise HTTPException(status_code=404, detail="Client base URL not configured")
+        if not str(base_url).strip():  # type: ignore[arg-type]
+            raise HTTPException(status_code=404, detail="Client base URL not configured")
+        return base_url.rstrip("/")
+    finally:
+        db.close()
 
 
 @router.get("/latest")
-def get_latest(device_id: int = Query(...), db: Session = Depends(get_db)):
-    base_url = _get_client_base_url(db, device_id)
+def get_latest(device_id: int = Query(...)):
+    base_url = _get_client_base_url(device_id)
     try:
         resp = requests.get(f"{base_url}/client/results/latest", timeout=10)
     except requests.RequestException as exc:
@@ -128,9 +133,8 @@ def get_latest(device_id: int = Query(...), db: Session = Depends(get_db)):
 def get_table(
     device_id: int = Query(...),
     folder: str | None = Query(None),
-    db: Session = Depends(get_db),
 ):
-    base_url = _get_client_base_url(db, device_id)
+    base_url = _get_client_base_url(device_id)
     try:
         params = {"folder": folder} if folder else None
         resp = requests.get(
@@ -157,9 +161,8 @@ def get_table(
 def get_table_preview(
     device_id: int = Query(...),
     folder: str | None = Query(None),
-    db: Session = Depends(get_db),
 ):
-    base_url = _get_client_base_url(db, device_id)
+    base_url = _get_client_base_url(device_id)
     try:
         params = {"folder": folder} if folder else None
         resp = requests.get(
@@ -188,9 +191,8 @@ def get_table_preview(
 def get_table_view(
     device_id: int = Query(...),
     folder: str | None = Query(None),
-    db: Session = Depends(get_db),
 ):
-    base_url = _get_client_base_url(db, device_id)
+    base_url = _get_client_base_url(device_id)
     try:
         params = {"folder": folder} if folder else None
         resp = requests.get(
@@ -217,9 +219,8 @@ def get_images(
     page: int = Query(1, ge=1),
     page_size: int = Query(200, ge=1, le=500),
     folder: str | None = Query(None),
-    db: Session = Depends(get_db),
 ):
-    base_url = _get_client_base_url(db, device_id)
+    base_url = _get_client_base_url(device_id)
     try:
         params: dict[str, int | str] = {"page": page, "page_size": page_size}
         if folder:
@@ -240,7 +241,6 @@ def get_images(
 def get_recent(
     device_id: int = Query(...),
     limit: int = Query(5, ge=1, le=20),
-    db: Session = Depends(get_db),
 ):
     cache_key = _get_recent_cache_key(device_id, limit)
     cached = _get_recent_cached_value(cache_key)
@@ -260,7 +260,7 @@ def get_recent(
         if inflight_event is not None:
             raise HTTPException(status_code=502, detail="Client unreachable")
 
-    base_url = _get_client_base_url(db, device_id)
+    base_url = _get_client_base_url(device_id)
     _mark_recent_inflight(cache_key)
 
     def _return_stale_or_raise(exc: Exception):
@@ -306,9 +306,8 @@ def get_image(
     filename: str,
     device_id: int = Query(...),
     folder: str | None = Query(None),
-    db: Session = Depends(get_db),
 ):
-    base_url = _get_client_base_url(db, device_id)
+    base_url = _get_client_base_url(device_id)
     safe_filename = quote(filename, safe="")
     params = {"folder": folder} if folder else None
     try:
@@ -332,9 +331,8 @@ def get_thumbnail(
     filename: str,
     device_id: int = Query(...),
     folder: str | None = Query(None),
-    db: Session = Depends(get_db),
 ):
-    base_url = _get_client_base_url(db, device_id)
+    base_url = _get_client_base_url(device_id)
     safe_filename = quote(filename, safe="")
     params = {"folder": folder} if folder else None
     try:
@@ -361,9 +359,8 @@ def cleanup_images(
     folder: str | None = Query(None),
     rename_enabled: bool = Query(False),
     new_folder_name: str | None = Query(None),
-    db: Session = Depends(get_db),
 ):
-    base_url = _get_client_base_url(db, device_id)
+    base_url = _get_client_base_url(device_id)
     try:
         params: dict[str, str | bool] = {"rename_enabled": rename_enabled}
         if folder:
