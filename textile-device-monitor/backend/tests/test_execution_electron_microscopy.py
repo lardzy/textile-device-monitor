@@ -349,9 +349,10 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             final_entry["input_mapping"]["review_result"],
             "$.nodes.review-record.output",
         )
-        self.assertEqual(
-            final_entry["input_mapping"]["controlled_test_override"],
-            "$.inputs.controlled_test_override",
+        self.assertNotIn("controlled_test_override", final_entry["input_mapping"])
+        self.assertNotIn(
+            "controlled_test_override",
+            definition["input_schema"]["properties"],
         )
         self.assertEqual(
             final_entry["input_mapping"]["registration_decision"],

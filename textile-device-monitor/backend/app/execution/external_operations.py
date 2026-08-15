@@ -305,9 +305,6 @@ SPECIAL_WOOL_QUALITATIVE_REVIEW_RECEIPT_TYPE = (
 GENERIC_CHECK_RECORD_ENTRY_RECEIPT_TYPE = (
     "legacy_generic_check_record_entry"
 )
-CONTROLLED_FINAL_ENTRY_OVERRIDE_KIND = (
-    "append_one_when_check_count_one"
-)
 FINAL_ENTRY_RECONCILIATION_EVIDENCE_CONTRACT = (
     "microscopy_final_entry_v1"
 )
@@ -1156,17 +1153,18 @@ def validate_external_receipt(
                 "task_project",
                 "template_binding",
                 "final_entry",
-                "controlled_test_override",
             },
-            optional={"existing_record_decision"},
+            # 受控测试覆盖通道已于 2026-08 移除；当前部署的 Writer 仍会在
+            # 回执中携带 null，保持容忍但拒绝任何非空声明。
+            optional={"existing_record_decision", "controlled_test_override"},
         )
         expected_type = MICROSCOPY_CHECK_RECORD_ENTRY_RECEIPT_TYPE
     else:
         document = _strict_object(
             receipt,
             path="$",
-            required=common | {"task_project", "final_entry", "controlled_test_override"},
-            optional={"existing_record_decision"},
+            required=common | {"task_project", "final_entry"},
+            optional={"existing_record_decision", "controlled_test_override"},
         )
         expected_type = GENERIC_CHECK_RECORD_ENTRY_RECEIPT_TYPE
     if document.get("schema_version") != 1 or document.get(
@@ -1303,46 +1301,12 @@ def validate_external_receipt(
             path="$.final_entry.record_id",
             pattern=_REDACTED_LEGACY_ID_RE,
         )
-        expected_override = package.get("controlled_test_override")
-        actual_override = document.get("controlled_test_override")
-        if expected_override is None:
-            if actual_override is not None:
-                raise _machine_document_error(
-                    "$.controlled_test_override", "普通业务回执不得声明受控测试覆盖"
-                )
-        else:
-            override = _strict_object(
-                actual_override,
-                path="$.controlled_test_override",
-                required={
-                    "active",
-                    "applied",
-                    "kind",
-                    "target_sample_number",
-                    "expected_task_check_count",
-                    "expected_existing_register_count",
-                    "resulting_register_count",
-                },
+        # 受控测试覆盖通道已移除：后端不再签发覆盖对象，任何非空声明
+        # 一律拒绝；当前部署的 Writer 会在回执中携带 null，保持容忍。
+        if document.get("controlled_test_override") is not None:
+            raise _machine_document_error(
+                "$.controlled_test_override", "普通业务回执不得声明受控测试覆盖"
             )
-            for key in (
-                "kind",
-                "target_sample_number",
-                "expected_task_check_count",
-                "expected_existing_register_count",
-                "resulting_register_count",
-            ):
-                if override.get(key) != expected_override.get(key):
-                    raise _machine_document_error(
-                        f"$.controlled_test_override.{key}",
-                        "受控测试回执与已批准的任务包不一致",
-                    )
-            if override.get("active") is not True or override.get(
-                "applied"
-            ) is not True:
-                raise _machine_document_error(
-                    "$.controlled_test_override.applied",
-                    "受控测试三重门禁未全部激活并通过远端预检",
-                )
         _validate_existing_record_decision_receipt(
             document.get("existing_record_decision"),
             expected=package.get("existing_record_decision"),
@@ -1448,46 +1412,12 @@ def validate_external_receipt(
             path="$.final_entry.original_data_filename",
             pattern=_LEGACY_ORIGINAL_DATA_FILENAME_RE,
         )
-        expected_override = expected_package.get("controlled_test_override")
-        actual_override = document.get("controlled_test_override")
-        if expected_override is None:
-            if actual_override is not None:
-                raise _machine_document_error(
-                    "$.controlled_test_override", "普通业务回执不得声明受控测试覆盖"
-                )
-        else:
-            override = _strict_object(
-                actual_override,
-                path="$.controlled_test_override",
-                required={
-                    "active",
-                    "applied",
-                    "kind",
-                    "target_sample_number",
-                    "expected_task_check_count",
-                    "expected_existing_register_count",
-                    "resulting_register_count",
-                },
+        # 受控测试覆盖通道已移除：后端不再签发覆盖对象，任何非空声明
+        # 一律拒绝；当前部署的 Writer 会在回执中携带 null，保持容忍。
+        if document.get("controlled_test_override") is not None:
+            raise _machine_document_error(
+                "$.controlled_test_override", "普通业务回执不得声明受控测试覆盖"
             )
-            for key in (
-                "kind",
-                "target_sample_number",
-                "expected_task_check_count",
-                "expected_existing_register_count",
-                "resulting_register_count",
-            ):
-                if override.get(key) != expected_override.get(key):
-                    raise _machine_document_error(
-                        f"$.controlled_test_override.{key}",
-                        "受控测试回执与已批准的任务包不一致",
-                    )
-            if override.get("active") is not True or override.get(
-                "applied"
-            ) is not True:
-                raise _machine_document_error(
-                    "$.controlled_test_override.applied",
-                    "受控测试三重门禁未全部激活并通过远端预检",
-                )
         _validate_existing_record_decision_receipt(
             document.get("existing_record_decision"),
             expected=expected_package.get("existing_record_decision"),
@@ -2506,48 +2436,6 @@ def _completed_special_wool_review_source(
     return source
 
 
-def _controlled_final_entry_override(
-    input_data: dict[str, Any],
-    *,
-    sample_number: str,
-) -> dict[str, Any] | None:
-    raw = input_data.get("controlled_test_override")
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise ExecutionApiError(
-            422,
-            "controlled_final_entry_override_invalid",
-            "受控测试覆盖必须是完整对象",
-        )
-    configured = str(
-        settings.EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO or ""
-    ).strip().upper()
-    expected = {
-        "kind": CONTROLLED_FINAL_ENTRY_OVERRIDE_KIND,
-        "target_sample_number": sample_number,
-        "expected_task_check_count": 1,
-        "expected_existing_register_count": 1,
-        "resulting_register_count": 2,
-    }
-    if configured != sample_number or any(
-        raw.get(key) != value for key, value in expected.items()
-    ):
-        raise ExecutionApiError(
-            403,
-            "controlled_final_entry_override_not_authorized",
-            "受控 1→2 测试覆盖未与部署环境的单一样品号授权绑定",
-        )
-    reason = _normalized_business_text(raw.get("reason"))
-    if not reason or len(reason) > 500:
-        raise ExecutionApiError(
-            422,
-            "controlled_final_entry_override_reason_required",
-            "受控测试覆盖必须记录不超过 500 字的原因",
-        )
-    return {**expected, "reason": reason}
-
-
 def _reverify_generated_artifact_source(
     db: Session,
     *,
@@ -2701,16 +2589,6 @@ def _reverify_microscopy_final_entry_sources(
             "microscopy_final_entry_binding_changed",
             "检验记录登记的任务项目或检验份数绑定已变化",
             operation_id=operation.id,
-        )
-    override = (
-        package.get("controlled_test_override")
-        if isinstance(package, dict)
-        else None
-    )
-    if override is not None:
-        _controlled_final_entry_override(
-            {"controlled_test_override": override},
-            sample_number=run.inspection_number.strip().upper(),
         )
 
 
@@ -4604,9 +4482,6 @@ def prepare_legacy_microscopy_check_record_entry_operation(
             "任务单未要求判定，检验记录登记工作簿不应包含判定字段",
         )
 
-    override = _controlled_final_entry_override(
-        input_data, sample_number=source_number
-    )
     registration_decision = input_data.get("registration_decision")
     register_count = selected_project.get("register_count")
     check_count = project["check_count"]
@@ -4640,9 +4515,6 @@ def prepare_legacy_microscopy_check_record_entry_operation(
                 "microscopy_registration_decision_changed",
                 "已有登记处理选择与当前任务份数不一致，请重新运行流程",
             )
-    elif override is not None:
-        # Compatibility for an already-running controlled validation snapshot.
-        expected_existing = 1
     elif register_count == 0:
         # Compatibility for an already-running workflow published before the
         # shared registration-decision node was introduced.
@@ -4654,7 +4526,7 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         )
 
     existing_record_decision = None
-    if append_existing and override is None:
+    if append_existing:
         existing_record_decision = {
             "kind": "append_when_check_count_one",
             "action": "append",
@@ -4701,8 +4573,6 @@ def prepare_legacy_microscopy_check_record_entry_operation(
         final_entry_package["existing_record_decision"] = (
             existing_record_decision
         )
-    if override is not None:
-        final_entry_package["controlled_test_override"] = override
     request_summary = {
         "schema_version": 1,
         "operation_type": LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION,
@@ -4753,10 +4623,6 @@ def prepare_legacy_microscopy_check_record_entry_operation(
             ),
             "existing_record_append_confirmed": (
                 existing_record_decision is not None
-            ),
-            "controlled_test": override is not None,
-            "controlled_test_reason": (
-                override.get("reason") if override is not None else None
             ),
         },
         "business_fields": {
@@ -5224,51 +5090,41 @@ def prepare_legacy_generic_check_record_entry_operation(
             "任务单未提供样品识别，不能写入旧系统下拉框",
         )
 
-    override = _controlled_final_entry_override(
-        input_data, sample_number=source_number
-    )
     registration_decision = input_data.get("registration_decision")
-    legacy_controlled_override = bool(
-        override is not None and not isinstance(registration_decision, dict)
-    )
-    if not isinstance(registration_decision, dict) and not legacy_controlled_override:
+    if not isinstance(registration_decision, dict):
         raise conflict(
             "paper_registration_decision_missing",
             "缺少录入前已有登记核对结果，请重新运行流程",
         )
     check_count = project["check_count"]
-    if legacy_controlled_override:
-        expected_existing = 1
-        append_existing = False
-    else:
-        expected_existing = registration_decision.get(
-            "expected_existing_register_count"
+    expected_existing = registration_decision.get(
+        "expected_existing_register_count"
+    )
+    action = str(
+        registration_decision.get("existing_record_action") or ""
+    ).strip()
+    if (
+        not isinstance(expected_existing, int)
+        or isinstance(expected_existing, bool)
+        or expected_existing < 0
+        or expected_existing != selected_project.get("register_count")
+        or registration_decision.get("registration_cancelled") is True
+    ):
+        raise conflict(
+            "paper_registration_decision_changed",
+            "录入前已有登记核对结果已变化，请重新运行流程",
         )
-        action = str(
-            registration_decision.get("existing_record_action") or ""
-        ).strip()
-        if (
-            not isinstance(expected_existing, int)
-            or isinstance(expected_existing, bool)
-            or expected_existing < 0
-            or expected_existing != selected_project.get("register_count")
-            or registration_decision.get("registration_cancelled") is True
-        ):
-            raise conflict(
-                "paper_registration_decision_changed",
-                "录入前已有登记核对结果已变化，请重新运行流程",
-            )
-        append_existing = check_count == 1 and expected_existing > 0
-        if append_existing and action != "append":
-            raise conflict(
-                "paper_existing_record_confirmation_required",
-                "当前单份项目已有登记，必须由用户确认直接新增",
-            )
-        if not append_existing and action != "continue":
-            raise conflict(
-                "paper_registration_decision_changed",
-                "已有登记处理选择与当前任务份数不一致，请重新运行流程",
-            )
+    append_existing = check_count == 1 and expected_existing > 0
+    if append_existing and action != "append":
+        raise conflict(
+            "paper_existing_record_confirmation_required",
+            "当前单份项目已有登记，必须由用户确认直接新增",
+        )
+    if not append_existing and action != "continue":
+        raise conflict(
+            "paper_registration_decision_changed",
+            "已有登记处理选择与当前任务份数不一致，请重新运行流程",
+        )
     final_entry_package = {
         "schema_version": 2,
         "operation_type": "generic_item_record",
@@ -5316,8 +5172,6 @@ def prepare_legacy_generic_check_record_entry_operation(
         final_entry_package["existing_record_decision"] = (
             existing_record_decision
         )
-    if override is not None:
-        final_entry_package["controlled_test_override"] = override
     request_summary = {
         "schema_version": 1,
         "operation_type": LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION,
@@ -5360,10 +5214,6 @@ def prepare_legacy_generic_check_record_entry_operation(
             "detail_count": 1,
             "judgement_required": judgement_required,
             "expected_proofed_count": 0,
-            "controlled_test": override is not None,
-            "controlled_test_reason": (
-                override.get("reason") if override is not None else None
-            ),
         },
         "business_fields": {
             "inspection_item": project["check_item_name"],
@@ -5829,8 +5679,7 @@ def _final_entry_reconciliation_expectations(
         "expected_task_check_count"
     )
     exceptional_append = bool(
-        final_entry_summary.get("controlled_test") is True
-        or isinstance(summary.get("existing_record_decision"), dict)
+        isinstance(summary.get("existing_record_decision"), dict)
         or (
             isinstance(expected_task_count, int)
             and not isinstance(expected_task_count, bool)

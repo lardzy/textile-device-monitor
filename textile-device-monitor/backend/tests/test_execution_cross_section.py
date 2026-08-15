@@ -177,7 +177,7 @@ class CrossSectionWorkflowDefinitionTests(unittest.TestCase):
         # 既有微观形貌定义的校验和保持稳定（目录自动升级依赖它）。
         self.assertEqual(
             definition_checksum(definition),
-            "e97d7cf760466d02119e833856148559ae257d3e3fe219f4c731eb71458b2055",
+            "df00b3131e66df721e9e720c760332130886f0005468724c62780c2df6225f8a",
         )
 
 

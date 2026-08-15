@@ -913,46 +913,6 @@ def _electron_microscopy_gbt36422_definition(
             "required": True,
         }
     ]
-    if not legacy_final_entry_contract:
-        definition["input_schema"]["properties"][
-            "controlled_test_override"
-        ] = {
-            "type": "object",
-            "title": "受控测试覆盖",
-            "properties": {
-                "kind": {
-                    "type": "string",
-                    "const": "append_one_when_check_count_one",
-                },
-                "target_sample_number": {"type": "string"},
-                "expected_task_check_count": {
-                    "type": "integer",
-                    "const": 1,
-                },
-                "expected_existing_register_count": {
-                    "type": "integer",
-                    "const": 1,
-                },
-                "resulting_register_count": {
-                    "type": "integer",
-                    "const": 2,
-                },
-                "reason": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 500,
-                },
-            },
-            "required": [
-                "kind",
-                "target_sample_number",
-                "expected_task_check_count",
-                "expected_existing_register_count",
-                "resulting_register_count",
-                "reason",
-            ],
-            "additionalProperties": False,
-        }
     definition["nodes"] = [
         start,
         discover,
@@ -1383,9 +1343,6 @@ def _electron_microscopy_gbt36422_definition(
                         ),
                         "record_input": "$.nodes.record-input.output",
                         "review_result": "$.nodes.review-record.output",
-                        "controlled_test_override": (
-                            "$.inputs.controlled_test_override"
-                        ),
                     },
                     "ui": {"x": 2880, "y": 100},
                 },
@@ -2090,6 +2047,9 @@ def ensure_default_catalog(db: Session) -> None:
                 # 已发布完整定义：登记前尚未复核份数、样品识别单值未要求确认，
                 # 判定字段中的指标/结果/备注仍留空。
                 "76733a4b0568321c78d55831f33beba5dca743af87ebb5a9dfe238778c2e9c86",
+                # 已发布完整定义：仍含受控测试覆盖运行输入与映射
+                # （2026-08 移除该测试通道前的版本）。
+                "e97d7cf760466d02119e833856148559ae257d3e3fe219f4c731eb71458b2055",
                 legacy_full_checksum,
                 legacy_print_choice_checksum,
                 legacy_project_checksum,
@@ -2272,6 +2232,56 @@ def ensure_default_catalog(db: Session) -> None:
             )
         )
         workflows_by_slug[cross_section_slug] = workflow
+    else:
+        existing_cross = workflows_by_slug[cross_section_slug]
+        cross_definition = _electron_cross_section_gbt36422_definition()
+        cross_checksum = definition_checksum(cross_definition)
+        # 2026-08 移除受控测试覆盖运行输入之前发布的首版横截面定义。
+        legacy_cross_checksums = {
+            "fbf6ab284ec3ef74986479c15ae58731913c4eadf8c087c551b3cd3717c87914",
+        }
+        current_cross = next(
+            (
+                version
+                for version in existing_cross.versions
+                if version.version_number
+                == existing_cross.published_version_number
+            ),
+            None,
+        )
+        cross_upgrade_required = bool(
+            existing_cross.created_by_id is None
+            and existing_cross.updated_by_id is None
+            and current_cross is not None
+            and existing_cross.draft_revision
+            == existing_cross.published_version_number
+            and len(existing_cross.versions)
+            == existing_cross.published_version_number
+            and definition_checksum(existing_cross.draft_definition)
+            in legacy_cross_checksums
+            and current_cross.checksum in legacy_cross_checksums
+        )
+        if cross_upgrade_required:
+            next_version = existing_cross.published_version_number + 1
+            existing_cross.draft_definition = deepcopy(cross_definition)
+            existing_cross.draft_revision = next_version
+            existing_cross.published_version_number = next_version
+            db.add(
+                ExecutionWorkflowVersion(
+                    workflow_id=existing_cross.id,
+                    version_number=next_version,
+                    schema_version="1.0",
+                    definition=deepcopy(cross_definition),
+                    checksum=cross_checksum,
+                    capabilities=deepcopy(current_cross.capabilities),
+                    contract_checksum=workflow_contract_checksum(
+                        cross_definition,
+                        current_cross.capabilities
+                        or {"read": True, "write": True, "external_write": True},
+                    ),
+                    release_note="移除受控测试覆盖运行输入",
+                )
+            )
 
     legacy_electron = workflows_by_slug.get(LEGACY_ELECTRON_WORKFLOW)
     if legacy_electron is not None:

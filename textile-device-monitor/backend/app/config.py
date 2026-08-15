@@ -141,10 +141,8 @@ class Settings(BaseSettings):
     EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED: bool = False
     # Keep the final CheckRecord save/proof connector independently disabled
     # until the Windows Bridge and writer for the deployment have been
-    # validated.  A controlled 1 -> 2 test additionally requires the exact
-    # sample number below; an empty value disables that exception package.
+    # validated.
     EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED: bool = False
-    EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

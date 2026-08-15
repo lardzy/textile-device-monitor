@@ -264,7 +264,11 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         return node, operation
 
     def _project_input(
-        self, *, name: str = "纤维微观形貌", no: str = "5103.5"
+        self,
+        *,
+        name: str = "纤维微观形貌",
+        no: str = "5103.5",
+        register_count: int = 0,
     ) -> dict:
         project = {
             "task_check_item_id": "sha256:" + "1" * 16,
@@ -274,7 +278,7 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             "check_method": "GB/T 36422-2018",
             "seq_num": 1,
             "check_count": 1,
-            "register_count": 0,
+            "register_count": register_count,
             "sample_identify": "纵向",
             "give_judgement": 0,
             "remark": "",
@@ -586,7 +590,7 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             "content_sha256": digest,
         }
 
-    def _final_entry_receipt(self, operation, *, controlled=None):
+    def _final_entry_receipt(self, operation):
         summary = operation.request_summary
         source = summary["files"][0]
         expected_existing = summary["final_entry_package"][
@@ -621,7 +625,8 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                 "content_sha256": source["content_sha256"],
                 "proofed": True,
             },
-            "controlled_test_override": controlled,
+            # 与当前部署的 Writer 回执一致：键存在、值为 null。
+            "controlled_test_override": None,
             "stages": list(MICROSCOPY_CHECK_RECORD_ENTRY_ATTEMPT_STAGES),
             "reconciliation_required": False,
         }
@@ -635,34 +640,26 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
             "final-entry-reconciliation",
         )
-        override = {
-            "kind": "append_one_when_check_count_one",
-            "target_sample_number": self.run.inspection_number,
-            "expected_task_check_count": 1,
-            "expected_existing_register_count": 1,
-            "resulting_register_count": 2,
-            "reason": "受控对账测试",
-        }
-        with patch(
-            "app.execution.external_operations.settings."
-            "EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO",
-            self.run.inspection_number,
-        ):
-            operation, _reused = (
-                prepare_legacy_microscopy_check_record_entry_operation(
-                    self.db,
-                    run=self.run,
-                    node_run=node,
-                    node={"config": {"credential_slot": "legacy_account"}},
-                    input_data={
-                        "registration_workbook": registration_workbook,
-                        "template_binding": binding,
-                        "review_result": {"operation_id": review.id},
-                        "controlled_test_override": override,
-                        **self._project_input(),
+        operation, _reused = (
+            prepare_legacy_microscopy_check_record_entry_operation(
+                self.db,
+                run=self.run,
+                node_run=node,
+                node={"config": {"credential_slot": "legacy_account"}},
+                input_data={
+                    "registration_workbook": registration_workbook,
+                    "template_binding": binding,
+                    "review_result": {"operation_id": review.id},
+                    # 份数=1 且已有 1 条登记：走正式的人工确认追加通道
+                    # （existing_record_decision），与生产路径一致。
+                    "registration_decision": {
+                        "expected_existing_register_count": 1,
+                        "existing_record_action": "append",
                     },
-                )
+                    **self._project_input(register_count=1),
+                },
             )
+        )
         now = utcnow()
         operation.status = "reconciliation_required"
         operation.attempt_count = 3
@@ -2420,8 +2417,6 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                 ),
                 "registration_capacity_exceeded": False,
                 "existing_record_append_confirmed": False,
-                "controlled_test": False,
-                "controlled_test_reason": None,
             },
         )
         bridge = bridge_external_operation(
@@ -2786,99 +2781,6 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         receipt = self._final_entry_receipt(operation)
         receipt["existing_record_decision"] = expected_decision
         self.assertIs(validate_external_receipt(operation, receipt), receipt)
-
-    def test_final_entry_controlled_override_and_receipt_are_fail_closed(self):
-        review = self._completed_review()
-        _artifact, binding, registration_workbook = self._check_record_artifact()
-        node_run = self._node_run(
-            LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
-            "final-entry-controlled",
-        )
-        override = {
-            "kind": "append_one_when_check_count_one",
-            "target_sample_number": self.run.inspection_number,
-            "expected_task_check_count": 1,
-            "expected_existing_register_count": 1,
-            "resulting_register_count": 2,
-            "reason": "已获准验证 CheckCount=1 时追加一条登记记录",
-        }
-        with patch(
-            "app.execution.external_operations.settings."
-            "EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO",
-            self.run.inspection_number,
-        ), patch(
-            "app.execution.external_operations.settings."
-            "EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED",
-            True,
-        ):
-            operation, _reused = (
-                prepare_legacy_microscopy_check_record_entry_operation(
-                    self.db,
-                    run=self.run,
-                    node_run=node_run,
-                    node={"config": {"credential_slot": "legacy_account"}},
-                    input_data={
-                        "registration_workbook": registration_workbook,
-                        "template_binding": binding,
-                        "review_result": {"operation_id": review.id},
-                        "controlled_test_override": override,
-                        **self._project_input(),
-                    },
-                )
-            )
-        with self.assertRaises(ExecutionApiError) as disabled:
-            approve_prepared_external_operation(
-                self.db,
-                operation=operation,
-                run=self.run,
-                actor=self.user,
-                payload_checksum=operation.payload_checksum,
-                confirmed_sample_number=self.run.inspection_number,
-            )
-        self.assertEqual(
-            disabled.exception.code,
-            "legacy_microscopy_final_entry_disabled",
-        )
-        with patch(
-            "app.execution.external_operations.settings."
-            "EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED",
-            True,
-        ):
-            with self.assertRaises(ExecutionApiError) as revoked_override:
-                approve_prepared_external_operation(
-                    self.db,
-                    operation=operation,
-                    run=self.run,
-                    actor=self.user,
-                    payload_checksum=operation.payload_checksum,
-                    confirmed_sample_number=self.run.inspection_number,
-                )
-        self.assertEqual(
-            revoked_override.exception.code,
-            "controlled_final_entry_override_not_authorized",
-        )
-        self.assertEqual(
-            public_external_operation(operation)["request_summary"][
-                "final_entry_summary"
-            ]["controlled_test_reason"],
-            override["reason"],
-        )
-        receipt = self._final_entry_receipt(
-            operation,
-            controlled={
-                key: value for key, value in override.items() if key != "reason"
-            }
-            | {"active": True, "applied": True},
-        )
-        self.assertIs(validate_external_receipt(operation, receipt), receipt)
-        receipt["controlled_test_override"]["applied"] = False
-        with self.assertRaises(ExecutionApiError) as captured:
-            validate_external_receipt(operation, receipt)
-        self.assertEqual(
-            captured.exception.code,
-            "legacy_special_wool_machine_document_invalid",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
