@@ -966,6 +966,139 @@
   padding: 8px 0;
 }
 
+.execution-result-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.execution-result-files + .execution-result-summary {
+  margin-top: 12px;
+}
+
+.execution-result-section {
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #e7ebf1;
+  border-radius: 10px;
+}
+
+.execution-result-section__head {
+  padding: 7px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #f8fafc;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.execution-result-section__head strong {
+  color: var(--execution-ink);
+  font-size: 12px;
+}
+
+.execution-result-section__head .ant-tag {
+  margin-inline-end: 0;
+}
+
+.execution-result-section__file-icon {
+  color: #4969c7;
+}
+
+.execution-result-section__body {
+  padding: 9px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.execution-result-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.execution-result-row__label {
+  flex: 0 0 auto;
+  color: var(--execution-muted);
+  font-size: 11px;
+}
+
+.execution-result-row__value {
+  min-width: 0;
+  flex: 1;
+  color: var(--execution-ink);
+  word-break: break-all;
+}
+
+.execution-result-row__value .ant-tag {
+  margin-inline-end: 0;
+}
+
+.execution-result-file-line {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.execution-result-file-line strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--execution-ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-result-file-line .ant-typography {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.execution-result-muted {
+  font-size: 12px;
+}
+
+.execution-result-other {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.execution-result-other .ant-typography {
+  font-size: 11px;
+}
+
+.execution-result-other pre,
+.execution-result-raw pre {
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  background: #f6f8fb;
+  border: 1px solid #e7ebf1;
+  border-radius: 6px;
+}
+
+.execution-result-other pre {
+  max-height: 160px;
+}
+
+.execution-result-raw .ant-collapse-header {
+  padding: 4px 2px !important;
+  color: var(--execution-muted);
+  font-size: 12px;
+}
+
+.execution-result-raw pre {
+  max-height: 320px;
+}
+
 .execution-result-files {
   display: flex;
   flex-direction: column;

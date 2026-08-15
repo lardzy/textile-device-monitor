@@ -55,6 +55,7 @@ import ExecutionResultFiles, {
   extractExecutionResultFiles,
   extractPrimaryFileId,
 } from './ExecutionResultFiles';
+import ExecutionResultSummary from './ExecutionResultSummary';
 import HumanTaskCard from './HumanTaskCard';
 import SchemaFields from './SchemaFields';
 import WorkflowCanvas from './WorkflowCanvas';
@@ -62,6 +63,16 @@ import useExecutionEvents from './useExecutionEvents';
 import './execution.css';
 
 const { Text, Title } = Typography;
+
+// 已由结果文件卡片展示的输出键，结构化摘要中跳过以避免重复。
+const FILE_RESULT_OUTPUT_KEYS = new Set([
+  'selected_files',
+  'primary_file',
+  'qualitative_result',
+  'result_files',
+  'results',
+  'selection',
+]);
 
 const RUN_STATUS = {
   created: { label: '已创建', color: 'default' },
@@ -458,21 +469,24 @@ export default function ExecutionRunWorkspace() {
       label: '执行结果',
       children: (
         <div className="execution-result-panel">
-          {resultFiles.length ? (
+          {resultFiles.length > 0 && (
             <ExecutionResultFiles
               files={resultFiles}
               primaryId={primaryResultFileId}
             />
-          ) : Object.keys(snapshot.outputs || {}).length ? (
-            <Descriptions column={1} size="small">
-              {Object.entries(snapshot.outputs || {}).map(([key, value]) => (
-                <Descriptions.Item key={key} label={key}>
-                  {typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}
-                </Descriptions.Item>
-              ))}
-            </Descriptions>
+          )}
+          {Object.keys(snapshot.outputs || {}).length ? (
+            <ExecutionResultSummary
+              outputs={snapshot.outputs}
+              skipKeys={resultFiles.length ? FILE_RESULT_OUTPUT_KEYS : undefined}
+            />
           ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="节点完成后将在这里显示输出" />
+            !resultFiles.length && (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="节点完成后将在这里显示输出"
+              />
+            )
           )}
         </div>
       ),
