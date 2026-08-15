@@ -29,7 +29,7 @@ namespace LegacyFibreCheckWriter
             Run("review_main_id_binding_rejects_replacement", ReviewMainIdBindingRejectsReplacement);
             Run("inspector_must_match_login_staff", InspectorMustMatchLoginStaff);
             Run("business_text_comparison_trims_edges", BusinessTextComparisonTrimsEdges);
-            Run("image_inspector_uses_authenticated_staff", ImageInspectorUsesAuthenticatedStaff);
+            Run("inspector_uses_authenticated_staff", InspectorUsesAuthenticatedStaff);
             Run("project_check_count_accepts_matching_multicopy_task", ProjectCheckCountAcceptsMatchingMulticopyTask);
             Run("project_check_count_rejects_signed_drift", ProjectCheckCountRejectsSignedDrift);
             Run("project_check_count_rejects_invalid_values", ProjectCheckCountRejectsInvalidValues);
@@ -232,11 +232,11 @@ namespace LegacyFibreCheckWriter
                 string.Empty, "staff-lisy"));
         }
 
-        private static void ImageInspectorUsesAuthenticatedStaff()
+        private static void InspectorUsesAuthenticatedStaff()
         {
             string name;
             string id;
-            True(SpecialWoolContracts.TryBindImageInspectorToAuthenticatedStaff(
+            True(SpecialWoolContracts.TryBindInspectorToAuthenticatedStaff(
                 "执行系统管理员",
                 " 李舒洋 ",
                 "staff-lisy",
@@ -246,7 +246,7 @@ namespace LegacyFibreCheckWriter
             Equal("staff-lisy", id);
             True(SpecialWoolContracts.MatchesLoginInspector(
                 name, id, "李舒洋", "staff-lisy"));
-            True(!SpecialWoolContracts.TryBindImageInspectorToAuthenticatedStaff(
+            True(!SpecialWoolContracts.TryBindInspectorToAuthenticatedStaff(
                 "执行系统管理员",
                 "",
                 "staff-lisy",

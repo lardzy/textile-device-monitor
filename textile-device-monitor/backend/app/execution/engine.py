@@ -788,24 +788,18 @@ def _normalize_human_submission(
             submitted_basis = " ".join(
                 str(data.get("judge_basis") or "").strip().split()
             )
-            if len(basis_options) == 1:
+            if submitted_basis:
+                # 候选仅供快捷选择，允许人工改写——判定依据写入的是 Excel
+                # 文本单元格，不受旧系统下拉框约束。
+                judge_basis = submitted_basis
+            elif len(basis_options) == 1:
                 judge_basis = basis_options[0]
-            elif basis_options:
-                if submitted_basis not in basis_options:
-                    raise ExecutionApiError(
-                        422,
-                        "microscopy_judge_basis_invalid",
-                        "请选择任务单中提供的判定依据",
-                    )
-                judge_basis = submitted_basis
             else:
-                if not submitted_basis:
-                    raise ExecutionApiError(
-                        422,
-                        "microscopy_judge_basis_required",
-                        "任务单要求判定，请填写判定依据",
-                    )
-                judge_basis = submitted_basis
+                raise ExecutionApiError(
+                    422,
+                    "microscopy_judge_basis_required",
+                    "任务单要求判定，请填写判定依据",
+                )
             indicator_requirement = " ".join(
                 str(data.get("indicator_requirement") or "").strip().split()
             )

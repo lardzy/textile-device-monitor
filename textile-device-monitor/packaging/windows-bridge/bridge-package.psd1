@@ -1,4 +1,4 @@
-﻿# 构建机路径与物料配置。默认值对应当前 Parallels Windows 11 构建机；
+# 构建机路径与物料配置。默认值对应当前 Parallels Windows 11 构建机；
 # 换机器/换源码包时只需改这里或同名覆盖文件，不要改 Build-BridgePackage.ps1。
 @{
     # 安装包版本号（写入 version.auto.iss、manifest 与安装包文件名）
@@ -23,7 +23,7 @@
     # Writer 源可执行文件 SHA-256 钉值：与本次验收通过的编译产物绑定。
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
-        'FibreCheckWriter.exe'           = '3bd826efcf2f606b9c15d3e77900de4d713c8ef6f49d0bee659cc6152c791b41'
+        'FibreCheckWriter.exe'           = 'e99da7ea028c93dad5f13934e7c5a0f90525092264b199cbb9e80d8b9a633108'
         'FibreCheckFinalEntryWriter.exe' = 'a8349314c8116c499e751872e2948d8a4fdb53788113cf43dee043f2d0127a8b'
     }
 

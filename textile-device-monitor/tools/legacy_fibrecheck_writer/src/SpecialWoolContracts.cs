@@ -178,17 +178,18 @@ namespace LegacyFibreCheckWriter
                     StringComparison.Ordinal);
         }
 
-        internal static bool TryBindImageInspectorToAuthenticatedStaff(
+        internal static bool TryBindInspectorToAuthenticatedStaff(
             string executionActorDisplayName,
             string loginChineseName,
             string loginStaffId,
             out string inspectorName,
             out string inspectorId)
         {
-            // 图片类原始记录由当前凭据登录旧系统后写入。执行系统账号的
-            // display_name 只用于审计，不能拿它去旧库 User.ChineseName 做二次
-            // 映射；二者并不要求同名（例如内置“执行系统管理员”账号）。
-            // 已认证的旧系统 Staff 是实际 CheckUser1 的唯一权威来源。
+            // 原始记录由当前凭据登录旧系统后写入，旧系统账号是所有旧系统流程
+            // 的通用身份。执行系统账号的 display_name 只用于审计，不能拿它去
+            // 旧库 User.ChineseName 做二次映射；二者并不要求同名（例如内置
+            // “执行系统管理员”账号）。已认证的旧系统 Staff 是实际 CheckUser1
+            // 的唯一权威来源。
             inspectorName = NormalizeBusinessText(loginChineseName);
             inspectorId = NormalizeBusinessText(loginStaffId);
             return !string.IsNullOrWhiteSpace(executionActorDisplayName)

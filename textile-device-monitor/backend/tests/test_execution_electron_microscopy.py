@@ -231,6 +231,51 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.assertEqual(normalized["test_result"], "符合指标要求")
         self.assertEqual(normalized["remark"], "无")
 
+    def test_record_input_accepts_edited_judge_basis_beyond_task_options(self):
+        project = {
+            "project_key": "project-basis-edit",
+            "check_count": 1,
+            "sample_identify": "正面",
+            "give_judgement": 1,
+            "check_basis_options": ["GB/T 36422-2018", "FZ/T 01057-2007"],
+        }
+        normalized = self._normalize_record_input(
+            project,
+            {
+                "sample_name": "示例样品",
+                "sample_identity": "正面",
+                "sample_identity_confirmed": True,
+                "judge_basis": "GB/T 36422-2018（客户补充协议）",
+                "indicator_requirement": "纤维表面形貌清晰",
+                "test_result": "符合指标要求",
+                "judgement": "符合",
+            },
+        )
+        self.assertEqual(
+            normalized["judge_basis"], "GB/T 36422-2018（客户补充协议）"
+        )
+
+    def test_record_input_auto_fills_single_judge_basis_option(self):
+        project = {
+            "project_key": "project-basis-auto",
+            "check_count": 1,
+            "sample_identify": "正面",
+            "give_judgement": 1,
+        }
+        normalized = self._normalize_record_input(
+            project,
+            {
+                "sample_name": "示例样品",
+                "sample_identity": "正面",
+                "sample_identity_confirmed": True,
+                "indicator_requirement": "纤维表面形貌清晰",
+                "test_result": "符合指标要求",
+                "judgement": "符合",
+            },
+        )
+        # record_context 里只有单条候选 “GB/T 36422-2018”，未提交时自动填入。
+        self.assertEqual(normalized["judge_basis"], "GB/T 36422-2018")
+
     def test_record_input_splits_three_delimiters_and_warns_without_stopping(self):
         project = {
             "project_key": "project-many",

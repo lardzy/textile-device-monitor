@@ -190,9 +190,9 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
         && currentIdentity === identities[0]
         ? currentIdentityConfirmed
         : undefined,
-      judge_basis: judgementRequired && basisOptions.length === 1
-        ? basisOptions[0]
-        : basisOptions.includes(currentBasis) ? currentBasis : undefined,
+      judge_basis: judgementRequired
+        ? currentBasis || (basisOptions.length === 1 ? basisOptions[0] : undefined)
+        : undefined,
       indicator_requirement: judgementRequired
         ? currentIndicator || selectedProject?.indicator_requirement || undefined
         : undefined,
@@ -365,25 +365,16 @@ const MicroscopyRecordInput = ({ form, inputData, disabled }) => {
               <Text type="secondary">任务单已要求判定</Text>
             </div>
           </div>
-          {basisOptions.length === 1 ? (
-            <>
-              <Descriptions size="small" bordered column={1}>
-                <Descriptions.Item label="判定依据">
-                  {basisOptions[0]}
-                  <Tag color="green" className="execution-microscopy-record__automatic">已自动填入</Tag>
-                </Descriptions.Item>
-              </Descriptions>
-              <Form.Item name="judge_basis" hidden>
-                <Input />
-              </Form.Item>
-            </>
-          ) : basisOptions.length > 1 ? (
+          {basisOptions.length > 0 ? (
             <Form.Item
               name="judge_basis"
               label="判定依据"
-              rules={[{ required: true, message: '请选择判定依据' }]}
+              extra={basisOptions.length === 1
+                ? '任务单唯一判定依据已自动填入，可按需修改。'
+                : '可选择任务单候选，也可直接修改填写。'}
+              rules={[{ required: true, whitespace: true, message: '请填写判定依据' }]}
             >
-              <Select
+              <AutoComplete
                 disabled={disabled}
                 options={basisOptions.map(value => ({ value, label: value }))}
               />

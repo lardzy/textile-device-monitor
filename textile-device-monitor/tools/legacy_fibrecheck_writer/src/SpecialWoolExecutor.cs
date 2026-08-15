@@ -231,7 +231,7 @@ namespace LegacyFibreCheckWriter
                     return PackageFailure(result, emit, projectError);
                 }
 
-                if (!SpecialWoolContracts.TryBindImageInspectorToAuthenticatedStaff(
+                if (!SpecialWoolContracts.TryBindInspectorToAuthenticatedStaff(
                     inspectorName,
                     staff.ChineseName,
                     staff.Id,
@@ -591,38 +591,21 @@ namespace LegacyFibreCheckWriter
                     { "check_item_id", Redact.HashId(project.CheckItemId) },
                 });
 
-                if (imageUpload)
+                // 检验员统一绑定到已认证的旧系统 Staff：旧系统账号是所有旧系统
+                // 流程的通用身份，执行系统账号的显示名只用于审计（与图片上传一致）。
+                if (!SpecialWoolContracts.TryBindInspectorToAuthenticatedStaff(
+                    inspectorName,
+                    staff.ChineseName,
+                    staff.Id,
+                    out inspectorName,
+                    out inspectorId))
                 {
-                    if (!SpecialWoolContracts.TryBindImageInspectorToAuthenticatedStaff(
-                        inspectorName,
-                        staff.ChineseName,
-                        staff.Id,
-                        out inspectorName,
-                        out inspectorId))
-                    {
-                        result.Receipt["error"] = "authenticated_inspector_missing";
-                        return UploadExecutor.Finish(
-                            result,
-                            ExitCodes.InspectorMappingFailed,
-                            null,
-                            emit);
-                    }
-                }
-                else
-                {
-                    var inspector = LegacyLoginFlow.ResolveInspector(
-                        db, inspectorName);
-                    if (inspector.Value != "unique")
-                    {
-                        result.Receipt["error"] =
-                            "inspector_not_unique:" + inspector.Value;
-                        return UploadExecutor.Finish(
-                            result,
-                            ExitCodes.InspectorMappingFailed,
-                            null,
-                            emit);
-                    }
-                    inspectorId = inspector.Key;
+                    result.Receipt["error"] = "authenticated_inspector_missing";
+                    return UploadExecutor.Finish(
+                        result,
+                        ExitCodes.InspectorMappingFailed,
+                        null,
+                        emit);
                 }
                 if (!SpecialWoolContracts.MatchesLoginInspector(
                     inspectorName,
