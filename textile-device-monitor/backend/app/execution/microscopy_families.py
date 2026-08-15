@@ -238,8 +238,26 @@ def _normalized_lookup_text(value: object) -> str:
 def microscopy_family_for_project(
     check_item_no: object,
     check_item_name: object,
+    db: object = None,
 ) -> Optional[MicroscopyRecordFamily]:
-    """Exact fail-closed lookup used by the external write gates."""
+    """Exact fail-closed lookup used by the external write gates.
+
+    With a database session the lookup is governed by the admin-editable
+    project rules (``binding`` facts), so rule edits reach the write path;
+    without one it falls back to the code constants (pure/test contexts).
+    """
+
+    if db is not None:
+        from app.execution.project_rules import rule_for_facts
+
+        rule = rule_for_facts(
+            db,
+            check_item_no=check_item_no,
+            check_item_name=check_item_name,
+        )
+        if rule is None:
+            return None
+        return microscopy_family_for_key(rule.binding.get("family_key"))
 
     no = _normalized_lookup_text(check_item_no)
     name = _normalized_lookup_text(check_item_name)

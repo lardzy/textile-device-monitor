@@ -798,8 +798,10 @@ def register_persistence_executors() -> None:
         register_electron_microscopy_executors,
     )
     from app.execution.paper_fiber import register_paper_fiber_executors
+    from app.execution.project_rules import register_project_rule_executors
 
     register_regenerated_fiber_executors()
     register_electron_microscopy_executors()
     register_paper_fiber_executors()
+    register_project_rule_executors()
     _EXECUTORS_REGISTERED = True

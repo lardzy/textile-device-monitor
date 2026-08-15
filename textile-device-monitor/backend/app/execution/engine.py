@@ -19,6 +19,7 @@ from app.execution.electron_microscopy import (
     request_task_snapshot_refresh,
 )
 from app.execution.microscopy_families import microscopy_family_from_config
+from app.execution.project_rules import microscopy_rule_key, resolve_rule
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
     LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
@@ -644,9 +645,18 @@ def _normalize_human_submission(
                 )
             matched_task_conditions = _task_project_conditions(
                 task_snapshot,
-                family=microscopy_family_from_config(
-                    {"record_family": node_run.input_data.get("record_family")}
-                ),
+                task_facts=resolve_rule(
+                    db,
+                    microscopy_rule_key(
+                        microscopy_family_from_config(
+                            {
+                                "record_family": node_run.input_data.get(
+                                    "record_family"
+                                )
+                            }
+                        ).key
+                    ),
+                ).task_facts,
             )
             missing_task_conditions = [
                 item

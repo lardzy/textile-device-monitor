@@ -1,5 +1,19 @@
 # 头脑风暴变更日志
 
+## 2026-08-15：项目匹配规则配置化（流程管理实时可编辑）
+
+- 编号 → 项目类型的匹配规则（项目名别名、测试方法、目录策略、结果探针）
+  从代码常量迁移到新表 `execution_project_rules`（迁移 0007），管理员在
+  流程管理/设计器中实时编辑、保存即生效；详见 `14_项目匹配规则配置化.md`。
+- 三个匹配器改为从规则表取事实；profile 缓存按 `rule_revision` 自动失效；
+  新增通用节点 `core.project_match` 与节点 config `match_rule` 参数
+  （`x-param-type: project_rule_ref`）；节点输出钉 `rule_key/rule_revision`。
+- 写门禁经 `rule_for_facts` 反查（电镜按 binding 编号+名称，纸类按规则
+  项目名/方法）；模板绑定 SHA256 与写入契约常量仍代码钉死。
+- API：`GET/PUT /project-rules[/{key}]`、`POST /project-rules/test` 干跑；
+  PUT 校验配置、revision+1、写审计日志。
+- 后端 580（+13）、前端 118（+3）全绿；既有匹配结果等价复现。
+
 ## 2026-08-15：移除样品识别单值确认勾选
 
 - 电镜/横截面“确认原始记录信息”与纸类“确认样品识别与判定信息”在任务单

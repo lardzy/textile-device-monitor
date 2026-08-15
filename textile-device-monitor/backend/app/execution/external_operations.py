@@ -32,6 +32,11 @@ from app.execution.microscopy_check_record import (
 from app.execution.microscopy_original_record import (
     MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME,
 )
+from app.execution.project_rules import (
+    PAPER_FIBER_RULE_KEY,
+    normalized_fact,
+    resolve_rule,
+)
 from app.execution.models import (
     ExecutionCredential,
     ExecutionArtifact,
@@ -444,9 +449,28 @@ def _validated_microscopy_project_binding(
 
 def _validated_paper_project_binding(
     input_data: dict[str, Any],
+    rule=None,
 ) -> dict[str, Any]:
-    """Validate the exact cached task project selected by the paper reader."""
+    """Validate the exact cached task project selected by the paper reader.
 
+    The accepted item name / test method come from the admin-editable
+    project rule when provided; the code constants remain the fallback.
+    """
+
+    if rule is not None:
+        allowed_names = {
+            normalized_fact(value)
+            for value in rule.fact_values("task_item_name")
+        } or {normalized_fact(PAPER_FIBER_PROJECT_NAME)}
+        method_values = rule.fact_values("test_method")
+        expected_method = (
+            normalized_fact(method_values[0])
+            if method_values
+            else normalized_fact(PAPER_FIBER_TEST_METHOD)
+        )
+    else:
+        allowed_names = {normalized_fact(PAPER_FIBER_PROJECT_NAME)}
+        expected_method = normalized_fact(PAPER_FIBER_TEST_METHOD)
     selected_key = str(input_data.get("selected_project_key") or "").strip()
     selected = input_data.get("selected_project")
     if not _TASK_PROJECT_KEY_RE.fullmatch(selected_key) or not isinstance(
@@ -472,8 +496,8 @@ def _validated_paper_project_binding(
         str(selected.get("project_key") or "").strip() != selected_key
         or not _REDACTED_LEGACY_ID_RE.fullmatch(task_check_item_id)
         or not _REDACTED_LEGACY_ID_RE.fullmatch(check_item_id)
-        or check_item_name != PAPER_FIBER_PROJECT_NAME
-        or check_method != PAPER_FIBER_TEST_METHOD
+        or check_item_name not in allowed_names
+        or check_method != expected_method
         or not isinstance(seq_num, int)
         or isinstance(seq_num, bool)
         or seq_num < 0
@@ -4433,7 +4457,9 @@ def prepare_legacy_microscopy_check_record_entry_operation(
     )
     project = _validated_microscopy_project_binding(input_data)
     project_family = microscopy_family_for_project(
-        project.get("check_item_no"), project.get("check_item_name")
+        project.get("check_item_no"),
+        project.get("check_item_name"),
+        db=db,
     )
     if project_family is None:
         raise ExecutionApiError(
@@ -4833,7 +4859,10 @@ def prepare_legacy_special_wool_qualitative_upload_operation(
     remote_business_key = lock_legacy_remote_business_scope(
         db, sample_number=target_number
     )
-    project = _validated_paper_project_binding(input_data)
+    project = _validated_paper_project_binding(
+        input_data,
+        rule=resolve_rule(db, PAPER_FIBER_RULE_KEY),
+    )
     file_row, inspector, result_value, unit = _selected_paper_file_row(
         db, run=run, input_data=input_data
     )
@@ -5106,7 +5135,10 @@ def prepare_legacy_generic_check_record_entry_operation(
     remote_business_key = lock_legacy_remote_business_scope(
         db, sample_number=source_number
     )
-    project = _validated_paper_project_binding(input_data)
+    project = _validated_paper_project_binding(
+        input_data,
+        rule=resolve_rule(db, PAPER_FIBER_RULE_KEY),
+    )
     source_review = _completed_paper_review_source(
         db, run=run, input_data=input_data
     )

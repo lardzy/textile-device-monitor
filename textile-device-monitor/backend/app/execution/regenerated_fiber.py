@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Optional
 
@@ -16,6 +16,10 @@ from app.execution.models import (
     ExecutionWorkflow,
     ExecutionWorkflowVersion,
     utcnow,
+)
+from app.execution.project_rules import (
+    REGENERATED_RULE_KEYS,
+    resolve_rule,
 )
 from app.execution.registry import node_registry
 from app.execution.storage import ArtifactRef, FileGateway, StorageError
@@ -198,6 +202,7 @@ def _profile_for_entry(
     *,
     rule: RegeneratedFiberRule,
     gateway: FileGateway,
+    rule_revision: int,
 ) -> tuple[dict[str, Any], bool]:
     metadata = dict(entry.metadata_json or {})
     profiles = dict(metadata.get("workbook_profiles") or {})
@@ -205,6 +210,7 @@ def _profile_for_entry(
     if (
         isinstance(cached, dict)
         and cached.get("rule_version") == rule.version
+        and cached.get("rule_revision") == rule_revision
         and cached.get("fingerprint") == entry.fingerprint
         and cached.get("status") in DETERMINISTIC_PROFILE_STATUSES
     ):
@@ -230,6 +236,7 @@ def _profile_for_entry(
     profile.update(
         {
             "rule_version": rule.version,
+            "rule_revision": rule_revision,
             "fingerprint": entry.fingerprint,
             "checked_at": utcnow().isoformat(),
         }
@@ -332,14 +339,46 @@ def match_regenerated_fiber_workbooks(
     inspection_number: str,
     gateway: Optional[FileGateway] = None,
     result_limit: int = 6,
+    rule_key: Optional[str] = None,
+    project_rule=None,
 ) -> dict[str, Any]:
-    rule = REGENERATED_FIBER_RULES.get(node_type)
-    if rule is None:
+    legacy_rule = REGENERATED_FIBER_RULES.get(node_type)
+    if legacy_rule is None:
         raise ExecutionApiError(
             422,
             "regenerated_fiber_rule_unknown",
             "未知的再生纤文件识别规则",
         )
+    project_rule = project_rule or resolve_rule(
+        db,
+        rule_key or REGENERATED_RULE_KEYS[node_type],
+    )
+    if not project_rule.enabled:
+        return {
+            "root_id": project_rule.source_root_id,
+            "index_state": "rule_disabled",
+            "filename_match_count": 0,
+            "worksheet_match_count": 0,
+            "full_match_count": 0,
+            "candidates": [],
+            "best_file_conditions": [],
+            "cache_updated": False,
+            "query_state": "empty",
+            "rule_key": project_rule.key,
+            "rule_revision": project_rule.revision,
+        }
+    # 代码 dataclass 仍是结果读取/缓存形状的事实源；项目规则表覆盖
+    # root_id 与工作表探针（管理员可编辑部分）。
+    worksheet_probe = project_rule.probe("worksheet_check")
+    rule = replace(
+        legacy_rule,
+        root_id=project_rule.source_root_id or legacy_rule.root_id,
+        worksheet=(
+            worksheet_probe.sheet
+            if worksheet_probe is not None and worksheet_probe.sheet
+            else legacy_rule.worksheet
+        ),
+    )
 
     query_text = str(inspection_number or "").strip()
     root = (
@@ -469,6 +508,7 @@ def match_regenerated_fiber_workbooks(
             entry,
             rule=rule,
             gateway=gateway,
+            rule_revision=project_rule.revision,
         )
         cache_updated = cache_updated or changed
         conditions = ["filename"]
@@ -510,6 +550,8 @@ def match_regenerated_fiber_workbooks(
         "best_file_conditions": best_file_conditions,
         "cache_updated": cache_updated,
         "query_state": "validated",
+        "rule_key": project_rule.key,
+        "rule_revision": project_rule.revision,
     }
 
 
@@ -569,6 +611,23 @@ def _specialized_record_family(
             and node.get("type") == node_type
         ):
             value = (node.get("config") or {}).get("record_family")
+            return str(value).strip() if value else None
+    return None
+
+
+def _specialized_match_rule(
+    definition: dict[str, Any],
+    node_type: str,
+) -> Optional[str]:
+    """Return the discover node's pinned ``match_rule`` override, if any."""
+
+    for node in definition.get("nodes") or []:
+        if (
+            isinstance(node, dict)
+            and node.get("disabled") is not True
+            and node.get("type") == node_type
+        ):
+            value = (node.get("config") or {}).get("match_rule")
             return str(value).strip() if value else None
     return None
 
@@ -727,6 +786,11 @@ def catalog_recommendations(
             score += 1
 
         node_type = _specialized_node_type(definition)
+        match_rule_key = (
+            _specialized_match_rule(definition, node_type)
+            if node_type is not None
+            else None
+        )
         candidate_count = 0
         candidate_preview: Optional[dict[str, Any]] = None
         index_state = "ready"
@@ -748,12 +812,14 @@ def catalog_recommendations(
         if node_type == "file.paper_fiber_gbt4688_qualitative":
             from app.execution.paper_fiber import paper_fiber_match
 
-            if node_type not in match_cache:
-                match_cache[node_type] = paper_fiber_match(
+            cache_key = (node_type, match_rule_key)
+            if cache_key not in match_cache:
+                match_cache[cache_key] = paper_fiber_match(
                     db,
                     inspection_number=inspection_number,
+                    rule_key=match_rule_key,
                 )
-            match = match_cache[node_type]
+            match = match_cache[cache_key]
             any_cache_updated = any_cache_updated or bool(
                 match["cache_updated"]
             )
@@ -783,12 +849,17 @@ def catalog_recommendations(
             family = microscopy_family_for_key(
                 _specialized_record_family(definition, node_type)
             )
-            cache_key = (node_type, family.key if family else None)
+            cache_key = (
+                node_type,
+                family.key if family else None,
+                match_rule_key,
+            )
             if cache_key not in match_cache:
                 match_cache[cache_key] = electron_microscopy_match(
                     db,
                     inspection_number=inspection_number,
                     family=family,
+                    rule_key=match_rule_key,
                 )
             match = match_cache[cache_key]
             any_cache_updated = any_cache_updated or bool(
@@ -820,13 +891,15 @@ def catalog_recommendations(
             full_match = bool(match["full_match"])
             task_cache_state = str(match["task_cache_state"])
         elif node_type is not None:
-            if node_type not in match_cache:
-                match_cache[node_type] = match_regenerated_fiber_workbooks(
+            cache_key = (node_type, match_rule_key)
+            if cache_key not in match_cache:
+                match_cache[cache_key] = match_regenerated_fiber_workbooks(
                     db,
                     node_type=node_type,
                     inspection_number=inspection_number,
+                    rule_key=match_rule_key,
                 )
-            match = match_cache[node_type]
+            match = match_cache[cache_key]
             any_cache_updated = (
                 any_cache_updated or bool(match["cache_updated"])
             )
@@ -890,7 +963,10 @@ def catalog_recommendations(
             elif "pending" in root_states:
                 index_state = "pending"
 
-        if index_state == "unavailable":
+        if index_state == "rule_disabled":
+            state = "rule_disabled"
+            runnable = False
+        elif index_state == "unavailable":
             state = "index_unavailable"
         elif index_state == "failed":
             state = "index_failed"
@@ -956,6 +1032,7 @@ def _regenerated_fiber_executor(context) -> dict[str, Any]:
             or context.run.inspection_number
         ),
         result_limit=min(int(config.get("limit", 6)), 6),
+        rule_key=str(config.get("match_rule") or "").strip() or None,
     )
     if not result["candidates"]:
         details = {
@@ -985,6 +1062,8 @@ def _regenerated_fiber_executor(context) -> dict[str, Any]:
             "full_match_count": result["full_match_count"],
         },
         "query_state": result["query_state"],
+        "rule_key": result.get("rule_key"),
+        "rule_revision": result.get("rule_revision"),
     }
 
 

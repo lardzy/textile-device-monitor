@@ -26,6 +26,7 @@ import {
 } from '../../api/execution';
 import { createDefaultDefinition } from '../../utils/executionWorkflow';
 import ExecutionChrome from './ExecutionChrome';
+import ExecutionProjectRuleEditor from './ExecutionProjectRuleEditor';
 import './execution.css';
 
 const { Text } = Typography;
@@ -39,6 +40,7 @@ export default function ExecutionWorkflowAdmin() {
   const [error, setError] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [ruleEditorKey, setRuleEditorKey] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -109,6 +111,15 @@ export default function ExecutionWorkflowAdmin() {
         <div className="execution-admin-workflow-name">
           <Text strong>{value || row.title}</Text>
           <Text type="secondary">{row.description || '暂无说明'}</Text>
+          {row.match_rule && (
+            <Text type="secondary">
+              匹配规则：{row.match_rule.display_name || row.match_rule.rule_key}
+              {row.match_rule.revision ? `（rev ${row.match_rule.revision}）` : ''}
+              {row.match_rule.enabled === false && (
+                <Tag color="warning" style={{ marginLeft: 4 }}>已停用</Tag>
+              )}
+            </Text>
+          )}
         </div>
       ),
     },
@@ -145,15 +156,25 @@ export default function ExecutionWorkflowAdmin() {
     {
       title: '操作',
       key: 'actions',
-      width: 110,
+      width: 200,
       render: (_, row) => (
-        <Button
-          type="link"
-          icon={<EditOutlined />}
-          onClick={() => navigate(`/execution/admin/workflows/${row.id || row.workflow_id}`)}
-        >
-          设计
-        </Button>
+        <Space size={0}>
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => navigate(`/execution/admin/workflows/${row.id || row.workflow_id}`)}
+          >
+            设计
+          </Button>
+          {row.match_rule?.rule_key && (
+            <Button
+              type="link"
+              onClick={() => setRuleEditorKey(row.match_rule.rule_key)}
+            >
+              匹配规则
+            </Button>
+          )}
+        </Space>
       ),
     },
   ];
@@ -213,6 +234,16 @@ export default function ExecutionWorkflowAdmin() {
           </Form.Item>
         </Form>
       </Modal>
+      <ExecutionProjectRuleEditor
+        open={Boolean(ruleEditorKey)}
+        ruleKey={ruleEditorKey}
+        onClose={(saved) => {
+          setRuleEditorKey(null);
+          if (saved) {
+            load();
+          }
+        }}
+      />
     </div>
   );
 }

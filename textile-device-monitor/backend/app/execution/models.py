@@ -775,6 +775,35 @@ class ExecutionTaskSnapshotCache(Base):
     )
 
 
+class ExecutionProjectRule(Base):
+    """Admin-editable inspection-number → project-type matching rule.
+
+    The rule carries discovery-time facts only: folder match strategy, task
+    fact conditions (project name aliases / test method) and read probes.
+    Template bindings and write gates remain code-pinned; editing a rule
+    bumps ``revision`` which invalidates derived caches (e.g. workbook
+    read profiles) without touching the immutable workflow definitions.
+    """
+
+    __tablename__ = "execution_project_rules"
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    rule_key = Column(String(100), nullable=False, unique=True, index=True)
+    display_name = Column(String(200), nullable=False)
+    category_key = Column(String(50), index=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    revision = Column(Integer, nullable=False, default=1)
+    config = Column(JSON_VARIANT, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )
+    updated_by_id = Column(String(36), ForeignKey("execution_users.id"))
+
+
 class ExecutionIndexJob(Base):
     __tablename__ = "execution_index_jobs"
     __table_args__ = (

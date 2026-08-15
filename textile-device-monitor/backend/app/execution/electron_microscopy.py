@@ -27,6 +27,12 @@ from app.execution.models import (
     ExecutionTaskSnapshotCache,
     utcnow,
 )
+from app.execution.project_rules import (
+    evaluate_task_facts,
+    list_rules,
+    microscopy_rule_key,
+    resolve_rule,
+)
 from app.execution.registry import node_registry
 
 
@@ -655,30 +661,10 @@ def _indexed_electron_images(
 def _task_project_conditions(
     snapshot: Optional[dict[str, Any]],
     *,
-    family=None,
+    task_facts=(),
 ) -> list[str]:
-    resolved_family = family or MICROSCOPY_RECORD_FAMILIES[
-        MICROSCOPY_FAMILY_KEY
-    ]
-    best: list[str] = []
-    for project in (snapshot or {}).get("projects") or []:
-        if not isinstance(project, dict):
-            continue
-        conditions: list[str] = []
-        if _normalized_fact(project.get("check_item_name")) in {
-            _normalized_fact(value)
-            for value in resolved_family.project_name_aliases
-        }:
-            conditions.append("task_item_name")
-        if _normalized_fact(project.get("check_method")) == _normalized_fact(
-            resolved_family.test_method
-        ):
-            conditions.append("test_method")
-        if len(conditions) > len(best):
-            best = conditions
-        if len(best) == 2:
-            break
-    return best
+    conditions, _matched = evaluate_task_facts(snapshot, task_facts)
+    return conditions
 
 
 def task_snapshot_status(
@@ -688,24 +674,22 @@ def task_snapshot_status(
 ) -> dict[str, Any]:
     """Return a small, polling-safe status contract for the human task UI.
 
-    Task conditions are evaluated against every built-in flow's project
-    rules (electron microscopy and GB/T 4688 paper fibre) and the best
-    match wins, so a paper-fibre task no longer reports its item name and
-    test method as missing just because they are not microscopy aliases.
+    Task conditions are evaluated against every enabled project rule, so a
+    paper-fibre task no longer reports its item name and test method as
+    missing just because they are not microscopy aliases — and admin-edited
+    aliases take effect immediately.
     """
 
     cached = cached_task_snapshot(db, inspection_number=inspection_number)
     snapshot = cached.get("snapshot")
-    matched = _task_project_conditions(snapshot)
-    for family in MICROSCOPY_RECORD_FAMILIES.values():
-        conditions = _task_project_conditions(snapshot, family=family)
+    matched: list[str] = []
+    for rule in list_rules(db, enabled_only=True):
+        conditions = _task_project_conditions(
+            snapshot,
+            task_facts=rule.task_facts,
+        )
         if len(conditions) > len(matched):
             matched = conditions
-    from app.execution.paper_fiber import paper_task_project_match
-
-    paper_conditions, _matched_project = paper_task_project_match(snapshot)
-    if len(paper_conditions) > len(matched):
-        matched = paper_conditions
     missing = [
         item
         for item in ("task_item_name", "test_method")
@@ -731,11 +715,30 @@ def electron_microscopy_match(
     *,
     inspection_number: str,
     family=None,
+    rule_key: Optional[str] = None,
+    rule=None,
 ) -> dict[str, Any]:
     resolved_family = family or MICROSCOPY_RECORD_FAMILIES[
         MICROSCOPY_FAMILY_KEY
     ]
+    rule = rule or resolve_rule(
+        db,
+        rule_key or microscopy_rule_key(resolved_family.key),
+    )
     images = _indexed_electron_images(db, inspection_number=inspection_number)
+    if not rule.enabled:
+        return {
+            **images,
+            "index_state": "rule_disabled",
+            "record_family": resolved_family.key,
+            "matched_conditions": [],
+            "full_match": False,
+            "task_cache_state": "disabled",
+            "task_snapshot": None,
+            "cache_updated": False,
+            "rule_key": rule.key,
+            "rule_revision": rule.revision,
+        }
     task = cached_task_snapshot(db, inspection_number=inspection_number)
     conditions: list[str] = []
     root_ready = images["index_state"] == "ready"
@@ -744,11 +747,18 @@ def electron_microscopy_match(
     if images["folder_match_count"] > 0:
         conditions.append("folder")
     conditions.extend(
-        _task_project_conditions(task.get("snapshot"), family=resolved_family)
+        _task_project_conditions(
+            task.get("snapshot"),
+            task_facts=rule.task_facts,
+        )
     )
     full_match = all(
         item in conditions
-        for item in ("source_root", "folder", "task_item_name", "test_method")
+        for item in (
+            "source_root",
+            "folder",
+            *[fact.condition_key for fact in rule.task_facts],
+        )
     )
     return {
         **images,
@@ -758,6 +768,8 @@ def electron_microscopy_match(
         "task_cache_state": task["cache_state"],
         "task_snapshot": task.get("snapshot"),
         "cache_updated": bool(task.get("refresh_queued")),
+        "rule_key": rule.key,
+        "rule_revision": rule.revision,
     }
 
 
@@ -772,6 +784,11 @@ def _electron_microscopy_executor(context) -> dict[str, Any]:
             or context.run.inspection_number
         ),
         family=family,
+        rule_key=(
+            str((context.node.get("config") or {}).get("match_rule") or "")
+            .strip()
+            or None
+        ),
     )
     missing = [
         item
@@ -817,6 +834,8 @@ def _electron_microscopy_executor(context) -> dict[str, Any]:
         ),
         "task_cache_state": match["task_cache_state"],
         "missing_conditions": missing,
+        "rule_key": match.get("rule_key"),
+        "rule_revision": match.get("rule_revision"),
     }
 
 

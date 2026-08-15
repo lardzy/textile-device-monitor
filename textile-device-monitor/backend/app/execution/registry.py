@@ -84,6 +84,14 @@ def _object_schema(
     }
 
 
+MATCH_RULE_CONFIG_PROPERTY = {
+    "type": "string",
+    "maxLength": 100,
+    # 设计器识别该扩展类型后渲染规则选择器（第 3 步表单化的元数据通道）。
+    "x-param-type": "project_rule_ref",
+}
+
+
 ROOT_QUERY_CONFIG_SCHEMA = _object_schema(
     {
         "root_id": {
@@ -122,6 +130,32 @@ def _register_builtins() -> None:
     definitions = [
         NodeType("core.start", 1, "开始", "基础", "流程入口"),
         NodeType("core.end", 1, "结束", "基础", "流程出口"),
+        NodeType(
+            "core.project_match",
+            1,
+            "编号项目匹配",
+            "基础",
+            "按项目匹配规则（流程管理中实时维护）识别编号对应的检测项目与候选资料",
+            required_config=("match_rule",),
+            config_schema=_object_schema(
+                {
+                    "match_rule": MATCH_RULE_CONFIG_PROPERTY,
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 6},
+                },
+                required=("match_rule",),
+            ),
+            input_schema=_object_schema(
+                {"inspection_number": {"type": "string"}},
+            ),
+            output_schema=_object_schema(
+                {
+                    "matched_conditions": {"type": "array"},
+                    "full_match": {"type": "boolean"},
+                    "rule_key": {"type": "string"},
+                    "rule_revision": {"type": "integer"},
+                }
+            ),
+        ),
         NodeType(
             "variables.set",
             1,
@@ -175,6 +209,7 @@ def _register_builtins() -> None:
                         "minimum": 1,
                         "maximum": 6,
                     },
+                    "match_rule": MATCH_RULE_CONFIG_PROPERTY,
                 },
                 required=("root_id",),
             ),
@@ -208,6 +243,7 @@ def _register_builtins() -> None:
                         "minimum": 1,
                         "maximum": 6,
                     },
+                    "match_rule": MATCH_RULE_CONFIG_PROPERTY,
                 },
                 required=("root_id",),
             ),
@@ -340,6 +376,7 @@ def _register_builtins() -> None:
                         "type": "string",
                         "enum": ["microscopy", "cross_section"],
                     },
+                    "match_rule": MATCH_RULE_CONFIG_PROPERTY,
                 },
                 required=("root_id",),
             ),
@@ -382,6 +419,7 @@ def _register_builtins() -> None:
                         "maximum": 6,
                     },
                     "require_full_task_match": {"type": "boolean"},
+                    "match_rule": MATCH_RULE_CONFIG_PROPERTY,
                 },
                 required=("root_id",),
             ),

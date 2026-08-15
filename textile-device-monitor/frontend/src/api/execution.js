@@ -88,6 +88,21 @@ export const getExecutionWorkflow = workflowId =>
 export const getExecutionNodeTypes = async () =>
   listPayload(await executionClient.get('/node-types'), ['items', 'node_types']);
 
+export const getExecutionFileRoots = async () =>
+  listPayload(await executionClient.get('/files/roots'), ['items']);
+
+export const getProjectRules = async () =>
+  listPayload(await executionClient.get('/project-rules'), ['items']);
+
+export const getProjectRule = ruleKey =>
+  executionClient.get(`/project-rules/${encodeURIComponent(ruleKey)}`);
+
+export const updateProjectRule = (ruleKey, payload) =>
+  executionClient.put(`/project-rules/${encodeURIComponent(ruleKey)}`, payload);
+
+export const testProjectRule = payload =>
+  executionClient.post('/project-rules/test', payload);
+
 export const createExecutionWorkflow = payload =>
   executionClient.post('/workflows', payload);
 

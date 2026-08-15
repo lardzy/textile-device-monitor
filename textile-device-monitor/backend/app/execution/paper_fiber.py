@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
 from openpyxl import load_workbook
+from openpyxl.utils import coordinate_to_tuple
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,13 @@ from app.execution.models import (
     ExecutionFileIndexEntry,
     ExecutionStorageRoot,
     utcnow,
+)
+from app.execution.project_rules import (
+    PAPER_FIBER_RULE_KEY,
+    ResolvedRule,
+    evaluate_task_facts,
+    parse_task_fact,
+    resolve_rule,
 )
 from app.execution.registry import node_registry
 from app.execution.storage import ArtifactRef, FileGateway, StorageError
@@ -89,11 +97,22 @@ def _display_value(value: Any) -> Optional[str]:
     return normalized or None
 
 
-def _read_result_profile(path: Path) -> dict[str, Any]:
+def _cell_zero_based(cell_ref: str) -> tuple[int, int]:
+    row, column = coordinate_to_tuple(cell_ref)
+    return row - 1, column - 1
+
+
+def _read_result_profile(
+    path: Path,
+    *,
+    worksheet: str = PAPER_FIBER_WORKSHEET,
+    result_cell: str = PAPER_FIBER_RESULT_CELL,
+    standard_cell: Optional[str] = PAPER_FIBER_STANDARD_SOURCE_CELL,
+) -> dict[str, Any]:
     profile: dict[str, Any] = {
         "profile_version": PAPER_FIBER_PROFILE_VERSION,
-        "worksheet": PAPER_FIBER_WORKSHEET,
-        "result_cell": PAPER_FIBER_RESULT_CELL,
+        "worksheet": worksheet,
+        "result_cell": result_cell,
         "worksheet_exists": False,
         "qualitative_result": None,
         "m32_value": None,
@@ -124,22 +143,26 @@ def _read_result_profile(path: Path) -> dict[str, Any]:
                 formatting_info=False,
             )
             try:
-                if PAPER_FIBER_WORKSHEET not in workbook.sheet_names():
+                if worksheet not in workbook.sheet_names():
                     profile["status"] = "worksheet_missing"
                     return profile
                 profile["worksheet_exists"] = True
-                sheet = workbook.sheet_by_name(PAPER_FIBER_WORKSHEET)
+                sheet = workbook.sheet_by_name(worksheet)
+                result_row, result_col = _cell_zero_based(result_cell)
                 raw_value = (
-                    sheet.cell_value(31, 22)
-                    if sheet.nrows > 31 and sheet.ncols > 22
+                    sheet.cell_value(result_row, result_col)
+                    if sheet.nrows > result_row and sheet.ncols > result_col
                     else None
                 )
-                # Sheet1!M32：判定标准值的人工核对数据源，缺失不阻断读取。
-                raw_m32 = (
-                    sheet.cell_value(31, 12)
-                    if sheet.nrows > 31 and sheet.ncols > 12
-                    else None
-                )
+                # 判定标准值的人工核对数据源，缺失不阻断读取。
+                raw_m32 = None
+                if standard_cell:
+                    std_row, std_col = _cell_zero_based(standard_cell)
+                    raw_m32 = (
+                        sheet.cell_value(std_row, std_col)
+                        if sheet.nrows > std_row and sheet.ncols > std_col
+                        else None
+                    )
             finally:
                 workbook.release_resources()
         else:
@@ -152,16 +175,16 @@ def _read_result_profile(path: Path) -> dict[str, Any]:
                     keep_links=False,
                 )
                 try:
-                    if PAPER_FIBER_WORKSHEET not in workbook.sheetnames:
+                    if worksheet not in workbook.sheetnames:
                         profile["status"] = "worksheet_missing"
                         return profile
                     profile["worksheet_exists"] = True
-                    raw_value = workbook[PAPER_FIBER_WORKSHEET][
-                        PAPER_FIBER_RESULT_CELL
-                    ].value
-                    raw_m32 = workbook[PAPER_FIBER_WORKSHEET][
-                        PAPER_FIBER_STANDARD_SOURCE_CELL
-                    ].value
+                    raw_value = workbook[worksheet][result_cell].value
+                    raw_m32 = (
+                        workbook[worksheet][standard_cell].value
+                        if standard_cell
+                        else None
+                    )
                 finally:
                     workbook.close()
     except Exception as exc:
@@ -190,7 +213,19 @@ def _profile_for_entry(
     entry: ExecutionFileIndexEntry,
     *,
     gateway: FileGateway,
+    rule: ResolvedRule,
 ) -> tuple[dict[str, Any], bool]:
+    result_probe = rule.probe("qualitative_result")
+    standard_probe = rule.probe("standard_source")
+    worksheet = (
+        result_probe.sheet if result_probe is not None else PAPER_FIBER_WORKSHEET
+    )
+    result_cell = (
+        result_probe.cell
+        if result_probe is not None and result_probe.cell
+        else PAPER_FIBER_RESULT_CELL
+    )
+    standard_cell = standard_probe.cell if standard_probe is not None else None
     metadata = dict(entry.metadata_json or {})
     profiles = dict(metadata.get("workbook_profiles") or {})
     # 鲜活度护栏：后台索引按间隔扫描，共享盘上的最新保存可能尚未反映到
@@ -198,9 +233,11 @@ def _profile_for_entry(
     # _validate_index_candidate 会以 file_candidate_stale 永久拒绝。
     # 这里先按实时 stat 校正指纹（连带 size/modified_at），让候选始终
     # 与磁盘一致；指纹变化会自动使下方缓存失效并重读结果单元格。
+    # 规则 revision 也是缓存有效性键：管理员修改探针（sheet/cell）后
+    # 无需清表，下一次匹配自动重读。
     try:
         live_path = gateway.resolve(
-            ArtifactRef(PAPER_FIBER_ROOT_ID, entry.relative_path),
+            ArtifactRef(rule.source_root_id, entry.relative_path),
             expected_type="file",
         )
         live_stat = live_path.stat()
@@ -221,6 +258,7 @@ def _profile_for_entry(
     if (
         isinstance(cached, dict)
         and cached.get("profile_version") == PAPER_FIBER_PROFILE_VERSION
+        and cached.get("rule_revision") == rule.revision
         and cached.get("fingerprint") == entry.fingerprint
         and cached.get("status") in _DETERMINISTIC_PROFILE_STATUSES
     ):
@@ -229,15 +267,20 @@ def _profile_for_entry(
     original_fingerprint = entry.fingerprint
     try:
         path = gateway.resolve(
-            ArtifactRef(PAPER_FIBER_ROOT_ID, entry.relative_path),
+            ArtifactRef(rule.source_root_id, entry.relative_path),
             expected_type="file",
         )
-        profile = _read_result_profile(path)
+        profile = _read_result_profile(
+            path,
+            worksheet=worksheet,
+            result_cell=result_cell,
+            standard_cell=standard_cell,
+        )
     except (ExecutionApiError, StorageError, OSError) as exc:
         profile = {
             "profile_version": PAPER_FIBER_PROFILE_VERSION,
-            "worksheet": PAPER_FIBER_WORKSHEET,
-            "result_cell": PAPER_FIBER_RESULT_CELL,
+            "worksheet": worksheet,
+            "result_cell": result_cell,
             "worksheet_exists": False,
             "qualitative_result": None,
             "m32_value": None,
@@ -249,6 +292,7 @@ def _profile_for_entry(
     profile.update(
         {
             "profile_version": PAPER_FIBER_PROFILE_VERSION,
+            "rule_revision": rule.revision,
             "fingerprint": entry.fingerprint,
             "checked_at": utcnow().isoformat(),
         }
@@ -300,6 +344,7 @@ def _indexed_entries(
     *,
     root: ExecutionStorageRoot,
     inspection_number: str,
+    max_depth: int = 2,
 ) -> list[ExecutionFileIndexEntry]:
     query_text = str(inspection_number or "").strip()
     if not query_text:
@@ -329,7 +374,7 @@ def _indexed_entries(
     return [
         entry
         for entry in rows
-        if len(PurePosixPath(entry.relative_path).parts) == 2
+        if len(PurePosixPath(entry.relative_path).parts) == max_depth
         and folded
         in PurePosixPath(entry.relative_path).parts[0].casefold()
     ]
@@ -350,27 +395,29 @@ def _index_state(
 
 def paper_task_project_match(
     snapshot: Optional[dict[str, Any]],
+    task_facts: Optional[Any] = None,
 ) -> tuple[list[str], Optional[dict[str, Any]]]:
-    best_conditions: list[str] = []
-    best_project: Optional[dict[str, Any]] = None
-    for project in (snapshot or {}).get("projects") or []:
-        if not isinstance(project, dict):
-            continue
-        conditions: list[str] = []
-        if _normalized_fact(project.get("check_item_name")) == _normalized_fact(
-            PAPER_FIBER_PROJECT_NAME
-        ):
-            conditions.append("task_item_name")
-        if _normalized_fact(project.get("check_method")) == _normalized_fact(
-            PAPER_FIBER_TEST_METHOD
-        ):
-            conditions.append("test_method")
-        if len(conditions) > len(best_conditions):
-            best_conditions = conditions
-            best_project = dict(project)
-        if len(best_conditions) == 2:
-            break
-    return best_conditions, best_project
+    if task_facts is None:
+        # 兼容无规则上下文（纯代码调用）：按代码常量构造事实条件。
+        task_facts = (
+            parse_task_fact(
+                {
+                    "condition_key": "task_item_name",
+                    "fact": "check_item_name",
+                    "op": "in",
+                    "values": [PAPER_FIBER_PROJECT_NAME],
+                }
+            ),
+            parse_task_fact(
+                {
+                    "condition_key": "test_method",
+                    "fact": "check_method",
+                    "op": "eq",
+                    "values": [PAPER_FIBER_TEST_METHOD],
+                }
+            ),
+        )
+    return evaluate_task_facts(snapshot, task_facts)
 
 
 def paper_fiber_match(
@@ -379,11 +426,33 @@ def paper_fiber_match(
     inspection_number: str,
     gateway: Optional[FileGateway] = None,
     result_limit: int = 6,
+    rule_key: Optional[str] = None,
+    rule: Optional[ResolvedRule] = None,
 ) -> dict[str, Any]:
     query_text = str(inspection_number or "").strip()
+    rule = rule or resolve_rule(db, rule_key or PAPER_FIBER_RULE_KEY)
+    if not rule.enabled:
+        return {
+            "root_id": rule.source_root_id,
+            "index_state": "rule_disabled",
+            "query_state": "empty" if not query_text else "complete",
+            "folder_match_count": 0,
+            "workbook_match_count": 0,
+            "result_match_count": 0,
+            "candidates": [],
+            "candidate_preview": None,
+            "matched_conditions": [],
+            "full_match": False,
+            "task_cache_state": "disabled",
+            "task_snapshot": None,
+            "matched_task_project": None,
+            "cache_updated": False,
+            "rule_key": rule.key,
+            "rule_revision": rule.revision,
+        }
     root = (
         db.query(ExecutionStorageRoot)
-        .filter(ExecutionStorageRoot.root_id == PAPER_FIBER_ROOT_ID)
+        .filter(ExecutionStorageRoot.root_id == rule.source_root_id)
         .one_or_none()
     )
     root_ready = bool(root and root.is_active and root.is_available)
@@ -407,6 +476,7 @@ def paper_fiber_match(
             db,
             root=root,
             inspection_number=query_text,
+            max_depth=rule.max_depth or 2,
         )
         if root_ready and root is not None
         else []
@@ -414,7 +484,8 @@ def paper_fiber_match(
     query_complete = _is_complete_inspection_number(query_text)
     task = cached_task_snapshot(db, inspection_number=query_text)
     task_conditions, matched_project = paper_task_project_match(
-        task.get("snapshot")
+        task.get("snapshot"),
+        rule.task_facts,
     )
     matched_conditions: list[str] = []
     if root_ready:
@@ -424,7 +495,21 @@ def paper_fiber_match(
     matched_conditions.extend(task_conditions)
     full_match = all(
         item in matched_conditions
-        for item in ("source_root", "folder", "task_item_name", "test_method")
+        for item in (
+            "source_root",
+            "folder",
+            *[fact.condition_key for fact in rule.task_facts],
+        )
+    )
+
+    result_probe = rule.probe("qualitative_result")
+    probe_worksheet = (
+        result_probe.sheet if result_probe is not None else PAPER_FIBER_WORKSHEET
+    )
+    probe_cell = (
+        result_probe.cell
+        if result_probe is not None and result_probe.cell
+        else PAPER_FIBER_RESULT_CELL
     )
 
     profiles_updated = False
@@ -444,7 +529,11 @@ def paper_fiber_match(
 
             gateway = build_file_gateway(db)
         for entry in entries:
-            profile, changed = _profile_for_entry(entry, gateway=gateway)
+            profile, changed = _profile_for_entry(
+                entry,
+                gateway=gateway,
+                rule=rule,
+            )
             profiles_updated = profiles_updated or changed
             if profile.get("status") != "matched":
                 continue
@@ -453,7 +542,7 @@ def paper_fiber_match(
             candidates.append(
                 {
                     "id": entry.id,
-                    "root_id": PAPER_FIBER_ROOT_ID,
+                    "root_id": rule.source_root_id,
                     "relative_path": entry.relative_path,
                     "name": entry.filename,
                     "suffix": entry.extension,
@@ -465,8 +554,8 @@ def paper_fiber_match(
                     "read_status": "succeeded",
                     "qualitative_result": result,
                     "result": {
-                        "worksheet": PAPER_FIBER_WORKSHEET,
-                        "cell": PAPER_FIBER_RESULT_CELL,
+                        "worksheet": probe_worksheet,
+                        "cell": probe_cell,
                         "w32_value": result,
                         "qualitative_result": result,
                         "m32_value": str(profile.get("m32_value") or ""),
@@ -506,7 +595,7 @@ def paper_fiber_match(
     else:
         candidate_preview = None
     return {
-        "root_id": PAPER_FIBER_ROOT_ID,
+        "root_id": rule.source_root_id,
         "index_state": index_state,
         "query_state": query_state,
         "folder_match_count": len(
@@ -525,6 +614,8 @@ def paper_fiber_match(
         "task_snapshot": task.get("snapshot"),
         "matched_task_project": matched_project,
         "cache_updated": bool(task.get("refresh_queued")) or profiles_updated,
+        "rule_key": rule.key,
+        "rule_revision": rule.revision,
     }
 
 
@@ -541,6 +632,7 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
             "请先输入完整检验编号后再读取纸类原始记录",
         )
     result_limit = min(int(config.get("limit", 6)), 6)
+    rule_key = str(config.get("match_rule") or "").strip() or None
     # The snapshot bridge polls every ~15 seconds, so a snapshot that is
     # still pending typically lands within a few seconds of run start (the
     # catalog recommendation already queued the refresh).  Wait briefly
@@ -553,6 +645,7 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
             context.db,
             inspection_number=inspection_number,
             result_limit=result_limit,
+            rule_key=rule_key,
         )
         missing = [
             item
@@ -631,6 +724,8 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
         "count": len(match["candidates"]),
         "task": match["task_snapshot"],
         "matched_task_project": match["matched_task_project"],
+        "rule_key": match.get("rule_key"),
+        "rule_revision": match.get("rule_revision"),
         "task_validation_state": (
             "matched"
             if "task_item_name" in match["matched_conditions"]

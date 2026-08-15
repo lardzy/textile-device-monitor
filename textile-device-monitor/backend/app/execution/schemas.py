@@ -87,6 +87,18 @@ class WorkflowPublishRequest(BaseModel):
     release_note: Optional[str] = Field(default=None, max_length=2000)
 
 
+class ProjectRuleUpdateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=200)
+    enabled: bool = True
+    config: dict[str, Any]
+
+
+class ProjectRuleTestRequest(BaseModel):
+    rule_key: Optional[str] = Field(default=None, max_length=100)
+    config: Optional[dict[str, Any]] = None
+    inspection_number: str = Field(min_length=1, max_length=200)
+
+
 class WorkflowImportRequest(BaseModel):
     document: dict[str, Any]
     overwrite_workflow_id: Optional[str] = None

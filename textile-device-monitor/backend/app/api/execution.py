@@ -87,6 +87,7 @@ from app.execution.models import (
     ExecutionIndexJob,
     ExecutionNodeRun,
     ExecutionPermission,
+    ExecutionProjectRule,
     ExecutionPublishReceipt,
     ExecutionRole,
     ExecutionRun,
@@ -115,7 +116,21 @@ from app.execution.mutation_runtime import (
     write_file_mutation,
 )
 from app.execution.registry import node_registry
-from app.execution.regenerated_fiber import catalog_recommendations
+from app.execution.regenerated_fiber import (
+    _specialized_match_rule,
+    _specialized_node_type,
+    _specialized_record_family,
+    catalog_recommendations,
+)
+from app.execution.project_rules import (
+    default_rule_key_for_node_type,
+    ensure_default_project_rules,
+    evaluate_project_rule,
+    list_rules,
+    resolve_rule,
+    row_to_rule,
+    validate_rule_config,
+)
 from app.execution.electron_microscopy import (
     ELECTRON_IMAGE_SUFFIXES,
     ELECTRON_ROOT_ID,
@@ -146,6 +161,8 @@ from app.execution.schemas import (
     MutationVerifyRequest,
     MutationWriteRequest,
     NodeRetryRequest,
+    ProjectRuleTestRequest,
+    ProjectRuleUpdateRequest,
     RunCreate,
     TaskSnapshotBridgeClaimRequest,
     TaskSnapshotBridgeCompleteRequest,
@@ -485,11 +502,48 @@ def _published_workflow_capabilities(
     return version.capabilities or {} if version is not None else {}
 
 
+def _workflow_match_rule_summary(
+    db: Session,
+    published_definition: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    """Link a workflow's published discover node to its project rule."""
+
+    if not published_definition:
+        return None
+    node_type = _specialized_node_type(published_definition)
+    if node_type is None:
+        return None
+    rule_key = _specialized_match_rule(published_definition, node_type)
+    if not rule_key:
+        rule_key = default_rule_key_for_node_type(
+            node_type,
+            record_family=_specialized_record_family(
+                published_definition, node_type
+            ),
+        )
+    if not rule_key:
+        return None
+    row = (
+        db.query(ExecutionProjectRule)
+        .filter(ExecutionProjectRule.rule_key == rule_key)
+        .one_or_none()
+    )
+    if row is None:
+        return {"rule_key": rule_key, "missing": True}
+    return {
+        "rule_key": row.rule_key,
+        "display_name": row.display_name,
+        "enabled": bool(row.enabled),
+        "revision": int(row.revision or 1),
+    }
+
+
 def _workflow_dict(
     workflow: ExecutionWorkflow,
     *,
     include_definition: bool = False,
     include_published_definition: bool = False,
+    db: Optional[Session] = None,
 ) -> dict[str, Any]:
     published_definition: dict[str, Any] = {}
     published_capabilities = _published_workflow_capabilities(workflow)
@@ -541,6 +595,10 @@ def _workflow_dict(
     if include_published_definition:
         # 运行准备页只读取不可变的已发布版本，绝不把管理员草稿暴露给普通用户。
         value["published_definition"] = published_definition
+    if db is not None:
+        value["match_rule"] = _workflow_match_rule_summary(
+            db, published_definition
+        )
     return value
 
 
@@ -1617,6 +1675,185 @@ def node_types(_auth: AuthContext = Depends(permission("workflow.design"))):
     return {"items": [item.public_dict() for item in node_registry.all()]}
 
 
+def _project_rule_dict(row: ExecutionProjectRule) -> dict[str, Any]:
+    return {
+        "rule_key": row.rule_key,
+        "display_name": row.display_name,
+        "category_key": row.category_key,
+        "enabled": bool(row.enabled),
+        "revision": int(row.revision or 1),
+        "config": row.config or {},
+        "updated_by_id": row.updated_by_id,
+        "created_at": (
+            row.created_at.isoformat() if row.created_at else None
+        ),
+        "updated_at": (
+            row.updated_at.isoformat() if row.updated_at else None
+        ),
+    }
+
+
+@router.get("/project-rules")
+def project_rules(
+    _auth: AuthContext = Depends(permission("workflow.read")),
+    db: Session = Depends(get_db),
+):
+    if ensure_default_project_rules(db):
+        db.commit()
+    rows = (
+        db.query(ExecutionProjectRule)
+        .order_by(
+            ExecutionProjectRule.category_key.asc().nulls_last(),
+            ExecutionProjectRule.rule_key.asc(),
+        )
+        .all()
+    )
+    return {"items": [_project_rule_dict(row) for row in rows]}
+
+
+@router.get("/project-rules/{rule_key}")
+def project_rule_detail(
+    rule_key: str,
+    _auth: AuthContext = Depends(permission("workflow.read")),
+    db: Session = Depends(get_db),
+):
+    if ensure_default_project_rules(db):
+        db.commit()
+    row = (
+        db.query(ExecutionProjectRule)
+        .filter(ExecutionProjectRule.rule_key == rule_key.strip())
+        .one_or_none()
+    )
+    if row is None:
+        raise not_found("项目匹配规则", rule_key.strip())
+    return {"item": _project_rule_dict(row)}
+
+
+@router.put("/project-rules/{rule_key}")
+def update_project_rule(
+    rule_key: str,
+    payload: ProjectRuleUpdateRequest,
+    auth: AuthContext = Depends(permission("workflow.design", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    ensure_default_project_rules(db)
+    row = (
+        db.query(ExecutionProjectRule)
+        .filter(ExecutionProjectRule.rule_key == rule_key.strip())
+        .one_or_none()
+    )
+    if row is None:
+        raise not_found("项目匹配规则", rule_key.strip())
+    issues = validate_rule_config(payload.config)
+    if issues:
+        raise ExecutionApiError(
+            422,
+            "project_rule_config_invalid",
+            "项目匹配规则配置校验失败：" + "；".join(issues),
+            details={"issues": issues},
+        )
+    root_id = str(
+        (payload.config.get("source") or {}).get("root_id") or ""
+    ).strip()
+    root = (
+        db.query(ExecutionStorageRoot)
+        .filter(ExecutionStorageRoot.root_id == root_id)
+        .one_or_none()
+    )
+    if root is None:
+        raise ExecutionApiError(
+            422,
+            "project_rule_root_unknown",
+            "source.root_id 对应的存储根不存在",
+            details={"root_id": root_id},
+        )
+    previous = {
+        "display_name": row.display_name,
+        "enabled": bool(row.enabled),
+        "revision": int(row.revision or 1),
+        "config": dict(row.config or {}),
+    }
+    row.display_name = payload.display_name.strip()
+    row.enabled = bool(payload.enabled)
+    row.config = payload.config
+    row.revision = int(row.revision or 1) + 1
+    row.updated_by_id = auth.user.id
+    append_audit_log(
+        db,
+        action="project_rule.update",
+        resource_type="execution_project_rule",
+        resource_id=row.rule_key,
+        actor_user_id=auth.user.id,
+        details={"revision": row.revision, "previous": previous},
+    )
+    db.commit()
+    return {"item": _project_rule_dict(row)}
+
+
+@router.post("/project-rules/test")
+def test_project_rule(
+    payload: ProjectRuleTestRequest,
+    _auth: AuthContext = Depends(permission("workflow.design", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    """Dry-run a rule against a number without persisting anything."""
+
+    ensure_default_project_rules(db)
+    if payload.config is not None:
+        issues = validate_rule_config(payload.config)
+        if issues:
+            raise ExecutionApiError(
+                422,
+                "project_rule_config_invalid",
+                "项目匹配规则配置校验失败：" + "；".join(issues),
+                details={"issues": issues},
+            )
+        rule = row_to_rule(
+            ExecutionProjectRule(
+                rule_key=(payload.rule_key or "(draft)"),
+                display_name="（干跑配置）",
+                enabled=True,
+                revision=0,
+                config=payload.config,
+            )
+        )
+    elif payload.rule_key:
+        rule = resolve_rule(db, payload.rule_key)
+    else:
+        raise ExecutionApiError(
+            422,
+            "project_rule_test_target_required",
+            "请提供 rule_key 或 config 进行匹配测试",
+        )
+    result = evaluate_project_rule(
+        db,
+        rule=rule,
+        inspection_number=payload.inspection_number.strip(),
+    )
+    if result.get("cache_updated"):
+        db.commit()
+    preview = result.get("candidate_preview")
+    if preview is None and result.get("folders"):
+        first_folder = result["folders"][0]
+        preview = {
+            "name": first_folder.get("name"),
+            "relative_path": first_folder.get("relative_path"),
+        }
+    candidate_count = len(result.get("candidates") or []) or int(
+        result.get("image_count") or 0
+    )
+    return {
+        "rule_key": rule.key,
+        "rule_revision": rule.revision,
+        "matched_conditions": result.get("matched_conditions") or [],
+        "full_match": bool(result.get("full_match")),
+        "index_state": result.get("index_state"),
+        "query_state": result.get("query_state"),
+        "task_cache_state": result.get("task_cache_state"),
+        "candidate_count": candidate_count,
+        "candidate_preview": preview,
+    }
+
 @router.get("/catalog/recommendations")
 def workflow_recommendations(
     inspection_number: str = Query(default="", max_length=200),
@@ -1772,6 +2009,8 @@ def workflows(
             | (ExecutionWorkflow.description.ilike(f"%{query}%"))
         )
     include_draft = has_permission(db, auth.user, "workflow.design")
+    if ensure_default_project_rules(db):
+        db.commit()
     items = []
     can_access_all_runs = _may_access_all_runs(db, auth)
     for item in statement.order_by(
@@ -1783,7 +2022,9 @@ def workflows(
             continue
         if published_capabilities.get("hidden") and not include_draft:
             continue
-        value = _workflow_dict(item, include_definition=include_draft)
+        value = _workflow_dict(
+            item, include_definition=include_draft, db=db
+        )
         recent = (
             db.query(ExecutionRun)
             .filter(ExecutionRun.workflow_id == item.id)
@@ -1844,10 +2085,13 @@ def workflow_detail(
 ):
     workflow = get_workflow(db, workflow_id)
     _ensure_workflow_visible(db, workflow=workflow, auth=auth)
+    if ensure_default_project_rules(db):
+        db.commit()
     return _workflow_dict(
         workflow,
         include_definition=has_permission(db, auth.user, "workflow.design"),
         include_published_definition=True,
+        db=db,
     )
 
 

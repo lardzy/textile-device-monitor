@@ -52,6 +52,7 @@ import {
   exportWorkflow,
   getExecutionNodeTypes,
   getExecutionWorkflow,
+  getProjectRules,
   getWorkflowVersions,
   importWorkflow,
   publishWorkflow,
@@ -68,6 +69,7 @@ import {
 import { createClientUuid } from '../../utils/clientId';
 import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
+import ExecutionProjectRuleEditor from './ExecutionProjectRuleEditor';
 import SchemaFields from './SchemaFields';
 import WorkflowCanvas from './WorkflowCanvas';
 import './execution.css';
@@ -621,6 +623,11 @@ function NodeInspector({
   const [configText, setConfigText] = useState('{}');
   const [mappingText, setMappingText] = useState('{}');
   const [jsonError, setJsonError] = useState(null);
+  const hasMatchRuleParam = Boolean(
+    nodeDefinition?.configSchema?.properties?.match_rule,
+  );
+  const [projectRules, setProjectRules] = useState([]);
+  const [ruleEditorOpen, setRuleEditorOpen] = useState(false);
 
   useEffect(() => {
     setConfigText(JSON.stringify(node?.data?.config || {}, null, 2));
@@ -628,6 +635,23 @@ function NodeInspector({
     setJsonError(null);
     onPendingChange?.({ dirty: false, error: null });
   }, [node?.id, node?.data?.config, node?.data?.inputMapping, onPendingChange]);
+
+  useEffect(() => {
+    if (!hasMatchRuleParam) {
+      return undefined;
+    }
+    let cancelled = false;
+    getProjectRules()
+      .then((rows) => {
+        if (!cancelled) {
+          setProjectRules(Array.isArray(rows) ? rows : []);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [hasMatchRuleParam]);
 
   if (!node) {
     return (
@@ -714,6 +738,38 @@ function NodeInspector({
             onChange={enabled => onUpdate({ ...node.data, disabled: !enabled })}
           />
         </Form.Item>
+        {hasMatchRuleParam && (
+          <Form.Item
+            label="项目匹配规则"
+            tooltip="规则内容在流程管理中实时维护（保存即生效）；此处仅选择本节点引用的规则。"
+          >
+            <Space.Compact style={{ width: '100%' }}>
+              <Select
+                aria-label="项目匹配规则"
+                placeholder="选择匹配规则"
+                value={node.data.config?.match_rule || undefined}
+                options={projectRules.map(item => ({
+                  value: item.rule_key,
+                  label: `${item.display_name || item.rule_key}（rev ${item.revision}）${
+                    item.enabled === false ? ' · 已停用' : ''
+                  }`,
+                }))}
+                onChange={(value) => {
+                  const nextConfigText = JSON.stringify(
+                    { ...(node.data.config || {}), match_rule: value },
+                    null,
+                    2,
+                  );
+                  setConfigText(nextConfigText);
+                  applyJson({ nextConfigText, notify: false });
+                }}
+              />
+              {node.data.config?.match_rule && (
+                <Button onClick={() => setRuleEditorOpen(true)}>编辑规则</Button>
+              )}
+            </Space.Compact>
+          </Form.Item>
+        )}
         <Form.Item
           label="节点参数（JSON）"
           tooltip="仅保存节点业务参数；路径必须使用 root_id 与 relative_path。"
@@ -757,6 +813,18 @@ function NodeInspector({
         type="info"
         message="首版不允许删除节点"
         description="暂不使用的节点请切换为“已停放”；配置和连线仍保留，恢复后可继续编辑。"
+      />
+      <ExecutionProjectRuleEditor
+        open={ruleEditorOpen}
+        ruleKey={node.data.config?.match_rule}
+        onClose={(saved) => {
+          setRuleEditorOpen(false);
+          if (saved) {
+            getProjectRules()
+              .then(rows => setProjectRules(Array.isArray(rows) ? rows : []))
+              .catch(() => {});
+          }
+        }}
       />
     </div>
   );
