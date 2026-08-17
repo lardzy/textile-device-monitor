@@ -1,0 +1,4 @@
+# Shell 脚本必须保持 LF：Windows 检出（autocrlf）或解压工具若转成 CRLF，
+# 容器内 dash/ash 与 Git Bash 会因 \r 直接启动失败。
+*.sh    text eol=lf
+*.envsh text eol=lf

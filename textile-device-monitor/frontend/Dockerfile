@@ -14,9 +14,14 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
         /etc/nginx/templates-available
 COPY docker-entrypoint.d/10-select-transport.envsh /docker-entrypoint.d/
 COPY docker-entrypoint.d/15-render-management-cidrs.envsh /docker-entrypoint.d/
-RUN chmod 0755 \
-    /docker-entrypoint.d/10-select-transport.envsh \
-    /docker-entrypoint.d/15-render-management-cidrs.envsh
+# 源码在 Windows 侧检出/解压可能变成 CRLF，dash 无法解析 \r 会导致入口脚本
+# 启动失败；构建时统一归一为 LF，与检出行尾无关。
+RUN sed -i 's/\r$//' \
+        /docker-entrypoint.d/10-select-transport.envsh \
+        /docker-entrypoint.d/15-render-management-cidrs.envsh \
+    && chmod 0755 \
+        /docker-entrypoint.d/10-select-transport.envsh \
+        /docker-entrypoint.d/15-render-management-cidrs.envsh
 COPY nginx.conf /etc/nginx/templates-available/http.conf.template
 COPY nginx.https.conf /etc/nginx/templates-available/https.conf.template
 EXPOSE 8080
