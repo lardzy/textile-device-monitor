@@ -54,11 +54,18 @@ Inno Setup 安装包，用于生产 Windows 主机的一次性部署。
 3. 复制 `config\bridge.env.example` 为 `config\bridge.env` 并填写机密；
    收紧 ACL 仅管理员/SYSTEM 可读。
 4. 自检：`ops\Test-BridgeInstallation.ps1`（无副作用）。
-5. 注册计划任务：`ops\Register-BridgeScheduledTasks.ps1 -UserName <操作员账号>`。
+5. 注册计划任务：`ops\Register-BridgeScheduledTasks.ps1 -UserName <操作员账号>`
+   （账号格式直接用 `whoami` 的输出；脚本注册后会立即尝试启动）。
    写入桥必须运行在已登录用户的交互会话（FinalEntry 需要 COM Excel），
    因此任务按“仅当用户登录时运行”注册；主机重启后需该用户登录。
 6. 手动验证一次：`ops\Invoke-SnapshotBridge.ps1 -Once`、
    `ops\Invoke-WriteBridge.ps1 -Once`。
+
+## 运行日志
+
+两个桥以隐藏窗口的计划任务运行，stdout 不可见；运行日志按天落盘在
+`work\logs\write-bridge-yyyyMMdd.log` 与 `work\logs\snapshot-bridge-yyyyMMdd.log`
+（保留 14 天，自动清理）。排查“等待连接器不动”类问题时先看这两个文件。
 
 ## 目录约定
 

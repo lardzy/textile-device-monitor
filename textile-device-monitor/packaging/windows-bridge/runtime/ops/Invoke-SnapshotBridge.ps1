@@ -7,6 +7,20 @@ param(
 $ErrorActionPreference = 'Stop'
 $InstallRoot = Split-Path $PSScriptRoot -Parent
 
+# 计划任务以隐藏窗口运行，stdout 无人可见；按天落盘日志，保留 14 天。
+$LogDir = Join-Path $InstallRoot 'work\logs'
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+try {
+    $LogFile = Join-Path $LogDir ("snapshot-bridge-" + (Get-Date -Format 'yyyyMMdd') + '.log')
+    Start-Transcript -Path $LogFile -Append -ErrorAction Stop | Out-Null
+    Get-ChildItem $LogDir -Filter 'snapshot-bridge-*.log' -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-14) } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+catch {
+    Write-Output "WARN: 日志初始化失败，继续运行（$_）"
+}
+
 . (Join-Path $PSScriptRoot 'Import-BridgeEnv.ps1') -EnvFile (Join-Path $InstallRoot 'config\bridge.env')
 $Config = Import-PowerShellDataFile -LiteralPath (Join-Path $InstallRoot 'config\BridgeConfig.psd1')
 

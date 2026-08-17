@@ -50,4 +50,19 @@ Register-ScheduledTask `
 Write-Output 'Registered scheduled tasks:'
 Write-Output '  TextileExecutionWriteBridge   (AtLogOn, interactive)'
 Write-Output '  TextileExecutionSnapshotBridge (AtLogOn, interactive)'
-Write-Output 'Start now with: Start-ScheduledTask -TaskName <name>'
+
+# 注册后立即尝试启动；交互型任务要求目标用户当前已登录，
+# 未登录时启动会失败，等其登录后由 AtLogOn 触发器拉起。
+foreach ($Name in @('TextileExecutionWriteBridge', 'TextileExecutionSnapshotBridge')) {
+    try {
+        Start-ScheduledTask -TaskName $Name -ErrorAction Stop
+        Write-Output "Started: $Name"
+    }
+    catch {
+        Write-Output "WARN: $Name 未能立即启动（$_）；确认用户已登录后可手动 Start-ScheduledTask -TaskName $Name"
+    }
+}
+$Current = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+if ($Current -notlike "*\$UserName" -and $Current -ne $UserName) {
+    Write-Output "WARN: 当前登录用户 ($Current) 与注册用户 ($UserName) 不一致；建议 -UserName 直接使用 whoami 的输出。"
+}
