@@ -454,14 +454,27 @@ docker compose --env-file .env -f docker-compose.yml \
 ```
 
 ### 数据备份
-```bash
-# 备份数据库（角色名与库名以 .env 的 POSTGRES_USER / POSTGRES_DB 为准；
-# 旧部署默认是 admin，新部署一般是 textile_prod）
-docker exec textile-monitor-db pg_dump -U <POSTGRES_USER> <POSTGRES_DB> > backup.sql
+
+角色名与库名以 .env 的 `POSTGRES_USER` / `POSTGRES_DB` 为准
+（旧部署默认是 `admin`，新部署一般是 `textile_prod`）。
+
+**绝对不要用 PowerShell 的 `>` 或管道导出备份**：PowerShell 会按控制台编码
+（中文 Windows 为 GBK）错读 docker 的 UTF-8 输出并转存为 UTF-16，中文内容
+在导出瞬间就不可逆损坏，这种备份文件**无法用于恢复**。正确做法是让 pg_dump
+在容器内直接落盘，再把文件原样拷出（全程不经过终端转码）：
+
+```bat
+docker exec textile-monitor-db pg_dump -U <POSTGRES_USER> -d <POSTGRES_DB> --no-owner -f /tmp/backup.sql
+docker cp textile-monitor-db:/tmp/backup.sql .\backup.sql
 ```
+
+辨别既有备份是否完好：文件前两个字节是 `FF FE`（UTF-16 标记）即已损坏、
+不可使用；正常纯 SQL 应为 `2D 2D`（`--` 注释开头），且文件内中文显示正常。
+可用 `powershell -Command "Format-Hex backup.sql | Select-Object -First 1"` 查看。
 
 ### 恢复数据库（含旧部署数据迁入新部署）
 
+动手前先确认备份文件完好（见上一节：文件头 `FF FE` 即已损坏，不要使用）。
 恢复目标必须是**空库**：后端启动时发现“有表但没有 alembic_version”会自动
 比对 legacy 基线、盖章并迁移到最新结构；往已初始化的库里直接恢复会全篇冲突。
 以下命令在 **CMD** 中执行（不要用 PowerShell 管道传 SQL，避免中文被转码）：
@@ -491,6 +504,11 @@ docker logs textile-monitor-backend --tail 40
 不要继续，把 drift 信息发给开发侧。恢复后流程目录会重新播种为默认全开，
 需重跑 `production-bootstrap.sh` 收敛开放范围；此前在执行系统网页里手动
 创建的账号也需重建（引导管理员由 .env 自动重建）。
+
+若恢复中途报错中止：库已处于半恢复状态，后端会因结构校验失败拒绝启动，
+属预期保护。放弃恢复时按“停应用容器 → `DROP DATABASE` → `CREATE DATABASE`
+→ `up -d`”重置回空库即可，后端会在空库上重新完整迁移（详见本节步骤 1/2/4；
+占位角色 admin 用 `DROP ROLE IF EXISTS admin` 一并清理）。
 
 ## 故障排查
 
