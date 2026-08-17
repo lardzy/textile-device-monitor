@@ -1,4 +1,4 @@
-# 构建机路径与物料配置。默认值对应当前 Parallels Windows 11 构建机；
+﻿# 构建机路径与物料配置。默认值对应当前 Parallels Windows 11 构建机；
 # 换机器/换源码包时只需改这里或同名覆盖文件，不要改 Build-BridgePackage.ps1。
 @{
     # 安装包版本号（写入 version.auto.iss、manifest 与安装包文件名）

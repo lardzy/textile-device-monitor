@@ -1,5 +1,5 @@
 #!/bin/bash
-# 生产初始化/验收脚本（仅开放 4 个工作流）。在仓库根 textile-device-monitor/ 下运行：
+# 生产初始化/验收脚本（仅开放 5 个工作流）。在仓库根 textile-device-monitor/ 下运行：
 #   bash ../.tmp/execution-system-local-runtime/production-bootstrap.sh
 #
 # 前置：compose 已用生产 .env 启动，postgres/backend/execution-worker/frontend healthy。
@@ -9,35 +9,35 @@ set -euo pipefail
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.execution.yml
          -f ../.tmp/execution-system-local-runtime/docker-compose.production.yml)
 
-echo '==> 1/5 服务健康状态'
+echo '==> 1/4 服务健康状态'
 "${COMPOSE[@]}" ps
 
-echo '==> 2/5 禁用不开放的 3 个工作流（幂等）'
+echo '==> 2/4 收敛工作流开放范围（白名单，幂等）'
 # 仅开放：regenerated-fiber-count-method / regenerated-fiber-area-method /
-#         electron-microscopy-gbt36422 / paper-fiber-gbt4688-2020-qualitative
+#         electron-microscopy-gbt36422 / electron-cross-section-gbt36422 /
+#         paper-fiber-gbt4688-2020-qualitative
+# 其余（含后续代码新增播种的工作流）一律禁用，避免未验收流程意外暴露。
 "${COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:?}" -d "${POSTGRES_DB:?}" <<'SQL'
 UPDATE execution_workflows
-   SET is_enabled = false
- WHERE slug IN (
-   'special-wool-source-selection',
-   'hemp-cotton-source-selection',
-   'system-controlled-xlsx-write-test'
- );
+   SET is_enabled = (slug IN (
+     'regenerated-fiber-count-method',
+     'regenerated-fiber-area-method',
+     'electron-microscopy-gbt36422',
+     'electron-cross-section-gbt36422',
+     'paper-fiber-gbt4688-2020-qualitative'
+   ));
 SELECT slug, name, is_enabled FROM execution_workflows ORDER BY slug;
 SQL
 
-echo '==> 3/5 确认 electron-source-selection 保持禁用（默认即禁用，此处防御）'
-"${COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:?}" -d "${POSTGRES_DB:?}" \
-  -c "UPDATE execution_workflows SET is_enabled = false WHERE slug = 'electron-source-selection';"
-
-echo '==> 4/5 容器内宋体检查（微观形貌原始记录必须）'
+echo '==> 3/4 容器内宋体检查（微观形貌/横截面原始记录必须）'
 "${COMPOSE[@]}" exec -T backend fc-match '宋体'
 "${COMPOSE[@]}" exec -T execution-worker fc-match '宋体'
 echo '期望输出含 simsun.ttc: "SimSun" "Regular"'
 
-echo '==> 5/5 执行系统存储根'
+echo '==> 4/4 执行系统存储根与项目匹配规则'
 "${COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER:?}" -d "${POSTGRES_DB:?}" \
-  -c "SELECT root_id, path, is_available FROM execution_storage_roots ORDER BY root_id;"
+  -c "SELECT root_id, path, is_available FROM execution_storage_roots ORDER BY root_id;" \
+  -c "SELECT rule_key, revision, updated_at FROM execution_project_rules ORDER BY rule_key;"
 
 cat <<'NEXT'
 

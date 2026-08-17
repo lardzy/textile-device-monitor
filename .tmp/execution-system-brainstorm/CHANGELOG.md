@@ -1,5 +1,28 @@
 # 头脑风暴变更日志
 
+## 2026-08-15：生产部署准备（安装包构建与部署材料核对）
+
+- VM 构建机（`textile-device-monitor-cdde9ec` 目录）源码树同步到 HEAD
+  `57c8717`：`legacy_fibrecheck_task_snapshot_bridge/bridge.py` 等 4 个
+  滞后文件已更新（含 f986711 快照桥跳过无 CheckItemID 套餐标题行修复），
+  `packaging/windows-bridge` 的 psd1/README 同步；两个 Writer exe 与
+  psd1 钉值（e99da7ea / 29e5a8e4）核验一致。
+- 修复 `bridge-package.psd1` 在 git 中无 UTF-8 BOM、PS 5.1
+  `Import-PowerShellDataFile` 按 ANSI 解析失败的问题（git 内已补 BOM；
+  仓库内其余 ops ps1 本就带 BOM，tools/*.ps1 不入包不受影响）。
+- 构建生产桥安装包 `textile-execution-bridge-setup-1.0.0.exe`，
+  SHA256 `0c47d76846de948d337141aea3c53434ebdcbf78f494f4656d750aaa0c36a05a`
+  （staging 886 MB / 3687 文件），已取回 Mac 并复验一致。
+- 生产 compose 清理：移除 `docker-compose.yml` 与 `.env.example` 中
+  `EXECUTION_CONTROLLED_FINAL_ENTRY_TEST_SAMPLE_NO` 残留（该设置项已随
+  受控覆盖通道移除）。
+- 生产开放范围经用户确认为 5 个工作流（新增电镜横截面）；
+  `production-bootstrap.sh` 改为白名单收敛（其余含未来新增播种一律禁用），
+  增查 `execution_project_rules`；新增 `production.env.example` 模板
+  （补齐 `DATABASE_URL` 等 compose 必需项）。
+- `12_生产部署方案.md` 同步：5 流程、迁移兼容说明更新至 0007、
+  引用 env 模板、冒烟顺序补横截面。
+
 ## 2026-08-15：移除受控测试覆盖通道
 
 - 电镜流程运行输入中的"受控测试覆盖"字段删除（此前会被运行准备页渲染为
