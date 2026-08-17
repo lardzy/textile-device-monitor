@@ -8,6 +8,13 @@
   height: 100%;
 }
 
+.area-shell-loading {
+  display: flex;
+  min-height: 240px;
+  align-items: center;
+  justify-content: center;
+}
+
 .area-section-nav,
 .area-page-toolbar,
 .area-section-heading,

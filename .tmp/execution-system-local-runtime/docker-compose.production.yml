@@ -3,13 +3,12 @@
 # 用法（仓库根 textile-device-monitor/ 下）：
 #   docker compose --env-file <生产.env> \
 #     -f docker-compose.yml \
-#     -f docker-compose.execution.yml \
 #     -f ../.tmp/execution-system-local-runtime/docker-compose.production.yml \
-#     up -d --build postgres backend execution-worker frontend
+#     up -d --build
 #
 # 说明：
-#   - docker-compose.execution.yml 已把 area-infer 放入 area profile 并置
-#     AREA_ENABLED=false，本覆盖不处理 area-infer（不要构建/启动它）。
+#   - 面积识别为生产高频功能，area-infer 随主 compose 一并构建启动
+#    （不要使用 docker-compose.execution.yml，那是本机开发跳过 area-infer 用的）。
 #   - 执行源共享盘使用主 compose 的 area_out_cifs CIFS 卷
 #    （//192.168.105.82/材料检测中心，只读挂载到 /data/execution-source），
 #     EXECUTION_SOURCE_ROOT 走主 compose 默认值 /data/execution-source/10特纤/02-检验。

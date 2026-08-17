@@ -6,8 +6,15 @@ import {
   Routes,
   useLocation,
 } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { areaApi } from '../../api/area';
 import AreaShell from './AreaShell';
+
+vi.mock('../../api/area', () => ({
+  areaApi: {
+    getStatus: vi.fn(),
+  },
+}));
 
 function LocationProbe() {
   const location = useLocation();
@@ -31,11 +38,16 @@ const renderShell = (initialEntry = '/tools/area') => render(
 );
 
 describe('AreaShell', () => {
+  beforeEach(() => {
+    vi.mocked(areaApi.getStatus).mockReset();
+    vi.mocked(areaApi.getStatus).mockResolvedValue({ ok: true });
+  });
+
   it('默认入口突出开始识别，并可明确进入独立任务记录页', async () => {
     const user = userEvent.setup();
     renderShell();
 
-    expect(screen.getByText('开始识别页面')).toBeInTheDocument();
+    expect(await screen.findByText('开始识别页面')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /开始识别/ })).toBeChecked();
 
     await user.click(screen.getByText('任务记录'));
@@ -43,5 +55,23 @@ describe('AreaShell', () => {
     expect(await screen.findByText('任务记录页面')).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent('/tools/area/tasks');
     expect(screen.getByRole('radio', { name: /任务记录/ })).toBeChecked();
+  });
+
+  it('模块未启用时只显示说明页，不渲染子页面', async () => {
+    vi.mocked(areaApi.getStatus).mockRejectedValue(
+      Object.assign(new Error('area_disabled'), { status: 503 }),
+    );
+    renderShell();
+
+    expect(await screen.findByText('面积识别未启用')).toBeInTheDocument();
+    expect(screen.queryByText('开始识别页面')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /开始识别/ })).not.toBeInTheDocument();
+  });
+
+  it('状态接口异常（非禁用）时仍渲染子页面，由子页面自行报错', async () => {
+    vi.mocked(areaApi.getStatus).mockRejectedValue(new Error('network_error'));
+    renderShell();
+
+    expect(await screen.findByText('开始识别页面')).toBeInTheDocument();
   });
 });

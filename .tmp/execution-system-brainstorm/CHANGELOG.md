@@ -853,3 +853,19 @@
 3. 原始记录模板与字段；
 4. 阈值和最终取值规则；
 5. 主单实际承担的业务含义。
+
+## 2026-08-17：生产部署首日修复（CRLF / 面积识别）
+
+- Win10 生产机首次启动失败三连环：Docker 网络残留（down --remove-orphans
+  后恢复）→ 105.66 CIFS 卷凭据为占位符（现场填入真实账号）→ 前端入口
+  脚本被 Windows 检出转成 CRLF，dash 无法解析 `set` 行容器起不来。
+  仓库侧加固：frontend Dockerfile 构建时强制 LF、根 .gitattributes 锁定
+  `*.sh`/`*.envsh` LF 检出（5219053）。
+- 面积识别页在 AREA_ENABLED=false 时白屏 + 裸错误码 area_disabled：
+  AreaShell 增加模块级状态门禁，禁用时整模块显示说明页；错误文案映射
+  补充 area_disabled；nginx 对 SPA 入口（/ 与 /index.html）输出
+  Cache-Control: no-cache，防止旧 index.html 引用已销毁的构建产物白屏。
+- 生产范围修正：面积识别是现场高频功能，生产链路不再使用
+  docker-compose.execution.yml（该覆盖仅用于本机开发跳过 area-infer），
+  area-infer 随主 compose 全量构建；.env 中 AREA_MODEL/AREA_TEMPLATE
+  两个目录需指向真实权重与模板（沿用旧部署）。

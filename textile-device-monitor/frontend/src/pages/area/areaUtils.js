@@ -14,6 +14,7 @@ export const JOB_STATUS_META = {
 };
 
 const ERROR_MESSAGES = {
+  area_disabled: '面积识别功能未启用（本次部署未开放该模块）。',
   root_path_not_found: '数据目录不可访问，请检查挂载路径或全局设置。',
   folder_not_found: '文件夹不存在或已经被移动。',
   empty_image_list: '所选文件夹中没有可处理的图片。',

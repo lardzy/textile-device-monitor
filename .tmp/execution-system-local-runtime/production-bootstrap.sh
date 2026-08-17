@@ -6,7 +6,7 @@
 # 本脚本不含也不读取任何凭据；SECRET 类配置在 .env 中由管理员维护。
 set -euo pipefail
 
-COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.execution.yml
+COMPOSE=(docker compose -f docker-compose.yml
          -f ../.tmp/execution-system-local-runtime/docker-compose.production.yml)
 
 echo '==> 1/4 服务健康状态'
