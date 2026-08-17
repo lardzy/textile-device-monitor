@@ -446,19 +446,51 @@ docker compose restart backend execution-worker
 # 拉取最新代码
 git pull
 
-# 不构建 Area Infer，仅更新本轮涉及的服务
-docker compose -f docker-compose.yml -f docker-compose.execution.yml \
-  up -d --build backend execution-worker frontend
+# 按部署时的同一条 compose 链路重建并重启（生产链路含 area-infer；
+# 不要使用 docker-compose.execution.yml，那是开发机跳过 area-infer 用的）
+docker compose --env-file .env -f docker-compose.yml \
+  -f ../.tmp/execution-system-local-runtime/docker-compose.production.yml \
+  up -d --build
 ```
 
 ### 数据备份
 ```bash
-# 备份数据库
-docker exec textile-monitor-db pg_dump -U admin textile_monitor > backup.sql
-
-# 恢复数据库
-docker exec -i textile-monitor-db psql -U admin textile_monitor < backup.sql
+# 备份数据库（角色名与库名以 .env 的 POSTGRES_USER / POSTGRES_DB 为准；
+# 旧部署默认是 admin，新部署一般是 textile_prod）
+docker exec textile-monitor-db pg_dump -U <POSTGRES_USER> <POSTGRES_DB> > backup.sql
 ```
+
+### 恢复数据库（含旧部署数据迁入新部署）
+
+恢复目标必须是**空库**：后端启动时发现“有表但没有 alembic_version”会自动
+比对 legacy 基线、盖章并迁移到最新结构；往已初始化的库里直接恢复会全篇冲突。
+以下命令在 **CMD** 中执行（不要用 PowerShell 管道传 SQL，避免中文被转码）：
+
+```bat
+:: 1. 停应用容器（db 保持运行）
+docker compose --env-file .env -f docker-compose.yml -f ..\.tmp\execution-system-local-runtime\docker-compose.production.yml stop backend execution-worker frontend
+
+:: 2. 重建空库
+docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "DROP DATABASE IF EXISTS <POSTGRES_DB>;"
+docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "CREATE DATABASE <POSTGRES_DB> OWNER <POSTGRES_USER>;"
+
+:: 3. 备份若来自旧部署（属主是 admin），先建占位角色再恢复、收尾转回属主
+docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "CREATE ROLE admin NOLOGIN;"
+cmd /c "docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d <POSTGRES_DB> -v ON_ERROR_STOP=1 < backup.sql"
+docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d <POSTGRES_DB> -c "REASSIGN OWNED BY admin TO <POSTGRES_USER>;"
+docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "DROP ROLE admin;"
+
+:: 4. 拉起全栈并确认迁移日志
+docker compose --env-file .env -f docker-compose.yml -f ..\.tmp\execution-system-local-runtime\docker-compose.production.yml up -d
+docker logs textile-monitor-backend --tail 40
+```
+
+日志出现 `Running upgrade ... -> 0007_project_rules` 与
+`Application startup complete` 即接管成功；若报
+`does not match the verified legacy baseline`，说明旧库结构与基线有出入，
+不要继续，把 drift 信息发给开发侧。恢复后流程目录会重新播种为默认全开，
+需重跑 `production-bootstrap.sh` 收敛开放范围；此前在执行系统网页里手动
+创建的账号也需重建（引导管理员由 .env 自动重建）。
 
 ## 故障排查
 
