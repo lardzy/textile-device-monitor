@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     EXECUTION_SOURCE_ROOT: str = "/data/execution-input"
     EXECUTION_RUNTIME_ROOT: str = "/data/execution-runtime"
     EXECUTION_PUBLISH_ROOT: str = "/data/execution-publish"
+    # 报告上传图片共享目录（容器内挂载点，可写）。对应局域网共享
+    # //192.168.105.82/公共交换文件，由 compose CIFS 卷挂载。
+    EXECUTION_REPORT_IMAGE_ROOT: str = "/data/report-upload-images"
+    # 人工冲突询问中展示的 Windows UNC 前缀（方便复制到资源管理器查看）。
+    # 属于部署知识而非流程定义，因此只经环境变量配置（流程定义禁止绝对路径）。
+    EXECUTION_REPORT_IMAGE_DISPLAY_UNC: str = (
+        "\\\\192.168.105.82\\公共交换文件"
+    )
     EXECUTION_INDEX_INTERVAL_SECONDS: int = 300
     EXECUTION_AUTO_INDEX_ROOT_IDS: str = (
         "regenerated_fiber_records,electron_microscopy_records,"

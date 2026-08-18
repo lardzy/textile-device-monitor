@@ -59,6 +59,11 @@ from app.execution.models import (
 )
 from app.execution.persistence import build_file_gateway
 from app.execution.registry import node_registry
+from app.execution.report_image_placement import (
+    auto_complete_report_image_placement,
+    normalize_report_image_placement_submission,
+    report_image_placement_form_schema,
+)
 from app.execution.storage import ArtifactRef, FileGateway, StorageError
 from app.execution.validation import (
     definition_checksum,
@@ -1070,6 +1075,14 @@ def _normalize_human_submission(
                     "sample_identity_options": identities,
                     "identity_count_mismatch": identity_count_mismatch,
                 }
+            if config.get("report_image_placement"):
+                return normalize_report_image_placement_submission(
+                    db,
+                    run=run,
+                    node_run=node_run,
+                    node=node,
+                    data=data,
+                )
         return data
     selected = data.get("selected_files")
     if not isinstance(selected, list) or not selected:
@@ -4285,6 +4298,8 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                 )
             if auto_output is None:
                 auto_output = _auto_complete_paper_judgement(context)
+            if auto_output is None:
+                auto_output = auto_complete_report_image_placement(context)
             if auto_output is not None:
                 complete_node(
                     db,
@@ -4296,6 +4311,8 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                 form_schema = _paper_existing_record_form_schema(context)
                 if form_schema is None:
                     form_schema = _paper_judgement_form_schema(context)
+                if form_schema is None:
+                    form_schema = report_image_placement_form_schema(context)
                 _create_human_task(
                     db,
                     context,

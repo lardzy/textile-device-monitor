@@ -22,6 +22,10 @@ services:
         source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/execution-source
         target: /data/execution-source
         read_only: true
+      # 报告上传图片本地可写测试目录（替代 //192.168.105.82/公共交换文件）
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/report-upload-images
+        target: /data/report-upload-images
       # 宋体字体：避免 LibreOffice 生成原始记录时把模板宋体替换成 DejaVu/Arial
       - type: bind
         source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/fonts
@@ -36,6 +40,10 @@ services:
         source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/execution-source
         target: /data/execution-source
         read_only: true
+      # 报告上传图片本地可写测试目录（替代 //192.168.105.82/公共交换文件）
+      - type: bind
+        source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/report-upload-images
+        target: /data/report-upload-images
       # 宋体字体：避免 LibreOffice 生成原始记录时把模板宋体替换成 DejaVu/Arial
       - type: bind
         source: /Users/lishuyang/PycharmProjects/textile-device-monitor/.tmp/execution-system-local-runtime/fonts

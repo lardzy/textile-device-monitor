@@ -42,6 +42,8 @@ NODE_ROOT_ACCESS_REQUIREMENTS = {
     "workbook.microscopy_check_record": {"staging_root_id": {"write"}},
     "workbook.copy": {"staging_root_id": {"write"}},
     "artifact.publish": {"publish_root_id": {"publish"}},
+    # 报告图片放置节点（report_image_placement 标记的 human.input）写入目标根。
+    "human.input": {"target_root_id": {"write"}},
 }
 SECRET_KEYS = {
     "password",

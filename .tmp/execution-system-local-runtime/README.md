@@ -55,6 +55,20 @@ docker compose \
 \\192.168.105.82\材料检测中心\10特纤\02-检验
 ```
 
+同时把报告上传图片目标（电镜流程“放置报告上传图片”节点）切回真实
+可写共享：
+
+```text
+/data/report-upload-images  →  \\192.168.105.82\公共交换文件
+```
+
+凭据：`report_images_cifs` 卷使用独立的 `SMB_USER_C`/`SMB_PASS_C`
+（local.env 已配置；`公共交换文件` 拒绝匿名挂载，必须是真实读写账号，
+而 `材料检测中心` 可访客只读）。注意 Docker CIFS 卷会固化创建时的凭据，
+修改凭据后必须先删除引用容器再 `docker volume rm` 旧卷，否则继续用旧
+凭据挂载。纯本地模式（不加 company-lan 覆盖）时该路径指向本目录下的
+可写测试目录 `report-upload-images/`。
+
 ## 原始记录字体（宋体）
 
 容器内 LibreOffice 默认没有"宋体"，生成原始记录重存 .xls 时会把模板宋体替换成

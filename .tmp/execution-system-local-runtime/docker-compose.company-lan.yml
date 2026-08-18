@@ -2,6 +2,8 @@
 #
 # 将 local 覆盖中的空测试目录替换为真实 CIFS 共享：
 #   //192.168.105.82/材料检测中心/10特纤/02-检验
+# 并把报告上传图片目标切回真实可写共享：
+#   //192.168.105.82/公共交换文件
 services:
   backend:
     environment:
@@ -11,6 +13,9 @@ services:
         source: area_out_cifs
         target: /data/execution-source
         read_only: true
+      - type: volume
+        source: report_images_cifs
+        target: /data/report-upload-images
 
   execution-worker:
     environment:
@@ -20,3 +25,6 @@ services:
         source: area_out_cifs
         target: /data/execution-source
         read_only: true
+      - type: volume
+        source: report_images_cifs
+        target: /data/report-upload-images

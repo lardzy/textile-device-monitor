@@ -78,6 +78,8 @@ services:
       EXECUTION_SOURCE_ROOT: "${EXECUTION_SOURCE_ROOT:-/data/execution-source/10特纤/02-检验}"
       EXECUTION_RUNTIME_ROOT: /data/execution-runtime
       EXECUTION_PUBLISH_ROOT: /data/execution-publish
+      EXECUTION_REPORT_IMAGE_ROOT: "${EXECUTION_REPORT_IMAGE_ROOT:-/data/report-upload-images}"
+      EXECUTION_REPORT_IMAGE_DISPLAY_UNC: "${EXECUTION_REPORT_IMAGE_DISPLAY_UNC:-\\\\192.168.105.82\\公共交换文件}"
       EXECUTION_INDEX_INTERVAL_SECONDS: ${EXECUTION_INDEX_INTERVAL_SECONDS:-300}
       EXECUTION_AUTO_INDEX_ROOT_IDS: ${EXECUTION_AUTO_INDEX_ROOT_IDS:-regenerated_fiber_records,electron_microscopy_records,paper_fiber_records}
       EXECUTION_TASK_SNAPSHOT_TTL_MINUTES: ${EXECUTION_TASK_SNAPSHOT_TTL_MINUTES:-15}
@@ -109,6 +111,10 @@ services:
         source: area_out_cifs
         target: /data/execution-source
         read_only: true
+      # 报告上传图片共享（//192.168.105.82/公共交换文件，可写）
+      - type: volume
+        source: report_images_cifs
+        target: /data/report-upload-images
       - type: bind
         source: "${AREA_MODEL_HOST_PATH:-./runtime/area-models}"
         target: /opt/area_weights
@@ -160,6 +166,8 @@ services:
       EXECUTION_SOURCE_ROOT: "${EXECUTION_SOURCE_ROOT:-/data/execution-source/10特纤/02-检验}"
       EXECUTION_RUNTIME_ROOT: /data/execution-runtime
       EXECUTION_PUBLISH_ROOT: /data/execution-publish
+      EXECUTION_REPORT_IMAGE_ROOT: "${EXECUTION_REPORT_IMAGE_ROOT:-/data/report-upload-images}"
+      EXECUTION_REPORT_IMAGE_DISPLAY_UNC: "${EXECUTION_REPORT_IMAGE_DISPLAY_UNC:-\\\\192.168.105.82\\公共交换文件}"
       EXECUTION_INDEX_INTERVAL_SECONDS: ${EXECUTION_INDEX_INTERVAL_SECONDS:-300}
       EXECUTION_AUTO_INDEX_ROOT_IDS: ${EXECUTION_AUTO_INDEX_ROOT_IDS:-regenerated_fiber_records,electron_microscopy_records,paper_fiber_records}
       EXECUTION_TASK_SNAPSHOT_TTL_MINUTES: ${EXECUTION_TASK_SNAPSHOT_TTL_MINUTES:-15}
@@ -184,6 +192,10 @@ services:
         source: area_out_cifs
         target: /data/execution-source
         read_only: true
+      # 报告上传图片共享（//192.168.105.82/公共交换文件，可写）
+      - type: volume
+        source: report_images_cifs
+        target: /data/report-upload-images
       - type: bind
         source: "${EXECUTION_RUNTIME_HOST_PATH:-./runtime/execution-runtime}"
         target: /data/execution-runtime
@@ -247,6 +259,16 @@ volumes:
       type: cifs
       o: "username=${SMB_USER_B:?SMB_USER_B is required},password=${SMB_PASS_B:?SMB_PASS_B is required},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
       device: "//192.168.105.82/材料检测中心"
+
+  # 报告上传图片写入目标（电镜流程“放置报告上传图片”节点）。使用独立账号
+  # 变量：材料检测中心共享可访客只读（开发机 SMB_USER_B 可为占位符），而
+  # 公共交换文件 共享拒绝匿名挂载，必须是有读写权限的真实账号。
+  report_images_cifs:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${SMB_USER_C:?SMB_USER_C is required},password=${SMB_PASS_C:?SMB_PASS_C is required},vers=3.0,iocharset=utf8,noperm,uid=0,gid=0,file_mode=0777,dir_mode=0777"
+      device: "//192.168.105.82/公共交换文件"
 
   area_old_cifs:
     driver: local

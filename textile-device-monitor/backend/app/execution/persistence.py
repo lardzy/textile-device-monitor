@@ -83,6 +83,15 @@ def ensure_storage_roots(db: Session) -> None:
     publish_root = Path(
         str(getattr(settings, "EXECUTION_PUBLISH_ROOT", "/data/execution/publish"))
     )
+    report_image_root = Path(
+        str(
+            getattr(
+                settings,
+                "EXECUTION_REPORT_IMAGE_ROOT",
+                "/data/report-upload-images",
+            )
+        )
+    )
     definitions = [
         *[
             (
@@ -96,6 +105,7 @@ def ensure_storage_roots(db: Session) -> None:
         ],
         ("execution_staging", "执行暂存区", runtime_root, None, "write"),
         ("execution_publish", "执行发布区", publish_root, None, "publish"),
+        ("report_upload_images", "报告上传图片", report_image_root, None, "write"),
     ]
     existing = {
         root.root_id: root for root in db.query(ExecutionStorageRoot).all()

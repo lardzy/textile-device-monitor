@@ -25,6 +25,10 @@ from app.execution.paper_fiber import (
     PAPER_FIBER_ROOT_ID,
     PAPER_FIBER_WORKFLOW_SLUG,
 )
+from app.execution.report_image_placement import (
+    REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY,
+    REPORT_IMAGE_ROOT_ID,
+)
 from app.execution.validation import (
     definition_checksum,
     runtime_definition,
@@ -876,6 +880,7 @@ def _electron_microscopy_gbt36422_definition(
     legacy_task_source_contract: bool = False,
     legacy_final_entry_contract: bool = False,
     legacy_registration_capacity_contract: bool = False,
+    legacy_image_placement_contract: bool = False,
 ) -> dict[str, Any]:
     """Current full workflow; keep the image-only v1 reproducible above."""
 
@@ -887,6 +892,11 @@ def _electron_microscopy_gbt36422_definition(
         or legacy_task_source_contract
         or legacy_final_entry_contract
         or legacy_registration_capacity_contract
+    )
+    # 报告上传图片放置节点只属于当前契约；所有 legacy_* 变体重建的都是
+    # 引入该节点之前已发布的历史定义，因此一律不包含它。
+    include_image_placement = not (
+        legacy_image_placement_contract or include_print_confirmation
     )
     start, discover, select_images = deepcopy(definition["nodes"][:3])
     task_output_path = (
@@ -905,6 +915,17 @@ def _electron_microscopy_gbt36422_definition(
             "root_id": "execution_staging",
             "access": "write",
         },
+        *(
+            [
+                {
+                    "name": "report_images",
+                    "root_id": REPORT_IMAGE_ROOT_ID,
+                    "access": "write",
+                }
+            ]
+            if include_image_placement
+            else []
+        ),
     ]
     definition["credential_slots"] = [
         {
@@ -1366,6 +1387,38 @@ def _electron_microscopy_gbt36422_definition(
                 },
             ]
         )
+        if include_image_placement:
+            definition["nodes"].append(
+                {
+                    "id": "place-report-images",
+                    "type": "human.input",
+                    "type_version": 1,
+                    "name": "放置报告上传图片",
+                    "config": {
+                        "title": "放置报告上传图片",
+                        "description": (
+                            "把本次选择的全部图片按“编号-样品识别-序号”命名，"
+                            "写入报告上传图片共享目录下以检验编号命名的文件夹；"
+                            "发现同名文件时会先询问覆盖或取消。"
+                        ),
+                        "report_image_placement": True,
+                        "target_root_id": REPORT_IMAGE_ROOT_ID,
+                        "target_directory": (
+                            REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY
+                        ),
+                    },
+                    "input_mapping": {
+                        "inspection_number": "$.inputs.inspection_number",
+                        "selected_images": (
+                            "$.nodes.select-images.output.selected_images"
+                        ),
+                        "sample_identity": (
+                            "$.nodes.record-input.output.sample_identity"
+                        ),
+                    },
+                    "ui": {"x": 3100, "y": 100},
+                }
+            )
         definition["edges"].extend(
             [
                 {
@@ -1402,7 +1455,24 @@ def _electron_microscopy_gbt36422_definition(
                     "source": "generate-check-record",
                     "target": "final-entry",
                 },
-                {"id": "e14", "source": "final-entry", "target": "end"},
+                {
+                    "id": "e14",
+                    "source": "final-entry",
+                    "target": (
+                        "place-report-images" if include_image_placement else "end"
+                    ),
+                },
+                *(
+                    [
+                        {
+                            "id": "e15",
+                            "source": "place-report-images",
+                            "target": "end",
+                        }
+                    ]
+                    if include_image_placement
+                    else []
+                ),
             ]
         )
         end_mapping.update(
@@ -1417,7 +1487,11 @@ def _electron_microscopy_gbt36422_definition(
                 ),
             }
         )
-        end_x = 3100
+        if include_image_placement:
+            end_mapping["image_placement"] = (
+                "$.nodes.place-report-images.output"
+            )
+        end_x = 3320 if include_image_placement else 3100
     definition["nodes"].append(
         {
             "id": "end",
@@ -1432,7 +1506,7 @@ def _electron_microscopy_gbt36422_definition(
     return definition
 
 
-def _electron_cross_section_gbt36422_definition() -> dict[str, Any]:
+def _electron_cross_section_gbt36422_definition(**kwargs) -> dict[str, Any]:
     """电镜—纤维横截面（5103.426）流程。
 
     与纤维微观形貌流程同链；唯一差异是各节点 config 钉住
@@ -1441,7 +1515,7 @@ def _electron_cross_section_gbt36422_definition() -> dict[str, Any]:
     检验记录登记使用旧系统的 纤维横截面 模板族（仅 1/2/3 张图）。
     """
 
-    definition = _electron_microscopy_gbt36422_definition()
+    definition = _electron_microscopy_gbt36422_definition(**kwargs)
     definition["metadata"]["slug"] = ELECTRON_CROSS_SECTION_WORKFLOW[0]
     definition["metadata"]["name"] = ELECTRON_CROSS_SECTION_WORKFLOW[1]
     for node in definition["nodes"]:
@@ -1875,7 +1949,8 @@ def ensure_default_catalog(db: Session) -> None:
             description=(
                 "按编号目录与旧系统任务项目识别 GB/T 36422-2018 "
                 "纤维微观形貌流程，选图后生成可核对的原始记录，"
-                "完成旧系统图片上传、特纤复核及检验记录登记校对。"
+                "完成旧系统图片上传、特纤复核及检验记录登记校对，"
+                "并将所选图片放入报告上传图片目录。"
             ),
             draft_definition=deepcopy(definition),
             draft_revision=1,
@@ -2081,6 +2156,14 @@ def ensure_default_catalog(db: Session) -> None:
                 )
             )
             compatible_full_checksums.add(legacy_current_contract_checksum)
+            # 已发布完整定义：检验记录登记校对后尚无报告上传图片放置节点。
+            compatible_full_checksums.add(
+                definition_checksum(
+                    _electron_microscopy_gbt36422_definition(
+                        legacy_image_placement_contract=True
+                    )
+                )
+            )
             version_two = next(
                 (
                     version
@@ -2183,7 +2266,8 @@ def ensure_default_catalog(db: Session) -> None:
                                 "绑定人工选择的任务项目；选图提交时重新绑定"
                                 "最新旧系统任务快照；特纤复核完成后生成按"
                                 "选图数量绑定的检验记录工作簿，并进入旧系统"
-                                "检验记录登记与校对"
+                                "检验记录登记与校对；流程末尾新增报告上传"
+                                "图片放置节点"
                             ),
                         )
                     )
@@ -2203,7 +2287,8 @@ def ensure_default_catalog(db: Session) -> None:
             description=(
                 "按编号目录与旧系统任务项目识别 GB/T 36422-2018 "
                 "纤维横截面流程，选图后生成 A1 为“纤维横截面原始记录”的"
-                "原始记录，完成旧系统图片上传、特纤复核及检验记录登记校对。"
+                "原始记录，完成旧系统图片上传、特纤复核及检验记录登记校对，"
+                "并将所选图片放入报告上传图片目录。"
             ),
             draft_definition=deepcopy(definition),
             draft_revision=1,
@@ -2239,6 +2324,12 @@ def ensure_default_catalog(db: Session) -> None:
         # 2026-08 移除受控测试覆盖运行输入之前发布的首版横截面定义。
         legacy_cross_checksums = {
             "fbf6ab284ec3ef74986479c15ae58731913c4eadf8c087c551b3cd3717c87914",
+            # 已发布横截面定义：尚无报告上传图片放置节点。
+            definition_checksum(
+                _electron_cross_section_gbt36422_definition(
+                    legacy_image_placement_contract=True
+                )
+            ),
         }
         current_cross = next(
             (
@@ -2279,7 +2370,7 @@ def ensure_default_catalog(db: Session) -> None:
                         current_cross.capabilities
                         or {"read": True, "write": True, "external_write": True},
                     ),
-                    release_note="移除受控测试覆盖运行输入",
+                    release_note="流程末尾新增“放置报告上传图片”节点",
                 )
             )
 

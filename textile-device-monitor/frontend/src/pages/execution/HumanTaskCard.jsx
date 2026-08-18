@@ -34,6 +34,7 @@ import ExecutionResultFiles, {
 import MicroscopyRecordHumanTask, {
   microscopyTaskKind,
 } from './MicroscopyRecordHumanTask';
+import ReportImagePlacementPrompt from './ReportImagePlacementPrompt';
 import SchemaFields from './SchemaFields';
 
 const { Paragraph, Text } = Typography;
@@ -191,6 +192,7 @@ export default function HumanTaskCard({
     && candidates.every(isPaperQualitativeResultFile);
   const approvalContext = nodeRun?.input_data?.approval_context;
   const approvalMutationId = approvalContext?.mutation_id;
+  const placementPlan = nodeRun?.input_data?.placement_plan || null;
 
   const valuesForSubmit = () => {
     const values = form.getFieldsValue();
@@ -828,6 +830,7 @@ export default function HumanTaskCard({
               disabled={working}
             />
           )}
+          {placementPlan && <ReportImagePlacementPrompt plan={placementPlan} />}
           <SchemaFields schema={formSchema} />
           <Space wrap>
             <Button loading={working} onClick={() => execute('save')}>保存草稿</Button>
