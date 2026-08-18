@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import TemporaryFile
 from typing import Any, Iterable, Optional
 from uuid import uuid4
 
@@ -73,6 +74,20 @@ ROOT_LAYOUT = (
 )
 
 
+def _storage_path_available(path: Path, access_mode: str) -> bool:
+    """Probe the capability promised by a configured storage root."""
+
+    if not path.exists() or not path.is_dir():
+        return False
+    if access_mode not in {"write", "publish"}:
+        return True
+    try:
+        with TemporaryFile(dir=path):
+            return True
+    except OSError:
+        return False
+
+
 def ensure_storage_roots(db: Session) -> None:
     source_root = Path(
         str(getattr(settings, "EXECUTION_SOURCE_ROOT", "/data/execution/source"))
@@ -111,7 +126,7 @@ def ensure_storage_roots(db: Session) -> None:
         root.root_id: root for root in db.query(ExecutionStorageRoot).all()
     }
     for root_id, name, path, category, access_mode in definitions:
-        available = path.exists() and path.is_dir()
+        available = _storage_path_available(path, access_mode)
         root = existing.get(root_id)
         if root is None:
             root = ExecutionStorageRoot(
@@ -129,7 +144,15 @@ def ensure_storage_roots(db: Session) -> None:
             root.access_mode = access_mode
             root.category_key = category
         root.is_available = available
-        root.availability_message = None if available else "目录尚未挂载或不存在"
+        root.availability_message = (
+            None
+            if available
+            else (
+                "目录不可写、尚未挂载或不存在"
+                if access_mode in {"write", "publish"}
+                else "目录尚未挂载或不存在"
+            )
+        )
     db.flush()
     availability_by_root = {
         root.root_id: root.is_available
@@ -151,22 +174,23 @@ def ensure_storage_roots(db: Session) -> None:
             else workflow.draft_definition
         )
         slots = (effective_definition or {}).get("root_slots") or []
-        source_root_ids = [
+        required_root_ids = [
             slot.get("root_id")
             for slot in slots
-            if isinstance(slot, dict) and slot.get("access", "read") == "read"
+            if isinstance(slot, dict)
+            and slot.get("access", "read") in {"read", "write", "publish"}
         ]
-        if not source_root_ids:
+        if not required_root_ids:
             continue
         missing = [
             root_id
-            for root_id in source_root_ids
+            for root_id in required_root_ids
             if not availability_by_root.get(root_id, False)
         ]
         if missing:
             workflow.availability_code = "root_not_configured"
             workflow.availability_message = (
-                f"数据根未配置：{', '.join(missing)}"
+                f"数据根不可用：{', '.join(missing)}"
             )
         elif workflow.availability_code == "root_not_configured":
             workflow.availability_code = None

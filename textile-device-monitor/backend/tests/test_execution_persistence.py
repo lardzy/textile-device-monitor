@@ -12,6 +12,7 @@ from app.database import Base
 from app.execution.catalog import (
     bind_user_role,
     create_workflow,
+    ensure_default_catalog,
     ensure_default_rbac,
     publish_workflow,
 )
@@ -29,6 +30,7 @@ from app.execution.models import (
     ExecutionHumanTask,
     ExecutionStorageRoot,
     ExecutionUser,
+    ExecutionWorkflow,
 )
 from app.execution.persistence import (
     claim_index_job,
@@ -50,12 +52,14 @@ class ExecutionPersistentIndexTests(unittest.TestCase):
         self.source = root / "source"
         self.runtime = root / "runtime"
         self.publish = root / "publish"
+        self.report_images = root / "report-images"
         for path in (
             self.source / "2026-特种毛",
             self.source / "2026-麻棉",
             self.source / "2026-电镜",
             self.runtime,
             self.publish,
+            self.report_images,
         ):
             path.mkdir(parents=True)
         (self.source / "2026-特种毛" / "260001_record.xlsx").write_bytes(
@@ -70,10 +74,12 @@ class ExecutionPersistentIndexTests(unittest.TestCase):
             settings.EXECUTION_SOURCE_ROOT,
             settings.EXECUTION_RUNTIME_ROOT,
             settings.EXECUTION_PUBLISH_ROOT,
+            settings.EXECUTION_REPORT_IMAGE_ROOT,
         )
         settings.EXECUTION_SOURCE_ROOT = str(self.source)
         settings.EXECUTION_RUNTIME_ROOT = str(self.runtime)
         settings.EXECUTION_PUBLISH_ROOT = str(self.publish)
+        settings.EXECUTION_REPORT_IMAGE_ROOT = str(self.report_images)
         self.engine = create_engine("sqlite:///:memory:")
         self.Session = sessionmaker(bind=self.engine, autoflush=False)
         Base.metadata.create_all(self.engine)
@@ -99,6 +105,7 @@ class ExecutionPersistentIndexTests(unittest.TestCase):
             settings.EXECUTION_SOURCE_ROOT,
             settings.EXECUTION_RUNTIME_ROOT,
             settings.EXECUTION_PUBLISH_ROOT,
+            settings.EXECUTION_REPORT_IMAGE_ROOT,
         ) = self.original_settings
         self.tempdir.cleanup()
 
@@ -130,6 +137,28 @@ class ExecutionPersistentIndexTests(unittest.TestCase):
         self.db.commit()
         execute_claimed_node(self.db, node_id, token)
         self.db.commit()
+
+    def test_workflow_availability_includes_required_write_roots(self):
+        ensure_default_catalog(self.db)
+        settings.EXECUTION_REPORT_IMAGE_ROOT = str(
+            Path(self.tempdir.name) / "missing-report-images"
+        )
+
+        ensure_storage_roots(self.db)
+
+        report_root = (
+            self.db.query(ExecutionStorageRoot)
+            .filter_by(root_id="report_upload_images")
+            .one()
+        )
+        workflow = (
+            self.db.query(ExecutionWorkflow)
+            .filter_by(slug="electron-microscopy-gbt36422")
+            .one()
+        )
+        self.assertFalse(report_root.is_available)
+        self.assertEqual(workflow.availability_code, "root_not_configured")
+        self.assertIn("report_upload_images", workflow.availability_message)
 
     def test_scan_is_persisted_and_search_never_rescans(self):
         job = self._refresh("special_wool_records")

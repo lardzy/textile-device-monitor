@@ -881,11 +881,12 @@ def _electron_microscopy_gbt36422_definition(
     legacy_final_entry_contract: bool = False,
     legacy_registration_capacity_contract: bool = False,
     legacy_image_placement_contract: bool = False,
+    legacy_no_print_contract: bool = False,
 ) -> dict[str, Any]:
     """Current full workflow; keep the image-only v1 reproducible above."""
 
     definition = _electron_microscopy_gbt36422_image_selection_definition()
-    include_print_confirmation = bool(
+    legacy_print_flags = bool(
         legacy_print_contract
         or legacy_print_choice_contract
         or legacy_project_contract
@@ -893,10 +894,17 @@ def _electron_microscopy_gbt36422_definition(
         or legacy_final_entry_contract
         or legacy_registration_capacity_contract
     )
+    # 打印确认节点属于当前契约；仅两个无打印历史时代不含它——
+    # legacy_image_placement_contract 重建引入图片放置节点之前的定义，
+    # legacy_no_print_contract 重建含图片放置但无打印确认的已发布定义，
+    # 二者保证在途运行与自动升级的校验和识别保持不变。
+    include_print_confirmation = not (
+        legacy_image_placement_contract or legacy_no_print_contract
+    )
     # 报告上传图片放置节点只属于当前契约；所有 legacy_* 变体重建的都是
     # 引入该节点之前已发布的历史定义，因此一律不包含它。
     include_image_placement = not (
-        legacy_image_placement_contract or include_print_confirmation
+        legacy_image_placement_contract or legacy_print_flags
     )
     start, discover, select_images = deepcopy(definition["nodes"][:3])
     task_output_path = (
@@ -1058,7 +1066,7 @@ def _electron_microscopy_gbt36422_definition(
                     if legacy_print_contract
                     else (
                         "可选择暂不打印并继续；如选择打印，请下载或打开生成的 Excel，"
-                        "在 Excel 中手动打印工作表“微观形貌”的默认打印区域。"
+                        "使用默认打印机打印工作表“微观形貌”的默认打印区域。"
                     )
                 ),
                 "form_schema": (
@@ -2164,6 +2172,14 @@ def ensure_default_catalog(db: Session) -> None:
                     )
                 )
             )
+            # 已发布完整定义：含报告上传图片放置节点、尚无打印确认节点。
+            compatible_full_checksums.add(
+                definition_checksum(
+                    _electron_microscopy_gbt36422_definition(
+                        legacy_no_print_contract=True
+                    )
+                )
+            )
             version_two = next(
                 (
                     version
@@ -2260,14 +2276,14 @@ def ensure_default_catalog(db: Session) -> None:
                                 full_definition, current_capabilities
                             ),
                             release_note=(
-                                "打印确认改为可选的人工打印或暂不打印；"
-                                "选择打印时需确认已在 Excel 完成打印；"
-                                "两种选择均绑定生成制品校验和；图片上传预检"
-                                "绑定人工选择的任务项目；选图提交时重新绑定"
-                                "最新旧系统任务快照；特纤复核完成后生成按"
-                                "选图数量绑定的检验记录工作簿，并进入旧系统"
-                                "检验记录登记与校对；流程末尾新增报告上传"
-                                "图片放置节点"
+                                "生成原始记录后恢复打印确认：可选择暂不打印，"
+                                "或下载/打开工作簿后使用默认打印机打印工作表"
+                                "“微观形貌”的默认打印区域并确认完成；"
+                                "图片上传预检绑定人工选择的任务项目；选图提交"
+                                "时重新绑定最新旧系统任务快照；特纤复核完成后"
+                                "生成按选图数量绑定的检验记录工作簿，并进入"
+                                "旧系统检验记录登记与校对；流程末尾保留报告"
+                                "上传图片放置节点"
                             ),
                         )
                     )
@@ -2330,6 +2346,12 @@ def ensure_default_catalog(db: Session) -> None:
                     legacy_image_placement_contract=True
                 )
             ),
+            # 已发布横截面定义：含报告上传图片放置节点、尚无打印确认节点。
+            definition_checksum(
+                _electron_cross_section_gbt36422_definition(
+                    legacy_no_print_contract=True
+                )
+            ),
         }
         current_cross = next(
             (
@@ -2370,7 +2392,11 @@ def ensure_default_catalog(db: Session) -> None:
                         current_cross.capabilities
                         or {"read": True, "write": True, "external_write": True},
                     ),
-                    release_note="流程末尾新增“放置报告上传图片”节点",
+                    release_note=(
+                        "生成原始记录后恢复打印确认（默认打印机打印"
+                        "“微观形貌”工作表默认打印区域），流程末尾保留"
+                        "“放置报告上传图片”节点"
+                    ),
                 )
             )
 

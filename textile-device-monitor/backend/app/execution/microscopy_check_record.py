@@ -35,7 +35,16 @@ from app.execution.storage import (
 
 MICROSCOPY_CHECK_RECORD_NODE_TYPE = "workbook.microscopy_check_record"
 MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION = (
-    "gbt36422-2018-microscopy-check-record-v3"
+    "gbt36422-2018-microscopy-check-record-v4"
+)
+MICROSCOPY_CHECK_RECORD_COMPATIBLE_GENERATOR_VERSIONS = frozenset(
+    {
+        MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
+        # v3 对不含前导零且不超过 Excel 精确数值范围的纯数字编号产物
+        # 仍然有效；最终登记还会逐项核对 verification.cells，旧版被舍入
+        # 或丢失前导零的产物不会通过。
+        "gbt36422-2018-microscopy-check-record-v3",
+    }
 )
 MICROSCOPY_CHECK_RECORD_SHEET_NAME = "Sheet1"
 MICROSCOPY_CHECK_RECORD_MEDIA_TYPE = "application/vnd.ms-excel"
@@ -297,7 +306,14 @@ def _build_biff_edits(cells: dict[str, str]) -> list["CellEdit"]:
 
     edits: list[CellEdit] = []
     row, column = cell("AS4")
-    edits.append(CellEdit(row, column, "number", float(cells["AS4"])))
+    report_number = cells["AS4"]
+    if _report_number_uses_numeric_cell(report_number):
+        # 纯数字编号沿用数字格写入，与已验收的生产行为一致。
+        edits.append(CellEdit(row, column, "number", float(report_number)))
+    else:
+        # 含字母（或带前导零）的编号必须按文本写入：模板 AS4 本来就是
+        # 文本占位格（“由系统写入的报告号”），数值化会直接崩溃或丢前导零。
+        edits.append(CellEdit(row, column, "text", report_number))
 
     method = cells["I8"]
     row, column = cell("BI8")
@@ -321,6 +337,18 @@ def _build_biff_edits(cells: dict[str, str]) -> list["CellEdit"]:
         row, column = cell(mirror)
         edits.append(CellEdit(row, column, "cached_string", value))
     return edits
+
+
+def _report_number_uses_numeric_cell(value: str) -> bool:
+    """Keep only exactly representable legacy identifiers as Excel numbers."""
+
+    return bool(
+        value.isascii()
+        and value.isdigit()
+        and not value.startswith("0")
+        # Excel numeric cells retain at most 15 significant decimal digits.
+        and len(value) <= 15
+    )
 
 
 def _verify_patched_workbook(
@@ -427,12 +455,17 @@ def _verify_patched_workbook(
         expected = cells.get(cell, "")
         actual = actual_cells.get(cell)
         if cell == "AS4":
-            actual_number = None
-            try:
-                actual_number = float(actual) if actual is not None else None
-            except (TypeError, ValueError):
+            if _report_number_uses_numeric_cell(expected):
                 actual_number = None
-            if actual_number != float(expected):
+                try:
+                    actual_number = (
+                        float(actual) if actual is not None else None
+                    )
+                except (TypeError, ValueError):
+                    actual_number = None
+                if actual_number != float(expected):
+                    mismatches[cell] = {"expected": expected, "actual": actual}
+            elif _normalized_text(actual) != expected:
                 mismatches[cell] = {"expected": expected, "actual": actual}
             continue
         if actual != expected:
@@ -455,6 +488,8 @@ def _verify_patched_workbook(
         "ole_header": True,
         "size_bytes": path.stat().st_size,
     }
+
+
 def _request_digest(
     *,
     inspection_number: str,
@@ -587,8 +622,13 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
         f"{inspection_number}-{family.check_record_filename_segment}"
         "-检验记录登记.xls"
     )
+    # A changed generator or audited input must never overwrite the immutable
+    # file referenced by an older artifact row.  The request digest gives each
+    # deterministic generation contract its own staging path while retries of
+    # the same request still reuse the exact artifact.
     relative_path = (
-        f"check-records/{context.run.id}/{context.node_run.id}/{filename}"
+        f"check-records/{context.run.id}/{context.node_run.id}/"
+        f"{request_digest}/{filename}"
     )
     existing = _existing_artifact(
         context.db,

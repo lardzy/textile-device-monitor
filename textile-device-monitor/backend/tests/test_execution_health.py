@@ -51,8 +51,10 @@ def test_worker_heartbeat_freshness_expires() -> None:
 def test_readiness_requires_worker_and_writable_storage(tmp_path) -> None:
     staging = tmp_path / "staging"
     publish = tmp_path / "publish"
+    report_images = tmp_path / "report-images"
     staging.mkdir()
     publish.mkdir()
+    report_images.mkdir()
     fresh_heartbeat = ExecutionWorkerHeartbeat(
         worker_id="ready-worker",
         status="running",
@@ -75,6 +77,10 @@ def test_readiness_requires_worker_and_writable_storage(tmp_path) -> None:
             "app.main.settings.EXECUTION_PUBLISH_ROOT",
             str(publish),
         ),
+        patch(
+            "app.main.settings.EXECUTION_REPORT_IMAGE_ROOT",
+            str(report_images),
+        ),
     ):
         payload, status_code = _readiness_payload()
     assert status_code == 200
@@ -96,6 +102,10 @@ def test_readiness_requires_worker_and_writable_storage(tmp_path) -> None:
             "app.main.settings.EXECUTION_PUBLISH_ROOT",
             str(publish),
         ),
+        patch(
+            "app.main.settings.EXECUTION_REPORT_IMAGE_ROOT",
+            str(report_images),
+        ),
     ):
         payload, status_code = _readiness_payload()
     assert status_code == 503
@@ -104,7 +114,9 @@ def test_readiness_requires_worker_and_writable_storage(tmp_path) -> None:
 
 def test_readiness_fails_when_publish_root_is_missing(tmp_path) -> None:
     staging = tmp_path / "staging"
+    report_images = tmp_path / "report-images"
     staging.mkdir()
+    report_images.mkdir()
     with (
         patch("app.main.database_schema_is_current", return_value=(True, "head", "head")),
         patch(
@@ -120,7 +132,37 @@ def test_readiness_fails_when_publish_root_is_missing(tmp_path) -> None:
             "app.main.settings.EXECUTION_PUBLISH_ROOT",
             str(tmp_path / "missing"),
         ),
+        patch(
+            "app.main.settings.EXECUTION_REPORT_IMAGE_ROOT",
+            str(report_images),
+        ),
     ):
         payload, status_code = _readiness_payload()
     assert status_code == 503
     assert not payload["components"]["execution_storage"]["publish_writable"]
+
+
+def test_readiness_fails_when_report_image_root_is_missing(tmp_path) -> None:
+    staging = tmp_path / "staging"
+    publish = tmp_path / "publish"
+    staging.mkdir()
+    publish.mkdir()
+    with (
+        patch("app.main.database_schema_is_current", return_value=(True, "head", "head")),
+        patch(
+            "app.main.worker_heartbeat_is_fresh",
+            return_value=(True, None),
+        ),
+        patch("app.main.settings.EXECUTION_ENABLED", True),
+        patch("app.main.settings.EXECUTION_RUNTIME_ROOT", str(staging)),
+        patch("app.main.settings.EXECUTION_PUBLISH_ROOT", str(publish)),
+        patch(
+            "app.main.settings.EXECUTION_REPORT_IMAGE_ROOT",
+            str(tmp_path / "missing-report-images"),
+        ),
+    ):
+        payload, status_code = _readiness_payload()
+    assert status_code == 503
+    assert not payload["components"]["execution_storage"][
+        "report_images_writable"
+    ]

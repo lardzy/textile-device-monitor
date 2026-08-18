@@ -27,7 +27,7 @@ from app.execution.microscopy_families import (
     microscopy_family_for_project,
 )
 from app.execution.microscopy_check_record import (
-    MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
+    MICROSCOPY_CHECK_RECORD_COMPATIBLE_GENERATOR_VERSIONS,
 )
 from app.execution.microscopy_original_record import (
     MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME,
@@ -2317,7 +2317,7 @@ def _generated_microscopy_check_record_artifact(
         or artifact.media_type != "application/vnd.ms-excel"
         or not artifact.filename.casefold().endswith(".xls")
         or metadata.get("generator_version")
-        != MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION
+        not in MICROSCOPY_CHECK_RECORD_COMPATIBLE_GENERATOR_VERSIONS
         or not isinstance(stored_binding, dict)
         or stored_binding != declared_binding
         or not isinstance(cells, dict)

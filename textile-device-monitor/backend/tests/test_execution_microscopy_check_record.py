@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import xlrd
 from sqlalchemy import create_engine
@@ -129,15 +130,15 @@ class MicroscopyCheckRecordExecutorTests(unittest.TestCase):
         self.engine.dispose()
         self.temporary.cleanup()
 
-    def _context(self, image_count: int = 1):
+    def _context(self, image_count: int = 1, number: str = "260111037"):
         return SimpleNamespace(
             db=self.db,
             run=SimpleNamespace(
-                id=f"run-{image_count}", inspection_number="260111037"
+                id=f"run-{image_count}-{number}", inspection_number=number
             ),
-            node_run=SimpleNamespace(id=f"check-record-{image_count}"),
+            node_run=SimpleNamespace(id=f"check-record-{image_count}-{number}"),
             input_data={
-                "inspection_number": "260111037",
+                "inspection_number": number,
                 "image_count": image_count,
                 "selected_image_ids": [
                     f"image-{index + 1}" for index in range(image_count)
@@ -342,6 +343,75 @@ class MicroscopyCheckRecordExecutorTests(unittest.TestCase):
         self.assertEqual(
             raised.exception.code,
             "microscopy_template_binding_mismatch",
+        )
+
+    def test_alphanumeric_report_number_is_written_as_text(self):
+        # 检验编号第三位可能是字母（如 26A045793）：AS4 必须按文本写入，
+        # 不能数值化（float('26A045793') 曾直接让生成节点崩溃）。
+        context = self._context(1, number="26A045793")
+        result = microscopy_check_record_executor(context)
+        artifact = self.db.get(ExecutionArtifact, result["artifact_id"])
+        self.assertTrue(artifact.metadata_json["verification"]["verified"])
+        output = self.staging_path / artifact.relative_path
+        workbook = xlrd.open_workbook(str(output), on_demand=True)
+        sheet = workbook.sheet_by_name(MICROSCOPY_CHECK_RECORD_SHEET_NAME)
+        row, column = _cell_coordinates("AS4")
+        cell = sheet.cell(row, column)
+        self.assertEqual(cell.ctype, xlrd.XL_CELL_TEXT)
+        self.assertEqual(cell.value, "26A045793")
+        workbook.release_resources()
+
+    def test_leading_zero_number_keeps_text_form(self):
+        # 前导零纯数字编号一旦数值化会丢位（'026...' -> 26...），同样按文本写入。
+        context = self._context(1, number="026004579")
+        result = microscopy_check_record_executor(context)
+        artifact = self.db.get(ExecutionArtifact, result["artifact_id"])
+        output = self.staging_path / artifact.relative_path
+        workbook = xlrd.open_workbook(str(output), on_demand=True)
+        sheet = workbook.sheet_by_name(MICROSCOPY_CHECK_RECORD_SHEET_NAME)
+        row, column = _cell_coordinates("AS4")
+        self.assertEqual(sheet.cell_value(row, column), "026004579")
+        workbook.release_resources()
+
+    def test_long_numeric_number_keeps_exact_text_form(self):
+        number = "12345678901234567"
+        context = self._context(1, number=number)
+        result = microscopy_check_record_executor(context)
+        artifact = self.db.get(ExecutionArtifact, result["artifact_id"])
+        output = self.staging_path / artifact.relative_path
+        workbook = xlrd.open_workbook(str(output), on_demand=True)
+        sheet = workbook.sheet_by_name(MICROSCOPY_CHECK_RECORD_SHEET_NAME)
+        row, column = _cell_coordinates("AS4")
+        cell = sheet.cell(row, column)
+        self.assertEqual(cell.ctype, xlrd.XL_CELL_TEXT)
+        self.assertEqual(cell.value, number)
+        workbook.release_resources()
+
+    def test_generator_version_change_does_not_reuse_old_artifact(self):
+        context = self._context(1, number="026004579")
+        with patch(
+            "app.execution.microscopy_check_record."
+            "MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION",
+            "gbt36422-2018-microscopy-check-record-v3",
+        ):
+            old = microscopy_check_record_executor(context)
+
+        current = microscopy_check_record_executor(context)
+
+        self.assertFalse(old["reused"])
+        self.assertFalse(current["reused"])
+        self.assertNotEqual(old["artifact_id"], current["artifact_id"])
+        old_artifact = self.db.get(ExecutionArtifact, old["artifact_id"])
+        current_artifact = self.db.get(
+            ExecutionArtifact, current["artifact_id"]
+        )
+        self.assertNotEqual(
+            old_artifact.relative_path,
+            current_artifact.relative_path,
+        )
+        self.assertEqual(
+            current_artifact.metadata_json["generator_version"],
+            MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
         )
 
 

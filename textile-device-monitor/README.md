@@ -83,6 +83,9 @@ HSTS_MAX_AGE=0
 `/data/execution-source`；无需先在 Docker 宿主机手工挂载共享盘。默认
 `EXECUTION_SOURCE_ROOT=/data/execution-source/10特纤/02-检验`，其下直接包含
 `2026-特种毛`、`2026-再生纤`、`2026-麻棉` 和 `2026-电镜`。
+报告上传图片放置节点使用独立的
+`SMB_USER_C/SMB_PASS_C` 将 `//192.168.105.82/公共交换文件`
+可写挂载到 `/data/report-upload-images`；该变量为基础 Compose 必填项。
 后台自动索引由 `EXECUTION_AUTO_INDEX_ROOT_IDS` 控制，默认扫描
 `regenerated_fiber_records`、`electron_microscopy_records` 和
 `paper_fiber_records`。再生纤扫描只记录

@@ -126,12 +126,16 @@ def _readiness_payload() -> tuple[dict, int]:
         publish_ready = _probe_writable_directory(
             settings.EXECUTION_PUBLISH_ROOT
         )
+        report_images_ready = _probe_writable_directory(
+            settings.EXECUTION_REPORT_IMAGE_ROOT
+        )
         components["execution_storage"] = {
-            "ready": staging_ready and publish_ready,
+            "ready": staging_ready and publish_ready and report_images_ready,
             "staging_writable": staging_ready,
             "publish_writable": publish_ready,
+            "report_images_writable": report_images_ready,
         }
-        ready = ready and staging_ready and publish_ready
+        ready = ready and staging_ready and publish_ready and report_images_ready
 
     return (
         {

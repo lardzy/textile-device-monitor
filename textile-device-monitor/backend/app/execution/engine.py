@@ -61,7 +61,9 @@ from app.execution.persistence import build_file_gateway
 from app.execution.registry import node_registry
 from app.execution.report_image_placement import (
     auto_complete_report_image_placement,
+    is_deferred_report_image_placement,
     normalize_report_image_placement_submission,
+    report_image_placement_node_config,
     report_image_placement_form_schema,
 )
 from app.execution.storage import ArtifactRef, FileGateway, StorageError
@@ -4269,7 +4271,21 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
         )
         return
     try:
+        persisted_placement_request = (
+            (node_run.input_data or {}).get("placement_request")
+            if report_image_placement_node_config(node)
+            else None
+        )
         input_data = _node_input(db, node_run.run, node)
+        if isinstance(persisted_placement_request, dict):
+            # A conflict decision is collected in the API transaction, then
+            # persisted on the node and executed by the Worker on the next
+            # attempt.  Input mappings are recomputed on every attempt, so the
+            # explicit request must be merged back after that recomputation.
+            input_data = {
+                **input_data,
+                "placement_request": persisted_placement_request,
+            }
         _assert_declared_root_refs(node_run.run, input_data)
         node_run.input_data = input_data
         attempt = (
@@ -4534,6 +4550,49 @@ def submit_human_task(
     task.completed_at = utcnow()
     task.revision += 1
     previous_run_status = run.status
+    if is_deferred_report_image_placement(normalized_data):
+        node_run.input_data = {
+            **(node_run.input_data or {}),
+            "placement_request": normalized_data,
+        }
+        node_run.status = "ready"
+        node_run.output_data = {}
+        node_run.ready_at = utcnow()
+        node_run.finished_at = None
+        node_run.error_code = None
+        node_run.error_message = None
+        node_run.lease_owner = None
+        node_run.lease_token = None
+        node_run.lease_expires_at = None
+        db.flush()
+        append_run_event(
+            db,
+            run_id=task.run_id,
+            event_type="human_task.completed",
+            actor_type="user",
+            actor_id=actor.id,
+            payload={"task_id": task.id, "node_id": node_run.node_id},
+        )
+        append_run_event(
+            db,
+            run_id=task.run_id,
+            event_type="node.ready",
+            actor_type="user",
+            actor_id=actor.id,
+            payload={
+                "node_id": node_run.node_id,
+                "reason": "report_image_placement_deferred",
+            },
+        )
+        _refresh_run_status(db, run)
+        if run.status != previous_run_status:
+            append_run_event(
+                db,
+                run_id=task.run_id,
+                event_type=f"run.{run.status}",
+                payload={"status": run.status},
+            )
+        return task
     node_run.status = "succeeded"
     node_run.output_data = normalized_data
     node_run.finished_at = utcnow()

@@ -447,7 +447,7 @@ const MicroscopyPrintConfirmation = ({
         <FileExcelOutlined />
         <div>
           <strong>{fileName}</strong>
-          <Text type="secondary">工作表：微观形貌 · 使用模板默认打印区域</Text>
+          <Text type="secondary">工作表：微观形貌 · 默认打印机 · 模板默认打印区域</Text>
         </div>
       </div>
       {sha256 ? (
@@ -480,7 +480,7 @@ const MicroscopyPrintConfirmation = ({
               <span>
                 <strong>打印</strong>
                 <Text type="secondary">
-                  下载或打开工作簿后，在 Excel 中手动打印“微观形貌”工作表的模板默认打印区域
+                  下载或打开工作簿后，在 Excel 中使用默认打印机打印“微观形貌”工作表的默认打印区域
                 </Text>
               </span>
             </Radio>
@@ -499,7 +499,7 @@ const MicroscopyPrintConfirmation = ({
             showIcon
             type="info"
             message="打印需要在 Excel 中手动完成"
-            description="网页不会自动打印。请打开工作簿，切换到“微观形貌”工作表，并使用模板中已经设置好的默认打印区域。"
+            description="网页不会自动打印。请打开工作簿，切换到“微观形貌”工作表，使用默认打印机打印模板中已经设置好的默认打印区域。"
           />
           <Space wrap>
             {downloadUrl && (

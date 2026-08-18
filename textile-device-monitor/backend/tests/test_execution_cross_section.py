@@ -175,9 +175,20 @@ class CrossSectionWorkflowDefinitionTests(unittest.TestCase):
                 "record_family", node.get("input_mapping") or {}
             )
         # 既有微观形貌定义的校验和保持稳定（目录自动升级依赖它）。
-        # 2026-08-18：流程末尾新增“放置报告上传图片”节点。
+        # 2026-08-18：流程末尾新增“放置报告上传图片”节点；
+        # 2026-08-18：恢复生成原始记录后的打印确认节点。
         self.assertEqual(
             definition_checksum(definition),
+            "9dad25e4badb749fd26d1cfc29502e314b04fdf19a91e3006ee2071ea3dfece2",
+        )
+        # 含图片放置节点、尚无打印确认节点的已发布定义必须保持原校验和，
+        # 否则存量库的自动跟随升级会失效。
+        self.assertEqual(
+            definition_checksum(
+                _electron_microscopy_gbt36422_definition(
+                    legacy_no_print_contract=True
+                )
+            ),
             "0a91e1daf635dfd035f889bba2f3c906ad703d32bb4df2eb03ca564a59c11fe5",
         )
         # 引入放置节点之前的已发布定义必须保持原校验和，

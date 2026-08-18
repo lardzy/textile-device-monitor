@@ -310,7 +310,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         )
         definition = workflow.draft_definition
         self.assertTrue(validate_definition(definition, for_publish=True).valid)
-        self.assertNotIn(
+        self.assertIn(
             "print-confirm",
             {node["id"] for node in definition["nodes"]},
         )
@@ -318,6 +318,14 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             {
                 "id": "e6",
                 "source": "generate-record",
+                "target": "print-confirm",
+            },
+            definition["edges"],
+        )
+        self.assertIn(
+            {
+                "id": "e7",
+                "source": "print-confirm",
                 "target": "upload-record",
             },
             definition["edges"],
@@ -368,10 +376,10 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                 "legacy_existing_record_decision"
             ]
         )
-        self.assertTrue(
-            registration_decision["config"][
-                "allow_multi_copy_over_capacity"
-            ]
+        # 运行时不再读取该标记；含打印确认的契约时代均不携带它。
+        self.assertNotIn(
+            "allow_multi_copy_over_capacity",
+            registration_decision["config"],
         )
         invalid_definition = _electron_microscopy_gbt36422_definition()
         invalid_final_entry = next(
@@ -650,7 +658,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflow.draft_revision, 2)
         self.assertEqual(workflow.published_version_number, 2)
-        self.assertNotIn(
+        self.assertIn(
             "print-confirm",
             {node["id"] for node in workflow.draft_definition["nodes"]},
         )
@@ -658,12 +666,12 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             {
                 "id": "e6",
                 "source": "generate-record",
-                "target": "upload-record",
+                "target": "print-confirm",
             },
             workflow.draft_definition["edges"],
         )
 
-    def test_previous_full_workflow_is_upgraded_without_print_pause(self):
+    def test_previous_full_workflow_is_upgraded_with_print_pause(self):
         workflow = self.db.query(ExecutionWorkflow).filter_by(
             slug="electron-microscopy-gbt36422"
         ).one()
@@ -700,7 +708,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflow.draft_revision, 2)
         self.assertEqual(workflow.published_version_number, 2)
-        self.assertNotIn(
+        self.assertIn(
             "print-confirm",
             {node["id"] for node in workflow.draft_definition["nodes"]},
         )
@@ -709,9 +717,8 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             for node in workflow.draft_definition["nodes"]
             if node["id"] == "registration-decision"
         )
-        self.assertTrue(
-            registration["config"]["allow_multi_copy_over_capacity"]
-        )
+        # 运行时不再读取该标记；含打印确认的契约时代均不携带它。
+        self.assertNotIn("allow_multi_copy_over_capacity", registration["config"])
 
     def test_system_owned_print_choice_without_completion_is_upgraded(self):
         workflow = self.db.query(ExecutionWorkflow).filter_by(
@@ -745,7 +752,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.db.refresh(workflow)
 
         self.assertEqual(workflow.draft_revision, 2)
-        self.assertNotIn(
+        self.assertIn(
             "print-confirm",
             {node["id"] for node in workflow.draft_definition["nodes"]},
         )
@@ -753,6 +760,14 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             {
                 "id": "e6",
                 "source": "generate-record",
+                "target": "print-confirm",
+            },
+            workflow.draft_definition["edges"],
+        )
+        self.assertIn(
+            {
+                "id": "e7",
+                "source": "print-confirm",
                 "target": "upload-record",
             },
             workflow.draft_definition["edges"],
