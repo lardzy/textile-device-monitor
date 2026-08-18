@@ -2,7 +2,8 @@
 # 换机器/换源码包时只需改这里或同名覆盖文件，不要改 Build-BridgePackage.ps1。
 @{
     # 安装包版本号（写入 version.auto.iss、manifest 与安装包文件名）
-    PackageVersion    = '1.0.0'
+    # 1.0.1：ops 运行日志按天落盘 + 注册后立即启动计划任务（c6b1ca9）
+    PackageVersion    = '1.0.1'
 
     # 执行系统源码树（含 tools\*；writer 已编译产物在其 out\ 下）
     RepoSourceRoot    = 'C:\Users\lishuyang\Downloads\textile-device-monitor-cdde9ec\textile-device-monitor'
