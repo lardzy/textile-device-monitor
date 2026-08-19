@@ -701,8 +701,8 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         ):
             _microscopy_original_record_executor(context)
         spec = captured["number_formats"]["K2"]
-        self.assertEqual(spec["format"], 'YYYY"年"M"月"D"日"')
-        self.assertEqual(spec["display_pattern"], r"^\d{4}年\d{1,2}月\d{1,2}日$")
+        self.assertEqual(spec["format"], "YYYY/M/D")
+        self.assertEqual(spec["display_pattern"], r"^\d{4}/\d{1,2}/\d{1,2}$")
 
     def test_executor_rejects_forged_declared_template_binding(self):
         context = self._context()

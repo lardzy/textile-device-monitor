@@ -66,11 +66,11 @@ MICROSCOPY_PRINT_AREA = "$A$1:$L$37"
 MICROSCOPY_MEDIA_TYPE = "application/vnd.ms-excel"
 # 模板 K2 是 TODAY() 日期公式，使用 BIFF 内建格式 0x0E（m/d/yy，随系统区域
 # 渲染）。LibreOffice 往返保存会把它固化为 en-US 显式格式（[$-409]m/d/yyyy），
-# 在中文 Windows 上也显示美国顺序。生成时经 UNO 显式改写为中文日期格式，
-# 渲染顺序与查看环境区域无关；公式本身保留，日期仍随打开/打印日刷新。
+# 在中文 Windows 上也显示美国顺序。生成时经 UNO 显式改写为 yyyy/m/d 中文
+# 顺序格式，渲染与查看环境区域无关；公式本身保留，日期仍随打开/打印日刷新。
 MICROSCOPY_RECORD_DATE_CELL = "K2"
-MICROSCOPY_RECORD_DATE_FORMAT = 'YYYY"年"M"月"D"日"'
-MICROSCOPY_RECORD_DATE_DISPLAY_PATTERN = r"^\d{4}年\d{1,2}月\d{1,2}日$"
+MICROSCOPY_RECORD_DATE_FORMAT = "YYYY/M/D"
+MICROSCOPY_RECORD_DATE_DISPLAY_PATTERN = r"^\d{4}/\d{1,2}/\d{1,2}$"
 STAGING_ROOT_ID = "execution_staging"
 MAX_SELECTED_IMAGES = 10
 
