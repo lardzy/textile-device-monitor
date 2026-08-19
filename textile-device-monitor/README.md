@@ -242,7 +242,7 @@ docker compose exec backend python -c "import urllib.request; print(urllib.reque
   原来的内网免登录边界。
 - 后端容器启动时先执行 Alembic。空数据库会从 `0001_legacy_baseline`
   完整建库；已有数据库只有通过结构预检后才会标记基线并升级。当前迁移头为
-  `0006_execution_task_snapshot_cache`。
+  `0007_project_rules`。
 - `execution-worker` 通过 PostgreSQL 租约领取节点。请勿只启动
   `backend` 而遗漏 Worker，否则新运行不会被执行。
 - `/health/live` 仅表示 API 进程存活；`/health/ready` 还会检查数据库、
@@ -475,12 +475,17 @@ docker cp textile-monitor-db:/tmp/backup.sql .\backup.sql
 不可使用；正常纯 SQL 应为 `2D 2D`（`--` 注释开头），且文件内中文显示正常。
 可用 `powershell -Command "Format-Hex backup.sql | Select-Object -First 1"` 查看。
 
-### 恢复数据库（含旧部署数据迁入新部署）
+### 恢复数据库
 
 动手前先确认备份文件完好（见上一节：文件头 `FF FE` 即已损坏，不要使用）。
-恢复目标必须是**空库**：后端启动时发现“有表但没有 alembic_version”会自动
-比对 legacy 基线、盖章并迁移到最新结构；往已初始化的库里直接恢复会全篇冲突。
-以下命令在 **CMD** 中执行（不要用 PowerShell 管道传 SQL，避免中文被转码）：
+恢复目标必须是**空库**，往已初始化的库里直接恢复会全篇冲突。以下命令在
+**CMD** 中执行（不要用 PowerShell 管道传 SQL，避免中文被转码）。
+按备份来源在 A/B 两个场景中选一个执行。
+
+#### 场景 A：新部署之间搬迁（备份属主 = 当前 `POSTGRES_USER`）
+
+适用于换机重装、整机迁移等"备份来自另一套新部署"的情况。网页账号、
+流程开放范围等业务状态都随备份回来，恢复后无需重建。
 
 ```bat
 :: 1. 停应用容器（db 保持运行）
@@ -490,7 +495,34 @@ docker compose --env-file .env -f docker-compose.yml -f ..\.tmp\execution-system
 docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "DROP DATABASE IF EXISTS <POSTGRES_DB>;"
 docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "CREATE DATABASE <POSTGRES_DB> OWNER <POSTGRES_USER>;"
 
-:: 3. 备份若来自旧部署（属主是 admin），先建占位角色再恢复、收尾转回属主
+:: 3. 恢复备份
+cmd /c "docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d <POSTGRES_DB> -v ON_ERROR_STOP=1 < backup.sql"
+
+:: 4. 拉起全栈并确认启动日志
+docker compose --env-file .env -f docker-compose.yml -f ..\.tmp\execution-system-local-runtime\docker-compose.production.yml up -d
+docker logs textile-monitor-backend --tail 40
+```
+
+日志出现 `Application startup complete` 即完成。若备份来自**较低版本**的
+新部署，启动时 Alembic 会自动把结构升级到当前迁移头（日志另有
+`Running upgrade ...` 行），同属正常现象。
+
+#### 场景 B：旧部署数据迁入（备份属主 = `admin`，库内无 `alembic_version`）
+
+适用于来自执行系统上线前的旧部署备份。旧库属主是 `admin` 角色，需先建
+占位角色再恢复、收尾转回属主；库内没有 `alembic_version`，后端启动时
+发现"有表但没有 alembic_version"会自动比对 legacy 基线、盖章并迁移到
+最新结构。
+
+```bat
+:: 1. 停应用容器（db 保持运行）
+docker compose --env-file .env -f docker-compose.yml -f ..\.tmp\execution-system-local-runtime\docker-compose.production.yml stop backend execution-worker frontend
+
+:: 2. 重建空库
+docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "DROP DATABASE IF EXISTS <POSTGRES_DB>;"
+docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "CREATE DATABASE <POSTGRES_DB> OWNER <POSTGRES_USER>;"
+
+:: 3. 先建占位角色再恢复，收尾把属主转回并删除占位角色
 docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d postgres -c "CREATE ROLE admin NOLOGIN;"
 cmd /c "docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d <POSTGRES_DB> -v ON_ERROR_STOP=1 < backup.sql"
 docker exec -i textile-monitor-db psql -U <POSTGRES_USER> -d <POSTGRES_DB> -c "REASSIGN OWNED BY admin TO <POSTGRES_USER>;"
@@ -501,17 +533,19 @@ docker compose --env-file .env -f docker-compose.yml -f ..\.tmp\execution-system
 docker logs textile-monitor-backend --tail 40
 ```
 
-日志出现 `Running upgrade ... -> 0007_project_rules` 与
+日志出现 `Running upgrade ... -> 0007_project_rules`（或更高迁移头）与
 `Application startup complete` 即接管成功；若报
 `does not match the verified legacy baseline`，说明旧库结构与基线有出入，
 不要继续，把 drift 信息发给开发侧。恢复后流程目录会重新播种为默认全开，
-需重跑 `production-bootstrap.sh` 收敛开放范围；此前在执行系统网页里手动
-创建的账号也需重建（引导管理员由 .env 自动重建）。
+需重跑 `production-bootstrap.sh` 收敛开放范围；旧库中没有执行系统账号，
+需在网页里重建（引导管理员由 .env 自动重建）。
 
-若恢复中途报错中止：库已处于半恢复状态，后端会因结构校验失败拒绝启动，
-属预期保护。放弃恢复时按“停应用容器 → `DROP DATABASE` → `CREATE DATABASE`
-→ `up -d`”重置回空库即可，后端会在空库上重新完整迁移（详见本节步骤 1/2/4；
-占位角色 admin 用 `DROP ROLE IF EXISTS admin` 一并清理）。
+#### 恢复中途报错中止的处理（两个场景通用）
+
+库已处于半恢复状态，后端会因结构校验失败拒绝启动，属预期保护。放弃恢复时
+按"停应用容器 → `DROP DATABASE` → `CREATE DATABASE` → `up -d`"重置回空库
+即可，后端会在空库上重新完整迁移（即场景 A 的步骤 1/2/4）。场景 B 还需用
+`DROP ROLE IF EXISTS admin` 清理可能残留的占位角色。
 
 ## 故障排查
 
