@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -181,6 +182,16 @@ def _write(payload):
             # Remove the two template placeholders before adding images.
             sheet.getCellRangeByName("A4").String = ""
             sheet.getCellRangeByName("G4").String = ""
+            number_formats = payload.get("number_formats") or {}
+            if number_formats:
+                format_supplier = document.NumberFormats
+                locale = uno.createUnoStruct("com.sun.star.lang.Locale")
+                for cell_name, spec in number_formats.items():
+                    format_code = str(spec["format"])
+                    format_key = format_supplier.queryKey(format_code, locale, False)
+                    if format_key == -1:
+                        format_key = format_supplier.addNew(format_code, locale)
+                    sheet.getCellRangeByName(cell_name).NumberFormat = format_key
             canvas = payload["canvas"]
             origin_x, origin_y, width, height = _canvas_geometry(
                 sheet, canvas["max_width"], canvas["max_height"]
@@ -258,6 +269,19 @@ def _write(payload):
                 cell: sheet.getCellRangeByName(cell).String
                 for cell in payload["cells"]
             }
+            number_format_strings = {}
+            number_format_verified = True
+            for cell_name, spec in number_formats.items():
+                target = sheet.getCellRangeByName(cell_name)
+                number_format_strings[cell_name] = reopened.NumberFormats.getByKey(
+                    int(target.NumberFormat)
+                ).FormatString
+                # 行为验证：LibreOffice 可能规范化格式码字面量，因此比较按
+                # 持久化格式渲染出的显示串，而不是格式码本身。
+                rendered = str(target.String or "")
+                pattern = str(spec.get("display_pattern") or "")
+                if pattern and re.fullmatch(pattern, rendered) is None:
+                    number_format_verified = False
             origin_x, origin_y, width, height = _canvas_geometry(
                 sheet, canvas["max_width"], canvas["max_height"]
             )
@@ -326,6 +350,7 @@ def _write(payload):
                 and len(images) == len(payload["images"])
                 and print_area_verified
                 and ordinary_print_area_removed
+                and number_format_verified
                 and all(image["index"] in expected_images for image in images)
                 and len({image["index"] for image in images}) == len(images)
             )
@@ -342,6 +367,8 @@ def _write(payload):
                 "print_area": payload["print_area"],
                 "print_area_verified": print_area_verified,
                 "ordinary_print_area_removed": ordinary_print_area_removed,
+                "number_formats": number_format_strings,
+                "number_format_verified": number_format_verified,
                 "reopened": True,
             }
         finally:

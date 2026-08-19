@@ -105,6 +105,11 @@ def _fake_uno_writer(payload_path: Path) -> dict:
         "print_area": payload["print_area"],
         "print_area_verified": True,
         "ordinary_print_area_removed": True,
+        "number_formats": {
+            cell: spec["format"]
+            for cell, spec in (payload.get("number_formats") or {}).items()
+        },
+        "number_format_verified": True,
         "reopened": True,
     }
 
@@ -679,6 +684,25 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
         self.assertEqual(sheet.cell_value(33, 1), "符合指标要求")
         self.assertEqual(sheet.cell_value(33, 8), "符合")
         self.assertEqual(sheet.cell_value(34, 1), "无")
+
+    def test_generation_payload_requests_chinese_date_format(self):
+        context = self._context()
+        captured: dict = {}
+
+        def _capturing_writer(payload_path):
+            captured.update(
+                json.loads(Path(payload_path).read_text(encoding="utf-8"))
+            )
+            return _fake_uno_writer(payload_path)
+
+        with patch(
+            "app.execution.microscopy_original_record._run_uno_writer",
+            side_effect=_capturing_writer,
+        ):
+            _microscopy_original_record_executor(context)
+        spec = captured["number_formats"]["K2"]
+        self.assertEqual(spec["format"], 'YYYY"年"M"月"D"日"')
+        self.assertEqual(spec["display_pattern"], r"^\d{4}年\d{1,2}月\d{1,2}日$")
 
     def test_executor_rejects_forged_declared_template_binding(self):
         context = self._context()

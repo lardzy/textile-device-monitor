@@ -64,6 +64,13 @@ MICROSCOPY_SUPPORTED_TEMPLATE_IMAGE_COUNTS = tuple(
 MICROSCOPY_SHEET_NAME = "微观形貌"
 MICROSCOPY_PRINT_AREA = "$A$1:$L$37"
 MICROSCOPY_MEDIA_TYPE = "application/vnd.ms-excel"
+# 模板 K2 是 TODAY() 日期公式，使用 BIFF 内建格式 0x0E（m/d/yy，随系统区域
+# 渲染）。LibreOffice 往返保存会把它固化为 en-US 显式格式（[$-409]m/d/yyyy），
+# 在中文 Windows 上也显示美国顺序。生成时经 UNO 显式改写为中文日期格式，
+# 渲染顺序与查看环境区域无关；公式本身保留，日期仍随打开/打印日刷新。
+MICROSCOPY_RECORD_DATE_CELL = "K2"
+MICROSCOPY_RECORD_DATE_FORMAT = 'YYYY"年"M"月"D"日"'
+MICROSCOPY_RECORD_DATE_DISPLAY_PATTERN = r"^\d{4}年\d{1,2}月\d{1,2}日$"
 STAGING_ROOT_ID = "execution_staging"
 MAX_SELECTED_IMAGES = 10
 
@@ -1151,6 +1158,13 @@ def _verify_generated_workbook(
             "生成后的原始记录内容与预期不一致",
             details={"cell_mismatches": mismatches},
         )
+    if uno_result.get("number_format_verified") is not True:
+        raise ExecutionApiError(
+            500,
+            "workbook_verification_failed",
+            "生成后的原始记录日期格式与预期不一致",
+            details={"number_formats": uno_result.get("number_formats")},
+        )
     canvas_width = int(canvas.get("width") or 0)
     canvas_height = int(canvas.get("height") or 0)
     geometry = _persisted_images_geometry(
@@ -1405,6 +1419,12 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
             "sheet_name": MICROSCOPY_SHEET_NAME,
             "print_area": MICROSCOPY_PRINT_AREA,
             "cells": cells,
+            "number_formats": {
+                MICROSCOPY_RECORD_DATE_CELL: {
+                    "format": MICROSCOPY_RECORD_DATE_FORMAT,
+                    "display_pattern": MICROSCOPY_RECORD_DATE_DISPLAY_PATTERN,
+                },
+            },
             "canvas": {
                 "range": "A4:L32",
                 "max_width": CANVAS_WIDTH,
