@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -37,6 +38,8 @@ from app.execution.persistence import register_persistence_executors
 from app.execution.report_image_placement import (
     REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY,
     REPORT_IMAGE_ROOT_ID,
+    _reservation_marker,
+    _sweep_stale_temporaries,
     auto_complete_report_image_placement,
     build_placement_plan,
     execute_placement_plan,
@@ -509,6 +512,94 @@ class ReportImagePlacementPlanTests(unittest.TestCase):
         self.assertEqual(first.read_bytes(), b"aaaa")
         self.assertEqual(second.read_bytes(), b"old-second")
 
+    def test_plan_ignores_own_reservation_remnant(self):
+        # 崩溃遗留的本系统预留标记不算冲突，重试不会陷入幻影人工确认。
+        target_dir = (
+            self.target_path
+            / REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY
+            / "260000001"
+        )
+        target_dir.mkdir(parents=True)
+        remnant = target_dir / "260000001-正面-1.bmp"
+        remnant.write_bytes(_reservation_marker())
+        plan = build_placement_plan(
+            self.gateway,
+            config=self._config(),
+            inspection_number="260000001",
+            sample_identity="正面",
+            selected_images=self._images(),
+        )
+        self.assertEqual(plan["conflicts"], [])
+
+    def test_plan_still_flags_foreign_placeholder_files(self):
+        # 非本系统标记的占位文件（包括零字节）必须仍然算冲突。
+        target_dir = (
+            self.target_path
+            / REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY
+            / "260000001"
+        )
+        target_dir.mkdir(parents=True)
+        (target_dir / "260000001-正面.bmp").write_bytes(b"")
+        almost_marker = (
+            b"textile-report-image-placement-reservation:" + b"0" * 31
+        )
+        (target_dir / "260000001-正面-1.bmp").write_bytes(almost_marker)
+        plan = build_placement_plan(
+            self.gateway,
+            config=self._config(),
+            inspection_number="260000001",
+            sample_identity="正面",
+            selected_images=self._images(),
+        )
+        self.assertEqual(
+            plan["conflicts"],
+            ["260000001-正面.bmp", "260000001-正面-1.bmp"],
+        )
+
+    def test_execute_takes_over_reservation_remnant(self):
+        target_dir = (
+            self.target_path
+            / REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY
+            / "260000001"
+        )
+        target_dir.mkdir(parents=True)
+        remnant = target_dir / "260000001-正面-1.bmp"
+        remnant.write_bytes(_reservation_marker())
+        plan = build_placement_plan(
+            self.gateway,
+            config=self._config(),
+            inspection_number="260000001",
+            sample_identity="正面",
+            selected_images=self._images(),
+        )
+        receipt = execute_placement_plan(self.gateway, plan, overwrite=False)
+        self.assertEqual(receipt["placed_count"], 2)
+        self.assertEqual(remnant.read_bytes(), b"bbbbbb")
+        self.assertEqual(
+            (target_dir / "260000001-正面.bmp").read_bytes(), b"aaaa"
+        )
+
+    def test_sweep_removes_only_stale_system_temporaries(self):
+        target_dir = self.target_path / "sweep"
+        target_dir.mkdir()
+        stale_staged = target_dir / (".a.bmp." + "a" * 32 + ".staged")
+        stale_backup = target_dir / (".a.bmp." + "b" * 32 + ".backup")
+        stale_remnant = target_dir / "260000001-正面.bmp"
+        fresh_staged = target_dir / (".b.bmp." + "c" * 32 + ".staged")
+        user_file = target_dir / "notes.txt"
+        for path in (stale_staged, stale_backup, fresh_staged):
+            path.write_bytes(b"x")
+        stale_remnant.write_bytes(_reservation_marker())
+        user_file.write_bytes(b"user")
+        old = time.time() - 7200
+        for path in (stale_staged, stale_backup, stale_remnant, user_file):
+            os.utime(path, (old, old))
+
+        _sweep_stale_temporaries(target_dir)
+
+        remaining = {path.name for path in target_dir.iterdir()}
+        self.assertEqual(remaining, {fresh_staged.name, user_file.name})
+
 
 class ReportImagePlacementEngineTests(unittest.TestCase):
     def setUp(self):
@@ -852,6 +943,78 @@ class ReportImagePlacementEngineTests(unittest.TestCase):
             "overwrite",
         )
         self.assertEqual(target.read_bytes(), b"old")
+
+    def test_auto_complete_resumes_partially_placed_attempt(self):
+        # 此前尝试在提交阶段崩溃：第一张已完整落盘，第二张只剩预留标记。
+        # 重试应识别已完成部分并补齐缺失部分，全程无需人工介入。
+        target_dir = (
+            self.target_path
+            / REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY
+            / "260000001"
+        )
+        target_dir.mkdir(parents=True)
+        (target_dir / "260000001-正面.bmp").write_bytes(b"aaaa")
+        remnant = target_dir / "260000001-正面-1.bmp"
+        remnant.write_bytes(_reservation_marker())
+
+        run = self._run("placement-resume")
+        context = self._placement_context(run)
+        output = auto_complete_report_image_placement(context)
+
+        self.assertIsNotNone(output)
+        self.assertEqual(output["auto_submit_reason"], "resumed_prior_attempt")
+        self.assertTrue(output["placement_reused"])
+        self.assertEqual(output["placed_count"], 2)
+        self.assertEqual(output["resumed_count"], 1)
+        self.assertEqual(
+            (target_dir / "260000001-正面.bmp").read_bytes(), b"aaaa"
+        )
+        self.assertEqual(remnant.read_bytes(), b"bbbbbb")
+
+    def test_deferred_overwrite_mismatch_recognizes_completed_batch(self):
+        # 用户在只有第一个冲突时批准了覆盖；Worker 执行前崩溃，回执未落库。
+        # 重试时冲突集已扩大（两个目标都在），授权不再匹配，但内容识别
+        # 发现整批已按源内容落盘，应直接收尾而不是再次询问。
+        target_dir = (
+            self.target_path
+            / REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY
+            / "260000001"
+        )
+        target_dir.mkdir(parents=True)
+        (target_dir / "260000001-正面.bmp").write_bytes(b"aaaa")
+        (target_dir / "260000001-正面-1.bmp").write_bytes(b"bbbbbb")
+
+        run = self._run("placement-deferred-recognized")
+        context = self._placement_context(run)
+        stale_request = {
+            "placement_deferred": True,
+            "placement_action": "overwrite",
+            "target_root_id": REPORT_IMAGE_ROOT_ID,
+            "target_relative_dir": (
+                f"{REPORT_IMAGE_DEFAULT_TARGET_DIRECTORY}/260000001"
+            ),
+            "image_count": 2,
+            "target_filenames": [
+                "260000001-正面.bmp",
+                "260000001-正面-1.bmp",
+            ],
+            "conflicts": ["260000001-正面.bmp"],
+        }
+        context.input_data = {
+            **context.input_data,
+            "placement_request": stale_request,
+        }
+        context.node_run.input_data = context.input_data
+
+        output = auto_complete_report_image_placement(context)
+
+        self.assertIsNotNone(output)
+        self.assertEqual(output["auto_submit_reason"], "matching_prior_attempt")
+        self.assertTrue(output["placement_reused"])
+        self.assertEqual(output["placed_count"], 2)
+        self.assertNotIn(
+            "placement_request", context.node_run.input_data
+        )
 
 
 class ReportImagePlacementCatalogTests(unittest.TestCase):

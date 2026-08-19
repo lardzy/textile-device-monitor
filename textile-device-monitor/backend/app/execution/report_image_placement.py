@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -173,10 +174,13 @@ def build_placement_plan(
             "report_image_root_unavailable",
             "报告上传图片共享目录不可用或未配置写入权限，请联系管理员检查挂载",
         ) from exc
+    # 本系统崩溃遗留的预留标记不算冲突（执行阶段会直接接管），
+    # 避免一次崩溃让后续重试陷入莫名的人工确认。
     conflicts = [
         item["target_filename"]
         for item in files
         if (target_dir / item["target_filename"]).is_file()
+        and not _is_reservation_remnant(target_dir / item["target_filename"])
     ]
     return {
         "inspection_number": number,
@@ -221,6 +225,62 @@ def _validate_open_source(
 
 def _temporary_path(target_dir: Path, target_name: str, kind: str) -> Path:
     return target_dir / f".{target_name}.{uuid4().hex}.{kind}"
+
+
+# 预留文件写入自描述标记而非空内容：崩溃留下的预留因此可以被后续尝试
+# 可靠识别并接管，不会与真实同名文件混淆（真实文件不可能恰好是该标记）。
+_RESERVATION_MARKER_PREFIX = b"textile-report-image-placement-reservation:"
+_RESERVATION_MARKER_LENGTH = len(_RESERVATION_MARKER_PREFIX) + 32
+
+# execute 各阶段隐藏临时文件的命名形态（staged/backup/verify），供崩溃
+# 残留清扫识别。
+_TEMPORARY_NAME_PATTERN = re.compile(r"^\.[^.].*\.[0-9a-f]{32}\.(staged|backup|verify)$")
+
+
+def _reservation_marker() -> bytes:
+    return _RESERVATION_MARKER_PREFIX + uuid4().hex.encode("ascii")
+
+
+def _is_reservation_remnant(path: Path) -> bool:
+    """识别本系统崩溃遗留的预留文件（内容即标记，不会误认真实文件）。"""
+
+    try:
+        if not path.is_file() or path.stat().st_size != _RESERVATION_MARKER_LENGTH:
+            return False
+        with path.open("rb") as handle:
+            content = handle.read(_RESERVATION_MARKER_LENGTH)
+    except OSError:
+        return False
+    suffix = content[len(_RESERVATION_MARKER_PREFIX):]
+    return (
+        content.startswith(_RESERVATION_MARKER_PREFIX)
+        and len(suffix) == 32
+        and all(character in b"0123456789abcdef" for character in suffix)
+    )
+
+
+def _takeover_remnant(target: Path) -> bool:
+    """接管本系统崩溃遗留的预留（删除标记文件）；真实文件绝不触碰。"""
+
+    if not _is_reservation_remnant(target):
+        return False
+    target.unlink()  # OSError 交由上层回滚/冲突处理
+    return True
+
+
+def _try_open_reservation(target: Path):
+    """排他创建预留文件；本系统遗留预留先接管，外来同名文件返回 None。"""
+
+    try:
+        return target.open("xb")
+    except FileExistsError:
+        if not _takeover_remnant(target):
+            return None
+        try:
+            return target.open("xb")
+        except FileExistsError:
+            # 接管窗口内被第三方抢注，按外来冲突处理。
+            return None
 
 
 def _safe_unlink(path: Path) -> Optional[str]:
@@ -320,6 +380,73 @@ def _stage_source(
     return written, digest.hexdigest()
 
 
+def _hash_open_source(
+    source_path: Path,
+    source: dict[str, Any],
+) -> tuple[int, str]:
+    """流式计算源图片哈希并核对索引指纹，不写任何临时文件。"""
+
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with source_path.open("rb") as src:
+            before = os.fstat(src.fileno())
+            _validate_open_source(source, before)
+            while True:
+                chunk = src.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                digest.update(chunk)
+            after = os.fstat(src.fileno())
+            _validate_open_source(source, after)
+            if _indexed_fingerprint(before) != _indexed_fingerprint(after):
+                raise ExecutionApiError(
+                    409,
+                    "report_image_source_changed",
+                    "读取期间源图片发生变化，请返回选图节点重新确认",
+                    details={
+                        "source_id": source.get("id"),
+                        "relative_path": source.get("relative_path"),
+                    },
+                )
+    except ExecutionApiError:
+        raise
+    except OSError as exc:
+        raise ExecutionApiError(
+            502,
+            "report_image_source_unreadable",
+            f"读取源图片失败：{exc}",
+        ) from exc
+    return size, digest.hexdigest()
+
+
+def _sweep_stale_temporaries(
+    target_dir: Path,
+    *,
+    older_than_seconds: float = 3600.0,
+) -> None:
+    """清理本系统崩溃遗留的隐藏临时文件与预留标记。
+
+    只扫除远超租约时长（默认一小时）的残留，避免误伤在途尝试；
+    预留标记内容即标记本身，不含用户数据，可安全删除。
+    """
+
+    try:
+        entries = list(target_dir.iterdir())
+    except OSError:
+        return
+    cutoff = time.time() - older_than_seconds
+    for entry in entries:
+        try:
+            if not entry.is_file() or entry.stat().st_mtime >= cutoff:
+                continue
+            if _TEMPORARY_NAME_PATTERN.match(entry.name) or _is_reservation_remnant(entry):
+                entry.unlink()
+        except OSError:
+            continue
+
+
 def _copy_existing_for_rollback(source: Path, backup: Path) -> None:
     try:
         with source.open("rb") as src, backup.open("xb") as dst:
@@ -395,16 +522,20 @@ def _rollback_or_raise(
     ) from original_error
 
 
-def _matching_existing_receipt(
+def _analyze_existing_placement(
     gateway: FileGateway,
     plan: dict[str, Any],
-) -> Optional[dict[str, Any]]:
-    """Recognize a fully committed prior attempt after a DB commit failure."""
+) -> dict[str, Any]:
+    """按内容核对目标目录现状，区分已完成、可续放与真实冲突。
+
+    - ``complete``：所有目标都已存在且内容与源逐一一致（此前尝试已完整
+      落盘，只是回执没落库）；
+    - ``resumable``：已存在的目标内容全部一致，其余目标缺失或为本系统
+      崩溃遗留的预留标记（可安全补齐，不触碰任何外来文件）；
+    - ``blocked``：存在内容不一致的外来同名文件，必须人工决定。
+    """
 
     files = plan.get("files") or []
-    conflicts = set(plan.get("conflicts") or [])
-    if not files or conflicts != {str(item.get("target_filename") or "") for item in files}:
-        return None
     try:
         target_dir = gateway.resolve(
             ArtifactRef(
@@ -420,26 +551,24 @@ def _matching_existing_receipt(
             "report_image_root_unavailable",
             "报告上传图片目标目录不可用，请检查共享盘挂载",
         ) from exc
-    placed: list[dict[str, Any]] = []
+    matched: list[dict[str, Any]] = []
+    remaining: list[dict[str, Any]] = []
     for item in files:
-        source = item.get("source") or {}
-        source_path = _resolve_source_path(gateway, source)
-        temporary = _temporary_path(
-            target_dir,
-            str(item.get("target_filename") or "source"),
-            "verify",
-        )
-        size, source_sha = _stage_source(source_path, source, temporary)
-        _safe_unlink(temporary)
         target_name = str(item.get("target_filename") or "")
         target = target_dir / target_name
+        if _is_reservation_remnant(target) or not target.is_file():
+            remaining.append(item)
+            continue
+        source = item.get("source") or {}
+        source_path = _resolve_source_path(gateway, source)
+        size, source_sha = _hash_open_source(source_path, source)
         try:
             target_size, target_sha = _content_fingerprint(target)
         except OSError:
-            return None
+            return {"status": "blocked", "blocked_by": target_name}
         if target_size != size or target_sha != source_sha:
-            return None
-        placed.append(
+            return {"status": "blocked", "blocked_by": target_name}
+        matched.append(
             {
                 "target_filename": target_name,
                 "source_id": source.get("id"),
@@ -450,15 +579,50 @@ def _matching_existing_receipt(
             }
         )
     return {
+        "status": "complete" if not remaining else "resumable",
+        "matched": matched,
+        "remaining": remaining,
+    }
+
+
+def _recognized_or_resumed_receipt(
+    gateway: FileGateway,
+    plan: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    """识别或补齐本系统此前尝试的落盘批次；存在外来冲突时返回 None。"""
+
+    analysis = _analyze_existing_placement(gateway, plan)
+    if analysis["status"] == "blocked":
+        return None
+    matched = analysis["matched"]
+    if analysis["status"] == "resumable":
+        # 只补放缺失/残留部分；已存在且内容一致的目标保持原样。
+        sub_plan = {
+            **plan,
+            "files": analysis["remaining"],
+            "conflicts": [],
+        }
+        receipt = execute_placement_plan(gateway, sub_plan, overwrite=False)
+        return {
+            **receipt,
+            "image_count": plan.get("image_count"),
+            "placed_count": len(matched) + receipt["placed_count"],
+            "placed_files": matched + receipt["placed_files"],
+            "conflicts": plan.get("conflicts") or [],
+            "placement_reused": True,
+            "resumed_count": receipt["placed_count"],
+        }
+    return {
         "placement_cancelled": False,
         "overwrite": False,
         "placement_reused": True,
+        "resumed_count": 0,
         "target_root_id": plan.get("target_root_id"),
         "target_relative_dir": plan.get("target_relative_dir"),
         "display_directory": plan.get("display_directory"),
         "image_count": plan.get("image_count"),
-        "placed_count": len(placed),
-        "placed_files": placed,
+        "placed_count": len(matched),
+        "placed_files": matched,
         "overwritten_files": [],
         "conflicts": plan.get("conflicts") or [],
         "placed_at": datetime.now(timezone.utc).isoformat(),
@@ -476,6 +640,9 @@ def execute_placement_plan(
     Every source is copied to a hidden file and fingerprint-checked before the
     first target is changed.  The commit phase uses same-directory ``replace``
     operations and restores backups (or removes new reservations) on failure.
+    Reservation placeholders carry a self-describing marker so leftovers from
+    a crashed attempt are recognized and taken over instead of surfacing as
+    phantom conflicts; stale hidden temporaries are swept best-effort.
     """
 
     root_id = str(plan.get("target_root_id") or REPORT_IMAGE_ROOT_ID)
@@ -488,6 +655,7 @@ def execute_placement_plan(
             "report_image_root_unavailable",
             "报告上传图片共享目录不可用或无法创建编号文件夹，请检查共享盘挂载",
         ) from exc
+    _sweep_stale_temporaries(target_dir)
 
     staged: list[dict[str, Any]] = []
     target_names: set[str] = set()
@@ -535,107 +703,61 @@ def execute_placement_plan(
         str(name) for name in plan.get("conflicts") or []
     }
     try:
-        if overwrite:
-            for item in staged:
-                target = item["target"]
-                state: dict[str, Any] = {
-                    "target": target,
-                    "backup": None,
-                    "reserved": False,
-                    "committed": False,
-                    "preserve_backup": False,
-                }
-                if target.exists():
-                    if item["target_name"] not in planned_conflicts:
-                        raise ExecutionApiError(
-                            409,
-                            "report_image_conflict_detected",
-                            "确认后出现了新的同名文件，未覆盖任何图片；请重新确认",
-                            details={"conflicts": [item["target_name"]]},
-                        )
-                    if not target.is_file():
-                        raise OSError(f"target_not_file:{target.name}")
-                    backup = _temporary_path(
-                        target_dir,
-                        item["target_name"],
-                        "backup",
-                    )
-                    _copy_existing_for_rollback(target, backup)
-                    state["backup"] = backup
-                    overwritten.append(item["target_name"])
-                else:
-                    try:
-                        reservation = target.open("xb")
-                    except FileExistsError:
-                        if item["target_name"] not in planned_conflicts:
-                            raise ExecutionApiError(
-                                409,
-                                "report_image_conflict_detected",
-                                "确认后出现了新的同名文件，未覆盖任何图片；请重新确认",
-                                details={
-                                    "conflicts": [item["target_name"]]
-                                },
-                            )
-                        backup = _temporary_path(
-                            target_dir,
-                            item["target_name"],
-                            "backup",
-                        )
-                        _copy_existing_for_rollback(target, backup)
-                        state["backup"] = backup
-                        overwritten.append(item["target_name"])
-                    else:
-                        # Record the reservation before flush/fsync so an I/O
-                        # failure during reservation durability is rolled back.
-                        state["reserved"] = True
-                        target_states.append(state)
-                        with reservation:
-                            reservation.flush()
-                            os.fsync(reservation.fileno())
-                        continue
-                target_states.append(state)
-        else:
-            for item in staged:
-                target = item["target"]
-                state = {
-                    "target": target,
-                    "backup": None,
-                    "reserved": False,
-                    "committed": False,
-                    "preserve_backup": False,
-                }
-                try:
-                    reservation = target.open("xb")
-                except FileExistsError as exc:
-                    cleanup_errors = _cleanup_paths(
-                        [state["target"] for state in target_states]
-                        + [entry["temporary"] for entry in staged]
-                    )
-                    if cleanup_errors:
-                        raise ExecutionApiError(
-                            500,
-                            "report_image_reconciliation_required",
-                            "同名竞态发生后无法完整清理预留文件，请人工核对",
-                            details={"cleanup_errors": cleanup_errors},
-                        ) from exc
-                    raise ExecutionApiError(
-                        409,
-                        "report_image_conflict_detected",
-                        "写入时发现新的同名文件，未放置任何图片；请重试并确认覆盖或取消",
-                        details={"conflicts": [item["target_name"]]},
-                    ) from exc
+        for item in staged:
+            target = item["target"]
+            state: dict[str, Any] = {
+                "target": target,
+                "backup": None,
+                "reserved": False,
+                "committed": False,
+                "preserve_backup": False,
+            }
+            reservation = _try_open_reservation(target)
+            if reservation is not None:
+                # 新名称（含接管的本系统遗留预留）：先占位并写入自描述标记，
+                # 提交阶段再原子替换为真实内容。标记让崩溃残留可被后续
+                # 尝试识别接管，而不是变成莫名的人工冲突确认。
                 state["reserved"] = True
                 target_states.append(state)
                 with reservation:
+                    reservation.write(_reservation_marker())
                     reservation.flush()
                     os.fsync(reservation.fileno())
+                continue
+            # 外来同名文件：无覆盖模式一律冲突；覆盖模式必须在人工确认
+            # 的冲突清单内，确认后出现的新同名文件绝不继承旧授权。
+            if not overwrite:
+                raise ExecutionApiError(
+                    409,
+                    "report_image_conflict_detected",
+                    "写入时发现新的同名文件，未放置任何图片；请重试并确认覆盖或取消",
+                    details={"conflicts": [item["target_name"]]},
+                )
+            if item["target_name"] not in planned_conflicts:
+                raise ExecutionApiError(
+                    409,
+                    "report_image_conflict_detected",
+                    "确认后出现了新的同名文件，未覆盖任何图片；请重新确认",
+                    details={"conflicts": [item["target_name"]]},
+                )
+            if not target.is_file():
+                raise OSError(f"target_not_file:{target.name}")
+            backup = _temporary_path(
+                target_dir,
+                item["target_name"],
+                "backup",
+            )
+            _copy_existing_for_rollback(target, backup)
+            state["backup"] = backup
+            overwritten.append(item["target_name"])
+            target_states.append(state)
 
         for index, item in enumerate(staged):
             os.replace(item["temporary"], item["target"])
             target_states[index]["committed"] = True
         _fsync_directory(target_dir)
     except ExecutionApiError as exc:
-        # Preparation can already have created zero-byte reservations.  No
+        # Preparation can already have created marker reservations.  No
         # target contents have been replaced yet when an application-level
         # validation/copy error is raised, so only those reservations need to
         # be removed; backup copies are cleaned in ``finally``.
@@ -701,7 +823,7 @@ def execute_placement_plan(
 
 
 def auto_complete_report_image_placement(context) -> Optional[dict[str, Any]]:
-    """无同名冲突时直接放置并自动完成；有冲突时交人工决定覆盖或取消。"""
+    """无冲突直接放置；可识别的本系统批次自动收尾/补齐；其余冲突交人工。"""
 
     config = report_image_placement_node_config(context.node)
     if not config:
@@ -749,31 +871,34 @@ def auto_complete_report_image_placement(context) -> Optional[dict[str, Any]]:
             and request.get("image_count") == plan.get("image_count")
             and current_conflicts.issubset(confirmed_conflicts)
         )
-        if not request_matches_plan:
-            # The user authorized one exact target batch and conflict set.  A
-            # newly appeared same-name file must never inherit that approval.
-            planned_input.pop("placement_request", None)
+        if request_matches_plan:
+            receipt = execute_placement_plan(gateway, plan, overwrite=True)
             context.input_data = planned_input
             context.node_run.input_data = planned_input
-            return None
-        receipt = execute_placement_plan(gateway, plan, overwrite=True)
-        context.input_data = planned_input
-        context.node_run.input_data = planned_input
-        return {
-            **receipt,
-            "auto_submitted": True,
-            "auto_submit_reason": "confirmed_overwrite",
-            "placement_request": request,
-        }
+            return {
+                **receipt,
+                "auto_submitted": True,
+                "auto_submit_reason": "confirmed_overwrite",
+                "placement_request": request,
+            }
+        # The user authorized one exact target batch and conflict set.  A
+        # newly appeared same-name file must never inherit that approval.
+        # 撤销授权后按当前状态重新判定：此前尝试若已（部分）落盘，下面的
+        # 内容识别会直接收尾或补齐，不产生幻影人工确认。
+        planned_input.pop("placement_request", None)
     if plan["conflicts"]:
-        reused = _matching_existing_receipt(gateway, plan)
+        reused = _recognized_or_resumed_receipt(gateway, plan)
         if reused is not None:
             context.input_data = planned_input
             context.node_run.input_data = planned_input
             return {
                 **reused,
                 "auto_submitted": True,
-                "auto_submit_reason": "matching_prior_attempt",
+                "auto_submit_reason": (
+                    "resumed_prior_attempt"
+                    if reused.get("resumed_count")
+                    else "matching_prior_attempt"
+                ),
             }
         context.input_data = planned_input
         context.node_run.input_data = planned_input
