@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$FibreCheckDir = "$PSScriptRoot\..\..\..\.tmp\FibreCheck",
     [string]$Odac32Dir = "$PSScriptRoot\..\..\..\.tmp\odac32"
 )
@@ -104,6 +104,22 @@ try {
     if ($authorityExitCode -ne 0 `
         -or ($authorityOutput -join "`n") -notmatch 'Collected register field authority self-test: 15 passed') {
         throw "Collected register field authority SelfTest failed: $authorityExitCode`n$($authorityOutput -join "`n")"
+    }
+    $passed++
+
+    $customerOrgSelfTest = Join-Path $outDir 'CustomerOrgBranchFlagsSelfTest.exe'
+    & $csc -nologo -target:exe -codepage:65001 -utf8output -debug- -optimize+ `
+        -out:"$customerOrgSelfTest" `
+        (Join-Path $PSScriptRoot 'src\CustomerOrgBranchFlags.cs') `
+        (Join-Path $PSScriptRoot 'tests\CustomerOrgBranchFlagsSelfTest.cs')
+    if ($LASTEXITCODE -ne 0) {
+        throw "Customer org branch flags SelfTest compilation failed: $LASTEXITCODE"
+    }
+    $customerOrgOutput = @(& $customerOrgSelfTest 2>&1 | ForEach-Object { $_.ToString() })
+    $customerOrgExitCode = $LASTEXITCODE
+    if ($customerOrgExitCode -ne 0 `
+        -or ($customerOrgOutput -join "`n") -notmatch 'Customer org branch flags self-test: 10 passed') {
+        throw "Customer org branch flags SelfTest failed: $customerOrgExitCode`n$($customerOrgOutput -join "`n")"
     }
     $passed++
 

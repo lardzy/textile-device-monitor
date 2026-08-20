@@ -1,5 +1,32 @@
 # 头脑风暴变更日志
 
+## 2026-08-19：CustomerOrg 同名多行放行（写入器结构性修复 + tools 脚本 BOM 修复）
+
+- 问题：260210750（委托单位"金佰利（中国）有限公司"）电镜流程登记节点报
+  `customer_org_not_unique`。旧库 `CustomerOrg` 按 `FullName` 精确匹配出 2 行，
+  旧逻辑凡多于 1 行即拦截；全库实测 1712 个单位存在同名多行（涉及 3547 行），
+  绝大多数仅差 `NULL` 与 `'0'`。该检查为写入前预检（零副作用），报错的
+  "异常记录"实为 `OriginalDataPictureFile` 上传条目（结构与健康样本一致），
+  登记从未发生。
+- 修复：新增纯规则类 `CustomerOrgBranchFlags`（src），对全部同名行的四个分支
+  标志位 `(IsChinaEngType, IsOnlyChinaEngReportType, IsShowAllTarget,
+  StartChinaEngTypeDate)` 做有效值比对——标志位本就按 `Text(...)=="1"` 消费，
+  `NULL` 与 `'0'` 天然归一为同一"关"值；全部一致视为同一单位继续执行，真正
+  分歧（含起始日期不一致）才报 `customer_org_not_unique`。
+  `LegacySafetyGuards.VerifyStandardExcelBranch` 改为调用该规则类。
+- 连带修复：`tools/` 下 5 个含中文的 .ps1 缺 UTF-8 BOM，Windows PowerShell 5.1
+  按 ANSI 解码导致解析/字符串损坏（此前纸类中文 JSON 离线用例报
+  `package_json_invalid` 即此引起）；按仓库惯例统一补 BOM
+  （两个 test.ps1、runner 的 build/run-tests、writer 的 build.ps1）。
+  `bridge-package.psd1` 同样补 BOM（否则 Import-PowerShellDataFile 解析失败）。
+- 验证：新增 `CustomerOrgBranchFlagsSelfTest`（10 项：空行/单行/同值多行放行、
+  各标志位与日期分歧拦截）并接入 test.ps1；VM 完整离线自测 67 项通过
+  （含此前失败的中文纸类用例）。
+- 部署：新 `FibreCheckFinalEntryWriter.exe` SHA256
+  `9bd509c61d6ddc40b7f1c0de9c11081a92461c0c22b8a372ce7a520cc7eeec03`；
+  本地桥钉值（run-bridge-cdde9ec.ps1）与安装包钉值（bridge-package.psd1）
+  已更新，安装包版本升至 1.0.2。
+
 ## 2026-08-19：电镜原始记录日期改为区域无关的中文格式
 
 - 问题：生成原始记录右上角日期在中文 Windows 上显示为美国顺序

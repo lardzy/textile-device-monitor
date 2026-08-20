@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$FibreCheckDir = "$PSScriptRoot\..\..\..\.tmp\FibreCheck",
     [string]$OutDir = "$PSScriptRoot\out"
 )

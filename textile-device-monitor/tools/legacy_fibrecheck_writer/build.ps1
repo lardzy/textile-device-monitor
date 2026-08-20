@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$FibreCheckDir = "$PSScriptRoot\..\..\..\.tmp\FibreCheck",
     [string]$OdpEfDir = "$PSScriptRoot\..\..\..\.tmp\odp-ef\lib\net45",
     [string]$Odac32Dir = "$PSScriptRoot\..\..\..\.tmp\odac32",

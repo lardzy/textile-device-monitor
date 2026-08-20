@@ -70,4 +70,9 @@ Inno Setup 安装包，用于生产 Windows 主机的一次性部署。
 ## 目录约定
 
 - 安装目录固定且不含版本号，升级直接覆盖安装；`config\`、`work\` 不会被卸载删除。
+- 注意：若新版本更换了 Writer 编译产物，`config\BridgeConfig.psd1` 因
+  `onlyifdoesntexist` 保留旧文件，其中 `WriterHashes` 钉值仍是旧哈希，
+  写入桥会拒绝启动（报 Writer hash mismatch）。此时需手工把
+  `BridgeConfig.psd1` 里对应 exe 的钉值改成安装包 `manifest.json` 中
+  `writer_sha256` 的新值，再重跑 `ops\Invoke-WriteBridge.ps1 -Once` 验证。
 - 写入桥同一时刻只允许一个进程（脚本自检）；全局写入并发仍由服务端固定为 1。

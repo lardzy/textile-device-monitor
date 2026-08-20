@@ -3,7 +3,9 @@
 @{
     # 安装包版本号（写入 version.auto.iss、manifest 与安装包文件名）
     # 1.0.1：ops 运行日志按天落盘 + 注册后立即启动计划任务（c6b1ca9）
-    PackageVersion    = '1.0.1'
+    # 1.0.2：FinalEntryWriter 放宽 CustomerOrg 同名多行检查（null≈0 归一后
+    #        有效标志位真正分歧才报 customer_org_not_unique）+ tools ps1 补 BOM
+    PackageVersion    = '1.0.2'
 
     # 执行系统源码树（含 tools\*；writer 已编译产物在其 out\ 下）
     RepoSourceRoot    = 'C:\Users\lishuyang\Downloads\textile-device-monitor-cdde9ec\textile-device-monitor'
@@ -25,7 +27,7 @@
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
         'FibreCheckWriter.exe'           = 'e99da7ea028c93dad5f13934e7c5a0f90525092264b199cbb9e80d8b9a633108'
-        'FibreCheckFinalEntryWriter.exe' = '29e5a8e4569b7a8f42320255ac80e3fe83e75872e4988ae249726dc39a86cf9e'
+        'FibreCheckFinalEntryWriter.exe' = '9bd509c61d6ddc40b7f1c0de9c11081a92461c0c22b8a372ce7a520cc7eeec03'
     }
 
     # probe 离线依赖打包时的 pip 源（构建机需要能访问；--no-input）

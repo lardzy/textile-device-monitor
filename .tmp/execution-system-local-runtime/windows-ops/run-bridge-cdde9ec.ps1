@@ -60,7 +60,7 @@ if ($Busy.Count -gt 0) {
 
 $ExpectedWriterHashes = @{
     'FibreCheckWriter.exe' = 'e892f409d9eab2030aa7a4bf6c5680055038703a99819b2099fdd94529672fc2'
-    'FibreCheckFinalEntryWriter.exe' = '1a46dc9df225a51015ff15fac4d5589427fc10b9120993aaa8d65ef306f2587a'
+    'FibreCheckFinalEntryWriter.exe' = '9bd509c61d6ddc40b7f1c0de9c11081a92461c0c22b8a372ce7a520cc7eeec03'
 }
 foreach ($pair in $ExpectedWriterHashes.GetEnumerator()) {
     $Path = if ($pair.Key -eq 'FibreCheckWriter.exe') { $Writer } else { $FinalWriter }

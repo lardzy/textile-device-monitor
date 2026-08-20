@@ -371,20 +371,35 @@ namespace LegacyFibreCheckFinalEntryWriter
                 new DbParam("org", snapshot.DelegateOrgName),
             }))
             {
-                if (table.Rows.Count > 1)
+                // CustomerOrg carries many duplicate FullName rows. Flags are
+                // read as Text(...)=="1", so NULL and '0' already collapse to
+                // the same "off" value; duplicates only block execution when
+                // the effective branch flags genuinely disagree.
+                var customerOrgRows = new List<CustomerOrgBranchFlags.Row>();
+                foreach (DataRow row in table.Rows)
+                {
+                    customerOrgRows.Add(new CustomerOrgBranchFlags.Row
+                    {
+                        ChinaEnglish = Text(row, "IsChinaEngType") == "1",
+                        OnlyChinaEnglish = Text(row, "IsOnlyChinaEngReportType") == "1",
+                        ShowAllTarget = Text(row, "IsShowAllTarget") == "1",
+                        ChinaEnglishStart = row["StartChinaEngTypeDate"] == DBNull.Value
+                            ? (DateTime?)null
+                            : Convert.ToDateTime(row["StartChinaEngTypeDate"]),
+                    });
+                }
+                CustomerOrgBranchFlags.Resolution resolution =
+                    CustomerOrgBranchFlags.Resolve(customerOrgRows);
+                if (resolution.Conflict)
                 {
                     throw new PackageValidationException("customer_org_not_unique");
                 }
-                if (table.Rows.Count == 1)
+                if (resolution.Values != null)
                 {
-                    DataRow row = table.Rows[0];
-                    chinaEnglish = Text(row, "IsChinaEngType") == "1";
-                    onlyChinaEnglish = Text(row, "IsOnlyChinaEngReportType") == "1";
-                    showAllTarget = Text(row, "IsShowAllTarget") == "1";
-                    if (row["StartChinaEngTypeDate"] != DBNull.Value)
-                    {
-                        chinaEnglishStart = Convert.ToDateTime(row["StartChinaEngTypeDate"]);
-                    }
+                    chinaEnglish = resolution.Values.ChinaEnglish;
+                    onlyChinaEnglish = resolution.Values.OnlyChinaEnglish;
+                    showAllTarget = resolution.Values.ShowAllTarget;
+                    chinaEnglishStart = resolution.Values.ChinaEnglishStart;
                 }
             }
             const string fixedSql =
