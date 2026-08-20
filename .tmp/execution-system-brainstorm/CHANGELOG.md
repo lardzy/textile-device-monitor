@@ -1,5 +1,42 @@
 # 头脑风暴变更日志
 
+## 2026-08-20：电镜图片类上传与官方手工同形 + 26A045793 全流程实证
+
+- 起因：用户发现流程上传的记录会在旧系统"检验记录登记"界面留下一条
+  无法删除/点击的"异常记录"，而手工上传不会。探针实证差异：流程图片类
+  上传写 `FileType=图片`、`ReviewUserItem1=图片` 并多写一条
+  `OriginalDataPictureFile` 子行（全库 99k+ 图片行中仅流程记录挂接
+  SpecialWoolManageID）；官方手工上传为 `FileType=定量试验`、
+  `ReviewUserItem1=null`、不写图片子行。删除特种毛记录时图片行被级联
+  删除，即用户看到的"异常记录消失"。
+- 修复：电镜图片类上传与官方手工完全同形——`FileType` 恒"定量试验"、
+  `ReviewUserItem1` 留空、不再写 `OriginalDataPictureFile` 子行；上传读回
+  与对账的图片子行计数期望 1→0，回执 `picture_records` 为空、
+  `readback.picture_count`=0，`verified_stage` 由 `picture_child_verified`
+  改为 `main_record_verified`；后端 business_fields 图片类 `review_item`
+  改发空串，回执校验同步（图片子记录必须不存在）。纸类路径一行未动。
+  契约文档 `special_wool_machine_contracts.json` 与 writer README 同步。
+- 验证：后端执行系统 434 项测试通过；writer 离线自测 27 项通过。
+  旧库实证：26A045793-5（新流程上传）与 7 月手工记录逐字段一致；
+  26A045793（份数=2、已有 2 条登记）本机全流程一次跑通——上传 -6、
+  复核、终录追加第 3 条登记并校对（16:48）、报告图片放置。
+  生产 08-20 的 reconciliation_required 未在本机复现；最可能原因是生产
+  后端停在 a16bb05、缺 K2 日期格式修复（5d0ae4e/a370572），en-US 固化
+  日期格式的工作簿被旧系统采集器误读。
+- 本机栈修复（local.env 未入库配置）：前端绑定恢复 0.0.0.0（VM 桥可达）、
+  补齐 EXECUTION_BRIDGE_TOKEN、EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED、
+  EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED、stage-sync 常驻镜像；
+  run-bridge 脚本 StageSync 改指 Z:\Downloads\exec-stage-sync（旧 C:\Mac
+  深路径不可用）。
+- VM 计划任务桥演练生产升级路径：静默安装 1.0.3 → 手工更新
+  BridgeConfig.psd1 两个 Writer 钉值（onlyifdoesntexist 保留旧配置的既定
+  步骤）→ 计划任务恢复后连续完成上传/复核/终录。
+- 部署：新 FibreCheckWriter.exe SHA256
+  `de6541b1043a6fa95ca4dac5cc61d7c21a87a688a7deebad06927ca51257a26f`；
+  本地桥与安装包钉值已更新，安装包版本 1.0.3（含 1.0.2 的 CustomerOrg
+  放行），安装包 SHA256
+  `37029812cd5243ad277391398fa3c1d8363f83b2608a8ddfe045a260f59773ab`。
+
 ## 2026-08-19：CustomerOrg 同名多行放行（写入器结构性修复 + tools 脚本 BOM 修复）
 
 - 问题：260210750（委托单位"金佰利（中国）有限公司"）电镜流程登记节点报

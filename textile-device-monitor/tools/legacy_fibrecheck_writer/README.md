@@ -42,7 +42,7 @@ main_record_save_started → main_record_verified → completed
 authenticated → permission_verified → remote_state_verified →
 task_project_verified → file_copy_ready →（等待 stdin 许可）→
 file_copy_started → file_copy_verified → main_record_save_started →
-main_record_verified → picture_child_verified → completed
+main_record_verified → completed
 ```
 
 复核不读取或复制源文件，使用另一条独立阶段：

@@ -17,7 +17,7 @@ $FinalWriter = Join-Path $Repo 'tools\legacy_fibrecheck_final_entry_writer\out\F
 $FibreCheck = Join-Path $LegacyRoot '.tmp\FibreCheck'
 $Staging = Join-Path $Root '.tmp\execution-win-runtime\staging'
 $FinalWork = Join-Path $Root '.tmp\execution-win-runtime\publish'
-$StageSync = 'C:\Mac\Home\PycharmProjects\textile-device-monitor\.tmp\execution-system-local-runtime\stage-sync'
+$StageSync = 'Z:\Downloads\exec-stage-sync'
 
 Get-Content -LiteralPath $Secrets | ForEach-Object {
     if ($_ -match '^\s*([^#][^=]*)=(.*)$') {
@@ -59,7 +59,7 @@ if ($Busy.Count -gt 0) {
 }
 
 $ExpectedWriterHashes = @{
-    'FibreCheckWriter.exe' = 'e892f409d9eab2030aa7a4bf6c5680055038703a99819b2099fdd94529672fc2'
+    'FibreCheckWriter.exe' = 'de6541b1043a6fa95ca4dac5cc61d7c21a87a688a7deebad06927ca51257a26f'
     'FibreCheckFinalEntryWriter.exe' = '9bd509c61d6ddc40b7f1c0de9c11081a92461c0c22b8a372ce7a520cc7eeec03'
 }
 foreach ($pair in $ExpectedWriterHashes.GetEnumerator()) {

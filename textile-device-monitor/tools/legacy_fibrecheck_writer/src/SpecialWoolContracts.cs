@@ -49,7 +49,6 @@ namespace LegacyFibreCheckWriter
             "file_copy_verified",
             "main_record_save_started",
             "main_record_verified",
-            "picture_child_verified",
             "completed",
         };
 

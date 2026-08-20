@@ -37,7 +37,6 @@ namespace LegacyFibreCheckWriter
             "file_copy_verified",
             "main_record_save_started",
             "main_record_verified",
-            "picture_child_verified",
             "review_save_started",
             "review_main_verified",
             "review_children_verified",

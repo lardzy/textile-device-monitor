@@ -364,22 +364,10 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                 "create_time": "2026-08-05T08:00:00",
                 "file_path": target_filename,
             },
-            "picture_records": [
-                {
-                    "id": "sha256:" + "6" * 16,
-                    "main_id": main_id,
-                    "check_item_id": operation.request_summary[
-                        "task_project"
-                    ]["check_item_id"],
-                    "field_fingerprint": "7" * 64,
-                    "filename": target_filename,
-                    "original_data_filename": target_filename,
-                    "create_time": "2026-08-05T08:00:00",
-                }
-            ],
+            "picture_records": [],
             "readback": {
                 "main_count": 1,
-                "picture_count": 1,
+                "picture_count": 0,
                 "mismatches": [],
                 "target_filename": target_filename,
                 "original_data_filename": target_filename,
@@ -395,7 +383,6 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                 "file_copy_verified",
                 "main_record_save_started",
                 "main_record_verified",
-                "picture_child_verified",
             ],
             "reconciliation_required": False,
         }
@@ -523,7 +510,7 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                 "post_fingerprint": "b" * 64,
             },
             "children": {
-                "picture_count": 1,
+                "picture_count": 0,
                 "before_fingerprint": children_fingerprint,
                 "after_fingerprint": children_fingerprint,
                 "unchanged": True,
@@ -890,7 +877,7 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             "inspection_method": "",
             "inspection_item": "图片",
             "inspection_copies": 1,
-            "review_item": "图片",
+            "review_item": "",
             "review_copies": 1,
         })
         self.assertEqual(summary["files"][0]["artifact_id"], artifact.id)
@@ -1224,10 +1211,6 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         )
         receipt["server_file"]["filename"] = actual_filename
         receipt["main_record"]["file_path"] = actual_filename
-        receipt["picture_records"][0]["filename"] = actual_filename
-        receipt["picture_records"][0][
-            "original_data_filename"
-        ] = actual_filename
         receipt["readback"]["target_filename"] = actual_filename
         receipt["readback"]["original_data_filename"] = actual_filename
         self.assertIs(validate_external_receipt(upload, receipt), receipt)
@@ -1236,8 +1219,6 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             ("target_filename",),
             ("server_file", "filename"),
             ("main_record", "file_path"),
-            ("picture_records", 0, "filename"),
-            ("picture_records", 0, "original_data_filename"),
             ("readback", "target_filename"),
             ("readback", "original_data_filename"),
         ):
@@ -1477,10 +1458,8 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             current["target_sample_number"],
             f"{self.run.inspection_number}-1",
         )
-        self.assertEqual(
-            current["picture_records"][0]["original_data_filename"],
-            current["target_filename"],
-        )
+        # 与官方客户端手工上传同形：不写 OriginalDataPictureFile 子记录。
+        self.assertEqual(current["picture_records"], [])
         self.assertEqual(
             current["readback"]["original_data_filename"],
             current["target_filename"],
@@ -1488,26 +1467,41 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
         self.assertIs(validate_external_receipt(operation, current), current)
 
         legacy_v1 = self._image_receipt(operation)
-        legacy_v1["picture_records"][0].pop("original_data_filename")
         legacy_v1["readback"].pop("original_data_filename")
         self.assertIs(
             validate_external_receipt(operation, legacy_v1),
             legacy_v1,
         )
 
-        for section in ("picture_records", "readback"):
-            with self.subTest(section=section):
-                invalid = self._image_receipt(operation)
-                if section == "picture_records":
-                    invalid[section][0]["original_data_filename"] = "错误文件名.xls"
-                else:
-                    invalid[section]["original_data_filename"] = "错误文件名.xls"
-                with self.assertRaises(ExecutionApiError) as rejected:
-                    validate_external_receipt(operation, invalid)
-                self.assertEqual(
-                    rejected.exception.code,
-                    "legacy_special_wool_machine_document_invalid",
-                )
+        invalid = self._image_receipt(operation)
+        invalid["readback"]["original_data_filename"] = "错误文件名.xls"
+        with self.assertRaises(ExecutionApiError) as rejected:
+            validate_external_receipt(operation, invalid)
+        self.assertEqual(
+            rejected.exception.code,
+            "legacy_special_wool_machine_document_invalid",
+        )
+
+        with_children = self._image_receipt(operation)
+        with_children["picture_records"] = [
+            {
+                "id": "sha256:" + "6" * 16,
+                "main_id": with_children["main_record"]["id"],
+                "check_item_id": operation.request_summary[
+                    "task_project"
+                ]["check_item_id"],
+                "field_fingerprint": "7" * 64,
+                "filename": with_children["target_filename"],
+                "original_data_filename": with_children["target_filename"],
+                "create_time": "2026-08-05T08:00:00",
+            }
+        ]
+        with self.assertRaises(ExecutionApiError) as child_rejected:
+            validate_external_receipt(operation, with_children)
+        self.assertEqual(
+            child_rejected.exception.code,
+            "legacy_special_wool_machine_document_invalid",
+        )
 
     def test_server_file_verification_accepts_only_two_strict_modes(self):
         _artifact, original_record = self._artifact()
@@ -1828,7 +1822,7 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
                 "post_fingerprint": "b" * 64,
             },
             "children": {
-                "picture_count": 1,
+                "picture_count": 0,
                 "before_fingerprint": children_fingerprint,
                 "after_fingerprint": children_fingerprint,
                 "unchanged": True,
@@ -1885,7 +1879,6 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
 
             replacement = "sha256:" + "f" * 16
             upload.receipt["main_record"]["id"] = replacement
-            upload.receipt["picture_records"][0]["main_id"] = replacement
             with self.assertRaises(ExecutionApiError) as changed:
                 approve_prepared_external_operation(
                     self.db,
@@ -1942,10 +1935,6 @@ class SpecialWoolExternalOperationTests(unittest.TestCase):
             )
             receipt["server_file"]["filename"] = actual_filename
             receipt["main_record"]["file_path"] = actual_filename
-            receipt["picture_records"][0]["filename"] = actual_filename
-            receipt["picture_records"][0][
-                "original_data_filename"
-            ] = actual_filename
             receipt["readback"]["target_filename"] = actual_filename
             receipt["readback"]["original_data_filename"] = actual_filename
             upload.receipt = receipt

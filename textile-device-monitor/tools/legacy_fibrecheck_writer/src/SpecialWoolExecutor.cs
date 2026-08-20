@@ -210,7 +210,6 @@ namespace LegacyFibreCheckWriter
             BindStaff(account, password, staff);
 
             DataRow mainRow;
-            DataRow pictureRow;
             TaskProject project;
             string inspectorId;
             string targetPath;
@@ -303,29 +302,12 @@ namespace LegacyFibreCheckWriter
                     {
                         new DbParam("main_id", mainId),
                     });
-                if (pictures.Rows.Count != 1)
+                // 与官方客户端手工上传同形：图片类记录不写
+                // OriginalDataPictureFile 子表，对账时必须为 0 条。
+                if (pictures.Rows.Count != 0)
                 {
                     result.Receipt["error"] =
                         "reconciliation_picture_child_count_mismatch";
-                    return UploadExecutor.Finish(
-                        result,
-                        UploadExecutor.ExitSourceMismatch,
-                        null,
-                        emit);
-                }
-                pictureRow = pictures.Rows[0];
-                mismatches = VerifyPicture(
-                    pictureRow,
-                    mainId,
-                    target,
-                    project.CheckItemId,
-                    targetFilename,
-                    staff.Id);
-                if (mismatches.Count != 0)
-                {
-                    result.Receipt["error"] =
-                        "reconciliation_picture_child_verify_mismatch";
-                    result.Receipt["mismatched_fields"] = mismatches;
                     return UploadExecutor.Finish(
                         result,
                         UploadExecutor.ExitSourceMismatch,
@@ -427,11 +409,6 @@ namespace LegacyFibreCheckWriter
                 { "record_id", Redact.HashId(Text(mainRow, "ID")) },
                 { "field_fingerprint", SpecialWoolContracts.FingerprintRow(mainRow, null) },
             });
-            stage("picture_child_verified", new SortedDictionary<string, object>
-            {
-                { "record_id", Redact.HashId(Text(pictureRow, "ID")) },
-                { "check_item_id", Redact.HashId(Text(pictureRow, "CheckItemID")) },
-            });
             BuildImageReceipt(
                 result,
                 operation,
@@ -441,7 +418,7 @@ namespace LegacyFibreCheckWriter
                 source,
                 targetFilename,
                 mainRow,
-                pictureRow,
+                null,
                 serverVerification);
             stage("completed", null);
             return UploadExecutor.Finish(result, 0, null, emit);
@@ -775,27 +752,18 @@ namespace LegacyFibreCheckWriter
                             ? "图片"
                             : "棉再生纤定性",
                         CheckUserNumber1 = 1,
+                        // 与官方客户端手工上传同形：图片类复核项目保持 NULL，
+                        // 官方复核也只设 ReviewUser/ReviewTime。
                         ReviewUserItem1 = imageUpload
-                            ? "图片"
+                            ? null
                             : "棉再生纤定性",
                         ReviewUserNumber1 = 1,
                         FilePath = actualFilename,
-                        FileType = imageUpload ? "图片" : "定量试验",
+                        FileType = "定量试验",
                     };
+                    // 与官方客户端手工上传同形：图片类上传不写
+                    // OriginalDataPictureFile 子记录。
                     var picturesToSave = new List<OriginalDataPictureFile>();
-                    if (imageUpload)
-                    {
-                        picturesToSave.Add(new OriginalDataPictureFile
-                        {
-                            SampleNo = actual,
-                            CheckItemID = project.CheckItemId,
-                            PictureFileName = actualFilename,
-                            // 旧字段只有 NVARCHAR2(100)。保存隔离 staging 的绝对路径
-                            // 会被 Provider 截断且不同运行不可辨识；制品路径/哈希已经由
-                            // 执行系统审计，旧库只保存稳定且可读的最终文件名。
-                            OriginalDataFileName = actualFilename,
-                        });
-                    }
                     var dal = new SpecialWoolDAL();
                     dal.SaveSpecialWoolManage(
                         record,
@@ -852,8 +820,9 @@ namespace LegacyFibreCheckWriter
                 });
 
                 DataTable pictures = QueryPictures(writeLock, mainId);
-                int expectedPictureCount = imageUpload ? 1 : 0;
-                if (pictures.Rows.Count != expectedPictureCount)
+                // 与官方客户端手工上传同形：图片类上传后也不应读回到
+                // OriginalDataPictureFile 子记录。
+                if (pictures.Rows.Count != 0)
                 {
                     result.Receipt["error"] = "picture_child_readback_count_mismatch";
                     return UploadExecutor.Finish(
@@ -861,28 +830,6 @@ namespace LegacyFibreCheckWriter
                         UploadExecutor.ExitReconciliationRequired,
                         "main_record_save_started",
                         emit);
-                }
-                DataRow pictureRow = imageUpload ? pictures.Rows[0] : null;
-                if (imageUpload)
-                {
-                    mismatches = VerifyPicture(
-                        pictureRow, mainId, actual, project.CheckItemId,
-                        actualFilename, staff.Id);
-                    if (mismatches.Count != 0)
-                    {
-                        result.Receipt["error"] = "picture_child_verify_mismatch";
-                        result.Receipt["mismatched_fields"] = mismatches;
-                        return UploadExecutor.Finish(
-                            result,
-                            UploadExecutor.ExitReconciliationRequired,
-                            "main_record_save_started",
-                            emit);
-                    }
-                    stage("picture_child_verified", new SortedDictionary<string, object>
-                    {
-                        { "record_id", Redact.HashId(Text(pictureRow, "ID")) },
-                        { "check_item_id", Redact.HashId(Text(pictureRow, "CheckItemID")) },
-                    });
                 }
 
                 LegacyXlsFileVerification serverVerification;
@@ -933,7 +880,7 @@ namespace LegacyFibreCheckWriter
                         source,
                         actualFilename,
                         mainRow,
-                        pictureRow,
+                        null,
                         serverVerification);
                 }
                 else
@@ -971,7 +918,9 @@ namespace LegacyFibreCheckWriter
                 operationType,
                 SpecialWoolContracts.QualitativeReviewOperation,
                 StringComparison.Ordinal);
-            int expectedPictureCount = qualitativeReview ? 0 : 1;
+            // 与官方客户端手工上传同形：图片类记录同样没有
+            // OriginalDataPictureFile 子记录，复核前后都必须为 0 条。
+            const int expectedPictureCount = 0;
             string target = UploadExecutor.GetStr(summary, "target_sample_number");
             string sourceNumber = UploadExecutor.GetStr(summary, "source_inspection_number");
             Dictionary<string, object> expectedProject = UploadExecutor.GetMap(
@@ -1424,6 +1373,10 @@ namespace LegacyFibreCheckWriter
                 }
                 string expectedMethod = imageUpload ? string.Empty : "定量";
                 string expectedItem = imageUpload ? "图片" : "棉再生纤定性";
+                // 与官方客户端手工上传同形：图片类复核项目为 NULL，后端同步发空串。
+                string expectedReviewItem = imageUpload
+                    ? string.Empty
+                    : "棉再生纤定性";
                 if (!string.Equals(
                         UploadExecutor.GetStr(business, "inspection_method")
                             ?? string.Empty,
@@ -1435,8 +1388,9 @@ namespace LegacyFibreCheckWriter
                         StringComparison.Ordinal)
                     || UploadExecutor.GetLong(business, "inspection_copies") != 1
                     || !string.Equals(
-                        UploadExecutor.GetStr(business, "review_item"),
-                        expectedItem,
+                        UploadExecutor.GetStr(business, "review_item")
+                            ?? string.Empty,
+                        expectedReviewItem,
                         StringComparison.Ordinal)
                     || UploadExecutor.GetLong(business, "review_copies") != 1)
                 {
@@ -1448,14 +1402,15 @@ namespace LegacyFibreCheckWriter
             else
             {
                 string expectedReviewItem = imageReview
-                    ? "图片"
+                    ? string.Empty
                     : "棉再生纤定性";
                 if (!string.Equals(
                         UploadExecutor.GetStr(business, "review_action"),
                         "特纤复核",
                         StringComparison.Ordinal)
                     || !string.Equals(
-                        UploadExecutor.GetStr(business, "review_item"),
+                        UploadExecutor.GetStr(business, "review_item")
+                            ?? string.Empty,
                         expectedReviewItem,
                         StringComparison.Ordinal)
                     || UploadExecutor.GetLong(
@@ -1913,51 +1868,30 @@ namespace LegacyFibreCheckWriter
             {
                 mismatches.Add("CheckUser1");
             }
-            string expectedItem = imageUpload ? "图片" : "棉再生纤定性";
+            string expectedCheckItem = imageUpload ? "图片" : "棉再生纤定性";
+            // 与官方客户端手工上传同形：图片类复核项目保持 NULL，读回为空串。
+            string expectedReviewItem = imageUpload
+                ? string.Empty
+                : "棉再生纤定性";
             Check(
                 mismatches,
                 "CheckUserItem1",
                 Text(row, "CheckUserItem1"),
-                expectedItem);
+                expectedCheckItem);
             Check(
                 mismatches,
                 "ReviewUserItem1",
                 Text(row, "ReviewUserItem1"),
-                expectedItem);
+                expectedReviewItem);
             Check(mismatches, "FilePath", Text(row, "FilePath"), fileName);
             Check(
                 mismatches,
                 "FileType",
                 Text(row, "FileType"),
-                imageUpload ? "图片" : "定量试验");
+                "定量试验");
             Check(mismatches, "CreateUser", Text(row, "CreateUser"), staffId);
             CheckInt(mismatches, row, "CheckUserNumber1", 1);
             CheckInt(mismatches, row, "ReviewUserNumber1", 1);
-            if (IsNull(row, "CreateTime")) mismatches.Add("CreateTime");
-            return mismatches;
-        }
-
-        private static List<string> VerifyPicture(
-            DataRow row,
-            string mainId,
-            string target,
-            string checkItemId,
-            string fileName,
-            string staffId)
-        {
-            var mismatches = new List<string>();
-            if (string.IsNullOrWhiteSpace(Text(row, "ID"))) mismatches.Add("ID");
-            Check(mismatches, "SpecialWoolManageID", Text(row, "SpecialWoolManageID"), mainId);
-            Check(mismatches, "SampleNo", Text(row, "SampleNo"), target);
-            Check(mismatches, "CheckItemID", Text(row, "CheckItemID"), checkItemId);
-            Check(mismatches, "PictureFileName", Text(row, "PictureFileName"), fileName);
-            if (!SpecialWoolContracts.MatchesTargetOriginalDataFileName(
-                Text(row, "OriginalDataFileName"),
-                target))
-            {
-                mismatches.Add("OriginalDataFileName");
-            }
-            Check(mismatches, "CreateUser", Text(row, "CreateUser"), staffId);
             if (IsNull(row, "CreateTime")) mismatches.Add("CreateTime");
             return mismatches;
         }
@@ -1975,9 +1909,10 @@ namespace LegacyFibreCheckWriter
             LegacyXlsFileVerification serverVerification)
         {
             string mainId = Text(main, "ID");
-            string originalDataFilename = Text(
-                picture,
-                "OriginalDataFileName");
+            // 图片类记录不再写 OriginalDataPictureFile 子表；
+            // original_data_filename 沿用主行 FilePath（与 targetFilename 同值），
+            // 保持回执契约字段不变。
+            string originalDataFilename = Text(main, "FilePath");
             string requested = UploadExecutor.GetStr(summary, "target_sample_number");
             result.Receipt["schema_version"] = 1;
             result.Receipt["receipt_type"] = SpecialWoolContracts.ImageReceiptType;
@@ -2011,23 +1946,12 @@ namespace LegacyFibreCheckWriter
                 { "create_time", Iso(NullableDate(main, "CreateTime")) },
                 { "file_path", Text(main, "FilePath") },
             };
-            result.Receipt["picture_records"] = new List<object>
-            {
-                new SortedDictionary<string, object>
-                {
-                    { "id", Redact.HashId(Text(picture, "ID")) },
-                    { "main_id", Redact.HashId(Text(picture, "SpecialWoolManageID")) },
-                    { "check_item_id", Redact.HashId(Text(picture, "CheckItemID")) },
-                    { "field_fingerprint", SpecialWoolContracts.FingerprintRow(picture, null) },
-                    { "filename", Text(picture, "PictureFileName") },
-                    { "original_data_filename", originalDataFilename },
-                    { "create_time", Iso(NullableDate(picture, "CreateTime")) },
-                },
-            };
+            // 与官方客户端手工上传同形：无 OriginalDataPictureFile 子记录。
+            result.Receipt["picture_records"] = new List<object>();
             result.Receipt["readback"] = new SortedDictionary<string, object>
             {
                 { "main_count", 1 },
-                { "picture_count", 1 },
+                { "picture_count", 0 },
                 { "mismatches", new List<string>() },
                 { "target_filename", targetFilename },
                 { "original_data_filename", originalDataFilename },

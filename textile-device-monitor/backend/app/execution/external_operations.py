@@ -165,7 +165,6 @@ SPECIAL_WOOL_IMAGE_ATTEMPT_STAGES = (
     "file_copy_verified",
     "main_record_save_started",
     "main_record_verified",
-    "picture_child_verified",
     "completed",
 )
 SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES = (
@@ -229,7 +228,7 @@ EXTERNAL_OPERATION_STAGE_PROFILES = {
     LEGACY_SPECIAL_WOOL_IMAGE_OPERATION: (
         SPECIAL_WOOL_IMAGE_ATTEMPT_STAGES,
         EXTERNAL_REMOTE_WRITE_STAGE,
-        "picture_child_verified",
+        "main_record_verified",
     ),
     LEGACY_SPECIAL_WOOL_REVIEW_OPERATION: (
         SPECIAL_WOOL_REVIEW_ATTEMPT_STAGES,
@@ -1557,45 +1556,9 @@ def validate_external_receipt(
                 )
             return document
         pictures = document.get("picture_records")
-        if not isinstance(pictures, list) or len(pictures) != 1:
+        if not isinstance(pictures, list) or pictures:
             raise _machine_document_error(
-                "$.picture_records", "单工作簿上传必须读回一条图片子记录"
-            )
-        picture = _strict_object(
-            pictures[0],
-            path="$.picture_records[0]",
-            required={
-                "id",
-                "main_id",
-                "check_item_id",
-                "field_fingerprint",
-                "filename",
-                "create_time",
-            },
-            optional={"original_data_filename"},
-        )
-        for key in ("id", "main_id", "check_item_id"):
-            _required_text(
-                picture.get(key),
-                path=f"$.picture_records[0].{key}",
-                pattern=_REDACTED_LEGACY_ID_RE,
-            )
-        _required_text(
-            picture.get("field_fingerprint"),
-            path="$.picture_records[0].field_fingerprint",
-            pattern=_SHA256_RE,
-        )
-        if picture.get("main_id") != main.get("id") or picture.get(
-            "check_item_id"
-        ) != (summary.get("task_project") or {}).get(
-            "check_item_id"
-        ) or picture.get("filename") != expected_target_filename or (
-            "original_data_filename" in picture
-            and picture.get("original_data_filename")
-            != expected_target_filename
-        ):
-            raise _machine_document_error(
-                "$.picture_records[0]", "图片子记录外键、项目标识或文件名不一致"
+                "$.picture_records", "图片类特纤上传不得生成图片子记录"
             )
         readback = _strict_object(
             document.get("readback"),
@@ -1611,7 +1574,7 @@ def validate_external_receipt(
         )
         if _required_count(readback.get("main_count"), path="$.readback.main_count") != 1 or _required_count(
             readback.get("picture_count"), path="$.readback.picture_count"
-        ) != 1 or readback.get("mismatches") != [] or readback.get(
+        ) != 0 or readback.get("mismatches") != [] or readback.get(
             "target_filename"
         ) != expected_target_filename or (
             "original_data_filename" in readback
@@ -1675,14 +1638,10 @@ def validate_external_receipt(
         _required_count(
             children.get("picture_count"), path="$.children.picture_count"
         )
-        if (
-            operation_type
-            == LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION
-            and children.get("picture_count") != 0
-        ):
+        if children.get("picture_count") != 0:
             raise _machine_document_error(
                 "$.children.picture_count",
-                "文档型特纤复核必须确认不存在图片子记录",
+                "特纤复核必须确认不存在图片子记录",
             )
         for key in ("before_fingerprint", "after_fingerprint"):
             _required_text(
@@ -4067,7 +4026,7 @@ def prepare_legacy_special_wool_image_operation(
             "inspection_method": "",
             "inspection_item": "图片",
             "inspection_copies": 1,
-            "review_item": "图片",
+            "review_item": "",
             "review_copies": 1,
         },
         "task_project": task_project,
@@ -4250,7 +4209,7 @@ def prepare_legacy_special_wool_review_operation(
         "business_fields": {
             "fiber_category": "图片",
             "review_action": "特纤复核",
-            "review_item": "图片",
+            "review_item": "",
             "review_copies": 1,
         },
         "task_project": dict(source_summary.get("task_project") or {}),

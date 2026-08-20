@@ -70,7 +70,7 @@ namespace LegacyFibreCheckWriter
 
         private static void ImageAndReviewStagesAreSeparate()
         {
-            Contains(SpecialWoolContracts.ImageStages, "picture_child_verified");
+            NotContains(SpecialWoolContracts.ImageStages, "picture_child_verified");
             NotContains(SpecialWoolContracts.ImageStages, "review_save_started");
             Contains(SpecialWoolContracts.ReviewStages, "review_children_verified");
             NotContains(SpecialWoolContracts.ReviewStages, "file_copy_started");

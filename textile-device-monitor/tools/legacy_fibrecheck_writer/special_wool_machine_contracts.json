@@ -34,22 +34,23 @@
         "file_copy_verified",
         "main_record_save_started",
         "main_record_verified",
-        "picture_child_verified",
         "completed"
       ],
       "side_effect_ready_stage": "file_copy_ready",
       "side_effect_stage": "file_copy_started",
-      "verified_stage": "picture_child_verified",
+      "verified_stage": "main_record_verified",
       "required_business_facts": {
         "project_names": ["纤维微观形貌", "膜平面形貌"],
         "check_method": "GB/T 36422-2018",
-        "picture_child_table": "OriginalDataPictureFile",
+        "file_type": "定量试验",
+        "review_user_item1": "null_matches_official_client_manual_upload",
+        "picture_child_count": 0,
         "sample_number_policy": "base_then_first_free_positive_integer_suffix",
         "target_filename_policy": "final_target_sample_number + '-' + immutable_original_template_filename",
         "original_template_filename": "39-8B-纤维形状截面定量试验-2026.xls",
-        "target_filename_must_match_main_picture_and_receipt_readback": true,
+        "target_filename_must_match_main_and_receipt_readback": true,
         "original_data_filename_policy": "same_as_target_filename",
-        "new_receipts_include_original_data_filename_in_picture_and_readback": true,
+        "new_receipts_include_original_data_filename_in_readback": true,
         "legacy_v1_receipts_without_original_data_filename_are_accepted": true,
         "reconciliation_original_data_filename_uses_target_filename": true,
         "allocation_must_still_equal_signed_summary_under_task_project_lock": true,
@@ -84,8 +85,7 @@
         "source_upload_main_id_must_match_readonly_target_before_permit": true,
         "source_upload_main_id_must_match_raw_and_backend_receipts": true,
         "main_updates": ["ReviewUser", "ReviewTime"],
-        "picture_child_updates": [],
-        "picture_children_must_remain_unchanged": true
+        "picture_child_count": 0
       }
     },
     "legacy_special_wool_qualitative_upload": {

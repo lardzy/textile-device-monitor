@@ -5,7 +5,9 @@
     # 1.0.1：ops 运行日志按天落盘 + 注册后立即启动计划任务（c6b1ca9）
     # 1.0.2：FinalEntryWriter 放宽 CustomerOrg 同名多行检查（null≈0 归一后
     #        有效标志位真正分歧才报 customer_org_not_unique）+ tools ps1 补 BOM
-    PackageVersion    = '1.0.2'
+    # 1.0.3：FibreCheckWriter 图片类上传与官方手工同形（FileType=定量试验、
+    #        ReviewUserItem1 留空、不再写 OriginalDataPictureFile 子记录）
+    PackageVersion    = '1.0.3'
 
     # 执行系统源码树（含 tools\*；writer 已编译产物在其 out\ 下）
     RepoSourceRoot    = 'C:\Users\lishuyang\Downloads\textile-device-monitor-cdde9ec\textile-device-monitor'
@@ -26,7 +28,7 @@
     # Writer 源可执行文件 SHA-256 钉值：与本次验收通过的编译产物绑定。
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
-        'FibreCheckWriter.exe'           = 'e99da7ea028c93dad5f13934e7c5a0f90525092264b199cbb9e80d8b9a633108'
+        'FibreCheckWriter.exe'           = 'de6541b1043a6fa95ca4dac5cc61d7c21a87a688a7deebad06927ca51257a26f'
         'FibreCheckFinalEntryWriter.exe' = '9bd509c61d6ddc40b7f1c0de9c11081a92461c0c22b8a372ce7a520cc7eeec03'
     }
 
