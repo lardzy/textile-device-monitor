@@ -7,7 +7,7 @@ import logging
 import mimetypes
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -97,6 +97,8 @@ from app.execution.models import (
     ExecutionUserRole,
     ExecutionWorkflow,
     ExecutionWorkflowVersion,
+    ExecutionWorkerHeartbeat,
+    ExecutionWorkerNodeCapability,
     utcnow,
 )
 from app.execution.persistence import (
@@ -564,11 +566,32 @@ def _workflow_dict(
         if include_definition
         else published_capabilities
     )
+    active_release_id = None
+    if (
+        getattr(workflow, "management_mode", "draft_v1") == "release_v2"
+        and workflow.published_version_number is not None
+    ):
+        active_version = next(
+            (
+                version
+                for version in workflow.versions
+                if version.version_number
+                == workflow.published_version_number
+            ),
+            None,
+        )
+        active_release_id = (
+            active_version.release_id if active_version is not None else None
+        )
     value = {
         "id": workflow.id,
         "slug": workflow.slug,
         "name": workflow.name,
         "description": workflow.description,
+        "management_mode": getattr(
+            workflow, "management_mode", "draft_v1"
+        ),
+        "active_release_id": active_release_id,
         "category": _category_dict(workflow.category),
         "draft_revision": workflow.draft_revision,
         "published_version": workflow.published_version_number,
@@ -1154,8 +1177,12 @@ def _artifact_path(
         ) from exc
 
 
-def _node_run_dict(node: ExecutionNodeRun) -> dict[str, Any]:
-    return {
+def _node_run_dict(
+    node: ExecutionNodeRun,
+    *,
+    db: Optional[Session] = None,
+) -> dict[str, Any]:
+    value = {
         "id": node.id,
         "node_id": node.node_id,
         "node_type": node.node_type,
@@ -1173,6 +1200,42 @@ def _node_run_dict(node: ExecutionNodeRun) -> dict[str, Any]:
         "started_at": node.started_at.isoformat() if node.started_at else None,
         "finished_at": node.finished_at.isoformat() if node.finished_at else None,
     }
+    binding_digest = getattr(node, "execution_binding_digest", None)
+    if binding_digest:
+        value["execution_kind"] = getattr(node, "execution_kind", None)
+        value["execution_binding_digest"] = binding_digest
+        if db is not None and node.status == "ready":
+            threshold = utcnow() - timedelta(
+                seconds=max(
+                    1,
+                    int(settings.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS),
+                )
+            )
+            available = (
+                db.query(ExecutionWorkerNodeCapability.id)
+                .join(
+                    ExecutionWorkerHeartbeat,
+                    ExecutionWorkerHeartbeat.worker_id
+                    == ExecutionWorkerNodeCapability.worker_id,
+                )
+                .filter(
+                    ExecutionWorkerNodeCapability.execution_binding_digest
+                    == binding_digest,
+                    ExecutionWorkerNodeCapability.ready.is_(True),
+                    ExecutionWorkerHeartbeat.status == "running",
+                    ExecutionWorkerHeartbeat.last_seen_at >= threshold,
+                    ExecutionWorkerHeartbeat.protocol_version.like("2.%"),
+                )
+                .first()
+                is not None
+            )
+            if not available:
+                value["diagnostic"] = {
+                    "code": "node_capability_unavailable",
+                    "message": "当前没有在线 Worker 提供该节点的精确执行绑定",
+                    "retryable": True,
+                }
+    return value
 
 
 def _event_dict(event: ExecutionEvent) -> dict[str, Any]:
@@ -1190,6 +1253,7 @@ def _event_dict(event: ExecutionEvent) -> dict[str, Any]:
 def _run_dict(
     run,
     *,
+    db: Optional[Session] = None,
     include_definition: bool = True,
     events: Optional[list[ExecutionEvent]] = None,
     artifacts: Optional[list[ExecutionArtifact]] = None,
@@ -1227,7 +1291,7 @@ def _run_dict(
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
         "updated_at": run.updated_at.isoformat(),
         "nodes": [
-            _node_run_dict(node)
+            _node_run_dict(node, db=db)
             for node in sorted(run.node_runs, key=lambda item: item.created_at)
         ],
         "human_tasks": [
@@ -2232,7 +2296,7 @@ def test_workflow(
             target_sample_number=payload.target_sample_number,
         )
         duplicate = True
-    return {"duplicate": duplicate, "run": _run_dict(run)}
+    return {"duplicate": duplicate, "run": _run_dict(run, db=db)}
 
 
 @router.get("/runs")
@@ -2322,27 +2386,22 @@ def start_run(
         db.commit()
     except IntegrityError:
         db.rollback()
-        run = (
-            db.query(ExecutionRun)
-            .filter_by(
-                created_by_id=auth.user.id,
-                idempotency_key=payload.idempotency_key,
-            )
-            .one()
-        )
-        assert_idempotent_run_matches(
-            run,
+        # Re-enter the normal idempotency path after the concurrent winner
+        # commits.  In particular, a v2 active pointer may have changed while
+        # this request was losing the insert race; create_run compares the
+        # winner against the *current* immutable deployed checksum instead of
+        # accepting the winner's own historical snapshots as expectations.
+        run, duplicate = create_run(
+            db,
             workflow=workflow,
+            actor=auth.user,
             inspection_number=payload.inspection_number,
             input_data=payload.input_data,
             global_data=payload.global_data,
-            mode="live",
-            definition=run.definition_snapshot,
-            capabilities=run.capabilities_snapshot,
+            idempotency_key=payload.idempotency_key,
             target_sample_number=payload.target_sample_number,
         )
-        duplicate = True
-    return {"duplicate": duplicate, "run": _run_dict(run)}
+    return {"duplicate": duplicate, "run": _run_dict(run, db=db)}
 
 
 @router.get("/runs/{run_id}")
@@ -2368,7 +2427,7 @@ def run_detail(
         .order_by(ExecutionArtifact.created_at.asc())
         .all()
     )
-    payload = _run_dict(run, events=events, artifacts=artifacts)
+    payload = _run_dict(run, db=db, events=events, artifacts=artifacts)
     payload["event_history"] = {
         "has_more": has_earlier_events,
         "cursors": {
@@ -3552,7 +3611,7 @@ def _run_action(
         actor=auth.user,
     )
     db.commit()
-    return _run_dict(run)
+    return _run_dict(run, db=db)
 
 
 @router.post("/runs/{run_id}/pause")
@@ -3599,7 +3658,7 @@ def retry_node(
         reason=payload.reason,
     )
     db.commit()
-    return _node_run_dict(node)
+    return _node_run_dict(node, db=db)
 
 
 @router.get("/runs/{run_id}/events")
@@ -4206,6 +4265,7 @@ def storage_roots(
                 "category": root.category_key,
                 "is_available": root.is_available,
                 "availability_message": root.availability_message,
+                "binding_revision": int(root.binding_revision or 1),
                 "last_scan_finished_at": (
                     root.last_scan_finished_at.isoformat()
                     if root.last_scan_finished_at

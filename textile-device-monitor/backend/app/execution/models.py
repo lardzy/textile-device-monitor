@@ -275,6 +275,9 @@ class ExecutionWorkflow(Base):
     name = Column(String(200), nullable=False)
     description = Column(Text)
     draft_definition = Column(JSON_VARIANT, nullable=False)
+    management_mode = Column(
+        String(20), nullable=False, default="draft_v1", index=True
+    )
     draft_revision = Column(Integer, nullable=False, default=1)
     published_version_number = Column(Integer)
     capabilities = Column(JSON_VARIANT, nullable=False, default=dict)
@@ -330,11 +333,161 @@ class ExecutionWorkflowVersion(Base):
     checksum = Column(String(64), nullable=False)
     capabilities = Column(JSON_VARIANT, nullable=False, default=dict)
     contract_checksum = Column(String(64), nullable=False)
+    contract_format = Column(String(50))
+    release_id = Column(
+        String(36),
+        ForeignKey("execution_workflow_releases.id", ondelete="SET NULL"),
+        index=True,
+    )
+    release_digest = Column(String(64), index=True)
+    dependency_lock = Column(JSON_VARIANT)
+    dependency_lock_digest = Column(String(64))
+    deployment_binding_snapshot = Column(JSON_VARIANT)
+    deployment_binding_digest = Column(String(64))
+    asset_lock = Column(JSON_VARIANT)
+    engine_version = Column(String(50))
+    deployed_contract_checksum = Column(String(64), index=True)
     release_note = Column(Text)
     published_by_id = Column(String(36), ForeignKey("execution_users.id"))
     published_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     workflow = relationship("ExecutionWorkflow", back_populates="versions")
+
+
+class ExecutionWorkflowRelease(Base):
+    """Portable v2 release staged independently from a local workflow."""
+
+    __tablename__ = "execution_workflow_releases"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_slug",
+            "source_version",
+            name="uq_execution_workflow_release_source_identity",
+        ),
+        Index(
+            "ix_execution_workflow_release_status_created",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    workflow_id = Column(
+        String(36),
+        ForeignKey("execution_workflows.id", ondelete="SET NULL"),
+        index=True,
+    )
+    source_slug = Column(String(100), nullable=False, index=True)
+    source_version = Column(Integer, nullable=False)
+    release_digest = Column(String(64), nullable=False, index=True)
+    format_version = Column(String(20), nullable=False, default="2.0")
+    portable_document = Column(JSON_VARIANT, nullable=False)
+    status = Column(String(30), nullable=False, default="staged", index=True)
+    created_by_id = Column(
+        String(36), ForeignKey("execution_users.id"), nullable=False
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    published_at = Column(DateTime(timezone=True))
+
+
+class ExecutionReleasePreflight(Base):
+    __tablename__ = "execution_release_preflights"
+    __table_args__ = (
+        Index(
+            "ix_execution_release_preflight_expiry",
+            "expires_at",
+            "consumed_at",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    release_id = Column(
+        String(36),
+        ForeignKey("execution_workflow_releases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    scope = Column(String(20), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    release_digest = Column(String(64), nullable=False, index=True)
+    registry_revision = Column(String(64), nullable=False)
+    binding_revision = Column(Integer)
+    report = Column(JSON_VARIANT, nullable=False)
+    portable_document = Column(JSON_VARIANT)
+    created_by_id = Column(
+        String(36), ForeignKey("execution_users.id"), nullable=False
+    )
+    consumed_by_id = Column(String(36), ForeignKey("execution_users.id"))
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    consumed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class ExecutionDeploymentBinding(Base):
+    __tablename__ = "execution_deployment_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "release_id",
+            "environment",
+            "revision",
+            name="uq_execution_deployment_binding_revision",
+        ),
+        Index(
+            "ix_execution_deployment_binding_current",
+            "release_id",
+            "environment",
+            "revision",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    release_id = Column(
+        String(36),
+        ForeignKey("execution_workflow_releases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    environment = Column(String(100), nullable=False, default="default")
+    revision = Column(Integer, nullable=False)
+    binding = Column(JSON_VARIANT, nullable=False)
+    digest = Column(String(64), nullable=False, index=True)
+    created_by_id = Column(
+        String(36), ForeignKey("execution_users.id"), nullable=False
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class ExecutionWorkflowActivationReceipt(Base):
+    __tablename__ = "execution_workflow_activation_receipts"
+    __table_args__ = (
+        Index(
+            "ix_execution_workflow_activation_receipt_workflow",
+            "workflow_id",
+            "created_at",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    workflow_id = Column(
+        String(36),
+        ForeignKey("execution_workflows.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    release_id = Column(
+        String(36),
+        ForeignKey("execution_workflow_releases.id", ondelete="SET NULL"),
+        index=True,
+    )
+    action = Column(String(20), nullable=False)
+    from_version_number = Column(Integer)
+    to_version_number = Column(Integer, nullable=False)
+    release_digest = Column(String(64))
+    deployment_binding_digest = Column(String(64))
+    actor_user_id = Column(
+        String(36), ForeignKey("execution_users.id"), nullable=False
+    )
+    reason = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
 class ExecutionRun(Base):
@@ -374,6 +527,20 @@ class ExecutionRun(Base):
     definition_checksum = Column(String(64), nullable=False)
     capabilities_snapshot = Column(JSON_VARIANT, nullable=False, default=dict)
     contract_checksum = Column(String(64), nullable=False)
+    contract_format = Column(String(50))
+    release_id = Column(
+        String(36),
+        ForeignKey("execution_workflow_releases.id", ondelete="SET NULL"),
+        index=True,
+    )
+    release_digest = Column(String(64), index=True)
+    dependency_lock = Column(JSON_VARIANT)
+    dependency_lock_digest = Column(String(64))
+    deployment_binding_snapshot = Column(JSON_VARIANT)
+    deployment_binding_digest = Column(String(64))
+    asset_lock = Column(JSON_VARIANT)
+    engine_version_snapshot = Column(String(50))
+    deployed_contract_checksum = Column(String(64), index=True)
     input_data = Column(JSON_VARIANT, nullable=False, default=dict)
     global_data = Column(JSON_VARIANT, nullable=False, default=dict)
     output_data = Column(JSON_VARIANT, nullable=False, default=dict)
@@ -442,6 +609,8 @@ class ExecutionNodeRun(Base):
     node_type = Column(String(100), nullable=False)
     node_type_version = Column(Integer, nullable=False, default=1)
     node_name = Column(String(200), nullable=False)
+    execution_kind = Column(String(30))
+    execution_binding_digest = Column(String(64), index=True)
     status = Column(String(30), nullable=False, default="pending", index=True)
     attempt_count = Column(Integer, nullable=False, default=0)
     input_data = Column(JSON_VARIANT, nullable=False, default=dict)
@@ -502,6 +671,8 @@ class ExecutionNodeAttempt(Base):
     attempt_number = Column(Integer, nullable=False)
     worker_id = Column(String(100), nullable=False)
     lease_token = Column(String(36), nullable=False)
+    execution_kind = Column(String(30))
+    execution_binding_digest = Column(String(64), index=True)
     status = Column(String(30), nullable=False, default="running")
     input_data = Column(JSON_VARIANT, nullable=False, default=dict)
     output_data = Column(JSON_VARIANT, nullable=False, default=dict)
@@ -654,6 +825,50 @@ class ExecutionWorkerHeartbeat(Base):
     )
     last_error = Column(Text)
     capabilities = Column(JSON_VARIANT, nullable=False, default=dict)
+    protocol_version = Column(String(20))
+    engine_version = Column(String(50))
+    capability_digest = Column(String(64), index=True)
+
+
+class ExecutionWorkerNodeCapability(Base):
+    __tablename__ = "execution_worker_node_capabilities"
+    __table_args__ = (
+        UniqueConstraint(
+            "worker_id",
+            "execution_binding_digest",
+            name="uq_execution_worker_node_capability_binding",
+        ),
+        Index(
+            "ix_execution_worker_node_capability_claim",
+            "execution_binding_digest",
+            "ready",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    worker_id = Column(
+        String(100),
+        ForeignKey(
+            "execution_worker_heartbeats.worker_id", ondelete="CASCADE"
+        ),
+        nullable=False,
+        index=True,
+    )
+    execution_binding_digest = Column(String(64), nullable=False)
+    node_type = Column(String(160), nullable=False)
+    node_type_version = Column(Integer, nullable=False)
+    contract_digest = Column(String(64), nullable=False)
+    implementation_digest = Column(String(64), nullable=False)
+    pack_id = Column(String(100), nullable=False)
+    pack_version = Column(String(50), nullable=False)
+    execution_kind = Column(String(30), nullable=False)
+    ready = Column(Boolean, nullable=False, default=False, index=True)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )
 
 
 class ExecutionAuditLog(Base):
@@ -686,6 +901,11 @@ class ExecutionStorageRoot(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     is_available = Column(Boolean, nullable=False, default=False)
     availability_message = Column(Text)
+    # Stable deployment-contract revision.  Index scans have their own
+    # generation counter and must not invalidate Release bindings.
+    binding_revision = Column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     scan_generation = Column(Integer, nullable=False, default=0)
     last_scan_started_at = Column(DateTime(timezone=True))
     last_scan_finished_at = Column(DateTime(timezone=True))

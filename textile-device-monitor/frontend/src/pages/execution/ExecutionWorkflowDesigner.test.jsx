@@ -498,4 +498,28 @@ describe('ExecutionWorkflowDesigner', () => {
     expect(savedDefinitions[0].nodes.find(node => node.id === 'aggregate')?.name)
       .toBe('卸载前保存的结果汇总');
   });
+
+  it('release_v2 管理的流程不进入 v1 画布并只显示转交入口', async () => {
+    server.use(
+      http.get('/api/execution/v1/workflows/wf-1', () => HttpResponse.json({
+        workflow: {
+          id: 'wf-1',
+          name: 'Release 管理流程',
+          management_mode: 'release_v2',
+          active_release_id: 'release-1',
+          draft_definition: {
+            format: 'textile-workflow-release',
+            format_version: '2.0',
+            definition: { schema_version: '2.0' },
+          },
+        },
+      })),
+    );
+
+    renderDesigner();
+
+    expect(await screen.findByText('该流程不能在 v1 草稿设计器中编辑')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '前往 Workflow Release 管理' })).toBeEnabled();
+    expect(screen.queryByTestId('workflow-canvas')).not.toBeInTheDocument();
+  });
 });

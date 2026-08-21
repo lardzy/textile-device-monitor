@@ -62,7 +62,19 @@ def test_empty_database_upgrades_to_execution_head(tmp_path):
         assert "execution_external_attempts" in tables
         assert "execution_task_snapshot_cache" in tables
         assert "execution_project_rules" in tables
-        assert len({name for name in tables if name.startswith("execution_")}) == 31
+        assert "execution_workflow_releases" in tables
+        assert "execution_release_preflights" in tables
+        assert "execution_deployment_bindings" in tables
+        assert "execution_workflow_activation_receipts" in tables
+        assert "execution_worker_node_capabilities" in tables
+        assert len({name for name in tables if name.startswith("execution_")}) == 36
+        storage_root_columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns(
+                "execution_storage_roots"
+            )
+        }
+        assert storage_root_columns["binding_revision"]["nullable"] is False
     finally:
         engine.dispose()
 
@@ -90,7 +102,7 @@ def test_existing_baseline_is_preflighted_stamped_and_upgraded(tmp_path):
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0007_project_rules"
+        assert revision == "0008_execution_v2_contracts"
     finally:
         engine.dispose()
 
@@ -207,20 +219,29 @@ def test_execution_contract_migration_backfills_versions_and_runs(tmp_path):
     )
     try:
         with engine.connect() as connection:
+            workflow_row = connection.execute(
+                text(
+                    "SELECT management_mode FROM execution_workflows "
+                    "WHERE id = 'workflow-1'"
+                )
+            ).one()
             version_row = connection.execute(
                 text(
-                    "SELECT capabilities, contract_checksum "
+                    "SELECT capabilities, contract_checksum, release_id, "
+                    "dependency_lock, deployed_contract_checksum "
                     "FROM execution_workflow_versions WHERE id = 'version-1'"
                 )
             ).one()
             run_row = connection.execute(
                 text(
-                    "SELECT capabilities_snapshot, contract_checksum "
+                    "SELECT capabilities_snapshot, contract_checksum, "
+                    "release_id, dependency_lock, deployed_contract_checksum "
                     "FROM execution_runs WHERE id = 'run-1'"
                 )
             ).one()
         assert json.loads(version_row.capabilities) == capabilities
         assert json.loads(run_row.capabilities_snapshot) == capabilities
+        assert workflow_row.management_mode == "draft_v1"
         assert version_row.contract_checksum == expected_contract
         assert run_row.contract_checksum == expected_contract
         version_columns = {
@@ -237,6 +258,12 @@ def test_execution_contract_migration_backfills_versions_and_runs(tmp_path):
         assert version_columns["contract_checksum"]["nullable"] is False
         assert run_columns["capabilities_snapshot"]["nullable"] is False
         assert run_columns["contract_checksum"]["nullable"] is False
+        assert version_row.release_id is None
+        assert version_row.dependency_lock is None
+        assert version_row.deployed_contract_checksum is None
+        assert run_row.release_id is None
+        assert run_row.dependency_lock is None
+        assert run_row.deployed_contract_checksum is None
     finally:
         engine.dispose()
 

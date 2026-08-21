@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://textile.local/schemas/execution/node-spec-v2.schema.json",
+  "title": "Textile Execution NodeSpec v2",
+  "type": "object",
+  "required": [
+    "schema_version", "type", "type_version", "name", "category",
+    "description", "execution", "config_schema", "input_schema",
+    "output_schema", "schema_bindings", "ui_schema", "ports",
+    "requirements", "side_effect", "policies", "suspension", "lifecycle"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "type": {"$ref": "#/$defs/nodeType"},
+    "type_version": {"type": "integer", "minimum": 1},
+    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+    "category": {"type": "string", "minLength": 1, "maxLength": 100},
+    "description": {"type": "string", "maxLength": 4000},
+    "execution": {
+      "type": "object",
+      "required": ["kind", "owner", "result_mode"],
+      "properties": {
+        "kind": {"enum": ["automatic", "human", "external_side_effect"]},
+        "owner": {
+          "type": "object",
+          "required": ["kind", "pack_id"],
+          "properties": {
+            "kind": {"enum": ["kernel", "capability_pack", "connector_pack"]},
+            "pack_id": {"$ref": "#/$defs/identifier"}
+          },
+          "additionalProperties": false
+        },
+        "result_mode": {"const": "object"}
+      },
+      "additionalProperties": false
+    },
+    "config_schema": {"$ref": "#/$defs/schema"},
+    "input_schema": {"$ref": "#/$defs/schema"},
+    "output_schema": {"$ref": "#/$defs/schema"},
+    "schema_bindings": {
+      "type": "object",
+      "required": ["input", "output"],
+      "properties": {
+        "input": {"$ref": "#/$defs/schemaBinding"},
+        "output": {"$ref": "#/$defs/schemaBinding"}
+      },
+      "additionalProperties": false
+    },
+    "ui_schema": {"type": "object"},
+    "ports": {
+      "type": "object",
+      "required": ["inputs", "outputs", "condition_mode"],
+      "properties": {
+        "inputs": {"type": "array", "items": {"$ref": "#/$defs/port"}},
+        "outputs": {"type": "array", "items": {"$ref": "#/$defs/port"}},
+        "condition_mode": {"enum": ["none", "edge_conditions", "node_expression"]}
+      },
+      "additionalProperties": false
+    },
+    "requirements": {
+      "type": "object",
+      "required": ["resources", "capabilities", "connectors", "assets"],
+      "properties": {
+        "resources": {
+          "type": "object",
+          "required": ["root_slots", "credential_slots", "role_slots", "rule_slots"],
+          "properties": {
+            "root_slots": {"type": "array", "items": {"$ref": "#/$defs/rootRequirement"}},
+            "credential_slots": {"type": "array", "items": {"$ref": "#/$defs/slotRequirement"}},
+            "role_slots": {"type": "array", "items": {"$ref": "#/$defs/slotRequirement"}},
+            "rule_slots": {"type": "array", "items": {"$ref": "#/$defs/slotRequirement"}}
+          },
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["capability_id", "version_range"],
+            "properties": {
+              "capability_id": {"$ref": "#/$defs/identifier"},
+              "version_range": {"$ref": "#/$defs/semverRange"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "connectors": {"type": "array", "items": {"type": "object"}},
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["config_pointer", "allowed_kinds", "allowed_media_types", "required"],
+            "properties": {
+              "config_pointer": {"$ref": "#/$defs/jsonPointer"},
+              "allowed_kinds": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "minItems": 1, "uniqueItems": true},
+              "allowed_media_types": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true},
+              "required": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "side_effect": {
+      "type": "object",
+      "required": ["class", "idempotency", "cancellation", "receipt", "unknown_outcome"],
+      "properties": {
+        "class": {"enum": ["none", "read_only", "reversible_local_write", "durable_write", "external_write"]},
+        "idempotency": {"enum": ["none", "engine_key", "business_key", "operation_fence"]},
+        "cancellation": {"enum": ["immediate", "cooperative", "fenced"]},
+        "receipt": {"enum": ["none", "optional", "required"]},
+        "unknown_outcome": {"enum": ["fail", "reconciliation_required"]}
+      },
+      "additionalProperties": false
+    },
+    "policies": {
+      "type": "object",
+      "required": ["retry", "timeout", "error"],
+      "properties": {
+        "retry": {"type": "object"},
+        "timeout": {"type": "object"},
+        "error": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "suspension": {"type": ["object", "null"]},
+    "lifecycle": {
+      "type": "object",
+      "required": ["state", "publish_mode", "replacement", "migration_ids"],
+      "properties": {
+        "state": {"enum": ["active", "deprecated", "retired"]},
+        "publish_mode": {"enum": ["allowed", "blocked"]},
+        "replacement": {"type": ["string", "null"]},
+        "migration_ids": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
+    "extensions": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_.-]*$"}
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"execution": {"properties": {"kind": {"const": "human"}}}}},
+      "then": {
+        "properties": {
+          "side_effect": {"properties": {"class": {"const": "none"}}},
+          "suspension": {"type": "object", "properties": {"kind": {"const": "human_task"}}, "required": ["kind"]}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"execution": {"properties": {"kind": {"const": "external_side_effect"}}}}},
+      "then": {
+        "properties": {
+          "side_effect": {"properties": {"class": {"const": "external_write"}, "unknown_outcome": {"const": "reconciliation_required"}}},
+          "suspension": {"type": "object", "properties": {"kind": {"const": "external_operation"}}, "required": ["kind"]}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,127}$"},
+    "nodeType": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"},
+    "jsonPointer": {"type": "string", "pattern": "^(?:/(?:[^~/]|~[01])*)+$"},
+    "semverRange": {"type": "string", "minLength": 1, "maxLength": 200},
+    "schema": {"oneOf": [{"type": "object"}, {"type": "boolean"}]},
+    "schemaBinding": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {"source": {"enum": ["node_spec", "workflow_output_schema", "node_config", "operation_spec", "query_spec"]}},
+      "additionalProperties": false
+    },
+    "port": {
+      "type": "object",
+      "required": ["id", "min_edges", "max_edges", "default"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+        "min_edges": {"type": "integer", "minimum": 0},
+        "max_edges": {"type": ["integer", "null"], "minimum": 1},
+        "default": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "slotRequirement": {
+      "type": "object",
+      "required": ["config_pointer", "required"],
+      "properties": {"config_pointer": {"$ref": "#/$defs/jsonPointer"}, "required": {"type": "boolean"}},
+      "additionalProperties": true
+    },
+    "rootRequirement": {
+      "type": "object",
+      "required": ["config_pointer", "access", "required"],
+      "properties": {
+        "config_pointer": {"$ref": "#/$defs/jsonPointer"},
+        "access": {"enum": ["read", "write", "publish"]},
+        "required": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

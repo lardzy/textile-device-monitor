@@ -1,0 +1,1384 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://textile-device-monitor.local/schemas/execution/workflow-release-v2.schema.json",
+  "title": "Textile Execution Workflow Release v2",
+  "description": "Portable, immutable workflow release contract. Environment bindings and executable import paths are intentionally outside this document.",
+  "type": "object",
+  "required": [
+    "format",
+    "format_version",
+    "release",
+    "dependencies",
+    "resources",
+    "assets",
+    "capabilities",
+    "definition",
+    "fixtures",
+    "integrity"
+  ],
+  "properties": {
+    "format": {
+      "const": "textile-workflow-release"
+    },
+    "format_version": {
+      "const": "2.0"
+    },
+    "release": {
+      "$ref": "#/$defs/releaseMetadata"
+    },
+    "dependencies": {
+      "$ref": "#/$defs/dependencies"
+    },
+    "resources": {
+      "$ref": "#/$defs/resources"
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/asset"
+      },
+      "uniqueItems": true,
+      "maxItems": 1000
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilityDeclaration"
+    },
+    "definition": {
+      "$ref": "#/$defs/workflowDefinition"
+    },
+    "fixtures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fixture"
+      },
+      "uniqueItems": true,
+      "maxItems": 100
+    },
+    "migration": {
+      "$ref": "#/$defs/migrationProvenance"
+    },
+    "integrity": {
+      "$ref": "#/$defs/integrity"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,99}$"
+    },
+    "slotIdentifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "nodeIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]{1,100}$"
+    },
+    "nodeType": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$",
+      "maxLength": 160
+    },
+    "semverRange": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[0-9A-Za-z*<>=~^|.,+ -]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "portableString": {
+      "type": "string",
+      "pattern": "^(?!/|\\\\|[A-Za-z]:[\\\\/]|(?:smb|file)://)[^\\u0000]*$"
+    },
+    "portableJsonValue": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "#/$defs/portableString"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/portableJsonValue"
+          },
+          "maxItems": 10000
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(?!(?:\\$)?(?:password|secret|token|api_key|credential|credential_value|executor|executor_path|import_path|python_module|shell|command)$)[^\\u0000-\\u001F]{1,100}$"
+          },
+          "patternProperties": {
+            "^(?!(?:\\$)?(?:password|secret|token|api_key|credential|credential_value|executor|executor_path|import_path|python_module|shell|command)$)[^\\u0000-\\u001F]{1,100}$": {
+              "$ref": "#/$defs/portableJsonValue"
+            }
+          },
+          "additionalProperties": false,
+          "maxProperties": 1000
+        }
+      ]
+    },
+    "releaseMetadata": {
+      "type": "object",
+      "required": [
+        "slug",
+        "release_version",
+        "name",
+        "category_key",
+        "release_note"
+      ],
+      "properties": {
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{1,99}$"
+        },
+        "release_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "category_key": {
+          "$ref": "#/$defs/identifier"
+        },
+        "release_note": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "publisher": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "labels": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/identifier"
+          },
+          "patternProperties": {
+            "^[a-z][a-z0-9_.-]{0,99}$": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          "additionalProperties": false,
+          "maxProperties": 50
+        }
+      },
+      "additionalProperties": false
+    },
+    "dependencies": {
+      "type": "object",
+      "required": [
+        "engine",
+        "node_types",
+        "packs",
+        "connectors"
+      ],
+      "properties": {
+        "engine": {
+          "type": "object",
+          "required": [
+            "version_range"
+          ],
+          "properties": {
+            "version_range": {
+              "$ref": "#/$defs/semverRange"
+            }
+          },
+          "additionalProperties": false
+        },
+        "node_types": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "type",
+              "type_version",
+              "contract_digest"
+            ],
+            "properties": {
+              "type": {
+                "$ref": "#/$defs/nodeType"
+              },
+              "type_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "contract_digest": {
+                "$ref": "#/$defs/sha256"
+              },
+              "implementation_digest": {
+                "$ref": "#/$defs/sha256"
+              }
+            },
+            "additionalProperties": false
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "maxItems": 1000
+        },
+        "packs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "pack_id",
+              "version_range",
+              "required_on"
+            ],
+            "properties": {
+              "pack_id": {
+                "$ref": "#/$defs/identifier"
+              },
+              "version_range": {
+                "$ref": "#/$defs/semverRange"
+              },
+              "distribution_digest": {
+                "$ref": "#/$defs/sha256"
+              },
+              "required_on": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "api",
+                    "worker",
+                    "bridge",
+                    "frontend"
+                  ]
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "uniqueItems": true,
+          "maxItems": 200
+        },
+        "connectors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/connectorDependency"
+          },
+          "uniqueItems": true,
+          "maxItems": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "connectorDependency": {
+      "type": "object",
+      "required": [
+        "connector_id",
+        "version_range",
+        "operations",
+        "queries"
+      ],
+      "properties": {
+        "connector_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "version_range": {
+          "$ref": "#/$defs/semverRange"
+        },
+        "distribution_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "operation",
+              "contract_version",
+              "contract_digest"
+            ],
+            "properties": {
+              "operation": {
+                "$ref": "#/$defs/identifier"
+              },
+              "contract_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "contract_digest": {
+                "$ref": "#/$defs/sha256"
+              }
+            },
+            "additionalProperties": false
+          },
+          "uniqueItems": true,
+          "maxItems": 200
+        },
+        "queries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "query",
+              "contract_version",
+              "contract_digest"
+            ],
+            "properties": {
+              "query": {
+                "$ref": "#/$defs/identifier"
+              },
+              "contract_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "contract_digest": {
+                "$ref": "#/$defs/sha256"
+              }
+            },
+            "additionalProperties": false
+          },
+          "uniqueItems": true,
+          "maxItems": 200
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "operations": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "queries": {
+              "minItems": 1
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "required": [
+        "root_slots",
+        "credential_slots",
+        "role_slots",
+        "rule_slots"
+      ],
+      "properties": {
+        "root_slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rootSlot"
+          },
+          "uniqueItems": true,
+          "maxItems": 100
+        },
+        "credential_slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/credentialSlot"
+          },
+          "uniqueItems": true,
+          "maxItems": 100
+        },
+        "role_slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/roleSlot"
+          },
+          "uniqueItems": true,
+          "maxItems": 100
+        },
+        "rule_slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ruleSlot"
+          },
+          "uniqueItems": true,
+          "maxItems": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "rootSlot": {
+      "type": "object",
+      "required": [
+        "slot_id",
+        "name",
+        "access",
+        "required"
+      ],
+      "properties": {
+        "slot_id": {
+          "$ref": "#/$defs/slotIdentifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "access": {
+          "enum": [
+            "read",
+            "write",
+            "publish"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "credentialSlot": {
+      "type": "object",
+      "required": [
+        "slot_id",
+        "name",
+        "connector_id",
+        "credential_kind",
+        "required"
+      ],
+      "properties": {
+        "slot_id": {
+          "$ref": "#/$defs/slotIdentifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "connector_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "credential_kind": {
+          "$ref": "#/$defs/identifier"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "roleSlot": {
+      "type": "object",
+      "required": [
+        "slot_id",
+        "name",
+        "required_permissions",
+        "required"
+      ],
+      "properties": {
+        "slot_id": {
+          "$ref": "#/$defs/slotIdentifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "required_permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true,
+          "maxItems": 100
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ruleSlot": {
+      "type": "object",
+      "required": [
+        "slot_id",
+        "name",
+        "rule_type",
+        "contract_version",
+        "required"
+      ],
+      "properties": {
+        "slot_id": {
+          "$ref": "#/$defs/slotIdentifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "rule_type": {
+          "$ref": "#/$defs/identifier"
+        },
+        "contract_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "asset": {
+      "type": "object",
+      "required": [
+        "asset_id",
+        "kind",
+        "version",
+        "media_type",
+        "size_bytes",
+        "digest",
+        "source"
+      ],
+      "properties": {
+        "asset_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "workbook_template",
+            "document_template",
+            "image",
+            "rule_data",
+            "other"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "media_type": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$",
+          "maxLength": 200
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1073741824
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "registry_key"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "registry"
+                },
+                "registry_key": {
+                  "type": "string",
+              "pattern": "^[a-z][a-z0-9_.:/@-]{0,199}$"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "relative_path"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "bundle"
+                },
+                "relative_path": {
+                  "type": "string",
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]{1,240}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilityDeclaration": {
+      "type": "object",
+      "required": [
+        "declared",
+        "side_effect_level",
+        "requires_human_approval"
+      ],
+      "properties": {
+        "declared": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true,
+          "maxItems": 200
+        },
+        "side_effect_level": {
+          "enum": [
+            "none",
+            "local_write",
+            "publish",
+            "external_write"
+          ]
+        },
+        "requires_human_approval": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowDefinition": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "input_schema",
+        "global_schema",
+        "output_schema",
+        "global_defaults",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "2.0"
+        },
+        "input_schema": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "global_schema": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "output_schema": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "global_defaults": {
+          "$ref": "#/$defs/portableObject"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          },
+          "minItems": 2,
+          "maxItems": 5000
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          },
+          "maxItems": 20000
+        },
+        "viewport": {
+          "type": "object",
+          "required": [
+            "x",
+            "y",
+            "zoom"
+          ],
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "zoom": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 10
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "type_version",
+        "name",
+        "config",
+        "input_mapping"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nodeIdentifier"
+        },
+        "type": {
+          "$ref": "#/$defs/nodeType"
+        },
+        "type_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "config": {
+          "$ref": "#/$defs/portableObject"
+        },
+        "input_mapping": {
+          "$ref": "#/$defs/portableObject"
+        },
+        "runtime_policy": {
+          "$ref": "#/$defs/runtimePolicy"
+        },
+        "ui": {
+          "$ref": "#/$defs/nodeUi"
+        }
+      },
+      "additionalProperties": false
+    },
+    "portableObject": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(?!(?:\\$)?(?:password|secret|token|api_key|credential|credential_value|executor|executor_path|import_path|python_module|shell|command)$)[^\\u0000-\\u001F]{1,100}$"
+      },
+      "patternProperties": {
+        "^(?!(?:\\$)?(?:password|secret|token|api_key|credential|credential_value|executor|executor_path|import_path|python_module|shell|command)$)[^\\u0000-\\u001F]{1,100}$": {
+          "$ref": "#/$defs/portableJsonValue"
+        }
+      },
+      "additionalProperties": false,
+      "maxProperties": 1000
+    },
+    "runtimePolicy": {
+      "type": "object",
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "retry": {
+          "type": "object",
+          "required": [
+            "max_attempts",
+            "backoff"
+          ],
+          "properties": {
+            "max_attempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "backoff": {
+              "enum": [
+                "none",
+                "fixed",
+                "exponential"
+              ]
+            },
+            "initial_delay_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3600
+            },
+            "max_delay_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 86400
+            }
+          },
+          "additionalProperties": false
+        },
+        "failure_strategy": {
+          "enum": [
+            "fail_run",
+            "continue_with_output",
+            "route_error"
+          ]
+        },
+        "error_handle": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:-]{1,100}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nodeUi": {
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "collapsed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": [
+        "id",
+        "source",
+        "target",
+        "join_policy"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nodeIdentifier"
+        },
+        "source": {
+          "$ref": "#/$defs/nodeIdentifier"
+        },
+        "target": {
+          "$ref": "#/$defs/nodeIdentifier"
+        },
+        "join_policy": {
+          "enum": [
+            "all",
+            "any"
+          ]
+        },
+        "condition": {
+          "oneOf": [
+            {
+              "const": "default"
+            },
+            {
+              "$ref": "#/$defs/condition"
+            }
+          ]
+        },
+        "source_handle": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:-]{1,100}$"
+        },
+        "target_handle": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:-]{1,100}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "condition": {
+      "type": "object",
+      "required": [
+        "path",
+        "operator"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^\\$\\.(?:inputs|globals|run|nodes)(?:\\.[A-Za-z0-9_.:-]+)+$",
+          "maxLength": 500
+        },
+        "operator": {
+          "enum": [
+            "truthy",
+            "eq",
+            "ne",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "in",
+            "not_in",
+            "contains"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/portableJsonValue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixture": {
+      "type": "object",
+      "required": [
+        "fixture_id",
+        "name",
+        "inputs",
+        "globals",
+        "mocks",
+        "assertions"
+      ],
+      "properties": {
+        "fixture_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "inputs": {
+          "$ref": "#/$defs/portableObject"
+        },
+        "globals": {
+          "$ref": "#/$defs/portableObject"
+        },
+        "mocks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "node_id",
+              "outcome",
+              "output"
+            ],
+            "properties": {
+              "node_id": {
+                "$ref": "#/$defs/nodeIdentifier"
+              },
+              "outcome": {
+                "enum": [
+                  "succeeded",
+                  "failed",
+                  "skipped"
+                ]
+              },
+              "output": {
+                "$ref": "#/$defs/portableJsonValue"
+              },
+              "error_code": {
+                "$ref": "#/$defs/identifier"
+              }
+            },
+            "additionalProperties": false
+          },
+          "uniqueItems": true,
+          "maxItems": 1000
+        },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "operator"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^\\$\\.(?:run|outputs|nodes)(?:\\.[A-Za-z0-9_.:-]+)+$",
+                "maxLength": 500
+              },
+              "operator": {
+                "enum": [
+                  "exists",
+                  "eq",
+                  "ne",
+                  "contains"
+                ]
+              },
+              "value": {
+                "$ref": "#/$defs/portableJsonValue"
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "migrationProvenance": {
+      "type": "object",
+      "required": [
+        "source_format",
+        "source_format_version",
+        "source_digest"
+      ],
+      "properties": {
+        "source_format": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "source_format_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "source_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "integrity": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "canonicalization",
+        "scope",
+        "digest",
+        "signatures"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "sha256"
+        },
+        "canonicalization": {
+          "const": "RFC8785"
+        },
+        "scope": {
+          "const": "document_without_integrity"
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "signatures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "algorithm",
+              "key_id",
+              "signed_digest",
+              "signature"
+            ],
+            "properties": {
+              "algorithm": {
+                "const": "ed25519"
+              },
+              "key_id": {
+                "$ref": "#/$defs/identifier"
+              },
+              "signed_digest": {
+                "$ref": "#/$defs/sha256"
+              },
+              "signature": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{86}$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "uniqueItems": true,
+          "maxItems": 20
+        }
+      },
+      "additionalProperties": false
+    },
+    "schemaOrBoolean": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/schemaDocument"
+        }
+      ]
+    },
+    "schemaDocument": {
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "type": "string",
+          "format": "uri"
+        },
+        "$id": {
+          "type": "string",
+          "format": "uri-reference"
+        },
+        "$ref": {
+          "type": "string",
+          "format": "uri-reference",
+          "pattern": "^(?:#/$defs/[A-Za-z_][A-Za-z0-9_.-]*(?:/[^\\s#]+)*|urn:textile:schema:[a-z][a-z0-9_.-]{0,99}@sha256:[a-f0-9]{64}(?:#/[^\\s]+)?)$"
+        },
+        "$anchor": {
+          "type": "string"
+        },
+        "$comment": {
+          "type": "string"
+        },
+        "$defs": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_.-]*$": {
+              "$ref": "#/$defs/schemaOrBoolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "type": {
+          "oneOf": [
+            {
+              "enum": [
+                "null",
+                "boolean",
+                "object",
+                "array",
+                "number",
+                "string",
+                "integer"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "null",
+                  "boolean",
+                  "object",
+                  "array",
+                  "number",
+                  "string",
+                  "integer"
+                ]
+              },
+              "uniqueItems": true,
+              "minItems": 1
+            }
+          ]
+        },
+        "enum": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/portableJsonValue"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "const": {
+          "$ref": "#/$defs/portableJsonValue"
+        },
+        "default": {
+          "$ref": "#/$defs/portableJsonValue"
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/portableJsonValue"
+          }
+        },
+        "properties": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_.:-]*$": {
+              "$ref": "#/$defs/schemaOrBoolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "patternProperties": {
+          "type": "object",
+          "patternProperties": {
+            ".+": {
+              "$ref": "#/$defs/schemaOrBoolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "additionalProperties": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "unevaluatedProperties": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "propertyNames": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "dependentRequired": {
+          "type": "object",
+          "patternProperties": {
+            ".+": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "items": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "prefixItems": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/schemaOrBoolean"
+          }
+        },
+        "contains": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uniqueItems": {
+          "type": "boolean"
+        },
+        "minContains": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxContains": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minProperties": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxProperties": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "contentEncoding": {
+          "type": "string"
+        },
+        "contentMediaType": {
+          "type": "string"
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "exclusiveMinimum": {
+          "type": "number"
+        },
+        "exclusiveMaximum": {
+          "type": "number"
+        },
+        "multipleOf": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "allOf": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/schemaOrBoolean"
+          }
+        },
+        "anyOf": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/schemaOrBoolean"
+          }
+        },
+        "oneOf": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/schemaOrBoolean"
+          }
+        },
+        "not": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "if": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "then": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "else": {
+          "$ref": "#/$defs/schemaOrBoolean"
+        },
+        "readOnly": {
+          "type": "boolean"
+        },
+        "writeOnly": {
+          "type": "boolean"
+        },
+        "deprecated": {
+          "type": "boolean"
+        }
+      },
+      "patternProperties": {
+        "^x-[a-z0-9][a-z0-9-]{0,63}$": {
+          "$ref": "#/$defs/portableJsonValue"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

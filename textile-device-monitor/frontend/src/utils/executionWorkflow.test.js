@@ -3,6 +3,7 @@ import {
   createDefaultDefinition,
   createWorkflowNode,
   definitionFromCanvas,
+  isWorkflowReleaseV2Document,
   normalizeWorkflowDefinition,
   resolveExecutionFocusNodeIds,
   validateWorkflowDefinition,
@@ -24,6 +25,19 @@ describe('execution workflow definition', () => {
     expect(normalized.nodes[0].type).toBe('executionNode');
     expect(normalized.nodes[0].data.nodeType).toBe('core.start');
     expect(normalized.viewport).toEqual({ x: 12, y: 20, zoom: 0.8 });
+  });
+
+  it('keeps Workflow Release v2 out of the legacy canvas normalizer', () => {
+    const release = {
+      format: 'textile-workflow-release',
+      format_version: '2.0',
+      definition: { schema_version: '2.0', nodes: [], edges: [] },
+    };
+
+    expect(isWorkflowReleaseV2Document(release)).toBe(true);
+    expect(() => normalizeWorkflowDefinition(release)).toThrow(
+      'Workflow Release v2 必须在独立 Release 管理页中处理',
+    );
   });
 
   it('uses the server registry version when creating a new canvas node', () => {

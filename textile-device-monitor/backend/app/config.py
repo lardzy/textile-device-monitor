@@ -127,6 +127,15 @@ class Settings(BaseSettings):
     EXECUTION_NODE_MAX_ATTEMPTS: int = 5
     EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS: int = 45
     EXECUTION_WORKER_SCHEMA_WAIT_SECONDS: int = 180
+    # Execution v2 is deployed additively. ``legacy`` keeps v1 scheduling,
+    # ``shadow`` computes exact capability decisions without enforcing them,
+    # and ``enforced`` permits v2 releases to use digest-pinned dispatch.
+    EXECUTION_CONTRACT_MODE: str = "legacy"
+    EXECUTION_ENVIRONMENT_ID: str = "local"
+    EXECUTION_RELEASE_PREFLIGHT_TTL_MINUTES: int = 15
+    EXECUTION_RELEASE_JSON_MAX_BYTES: int = 8 * 1024 * 1024
+    EXECUTION_RELEASE_SIGNATURE_POLICY: str = "optional"
+    EXECUTION_RELEASE_TRUSTED_KEYS_DIR: str = ""
     EXECUTION_OUTBOX_MAX_ATTEMPTS: int = 10
     EXECUTION_OUTBOX_RETENTION_DAYS: int = 7
     EXECUTION_SSE_MAX_SECONDS: int = 300
@@ -424,6 +433,26 @@ class Settings(BaseSettings):
         if self.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS < 15:
             raise RuntimeError(
                 "Production worker heartbeat timeout must be at least 15 seconds"
+            )
+        contract_mode = self.EXECUTION_CONTRACT_MODE.strip().lower()
+        if contract_mode not in {"legacy", "shadow", "enforced"}:
+            raise RuntimeError(
+                "EXECUTION_CONTRACT_MODE must be legacy, shadow, or enforced"
+            )
+        if not self.EXECUTION_ENVIRONMENT_ID.strip():
+            raise RuntimeError("EXECUTION_ENVIRONMENT_ID must not be empty")
+        if not 1 <= self.EXECUTION_RELEASE_PREFLIGHT_TTL_MINUTES <= 1440:
+            raise RuntimeError(
+                "Execution release preflight TTL must be between 1 and 1440 minutes"
+            )
+        if not 1024 <= self.EXECUTION_RELEASE_JSON_MAX_BYTES <= 64 * 1024 * 1024:
+            raise RuntimeError(
+                "Execution release JSON limit must be between 1 KiB and 64 MiB"
+            )
+        signature_policy = self.EXECUTION_RELEASE_SIGNATURE_POLICY.strip().lower()
+        if signature_policy not in {"disabled", "optional", "required"}:
+            raise RuntimeError(
+                "EXECUTION_RELEASE_SIGNATURE_POLICY must be disabled, optional, or required"
             )
         if not 1 <= self.EXECUTION_TASK_SNAPSHOT_TTL_MINUTES <= 1440:
             raise RuntimeError(

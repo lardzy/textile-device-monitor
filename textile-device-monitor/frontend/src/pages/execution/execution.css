@@ -1809,6 +1809,82 @@
   gap: 3px;
 }
 
+.execution-release-page {
+  min-height: 100vh;
+  background: #f4f7fb;
+}
+
+.execution-release-body {
+  width: min(1480px, calc(100% - 48px));
+  margin: 24px auto 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.execution-release-body > .ant-steps,
+.execution-release-body > .ant-card,
+.execution-release-body > .ant-alert {
+  padding: 20px 24px;
+  background: #fff;
+  border: 1px solid var(--execution-line);
+  border-radius: 14px;
+  box-shadow: var(--execution-shadow);
+}
+
+.execution-release-body .ant-card {
+  height: 100%;
+  border-color: var(--execution-line);
+  box-shadow: 0 5px 18px rgba(37, 55, 88, 0.05);
+}
+
+.execution-release-report {
+  min-height: 300px;
+}
+
+.execution-release-report__summary {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.execution-release-report__summary .ant-typography code {
+  max-width: 100%;
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.execution-release-report .ant-list-item {
+  padding: 6px 0;
+  border: 0;
+}
+
+.execution-release-report .ant-alert {
+  width: 100%;
+}
+
+.execution-release-preview {
+  max-height: 440px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  color: #dce7ff;
+  background: #172033;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.execution-release-managed-notice {
+  width: min(960px, calc(100% - 48px));
+  margin: 48px auto;
+}
+
 .execution-settings {
   min-height: 100vh;
   background: #f4f7fb;
@@ -2480,6 +2556,8 @@
   .execution-workflow-groups,
   .execution-catalog__skeleton,
   .execution-admin-table,
+  .execution-release-body,
+  .execution-release-managed-notice,
   .execution-run-history__body,
   .execution-run-history > .ant-alert {
     width: calc(100% - 24px);

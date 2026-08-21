@@ -1,0 +1,93 @@
+{
+  "manifest_schema_version": "1.0",
+  "pack_id": "legacy_fibrecheck.v1-compat",
+  "pack_version": "1.0.0",
+  "engine_version_range": ">=2.0.0 <3.0.0",
+  "resource_paths": [
+    "external_operations.py"
+  ],
+  "provides": {
+    "capabilities": [
+      {"capability_id": "legacy_fibrecheck.operation-metadata", "version": "1.0.0"}
+    ],
+    "nodes": [],
+    "connectors": [
+      {
+        "connector_id": "legacy_fibrecheck",
+        "version": "1.0.0",
+        "operations": [
+          {
+            "operation": "regenerated_fiber.count_upload",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "side_effect_class": "external_write",
+            "stages": ["authenticated", "permission_verified", "remote_absence_verified", "file_copy_ready", "file_copy_started", "file_copy_verified", "main_record_save_started", "main_record_verified", "completed"],
+            "write_boundary": "file_copy_started",
+            "completion_stage": "main_record_verified"
+          },
+          {
+            "operation": "special_wool.image_upload",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "side_effect_class": "external_write",
+            "stages": ["authenticated", "permission_verified", "remote_state_verified", "task_project_verified", "file_copy_ready", "file_copy_started", "file_copy_verified", "main_record_save_started", "main_record_verified", "completed"],
+            "write_boundary": "file_copy_started",
+            "completion_stage": "main_record_verified",
+            "extensions": {"textile": {"picture_records": [], "picture_count": 0}}
+          },
+          {
+            "operation": "special_wool.image_review",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "side_effect_class": "external_write",
+            "stages": ["authenticated", "permission_verified", "remote_state_verified", "review_save_ready", "review_save_started", "review_main_verified", "review_children_verified", "completed"],
+            "write_boundary": "review_save_started",
+            "completion_stage": "review_children_verified",
+            "extensions": {"textile": {"picture_count": 0}}
+          },
+          {
+            "operation": "microscopy.check_record_entry",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "side_effect_class": "external_write",
+            "stages": ["authenticated", "permission_verified", "remote_state_verified", "excel_write_ready", "excel_collection_started", "remote_file_verified", "excel_register_verified", "excel_proof_verified", "completed"],
+            "write_boundary": "excel_collection_started",
+            "completion_stage": "excel_proof_verified"
+          },
+          {
+            "operation": "paper_fiber.qualitative_upload",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "side_effect_class": "external_write",
+            "stages": ["authenticated", "permission_verified", "remote_state_verified", "task_project_verified", "file_copy_ready", "file_copy_started", "file_copy_verified", "main_record_save_started", "main_record_verified", "completed"],
+            "write_boundary": "file_copy_started",
+            "completion_stage": "main_record_verified",
+            "extensions": {"textile": {"picture_count": 0}}
+          },
+          {
+            "operation": "paper_fiber.qualitative_review",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "side_effect_class": "external_write",
+            "stages": ["authenticated", "permission_verified", "remote_state_verified", "review_save_ready", "review_save_started", "review_main_verified", "completed"],
+            "write_boundary": "review_save_started",
+            "completion_stage": "review_main_verified",
+            "extensions": {"textile": {"picture_count": 0}}
+          },
+          {
+            "operation": "check_record.generic_entry",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "side_effect_class": "external_write",
+            "stages": ["authenticated", "permission_verified", "remote_state_verified", "generic_write_ready", "generic_save_started", "generic_rows_verified", "generic_projection_verified", "completed"],
+            "write_boundary": "generic_save_started",
+            "completion_stage": "generic_projection_verified"
+          }
+        ],
+        "queries": []
+      }
+    ]
+  },
+  "assets": [],
+  "extensions": {"textile": {"candidate_compilation_only": true, "generic_external_operation_enabled": false}}
+}

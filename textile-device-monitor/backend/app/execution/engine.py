@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 import re
 import time
 from typing import Any, Optional
@@ -55,6 +56,8 @@ from app.execution.models import (
     ExecutionUserRole,
     ExecutionWorkflow,
     ExecutionWorkflowVersion,
+    ExecutionWorkerHeartbeat,
+    ExecutionWorkerNodeCapability,
     utcnow,
 )
 from app.execution.persistence import build_file_gateway
@@ -112,6 +115,9 @@ RUN_RESULT_ACCEPTING_STATUSES = {
     # section. Keep accepting only that publish result until it is reconciled.
     "failure_pending",
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 def _deadline_reached(deadline: datetime | None, now: datetime) -> bool:
@@ -346,6 +352,12 @@ def _node_input(
     run: ExecutionRun,
     node: dict[str, Any],
 ) -> dict[str, Any]:
+    # A v2 start node is the typed workflow input boundary.  Its immutable
+    # effective schema is the Release input schema, so it must validate and
+    # forward the already-normalized Run input instead of resolving an empty
+    # input_mapping.  Historical v1 start-node behaviour remains unchanged.
+    if run.release_id is not None and node.get("type") == "core.start":
+        return deepcopy(run.input_data or {})
     mapping = node.get("input_mapping") or {}
     context = _run_context(db, run)
     node_type = node_registry.get(
@@ -1932,6 +1944,7 @@ def _assert_idempotent_run_matches(
     definition_checksum_value: str,
     capabilities_snapshot: dict[str, Any],
     contract_checksum_value: str,
+    deployed_contract_checksum_value: str | None = None,
     input_data: dict[str, Any],
     global_data: dict[str, Any],
 ) -> None:
@@ -1942,6 +1955,11 @@ def _assert_idempotent_run_matches(
         and existing.definition_checksum == definition_checksum_value
         and (existing.capabilities_snapshot or {}) == capabilities_snapshot
         and existing.contract_checksum == contract_checksum_value
+        and (
+            deployed_contract_checksum_value is None
+            or existing.deployed_contract_checksum
+            == deployed_contract_checksum_value
+        )
         and (existing.input_data or {}) == input_data
         and (existing.global_data or {}) == global_data
     ):
@@ -2013,6 +2031,17 @@ def create_run(
     draft_definition: Optional[dict[str, Any]] = None,
     target_sample_number: Optional[str] = None,
 ) -> tuple[ExecutionRun, bool]:
+    if (
+        mode == "test"
+        and getattr(workflow, "management_mode", "draft_v1")
+        == "release_v2"
+    ):
+        raise ExecutionApiError(
+            409,
+            "workflow_managed_by_release_v2",
+            "该流程由 Workflow Release v2 管理，不能通过 v1 草稿测试接口运行",
+            details={"workflow_id": workflow.id},
+        )
     if (
         (not workflow.is_enabled or workflow.availability_code is not None)
         and mode != "test"
@@ -2087,6 +2116,9 @@ def create_run(
     _assert_root_refs_allowed(normalized_globals, allowed_root_ids)
     checksum = definition_checksum(definition)
     contract_checksum = workflow_contract_checksum(definition, capabilities)
+    deployed_contract_checksum = (
+        version.deployed_contract_checksum if version is not None else None
+    )
     existing = (
         db.query(ExecutionRun)
         .filter(
@@ -2104,10 +2136,57 @@ def create_run(
             definition_checksum_value=checksum,
             capabilities_snapshot=capabilities,
             contract_checksum_value=contract_checksum,
+            deployed_contract_checksum_value=deployed_contract_checksum,
             input_data=normalized_inputs,
             global_data=normalized_globals,
         )
         return existing, True
+    is_v2_version = bool(version is not None and version.release_id)
+    v2_dependency_lock = deepcopy(
+        (version.dependency_lock or {}) if is_v2_version else {}
+    )
+    v2_node_instances: dict[str, dict[str, Any]] = {}
+    if is_v2_version:
+        raw_instances = v2_dependency_lock.get("node_instances")
+        if isinstance(raw_instances, dict):
+            v2_node_instances = {
+                str(node_id): value
+                for node_id, value in raw_instances.items()
+                if isinstance(value, dict)
+            }
+        elif isinstance(raw_instances, list):
+            v2_node_instances = {
+                str(value.get("node_id")): value
+                for value in raw_instances
+                if isinstance(value, dict) and value.get("node_id")
+            }
+        missing_contract_nodes = sorted(
+            node["id"]
+            for node in definition["nodes"]
+            if node["id"] not in v2_node_instances
+        )
+        if missing_contract_nodes:
+            raise ExecutionApiError(
+                503,
+                "deployed_contract_invalid",
+                "已发布的 v2 版本缺少节点执行绑定快照",
+                details={"missing_node_ids": missing_contract_nodes},
+            )
+        invalid_binding_nodes = sorted(
+            node_id
+            for node_id, contract in v2_node_instances.items()
+            if len(str(contract.get("execution_binding_digest") or ""))
+            != 64
+            or not str(contract.get("execution_kind") or "").strip()
+        )
+        if invalid_binding_nodes:
+            raise ExecutionApiError(
+                503,
+                "deployed_contract_invalid",
+                "已发布的 v2 版本包含无效节点执行绑定",
+                details={"invalid_node_ids": invalid_binding_nodes},
+            )
+
     run = ExecutionRun(
         workflow_id=workflow.id,
         workflow_version_id=version.id if version else None,
@@ -2120,6 +2199,28 @@ def create_run(
         definition_checksum=checksum,
         capabilities_snapshot=capabilities,
         contract_checksum=contract_checksum,
+        contract_format=(version.contract_format if version else None),
+        release_id=(version.release_id if version else None),
+        release_digest=(version.release_digest if version else None),
+        dependency_lock=(v2_dependency_lock or None),
+        dependency_lock_digest=(
+            version.dependency_lock_digest if version else None
+        ),
+        deployment_binding_snapshot=(
+            deepcopy(version.deployment_binding_snapshot)
+            if version and version.deployment_binding_snapshot is not None
+            else None
+        ),
+        deployment_binding_digest=(
+            version.deployment_binding_digest if version else None
+        ),
+        asset_lock=(
+            deepcopy(version.asset_lock)
+            if version and version.asset_lock is not None
+            else None
+        ),
+        engine_version_snapshot=(version.engine_version if version else None),
+        deployed_contract_checksum=deployed_contract_checksum,
         input_data=normalized_inputs,
         global_data=normalized_globals,
     )
@@ -2127,12 +2228,17 @@ def create_run(
     db.flush()
 
     for node in definition["nodes"]:
+        node_contract = v2_node_instances.get(node["id"]) or {}
         node_run = ExecutionNodeRun(
             run_id=run.id,
             node_id=node["id"],
             node_type=node["type"],
             node_type_version=node.get("type_version", 1),
             node_name=node.get("name") or node["type"],
+            execution_kind=node_contract.get("execution_kind"),
+            execution_binding_digest=node_contract.get(
+                "execution_binding_digest"
+            ),
             status=("ready" if node["type"] == "core.start" else "pending"),
         )
         db.add(node_run)
@@ -2157,6 +2263,10 @@ def create_run(
             "status": run.status,
             "inspection_number": inspection_number,
             "mode": mode,
+            "release_digest": (
+                version.release_digest if version is not None else None
+            ),
+            "deployed_contract_checksum": deployed_contract_checksum,
         },
     )
     append_audit_log(
@@ -2518,6 +2628,37 @@ def claim_next_node(
         "waiting_external",
     ]
     settling_run_statuses = ["cancel_pending", "failure_pending"]
+    contract_mode = str(
+        getattr(settings, "EXECUTION_CONTRACT_MODE", "legacy")
+    ).strip().lower()
+    heartbeat_threshold = now - timedelta(
+        seconds=max(
+            1,
+            int(settings.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS),
+        )
+    )
+    exact_capability = (
+        db.query(ExecutionWorkerNodeCapability.id)
+        .join(
+            ExecutionWorkerHeartbeat,
+            ExecutionWorkerHeartbeat.worker_id
+            == ExecutionWorkerNodeCapability.worker_id,
+        )
+        .filter(
+            ExecutionWorkerNodeCapability.worker_id == worker_id,
+            ExecutionWorkerNodeCapability.execution_binding_digest
+            == ExecutionNodeRun.execution_binding_digest,
+            ExecutionWorkerNodeCapability.ready.is_(True),
+            ExecutionWorkerHeartbeat.status == "running",
+            ExecutionWorkerHeartbeat.last_seen_at >= heartbeat_threshold,
+            ExecutionWorkerHeartbeat.protocol_version.like("2.%"),
+        )
+        .exists()
+    )
+    worker_can_claim = or_(
+        ExecutionNodeRun.execution_binding_digest.is_(None),
+        exact_capability,
+    )
     exhausted = (
         db.query(ExecutionNodeRun.id)
         .join(ExecutionRun, ExecutionRun.id == ExecutionNodeRun.run_id)
@@ -2627,7 +2768,7 @@ def claim_next_node(
         # This also avoids holding one run lock while trying to lock another.
         return None
 
-    candidate = (
+    candidate_query = (
         db.query(ExecutionNodeRun.id, ExecutionNodeRun.run_id)
         .join(ExecutionRun, ExecutionRun.id == ExecutionNodeRun.run_id)
         .filter(
@@ -2648,11 +2789,61 @@ def claim_next_node(
                 ),
             ),
         )
-        .order_by(ExecutionNodeRun.ready_at.asc(), ExecutionNodeRun.created_at.asc())
-        .first()
+        .order_by(
+            ExecutionNodeRun.ready_at.asc(),
+            ExecutionNodeRun.created_at.asc(),
+        )
     )
+    if contract_mode == "enforced":
+        candidate_query = candidate_query.filter(worker_can_claim)
+    candidate = candidate_query.first()
     if candidate is None:
         return None
+
+    if contract_mode == "shadow":
+        candidate_binding = (
+            db.query(ExecutionNodeRun.execution_binding_digest)
+            .filter(ExecutionNodeRun.id == candidate.id)
+            .scalar()
+        )
+        if candidate_binding:
+            shadow_match = (
+                db.query(ExecutionWorkerNodeCapability.id)
+                .join(
+                    ExecutionWorkerHeartbeat,
+                    ExecutionWorkerHeartbeat.worker_id
+                    == ExecutionWorkerNodeCapability.worker_id,
+                )
+                .filter(
+                    ExecutionWorkerNodeCapability.worker_id == worker_id,
+                    ExecutionWorkerNodeCapability.execution_binding_digest
+                    == candidate_binding,
+                    ExecutionWorkerNodeCapability.ready.is_(True),
+                    ExecutionWorkerHeartbeat.status == "running",
+                    ExecutionWorkerHeartbeat.last_seen_at
+                    >= heartbeat_threshold,
+                    ExecutionWorkerHeartbeat.protocol_version.like("2.%"),
+                )
+                .first()
+            )
+            if shadow_match is None:
+                logger.warning(
+                    "execution_v2_claim_shadow_mismatch "
+                    "worker_id=%s node_run_id=%s binding=%s",
+                    worker_id,
+                    candidate.id,
+                    candidate_binding,
+                )
+                append_audit_log(
+                    db,
+                    action="execution_v2.claim.shadow_mismatch",
+                    resource_type="execution_node_run",
+                    resource_id=candidate.id,
+                    details={
+                        "worker_id": worker_id,
+                        "execution_binding_digest": candidate_binding,
+                    },
+                )
 
     # Every transition within a run takes the run lock before a node/task lock.
     # This serializes parallel branch completion with pause/cancel and avoids the
@@ -2691,6 +2882,29 @@ def claim_next_node(
         .one_or_none()
     )
     if claimable is None:
+        return None
+    if contract_mode == "enforced" and not (
+        claimable.execution_binding_digest is None
+        or db.query(ExecutionWorkerNodeCapability.id)
+        .join(
+            ExecutionWorkerHeartbeat,
+            ExecutionWorkerHeartbeat.worker_id
+            == ExecutionWorkerNodeCapability.worker_id,
+        )
+        .filter(
+            ExecutionWorkerNodeCapability.worker_id == worker_id,
+            ExecutionWorkerNodeCapability.execution_binding_digest
+            == claimable.execution_binding_digest,
+            ExecutionWorkerNodeCapability.ready.is_(True),
+            ExecutionWorkerHeartbeat.status == "running",
+            ExecutionWorkerHeartbeat.last_seen_at >= heartbeat_threshold,
+            ExecutionWorkerHeartbeat.protocol_version.like("2.%"),
+        )
+        .first()
+        is not None
+    ):
+        # The capability set or heartbeat can change between the non-locking
+        # scan and the row lock.  Leave the node ready for a compatible Worker.
         return None
     if (
         run.status in settling_run_statuses
@@ -2732,6 +2946,8 @@ def claim_next_node(
         attempt_number=claimable.attempt_count,
         worker_id=worker_id,
         lease_token=lease_token,
+        execution_kind=claimable.execution_kind,
+        execution_binding_digest=claimable.execution_binding_digest,
         status="running",
     )
     db.add(attempt)
@@ -2859,6 +3075,8 @@ def claim_publish_node_for_api(
             attempt_number=node_run.attempt_count,
             worker_id=node_run.lease_owner,
             lease_token=lease_token,
+            execution_kind=node_run.execution_kind,
+            execution_binding_digest=node_run.execution_binding_digest,
             status="running",
         )
     )
@@ -4250,6 +4468,88 @@ def _execute_builtin(context: NodeExecutionContext) -> dict[str, Any]:
     )
 
 
+def _v2_node_instance_contract(
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+) -> dict[str, Any] | None:
+    """Return the immutable per-node contract stored with a v2 run.
+
+    v1 rows intentionally have no execution binding and keep their historical
+    validation/dispatch behavior.  A v2 node must never resolve a newer live
+    NodeSpec at execution time; effective schemas therefore come from the
+    dependency lock copied onto the Run.
+    """
+
+    binding_digest = getattr(node_run, "execution_binding_digest", None)
+    if not binding_digest:
+        return None
+    lock = (
+        getattr(run, "dependency_lock", None)
+        or getattr(run, "dependency_lock_snapshot", None)
+        or {}
+    )
+    instances = lock.get("node_instances") if isinstance(lock, dict) else None
+    if isinstance(instances, dict):
+        candidate = instances.get(node_run.node_id)
+        if isinstance(candidate, dict):
+            return candidate
+    if isinstance(instances, list):
+        for candidate in instances:
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("node_id") == node_run.node_id
+            ):
+                return candidate
+    raise ExecutionApiError(
+        503,
+        "node_contract_snapshot_missing",
+        "v2 节点缺少已发布的不可变契约快照",
+        details={
+            "node_id": node_run.node_id,
+            "execution_binding_digest": binding_digest,
+        },
+    )
+
+
+def _validate_v2_node_payload(
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    *,
+    direction: str,
+    value: Any,
+) -> None:
+    contract = _v2_node_instance_contract(run, node_run)
+    if contract is None:
+        return
+    schema_key = (
+        "effective_input_schema"
+        if direction == "input"
+        else "effective_output_schema"
+    )
+    schema = contract.get(schema_key)
+    if schema is None:
+        raise ExecutionApiError(
+            503,
+            "node_contract_snapshot_missing",
+            "v2 节点缺少有效数据结构快照",
+            details={"node_id": node_run.node_id, "schema": schema_key},
+        )
+    result = validate_json_instance(
+        schema,
+        value,
+        path_prefix=f"$.nodes.{node_run.node_id}.{direction}",
+    )
+    if not result.valid:
+        raise ExecutionApiError(
+            422,
+            "node_input_invalid" if direction == "input" else "node_output_invalid",
+            "节点输入不符合已发布契约"
+            if direction == "input"
+            else "节点输出不符合已发布契约",
+            details=result.as_dict(),
+        )
+
+
 def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> None:
     node_run = db.get(ExecutionNodeRun, node_run_id)
     if node_run is None:
@@ -4287,6 +4587,12 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                 "placement_request": persisted_placement_request,
             }
         _assert_declared_root_refs(node_run.run, input_data)
+        _validate_v2_node_payload(
+            node_run.run,
+            node_run,
+            direction="input",
+            value=input_data,
+        )
         node_run.input_data = input_data
         attempt = (
             db.query(ExecutionNodeAttempt)
@@ -4306,7 +4612,14 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
             worker_id=node_run.lease_owner or "",
             lease_token=lease_token,
         )
-        if node_run.node_type in HUMAN_NODE_TYPES:
+        execution_kind = (
+            getattr(node_run, "execution_kind", None)
+            if getattr(node_run, "execution_binding_digest", None)
+            else None
+        )
+        if execution_kind == "human" or (
+            execution_kind is None and node_run.node_type in HUMAN_NODE_TYPES
+        ):
             auto_output = _auto_submit_single_candidate(db, context)
             if auto_output is None:
                 auto_output = _auto_complete_paper_existing_record_decision(
@@ -4335,7 +4648,9 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                     form_schema_override=form_schema,
                 )
             return
-        if node_run.node_type in EXTERNAL_NODE_TYPES:
+        if execution_kind == "external_side_effect" or (
+            execution_kind is None and node_run.node_type in EXTERNAL_NODE_TYPES
+        ):
             if _reopen_paper_judgement_for_standard_value(db, context):
                 return
             _prepare_external_operation_wait(db, context)
@@ -4351,6 +4666,12 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
         )
         if not isinstance(output, dict):
             output = {"value": output}
+        _validate_v2_node_payload(
+            node_run.run,
+            node_run,
+            direction="output",
+            value=output,
+        )
     except ExecutionApiError as exc:
         fail_node(
             db,

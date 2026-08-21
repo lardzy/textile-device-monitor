@@ -91,6 +91,20 @@ def test_valid_http_production_security_configuration() -> None:
             {"EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS": 5},
             "at least 15 seconds",
         ),
+        ({"EXECUTION_CONTRACT_MODE": "unsafe"}, "CONTRACT_MODE"),
+        ({"EXECUTION_ENVIRONMENT_ID": ""}, "ENVIRONMENT_ID"),
+        (
+            {"EXECUTION_RELEASE_PREFLIGHT_TTL_MINUTES": 0},
+            "preflight TTL",
+        ),
+        (
+            {"EXECUTION_RELEASE_JSON_MAX_BYTES": 128},
+            "release JSON limit",
+        ),
+        (
+            {"EXECUTION_RELEASE_SIGNATURE_POLICY": "trust-all"},
+            "SIGNATURE_POLICY",
+        ),
     ],
 )
 def test_production_rejects_unsafe_configuration(
@@ -185,6 +199,10 @@ def test_index_interval_safe_default_is_five_minutes() -> None:
     assert settings.EXECUTION_TASK_SNAPSHOT_RETRY_SECONDS == 60
     assert settings.EXECUTION_NODE_MAX_ATTEMPTS == 5
     assert settings.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS == 45
+    assert settings.EXECUTION_CONTRACT_MODE == "legacy"
+    assert settings.EXECUTION_RELEASE_PREFLIGHT_TTL_MINUTES == 15
+    assert settings.EXECUTION_RELEASE_JSON_MAX_BYTES == 8 * 1024 * 1024
+    assert settings.EXECUTION_RELEASE_SIGNATURE_POLICY == "optional"
     assert settings.WEB_TRANSPORT == "http"
     assert settings.PUBLIC_HOSTNAME == "localhost"
     assert settings.PUBLIC_ORIGIN == "http://localhost"

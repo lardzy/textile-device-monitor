@@ -111,7 +111,22 @@ const normalizeNode = node => ({
   },
 });
 
+export const isWorkflowReleaseV2Document = value => Boolean(
+  value
+  && typeof value === 'object'
+  && (
+    value.format === 'textile-workflow-release'
+    || value.format_version === '2.0'
+    || value.definition?.schema_version === '2.0'
+  )
+);
+
 export const normalizeWorkflowDefinition = (value, metadata = {}) => {
+  if (isWorkflowReleaseV2Document(value)) {
+    const error = new Error('Workflow Release v2 必须在独立 Release 管理页中处理');
+    error.code = 'workflow_release_v2_requires_release_manager';
+    throw error;
+  }
   const raw = value?.definition || value?.draft_definition || value || {};
   const fallback = createDefaultDefinition(metadata);
   return {

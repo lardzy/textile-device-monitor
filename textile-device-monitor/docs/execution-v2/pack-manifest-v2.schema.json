@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://textile.local/schemas/execution/pack-manifest-v2.schema.json",
+  "title": "Textile Execution Capability Pack Manifest",
+  "type": "object",
+  "required": [
+    "manifest_schema_version", "pack_id", "pack_version",
+    "engine_version_range", "resource_paths", "provides", "assets"
+  ],
+  "properties": {
+    "manifest_schema_version": {"const": "1.0"},
+    "pack_id": {"$ref": "#/$defs/identifier"},
+    "pack_version": {"$ref": "#/$defs/semver"},
+    "engine_version_range": {"type": "string", "minLength": 1, "maxLength": 200},
+    "distribution_digest": {"$ref": "#/$defs/sha256"},
+    "resource_paths": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]{1,240}$"},
+      "uniqueItems": true
+    },
+    "provides": {
+      "type": "object",
+      "required": ["capabilities", "nodes", "connectors"],
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["capability_id", "version"],
+            "properties": {"capability_id": {"$ref": "#/$defs/identifier"}, "version": {"$ref": "#/$defs/semver"}},
+            "additionalProperties": false
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "type_version", "source"],
+            "properties": {
+              "type": {"$ref": "#/$defs/nodeType"},
+              "type_version": {"type": "integer", "minimum": 1},
+              "source": {"enum": ["v1_registry_adapter", "resource"]},
+              "spec_resource": {"type": "string"},
+              "contract_digest": {"$ref": "#/$defs/sha256"},
+              "implementation_digest": {"$ref": "#/$defs/sha256"},
+              "handler_channel": {"enum": ["kernel_builtin", "human", "external_operation", "worker_callable", "placeholder"]}
+            },
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        },
+        "connectors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["connector_id", "version", "operations", "queries"],
+            "properties": {
+              "connector_id": {"$ref": "#/$defs/identifier"},
+              "version": {"$ref": "#/$defs/semver"},
+              "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}, "uniqueItems": true},
+              "queries": {"type": "array", "items": {"type": "object"}, "uniqueItems": true}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["asset_id", "kind", "version", "digest", "media_type", "size_bytes", "resource_path"],
+        "properties": {
+          "asset_id": {"$ref": "#/$defs/identifier"},
+          "kind": {"enum": ["workbook_template", "document_template", "image", "rule_data", "other"]},
+          "version": {"$ref": "#/$defs/semver"},
+          "digest": {"$ref": "#/$defs/sha256"},
+          "media_type": {"type": "string", "minLength": 3, "maxLength": 200},
+          "size_bytes": {"type": "integer", "minimum": 0, "maximum": 1073741824},
+          "resource_path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]{1,240}$"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "extensions": {"type": "object"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,127}$"},
+    "nodeType": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"},
+    "semver": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "operation": {
+      "type": "object",
+      "required": ["operation", "contract_version", "execution_kind", "side_effect_class", "stages", "write_boundary", "completion_stage"],
+      "properties": {
+        "operation": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,199}$"},
+        "contract_version": {"type": "integer", "minimum": 1},
+        "execution_kind": {"const": "external_side_effect"},
+        "side_effect_class": {"const": "external_write"},
+        "stages": {"type": "array", "items": {"type": "string"}, "minItems": 2, "uniqueItems": true},
+        "write_boundary": {"type": "string"},
+        "completion_stage": {"type": "string"},
+        "extensions": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

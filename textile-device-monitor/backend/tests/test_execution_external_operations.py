@@ -952,7 +952,10 @@ class ExecutionExternalOperationTests(unittest.TestCase):
 
         with patch(
             "app.api.execution.create_run",
-            side_effect=IntegrityError("insert", {}, Exception("race")),
+            side_effect=[
+                IntegrityError("insert", {}, Exception("race")),
+                (existing, True),
+            ],
         ):
             recovered = start_run(
                 payload,

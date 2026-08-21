@@ -2786,6 +2786,16 @@ def get_workflow(db: Session, workflow_id: str) -> ExecutionWorkflow:
     return workflow
 
 
+def assert_workflow_managed_by_v1(workflow: ExecutionWorkflow) -> None:
+    if getattr(workflow, "management_mode", "draft_v1") == "release_v2":
+        raise ExecutionApiError(
+            409,
+            "workflow_managed_by_release_v2",
+            "该流程由 Workflow Release v2 管理，请使用 Release 管理接口",
+            details={"workflow_id": workflow.id},
+        )
+
+
 def create_workflow(
     db: Session,
     *,
@@ -2859,6 +2869,7 @@ def update_workflow_draft(
     )
     if workflow is None:
         raise not_found("流程", workflow_id)
+    assert_workflow_managed_by_v1(workflow)
     if workflow.draft_revision != expected_revision:
         raise conflict(
             "workflow_revision_conflict",
@@ -2913,6 +2924,7 @@ def publish_workflow(
     )
     if workflow is None:
         raise not_found("流程", workflow_id)
+    assert_workflow_managed_by_v1(workflow)
     if workflow.draft_revision != expected_revision:
         raise conflict(
             "workflow_revision_conflict",
@@ -2998,6 +3010,7 @@ def publish_workflow(
 
 
 def export_workflow(workflow: ExecutionWorkflow) -> dict[str, Any]:
+    assert_workflow_managed_by_v1(workflow)
     capabilities = deepcopy(workflow.capabilities or {})
     return {
         "format": "textile-execution-workflow",

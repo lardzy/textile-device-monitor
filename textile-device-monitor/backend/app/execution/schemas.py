@@ -121,6 +121,58 @@ class WorkflowTestRequest(BaseModel):
         return normalized or None
 
 
+class WorkflowReleasePreflightRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document: dict[str, Any]
+
+
+class WorkflowReleaseApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preflight_token: str = Field(min_length=32, max_length=500)
+    document: Optional[dict[str, Any]] = None
+
+
+class WorkflowReleaseBindingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    environment: str = Field(
+        default="default",
+        pattern=r"^[a-z][a-z0-9_.-]{0,99}$",
+    )
+    expected_revision: int = Field(ge=0)
+    bindings: Optional[dict[str, Any]] = None
+    root_bindings: Optional[list[dict[str, Any]]] = None
+
+    @model_validator(mode="after")
+    def exactly_one_binding_shape(self):
+        if (self.bindings is None) == (self.root_bindings is None):
+            raise ValueError("bindings 与 root_bindings 必须且只能提供一个")
+        return self
+
+
+class WorkflowReleasePublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preflight_token: str = Field(min_length=32, max_length=500)
+    reason: Optional[str] = Field(default=None, max_length=2000)
+
+
+class WorkflowReleaseRollbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_local_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class WorkflowV1MigrationPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_id: str = Field(min_length=1, max_length=36)
+    source: Literal["published", "draft"] = "published"
+
+
 class RunCreate(BaseModel):
     workflow_id: str
     inspection_number: str = Field(min_length=1, max_length=200)
