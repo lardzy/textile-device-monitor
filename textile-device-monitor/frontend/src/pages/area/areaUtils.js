@@ -31,6 +31,11 @@ const ERROR_MESSAGES = {
   invalid_class_name: '所选类别不属于当前模型。',
   source_image_not_found: '原图不可访问，可能已被移动或删除。',
   edit_version_conflict: '该图片已被其他终端更新，请加载最新版本。',
+  excel_template_missing: 'Excel 模板不存在，请检查面积识别模板配置。',
+  excel_template_invalid: 'Excel 模板结构或类别映射无效。',
+  excel_template_capacity_exceeded: '识别实例数量超过 Excel 模板容量。',
+  excel_generation_failed: 'Excel 结果生成失败，识别数据仍已保留，请稍后重试。',
+  excel_publish_failed: 'Excel 已生成，但发布到公共路径失败，请检查共享盘连接。',
   output_root_unavailable: '结果输出目录不可写。',
   model_weights_missing: '存在缺失的模型权重文件。',
 };

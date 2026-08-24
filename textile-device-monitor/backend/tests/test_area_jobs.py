@@ -19,6 +19,7 @@ from app.services.area_infer import AreaImageInferenceResult, AreaInstance, pars
 from app.services.area_jobs import (
     AREA_PX2_TO_UM2,
     AreaEditConflictError,
+    AreaExcelTemplateError,
     AreaJobManager,
 )
 
@@ -166,15 +167,23 @@ class AreaJobsTests(unittest.TestCase):
             template_path = (
                 Path(tmpdir) / "-面积法-定量试验原始记录-新系统.xls"
             )
+            output_path = Path(tmpdir) / "sample.xls"
             _create_xls_template(template_path)
             old_template = settings.AREA_EXCEL_TEMPLATE_PATH
             captured_payloads: list[dict] = []
 
             def fake_run(cmd, **kwargs):
-                captured_payloads.append(
-                    json.loads(Path(cmd[-1]).read_text(encoding="utf-8"))
+                payload = json.loads(Path(cmd[-1]).read_text(encoding="utf-8"))
+                captured_payloads.append(payload)
+                staged_path = Path(payload["excel_path"])
+                staged_path.write_bytes(staged_path.read_bytes() + b"generated")
+                self.assertNotEqual(staged_path, output_path)
+                self.assertFalse(output_path.exists())
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"verified": True}),
+                    stderr="",
                 )
-                return SimpleNamespace(returncode=0, stdout="", stderr="")
 
             manager = AreaJobManager()
             try:
@@ -186,15 +195,126 @@ class AreaJobsTests(unittest.TestCase):
                 with patch("app.services.area_jobs.subprocess.run", side_effect=fake_run):
                     manager._build_excel(
                         job=job,
-                        excel_path=Path(tmpdir) / "sample.xls",
+                        excel_path=output_path,
                         template_instances=[{"class_name": "粘纤", "area_px": 120}],
                     )
 
+                self.assertTrue(output_path.read_bytes().endswith(b"generated"))
                 self.assertEqual(captured_payloads[0]["rows"][0]["class_id"], 1)
                 self.assertEqual(
                     captured_payloads[0]["class_names"],
                     ["粘纤", "莱赛尔"],
                 )
+            finally:
+                settings.AREA_EXCEL_TEMPLATE_PATH = old_template
+                manager.stop()
+
+    def test_excel_writer_failure_does_not_publish_blank_template(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            template_path = Path(tmpdir) / "template.xls"
+            output_path = Path(tmpdir) / "result.xls"
+            _create_xls_template(template_path)
+            old_template = settings.AREA_EXCEL_TEMPLATE_PATH
+            manager = AreaJobManager()
+            try:
+                settings.AREA_EXCEL_TEMPLATE_PATH = str(template_path)
+                job = AreaJob(folder_name="sample", model_name="棉-粘纤")
+                failed = SimpleNamespace(
+                    returncode=3,
+                    stdout="",
+                    stderr="uno_write_failed:store_failed",
+                )
+                with patch(
+                    "app.services.area_jobs.subprocess.run",
+                    return_value=failed,
+                ) as run:
+                    with self.assertRaises(AreaExcelTemplateError) as ctx:
+                        manager._build_excel(
+                            job=job,
+                            excel_path=output_path,
+                            template_instances=[{"class_name": "棉", "area_px": 120}],
+                        )
+
+                self.assertEqual(ctx.exception.code, "excel_generation_failed")
+                self.assertEqual(run.call_count, 2)
+                self.assertFalse(output_path.exists())
+            finally:
+                settings.AREA_EXCEL_TEMPLATE_PATH = old_template
+                manager.stop()
+
+    def test_excel_writer_failure_preserves_previous_published_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            template_path = Path(tmpdir) / "template.xls"
+            output_path = Path(tmpdir) / "result.xls"
+            _create_xls_template(template_path)
+            _create_xls_template(output_path)
+            output_path.write_bytes(output_path.read_bytes() + b"previous")
+            previous_bytes = output_path.read_bytes()
+            old_template = settings.AREA_EXCEL_TEMPLATE_PATH
+            manager = AreaJobManager()
+            try:
+                settings.AREA_EXCEL_TEMPLATE_PATH = str(template_path)
+                job = AreaJob(folder_name="sample", model_name="棉-粘纤")
+                failed = SimpleNamespace(
+                    returncode=3,
+                    stdout="",
+                    stderr="uno_write_failed:store_failed",
+                )
+                with patch(
+                    "app.services.area_jobs.subprocess.run",
+                    return_value=failed,
+                ):
+                    with self.assertRaises(AreaExcelTemplateError):
+                        manager._build_excel(
+                            job=job,
+                            excel_path=output_path,
+                            template_instances=[{"class_name": "棉", "area_px": 120}],
+                        )
+
+                self.assertEqual(output_path.read_bytes(), previous_bytes)
+            finally:
+                settings.AREA_EXCEL_TEMPLATE_PATH = old_template
+                manager.stop()
+
+    def test_excel_generation_retries_transient_writer_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            template_path = Path(tmpdir) / "template.xls"
+            output_path = Path(tmpdir) / "result.xls"
+            _create_xls_template(template_path)
+            old_template = settings.AREA_EXCEL_TEMPLATE_PATH
+            calls = 0
+
+            def fake_run(cmd, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    return SimpleNamespace(
+                        returncode=3,
+                        stdout="",
+                        stderr="uno_write_failed:temporary_failure",
+                    )
+                payload = json.loads(Path(cmd[-1]).read_text(encoding="utf-8"))
+                staged_path = Path(payload["excel_path"])
+                staged_path.write_bytes(staged_path.read_bytes() + b"retried")
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"verified": True}),
+                    stderr="",
+                )
+
+            manager = AreaJobManager()
+            try:
+                settings.AREA_EXCEL_TEMPLATE_PATH = str(template_path)
+                job = AreaJob(folder_name="sample", model_name="棉-粘纤")
+                with patch("app.services.area_jobs.subprocess.run", side_effect=fake_run):
+                    manager._build_excel(
+                        job=job,
+                        excel_path=output_path,
+                        template_instances=[{"class_name": "棉", "area_px": 120}],
+                    )
+
+                self.assertEqual(calls, 2)
+                self.assertTrue(output_path.read_bytes().endswith(b"retried"))
             finally:
                 settings.AREA_EXCEL_TEMPLATE_PATH = old_template
                 manager.stop()

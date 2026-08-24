@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import queue
@@ -49,11 +51,15 @@ OVERLAY_CLASS_MAPPING_VERSION = "semantic-v1"
 
 INVALID_OUTPUT_CHARS_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 MAX_TEMPLATE_INSTANCE_ROWS = 2990
+EXCEL_GENERATION_ATTEMPTS = 2
+EXCEL_OLE_HEADER = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 UNO_WRITER_SCRIPT = Path(__file__).resolve().with_name("uno_excel_writer.py")
 AREA_IMAGE_PIXEL_SIZE = 1024.0
 AREA_IMAGE_ACTUAL_SIZE_UM = 129.15
 AREA_PX_TO_UM = AREA_IMAGE_ACTUAL_SIZE_UM / AREA_IMAGE_PIXEL_SIZE
 AREA_PX2_TO_UM2 = AREA_PX_TO_UM * AREA_PX_TO_UM
+
+logger = logging.getLogger(__name__)
 
 
 class AreaExcelTemplateError(RuntimeError):
@@ -1329,6 +1335,12 @@ class AreaJobManager:
 
     def _set_job_failed(self, record: AreaJobRecord, code: str, message: str) -> None:
         now = datetime.now(timezone.utc)
+        logger.warning(
+            "Area job %s failed with %s: %s",
+            record.job_id,
+            code,
+            message,
+        )
         with self._lock:
             record.status = "failed"
             record.error_code = code
@@ -1575,6 +1587,107 @@ class AreaJobManager:
     def _build_template_class_id_map(self, class_names: list[str]) -> dict[str, int]:
         return {class_name: idx + 1 for idx, class_name in enumerate(class_names)}
 
+    def _verify_excel_artifact(self, path: Path, error_code: str) -> None:
+        if not path.exists() or not path.is_file():
+            raise AreaExcelTemplateError(error_code, "excel_output_missing")
+        if path.suffix.lower() != ".xls":
+            raise AreaExcelTemplateError(error_code, "excel_suffix_invalid")
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as fh:
+                head = fh.read(8)
+        except OSError as exc:
+            raise AreaExcelTemplateError(
+                error_code,
+                f"excel_verify_failed:{exc}",
+            ) from exc
+        if size < 1024:
+            raise AreaExcelTemplateError(error_code, "excel_output_too_small")
+        if head != EXCEL_OLE_HEADER:
+            raise AreaExcelTemplateError(error_code, "excel_ole_header_missing")
+
+    def _excel_file_digest(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            while True:
+                chunk = fh.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _run_excel_writer(self, payload_path: Path) -> dict[str, Any]:
+        try:
+            result = subprocess.run(
+                ["/usr/bin/python3", str(UNO_WRITER_SCRIPT), str(payload_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=120,
+                check=False,
+                env=dict(os.environ),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AreaExcelTemplateError(
+                "excel_generation_failed",
+                "uno_write_timeout",
+            ) from exc
+        except FileNotFoundError as exc:
+            raise AreaExcelTemplateError(
+                "excel_generation_failed",
+                "uno_runtime_missing",
+            ) from exc
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()[-500:]
+            raise AreaExcelTemplateError(
+                "excel_generation_failed",
+                f"writer_failed:{detail or 'unknown_error'}",
+            )
+
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        try:
+            verification = json.loads(lines[-1])
+        except (IndexError, json.JSONDecodeError) as exc:
+            raise AreaExcelTemplateError(
+                "excel_generation_failed",
+                "writer_result_invalid",
+            ) from exc
+        if not isinstance(verification, dict) or not verification.get("verified"):
+            detail = json.dumps(verification, ensure_ascii=False, separators=(",", ":"))
+            raise AreaExcelTemplateError(
+                "excel_generation_failed",
+                f"workbook_verification_failed:{detail[:400]}",
+            )
+        return verification
+
+    def _publish_excel_artifact(self, source: Path, target: Path) -> None:
+        publish_path = target.with_name(
+            f".{target.stem}-{uuid4().hex}.tmp.xls"
+        )
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, publish_path)
+            self._verify_excel_artifact(publish_path, "excel_publish_failed")
+            if self._excel_file_digest(source) != self._excel_file_digest(publish_path):
+                raise AreaExcelTemplateError(
+                    "excel_publish_failed",
+                    "excel_publish_content_mismatch",
+                )
+            os.replace(publish_path, target)
+        except AreaExcelTemplateError:
+            raise
+        except OSError as exc:
+            raise AreaExcelTemplateError(
+                "excel_publish_failed",
+                f"excel_publish_failed:{exc}",
+            ) from exc
+        finally:
+            try:
+                publish_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _build_excel(
         self,
         *,
@@ -1609,64 +1722,50 @@ class AreaJobManager:
                 }
             )
 
-        excel_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            shutil.copy2(template_path, excel_path)
-        except Exception as exc:
-            raise AreaExcelTemplateError("excel_template_invalid", f"template_copy_failed:{exc}") from exc
+        last_error: AreaExcelTemplateError | None = None
+        with tempfile.TemporaryDirectory(prefix="area-excel-", dir="/tmp") as tmpdir:
+            stage_dir = Path(tmpdir)
+            for attempt in range(1, EXCEL_GENERATION_ATTEMPTS + 1):
+                staged_excel = stage_dir / f"generated-{attempt}.xls"
+                payload_path = stage_dir / f"payload-{attempt}.json"
+                try:
+                    shutil.copyfile(template_path, staged_excel)
+                except OSError as exc:
+                    raise AreaExcelTemplateError(
+                        "excel_template_invalid",
+                        f"template_copy_failed:{exc}",
+                    ) from exc
 
-        payload = {
-            "excel_path": str(excel_path),
-            "folder_name": str(job.folder_name or ""),
-            "class_names": class_names,
-            "rows": write_rows,
-        }
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False)
-            payload_path = fh.name
+                payload = {
+                    "excel_path": str(staged_excel),
+                    "folder_name": str(job.folder_name or ""),
+                    "class_names": class_names,
+                    "rows": write_rows,
+                }
+                payload_path.write_text(
+                    json.dumps(payload, ensure_ascii=False),
+                    encoding="utf-8",
+                )
 
-        try:
-            cmd = ["/usr/bin/python3", str(UNO_WRITER_SCRIPT), payload_path]
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=120,
-                check=False,
-                env=dict(os.environ),
-            )
-            if result.returncode != 0:
-                detail = (result.stderr or result.stdout or "").strip()[:500]
-                raise AreaExcelTemplateError("excel_template_invalid", f"uno_write_failed:{detail}")
-        except subprocess.TimeoutExpired as exc:
-            raise AreaExcelTemplateError("excel_template_invalid", "uno_write_timeout") from exc
-        except FileNotFoundError as exc:
-            raise AreaExcelTemplateError("excel_template_invalid", "uno_runtime_missing") from exc
-        finally:
-            try:
-                Path(payload_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+                try:
+                    self._run_excel_writer(payload_path)
+                    self._verify_excel_artifact(
+                        staged_excel,
+                        "excel_generation_failed",
+                    )
+                    self._publish_excel_artifact(staged_excel, excel_path)
+                    return
+                except AreaExcelTemplateError as exc:
+                    last_error = exc
+                    retryable = (
+                        exc.code == "excel_generation_failed"
+                        and str(exc) not in {"uno_write_timeout", "uno_runtime_missing"}
+                    )
+                    if not retryable or attempt >= EXCEL_GENERATION_ATTEMPTS:
+                        raise
 
-        if not excel_path.exists() or not excel_path.is_file():
-            raise AreaExcelTemplateError("excel_template_invalid", "excel_output_missing")
-        if excel_path.stat().st_size <= 0:
-            raise AreaExcelTemplateError("excel_template_invalid", "excel_output_empty")
-        if excel_path.suffix.lower() != ".xls":
-            raise AreaExcelTemplateError("excel_template_invalid", "excel_suffix_invalid")
-
-        if excel_path.stat().st_size < 1024:
-            raise AreaExcelTemplateError("excel_template_invalid", "excel_output_too_small")
-        try:
-            with excel_path.open("rb") as fh:
-                head = fh.read(8)
-            if head != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
-                raise AreaExcelTemplateError("excel_template_invalid", "excel_ole_header_missing")
-        except Exception as exc:
-            if isinstance(exc, AreaExcelTemplateError):
-                raise
-            raise AreaExcelTemplateError("excel_template_invalid", f"excel_verify_failed:{exc}") from exc
+        if last_error is not None:
+            raise last_error
 
     def _normalize_polygon(self, raw: Any) -> list[list[int]]:
         if not isinstance(raw, list):

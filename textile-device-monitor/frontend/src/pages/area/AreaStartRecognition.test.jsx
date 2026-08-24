@@ -9,7 +9,6 @@ import {
   MemoryRouter,
   Route,
   Routes,
-  useParams,
 } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { areaApi } from '../../api/area';
@@ -29,11 +28,6 @@ vi.mock('../../api/area', () => ({
   },
 }));
 
-function WorkspaceProbe() {
-  const { jobId } = useParams();
-  return <div>任务工作台 {jobId}</div>;
-}
-
 const renderStartPage = () => render(
   <MemoryRouter
     initialEntries={['/tools/area']}
@@ -41,7 +35,6 @@ const renderStartPage = () => render(
   >
     <Routes>
       <Route path="/tools/area" element={<AreaStartRecognition />} />
-      <Route path="/tools/area/jobs/:jobId" element={<WorkspaceProbe />} />
       <Route path="/tools/area/tasks" element={<div>任务记录</div>} />
     </Routes>
   </MemoryRouter>,
@@ -85,7 +78,7 @@ describe('AreaStartRecognition', () => {
     });
   });
 
-  it('进入页面即可选择目录并开始识别，提交后直接进入任务工作台', async () => {
+  it('进入页面即可选择目录并开始识别，提交后直接进入任务记录', async () => {
     const user = userEvent.setup();
     renderStartPage();
 
@@ -114,7 +107,7 @@ describe('AreaStartRecognition', () => {
         model_name: '棉-再生纤',
       });
     });
-    expect(await screen.findByText('任务工作台 job-001')).toBeInTheDocument();
+    expect(await screen.findByText('任务记录')).toBeInTheDocument();
   });
 
   it('快速连续搜索时不会让旧响应覆盖较新的目录结果', async () => {

@@ -2,37 +2,43 @@
 from __future__ import annotations
 
 import json
-import random
-import shutil
+import math
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from uuid import uuid4
 
 
-def _mkprop(name, value):
-    from com.sun.star.beans import PropertyValue
+def _property(name, value):
+    import uno
 
-    prop = PropertyValue()
+    prop = uno.createUnoStruct("com.sun.star.beans.PropertyValue")
     prop.Name = name
     prop.Value = value
     return prop
 
 
-def _connect_uno(port: int, timeout_sec: int = 20):
+def _file_url(path: Path | str) -> str:
     import uno
 
-    start = time.time()
+    return uno.systemPathToFileUrl(str(Path(path).resolve()))
+
+
+def _connect_uno(pipe_name: str, timeout_sec: int = 30):
+    import uno
+
+    start = time.monotonic()
     local_ctx = uno.getComponentContext()
     resolver = local_ctx.ServiceManager.createInstanceWithContext(
         "com.sun.star.bridge.UnoUrlResolver", local_ctx
     )
     last_exc = None
-    while time.time() - start < timeout_sec:
+    while time.monotonic() - start < timeout_sec:
         try:
             return resolver.resolve(
-                f"uno:socket,host=127.0.0.1,port={port};urp;StarOffice.ComponentContext"
+                f"uno:pipe,name={pipe_name};urp;StarOffice.ComponentContext"
             )
         except Exception as exc:  # pragma: no cover - UNO exception type varies
             last_exc = exc
@@ -42,23 +48,38 @@ def _connect_uno(port: int, timeout_sec: int = 20):
     raise RuntimeError("uno_connect_timeout")
 
 
+def _load_document(desktop, excel_path: Path, *, read_only: bool):
+    document = desktop.loadComponentFromURL(
+        _file_url(excel_path),
+        "_blank",
+        0,
+        (
+            _property("Hidden", True),
+            _property("ReadOnly", read_only),
+        ),
+    )
+    if document is None:
+        raise RuntimeError("workbook_open_failed")
+    return document
+
+
 def _write_cells(
     excel_path: Path,
     folder_name: str,
     class_names: list[str],
     rows: list[dict[str, int | float]],
-    port: int,
-) -> None:
-    import uno
-
-    ctx = _connect_uno(port)
-    desktop = ctx.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
-
-    url = uno.systemPathToFileUrl(str(excel_path))
-    doc = desktop.loadComponentFromURL(url, "_blank", 0, (_mkprop("Hidden", True),))
+    pipe_name: str,
+) -> dict[str, object]:
+    ctx = _connect_uno(pipe_name)
+    desktop = ctx.ServiceManager.createInstanceWithContext(
+        "com.sun.star.frame.Desktop", ctx
+    )
+    document = None
+    reopened = None
     try:
-        raw = doc.Sheets.getByName("原始数据")
-        report = doc.Sheets.getByName("截面统计报告1")
+        document = _load_document(desktop, excel_path, read_only=False)
+        raw = document.Sheets.getByName("原始数据")
+        report = document.Sheets.getByName("截面统计报告1")
 
         raw.getCellRangeByName("BA9").setString(folder_name)
         report.getCellRangeByName("F8").setString(folder_name)
@@ -80,9 +101,77 @@ def _write_cells(
             raw.getCellByPosition(13, row_idx).setValue(float(max(0, class_id)))
             raw.getCellByPosition(14, row_idx).setValue(float(max(0.0, area_um2)))
 
-        doc.store()
+        document.store()
+        document.close(True)
+        document = None
+
+        # Reopen the saved workbook and verify persisted values. A successful
+        # UNO call alone is not enough because a failed store can otherwise
+        # leave the copied, still-empty template behind.
+        reopened = _load_document(desktop, excel_path, read_only=True)
+        raw = reopened.Sheets.getByName("原始数据")
+        report = reopened.Sheets.getByName("截面统计报告1")
+
+        folder_verified = (
+            str(raw.getCellRangeByName("BA9").String or "") == folder_name
+            and str(report.getCellRangeByName("F8").String or "") == folder_name
+        )
+        class_names_verified = all(
+            str(raw.getCellByPosition(52 + idx, 10).String or "") == class_name
+            for idx, class_name in enumerate(class_names)
+        )
+        rows_verified = True
+        for idx, item in enumerate(rows):
+            row_idx = 10 + idx
+            expected_class_id = float(max(0, int(item.get("class_id", 0))))
+            expected_area = float(
+                max(0.0, float(item.get("area_um2", item.get("area_px", 0.0))))
+            )
+            actual_class_id = float(raw.getCellByPosition(13, row_idx).Value)
+            actual_area = float(raw.getCellByPosition(14, row_idx).Value)
+            if actual_class_id != expected_class_id or not math.isclose(
+                actual_area,
+                expected_area,
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            ):
+                rows_verified = False
+                break
+
+        next_row_cleared = True
+        next_row_idx = 10 + len(rows)
+        if next_row_idx < 3000:
+            next_row_cleared = (
+                str(raw.getCellByPosition(13, next_row_idx).String or "") == ""
+                and str(raw.getCellByPosition(14, next_row_idx).String or "") == ""
+            )
+
+        verified = (
+            folder_verified
+            and class_names_verified
+            and rows_verified
+            and next_row_cleared
+        )
+        return {
+            "verified": verified,
+            "folder_verified": folder_verified,
+            "class_names_verified": class_names_verified,
+            "rows_verified": rows_verified,
+            "next_row_cleared": next_row_cleared,
+            "row_count": len(rows),
+            "reopened": True,
+        }
     finally:
-        doc.close(True)
+        if reopened is not None:
+            try:
+                reopened.close(True)
+            except Exception:
+                pass
+        if document is not None:
+            try:
+                document.close(True)
+            except Exception:
+                pass
 
 
 def main() -> int:
@@ -110,43 +199,46 @@ def main() -> int:
         print("excel_target_missing", file=sys.stderr)
         return 2
 
-    port = random.randint(21000, 31000)
-    profile_dir = Path(tempfile.mkdtemp(prefix="lo-profile-")).resolve()
-    profile_url = f"file://{profile_dir.as_posix()}"
-    cmd = [
-        "soffice",
-        "--headless",
-        f"--accept=socket,host=127.0.0.1,port={port};urp;StarOffice.ServiceManager",
-        "--norestore",
-        "--nodefault",
-        "--nofirststartwizard",
-        "--nolockcheck",
-        "--nologo",
-        f"-env:UserInstallation={profile_url}",
-    ]
-
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    pipe_name = f"area_{uuid4().hex}"
+    process = None
     try:
-        _write_cells(excel_path, folder_name, class_names, rows, port)
-        return 0
+        with tempfile.TemporaryDirectory(prefix="area-lo-profile-") as profile_dir:
+            cmd = [
+                "soffice",
+                "--headless",
+                "--norestore",
+                "--nodefault",
+                "--nofirststartwizard",
+                "--nolockcheck",
+                "--nologo",
+                f"-env:UserInstallation={_file_url(profile_dir)}",
+                f"--accept=pipe,name={pipe_name};urp;StarOffice.ServiceManager",
+            ]
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            result = _write_cells(
+                excel_path,
+                folder_name,
+                class_names,
+                rows,
+                pipe_name,
+            )
+            print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+            return 0
     except Exception as exc:
         print(f"uno_write_failed:{exc}", file=sys.stderr)
         return 3
     finally:
-        try:
-            proc.terminate()
-            proc.wait(timeout=8)
-        except Exception:
-            proc.kill()
-            proc.wait(timeout=2)
-        try:
-            shutil.rmtree(profile_dir, ignore_errors=True)
-        except Exception:
-            pass
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
 
 
 if __name__ == "__main__":

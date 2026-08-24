@@ -154,12 +154,12 @@ function AreaStartRecognition() {
 
     setCreating(true);
     try {
-      const job = await areaApi.createJob({
+      await areaApi.createJob({
         folder_name: selectedFolder.folder_name,
         model_name: modelName,
       });
       message.success('识别任务已提交');
-      navigate(job?.job_id ? `/tools/area/jobs/${job.job_id}` : '/tools/area/tasks');
+      navigate('/tools/area/tasks');
     } catch (error) {
       message.error(getAreaErrorMessage(error, '任务创建失败'));
     } finally {
@@ -388,7 +388,7 @@ function AreaStartRecognition() {
             开始识别
           </Button>
           <Typography.Text className="area-start-submit-hint" type="secondary">
-            提交后将直接进入任务进度与结果页面
+            提交后将直接进入任务记录，可继续查看处理进度
           </Typography.Text>
         </Card>
       </div>
