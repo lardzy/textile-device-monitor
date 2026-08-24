@@ -200,6 +200,7 @@ def test_index_interval_safe_default_is_five_minutes() -> None:
     assert settings.EXECUTION_NODE_MAX_ATTEMPTS == 5
     assert settings.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS == 45
     assert settings.EXECUTION_CONTRACT_MODE == "legacy"
+    assert settings.EXECUTION_V2_ROLLOUT_PROFILE == "p1_readonly"
     assert settings.EXECUTION_RELEASE_PREFLIGHT_TTL_MINUTES == 15
     assert settings.EXECUTION_RELEASE_JSON_MAX_BYTES == 8 * 1024 * 1024
     assert settings.EXECUTION_RELEASE_SIGNATURE_POLICY == "optional"

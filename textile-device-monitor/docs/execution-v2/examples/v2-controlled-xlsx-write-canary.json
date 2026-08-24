@@ -1,0 +1,425 @@
+{
+  "assets": [],
+  "capabilities": {
+    "declared": [
+      "artifact.atomic-publish",
+      "file.publish",
+      "file.read",
+      "file.write",
+      "workbook.copy-on-write",
+      "workbook.read",
+      "workbook.verify",
+      "workbook.write-cells"
+    ],
+    "requires_human_approval": true,
+    "side_effect_level": "publish"
+  },
+  "definition": {
+    "edges": [
+      {
+        "id": "edge-1",
+        "join_policy": "all",
+        "source": "start",
+        "target": "classify"
+      },
+      {
+        "id": "edge-2",
+        "join_policy": "all",
+        "source": "classify",
+        "target": "extract"
+      },
+      {
+        "id": "edge-3",
+        "join_policy": "all",
+        "source": "extract",
+        "target": "copy"
+      },
+      {
+        "id": "edge-4",
+        "join_policy": "all",
+        "source": "copy",
+        "target": "write"
+      },
+      {
+        "id": "edge-5",
+        "join_policy": "all",
+        "source": "write",
+        "target": "verify"
+      },
+      {
+        "id": "edge-6",
+        "join_policy": "all",
+        "source": "verify",
+        "target": "confirm"
+      },
+      {
+        "id": "edge-7",
+        "join_policy": "all",
+        "source": "confirm",
+        "target": "publish"
+      },
+      {
+        "id": "edge-8",
+        "join_policy": "all",
+        "source": "publish",
+        "target": "end"
+      }
+    ],
+    "global_defaults": {},
+    "global_schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_number": {
+          "title": "检验编号",
+          "type": "string"
+        },
+        "mutation_id": {
+          "title": "变更幂等键",
+          "type": "string"
+        },
+        "source": {
+          "title": "源工作簿引用",
+          "type": "object"
+        },
+        "target": {
+          "title": "测试发布目标",
+          "type": "object"
+        },
+        "writes": {
+          "title": "单元格写入计划",
+          "type": "array"
+        }
+      },
+      "required": [
+        "inspection_number",
+        "source",
+        "mutation_id",
+        "writes",
+        "target"
+      ],
+      "type": "object"
+    },
+    "nodes": [
+      {
+        "config": {},
+        "id": "start",
+        "input_mapping": {},
+        "name": "开始",
+        "type": "core.start",
+        "type_version": 1,
+        "ui": {
+          "x": 60,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "data_only": true,
+          "types": [
+            {
+              "features": [
+                {
+                  "cell": "A1",
+                  "operator": "nonempty",
+                  "sheet": "Sheet1"
+                }
+              ],
+              "name": "controlled-test-workbook"
+            }
+          ]
+        },
+        "id": "classify",
+        "input_mapping": {
+          "source": "$.inputs.source"
+        },
+        "name": "识别工作簿类型",
+        "type": "workbook.classify",
+        "type_version": 1,
+        "ui": {
+          "x": 290,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "data_only": true,
+          "fail_on_error": false,
+          "fields": [
+            {
+              "cell": "A1",
+              "name": "source_a1",
+              "required": false,
+              "sheet": "Sheet1"
+            }
+          ]
+        },
+        "id": "extract",
+        "input_mapping": {
+          "source": "$.inputs.source"
+        },
+        "name": "读取摘要",
+        "type": "workbook.extract_fields",
+        "type_version": 1,
+        "ui": {
+          "x": 520,
+          "y": 180
+        }
+      },
+      {
+        "config": {},
+        "id": "copy",
+        "input_mapping": {
+          "mutation_id": "$.inputs.mutation_id",
+          "source": "$.inputs.source"
+        },
+        "name": "创建工作副本",
+        "type": "workbook.copy",
+        "type_version": 1,
+        "ui": {
+          "x": 750,
+          "y": 180
+        }
+      },
+      {
+        "config": {},
+        "id": "write",
+        "input_mapping": {
+          "mutation_id": "$.inputs.mutation_id",
+          "working_copy": "$.nodes.copy.output.working_copy",
+          "writes": "$.inputs.writes"
+        },
+        "name": "写入映射字段",
+        "type": "workbook.write_cells",
+        "type_version": 2,
+        "ui": {
+          "x": 980,
+          "y": 180
+        }
+      },
+      {
+        "config": {},
+        "id": "verify",
+        "input_mapping": {
+          "mutation_id": "$.inputs.mutation_id",
+          "target": "$.inputs.target",
+          "working_copy": "$.nodes.copy.output.working_copy",
+          "writes": "$.inputs.writes"
+        },
+        "name": "保存后重读核对",
+        "type": "workbook.verify",
+        "type_version": 2,
+        "ui": {
+          "x": 1210,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "title": "确认测试发布"
+        },
+        "id": "confirm",
+        "input_mapping": {
+          "subject": {
+            "digest": "$.nodes.verify.output.subject_digest",
+            "summary": "$.nodes.verify.output.verification",
+            "type": "workbook_mutation"
+          }
+        },
+        "name": "人工确认",
+        "type": "human.approval",
+        "type_version": 1,
+        "ui": {
+          "x": 1440,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "publish_root_slot": "execution_publish"
+        },
+        "id": "publish",
+        "input_mapping": {
+          "approval_receipt_id": "$.nodes.confirm.output.approval_receipt.id",
+          "mutation_id": "$.inputs.mutation_id",
+          "target": "$.inputs.target",
+          "verification_receipt": "$.nodes.verify.output",
+          "working_copy": "$.nodes.copy.output.working_copy"
+        },
+        "name": "发布测试制品",
+        "type": "artifact.publish",
+        "type_version": 2,
+        "ui": {
+          "x": 1670,
+          "y": 180
+        }
+      },
+      {
+        "config": {},
+        "id": "end",
+        "input_mapping": {
+          "published": "$.nodes.publish.output"
+        },
+        "name": "结束",
+        "type": "core.end",
+        "type_version": 1,
+        "ui": {
+          "x": 1900,
+          "y": 180
+        }
+      }
+    ],
+    "output_schema": {
+      "additionalProperties": true,
+      "properties": {},
+      "type": "object"
+    },
+    "schema_version": "2.0"
+  },
+  "dependencies": {
+    "connectors": [],
+    "engine": {
+      "version_range": ">=2.1.0 <3.0.0"
+    },
+    "node_types": [
+      {
+        "contract_digest": "f8f40977f40d7de6e34ac5ea6200f57521704fdb39e07804a18bfbd9f716ab54",
+        "implementation_digest": "5879bdb3e36cac48dd81d214f0ae7d1dad52e325fd481bca50109df68c28d210",
+        "type": "artifact.publish",
+        "type_version": 2
+      },
+      {
+        "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
+        "implementation_digest": "28edf64262c2f6b1f0cd4458bce1223145a6bc1b3a219359ae1903e43d58d4cb",
+        "type": "core.end",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
+        "implementation_digest": "c2a19a7696d1cf77e5e8ac89c69b573c98568204639ed5ff3c17c74e441747c6",
+        "type": "core.start",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
+        "implementation_digest": "5d7e1de78ac76d361924e4949046e777c2c11aa7bcdbd1878a64fa7d4ed27691",
+        "type": "human.approval",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
+        "implementation_digest": "1c2ab31658340b72166a0311941095f94201f590d1bc6d5203587931e01595d3",
+        "type": "workbook.classify",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "e2c9297c270b3c2617b8f5921f8be45df413a0f5624bf71e9ec7407dca4cdca1",
+        "implementation_digest": "61818d6c8ef1d1e864d3e2b3992458fc486f0588b860e1b4e5cce6a1ab05c492",
+        "type": "workbook.copy",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
+        "implementation_digest": "367c2b03bbf8a1efc6c78e4ba2e3b5b51d9f0614d46a2aac905c1f8e2cf00add",
+        "type": "workbook.extract_fields",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
+        "implementation_digest": "c534fc7d02f8de82c68b4fb3415a8bcde19eeebf9774b02a75f123264cb07675",
+        "type": "workbook.verify",
+        "type_version": 2
+      },
+      {
+        "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
+        "implementation_digest": "6ec5391d82e0d73ca4e62adfd250886df7763f735b218c8802e681346eab48a6",
+        "type": "workbook.write_cells",
+        "type_version": 2
+      }
+    ],
+    "packs": [
+      {
+        "distribution_digest": "d9bc2226d8efbaaa6d69dbbe83d08a02f7de204d79b758574b3eb8206a1702f4",
+        "pack_id": "textile.execution-files",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": "1.0.0"
+      },
+      {
+        "distribution_digest": "05f2b9b45de0d4453d93bf8d7ca120e6e89b2ffd7a6738c5723f88db3ffb5735",
+        "pack_id": "textile.execution-kernel",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": "2.1.0"
+      },
+      {
+        "distribution_digest": "e24b71773af4911345608092897f4ec0aad48b5cd19dac9793baa0c1ee9cea1f",
+        "pack_id": "textile.execution-v1-compat",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": "2.1.0"
+      },
+      {
+        "distribution_digest": "48d611077085d4de69b878d6aad0e15b127a5c32d40db6d0f314978ef1c40029",
+        "pack_id": "textile.execution-workbook",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": "1.0.0"
+      }
+    ]
+  },
+  "fixtures": [],
+  "format": "textile-workflow-release",
+  "format_version": "2.0",
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "RFC8785",
+    "digest": "80086d44ee9a809972944ae4bebdf8dfb12124783033e2c01dd8026590498ad2",
+    "scope": "document_without_integrity",
+    "signatures": []
+  },
+  "release": {
+    "category_key": "special_wool",
+    "description": "仅用于隔离测试 root 的 copy/write/verify/approval/publish 闭环。",
+    "name": "Execution v2 受控工作簿写入 Canary",
+    "release_note": "P2 hidden controlled-write canary; never auto-activate",
+    "release_version": 1,
+    "slug": "v2-controlled-xlsx-write-canary"
+  },
+  "resources": {
+    "credential_slots": [],
+    "role_slots": [],
+    "root_slots": [
+      {
+        "access": "read",
+        "name": "source",
+        "required": true,
+        "slot_id": "special_wool_records"
+      },
+      {
+        "access": "write",
+        "name": "staging",
+        "required": true,
+        "slot_id": "execution_staging"
+      },
+      {
+        "access": "publish",
+        "name": "publish",
+        "required": true,
+        "slot_id": "execution_publish"
+      }
+    ],
+    "rule_slots": []
+  }
+}

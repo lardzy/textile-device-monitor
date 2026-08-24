@@ -125,7 +125,11 @@ def _json_value(value: Any) -> Any:
     return str(value)
 
 
-def _classify_executor(context) -> dict[str, Any]:
+def _classify_executor(
+    context,
+    *,
+    detached_io: bool = False,
+) -> dict[str, Any]:
     ref = _ref(
         context.input_data.get("source")
         or context.input_data.get("file")
@@ -133,6 +137,9 @@ def _classify_executor(context) -> dict[str, Any]:
     )
     path = _path(context, ref)
     config = context.node.get("config") or {}
+    if detached_io:
+        context.db.flush()
+        context.db.commit()
     with _WorkbookReader(path, data_only=bool(config.get("data_only", True))) as reader:
         matches = []
         for candidate in config.get("types") or []:
@@ -149,7 +156,11 @@ def _classify_executor(context) -> dict[str, Any]:
         }
 
 
-def _extract_executor(context) -> dict[str, Any]:
+def _extract_executor(
+    context,
+    *,
+    detached_io: bool = False,
+) -> dict[str, Any]:
     ref = _ref(
         context.input_data.get("source")
         or context.input_data.get("file")
@@ -157,6 +168,9 @@ def _extract_executor(context) -> dict[str, Any]:
     )
     path = _path(context, ref)
     config = context.node.get("config") or {}
+    if detached_io:
+        context.db.flush()
+        context.db.commit()
     values: dict[str, Any] = {}
     errors: list[dict[str, str]] = []
     with _WorkbookReader(path, data_only=bool(config.get("data_only", True))) as reader:

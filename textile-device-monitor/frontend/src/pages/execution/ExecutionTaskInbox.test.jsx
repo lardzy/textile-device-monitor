@@ -139,7 +139,9 @@ describe('ExecutionTaskInbox', () => {
     await user.click(await screen.findByText('选择原始记录'));
     const detail = await screen.findByText('26X910095-1.xlsx');
     // 仅一份候选时表单已自动选中，无需再点击
-    expect(detail.closest('label').querySelector('input')).toBeChecked();
+    await waitFor(() => expect(
+      detail.closest('label').querySelector('input'),
+    ).toBeChecked());
     await user.type(screen.getByRole('textbox', { name: '处理备注' }), '已核对');
     await user.click(screen.getByRole('button', { name: '确认提交' }));
 
@@ -189,7 +191,9 @@ describe('ExecutionTaskInbox', () => {
     expect(screen.getByTitle(`${longPath} · .xls`)).toBeInTheDocument();
     expect(screen.queryByText(longPath)).not.toBeInTheDocument();
     // 仅一份候选时表单已自动选中，无需再点击
-    expect(fileName.closest('label').querySelector('input')).toBeChecked();
+    await waitFor(() => expect(
+      fileName.closest('label').querySelector('input'),
+    ).toBeChecked());
   });
 
   it('人工任务发生 409 时刷新详情，避免继续使用旧 revision', async () => {
@@ -540,7 +544,7 @@ describe('ExecutionTaskInbox', () => {
     renderInbox();
 
     await user.click(await screen.findByText('选择纤维微观形貌图片'));
-    expect(screen.getByText('候选图片数量超过展示上限')).toBeInTheDocument();
+    expect(await screen.findByText('候选图片数量超过展示上限')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: '确认提交' }));
     expect(await screen.findByText('请至少选择一个结果文件夹', { exact: true }))
       .toBeInTheDocument();
@@ -959,7 +963,7 @@ describe('ExecutionTaskInbox', () => {
     renderInbox();
 
     await user.click(await screen.findByText('打印微观形貌原始记录'));
-    expect(screen.getByText(sha256)).toBeInTheDocument();
+    expect(await screen.findByText(sha256)).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /下载工作簿/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '确认提交' }));
     expect(await screen.findByText('请选择打印原始记录或暂不打印')).toBeInTheDocument();

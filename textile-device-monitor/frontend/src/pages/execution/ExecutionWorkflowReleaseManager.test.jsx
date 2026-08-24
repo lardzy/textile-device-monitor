@@ -55,6 +55,19 @@ describe('ExecutionWorkflowReleaseManager', () => {
       http.get('/api/execution/v1/files/roots', () => HttpResponse.json({
         items: [{ id: 'root-readonly', name: '只读检测目录' }],
       })),
+      http.get('/api/execution/v2/workflow-releases', () => HttpResponse.json({
+        items: [], has_more: false, next_cursor: null,
+      })),
+      http.get('/api/execution/v2/packs', () => HttpResponse.json({ items: [] })),
+      http.get('/api/execution/v2/renderer-capabilities', () => HttpResponse.json({
+        items: [], registry_revision: 'registry-1', rollout_profile: 'p1_readonly',
+      })),
+      http.get('/api/execution/v2/monitoring', () => HttpResponse.json({
+        registry_revision: 'registry-1',
+        rollout_profile: 'p1_readonly',
+        shadow_mismatch: { count: 0 },
+        node_capability_unavailable: { unavailable_node_count: 0 },
+      })),
     );
   });
 
@@ -181,9 +194,15 @@ describe('ExecutionWorkflowReleaseManager', () => {
         expect(await request.json()).toEqual({
           workflow_id: 'workflow-v1',
           source: 'published',
+          target_profile: 'compat_v1',
         });
         return HttpResponse.json({
           candidate: releaseDocument,
+          content_valid: true,
+          migration_status: 'compatibility_preview',
+          native_node_count: 0,
+          compatibility_node_count: 0,
+          blockers: [],
           diff: [{ path: '$.definition.schema_version', before: '1.0', after: '2.0' }],
         });
       }),

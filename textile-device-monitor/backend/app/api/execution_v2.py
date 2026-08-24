@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -47,6 +48,7 @@ from app.execution.schemas import (
 from app.execution.v2.registry import (
     get_installed_registry,
     list_node_specs,
+    list_renderer_capabilities,
     registry_revision,
     resolve_node_spec,
 )
@@ -123,12 +125,108 @@ def assets(_auth: AuthContext = Depends(permission("workflow.design"))):
     }
 
 
+@router.get("/renderer-capabilities")
+def renderer_capabilities(
+    _auth: AuthContext = Depends(permission("workflow.design")),
+):
+    return {
+        "items": list_renderer_capabilities(),
+        "rollout_profile": settings.EXECUTION_V2_ROLLOUT_PROFILE,
+        "registry_revision": registry_revision(),
+    }
+
+
+@router.get("/workflow-releases")
+def list_workflow_releases(
+    status: Optional[str] = Query(default=None, max_length=30),
+    slug: Optional[str] = Query(default=None, max_length=100),
+    cursor: Optional[str] = Query(default=None, max_length=36),
+    limit: int = Query(default=30, ge=1, le=100),
+    _auth: AuthContext = Depends(permission("workflow.design")),
+    db: Session = Depends(get_db),
+):
+    statement = db.query(ExecutionWorkflowRelease)
+    if status:
+        statement = statement.filter(ExecutionWorkflowRelease.status == status)
+    if slug:
+        statement = statement.filter(ExecutionWorkflowRelease.source_slug == slug)
+    if cursor:
+        anchor = db.get(ExecutionWorkflowRelease, cursor)
+        if anchor is None:
+            raise ExecutionApiError(422, "release_cursor_invalid", "Release cursor 无效")
+        statement = statement.filter(
+            or_(
+                ExecutionWorkflowRelease.created_at < anchor.created_at,
+                (
+                    ExecutionWorkflowRelease.created_at == anchor.created_at
+                )
+                & (ExecutionWorkflowRelease.id < anchor.id),
+            )
+        )
+    rows = (
+        statement.order_by(
+            ExecutionWorkflowRelease.created_at.desc(),
+            ExecutionWorkflowRelease.id.desc(),
+        )
+        .limit(limit + 1)
+        .all()
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    items = []
+    registry = get_installed_registry()
+    for release in rows:
+        dependencies = (release.portable_document or {}).get("dependencies") or {}
+        native_count = 0
+        compatibility_count = 0
+        for dependency in dependencies.get("node_types") or []:
+            try:
+                installed = registry.resolve_node_spec(
+                    dependency["type"],
+                    dependency["type_version"],
+                    dependency["contract_digest"],
+                )
+            except (KeyError, LookupError, TypeError, ValueError):
+                continue
+            if installed.source == "resource":
+                native_count += 1
+            else:
+                compatibility_count += 1
+        items.append(
+            {
+                "id": release.id,
+                "workflow_id": release.workflow_id,
+                "source_slug": release.source_slug,
+                "source_version": release.source_version,
+                "release_digest": release.release_digest,
+                "status": release.status,
+                "native_node_type_count": native_count,
+                "compatibility_node_type_count": compatibility_count,
+                "created_at": release.created_at.isoformat(),
+                "published_at": (
+                    release.published_at.isoformat()
+                    if release.published_at
+                    else None
+                ),
+            }
+        )
+    return {
+        "items": items,
+        "next_cursor": rows[-1].id if has_more and rows else None,
+        "has_more": has_more,
+    }
+
+
 @router.get("/monitoring")
 def monitoring(
+    window_hours: int = Query(default=24, ge=1, le=720),
     _auth: AuthContext = Depends(permission("audit.read")),
     db: Session = Depends(get_db),
 ):
-    """Expose the P1 rollout signals from installed and persisted facts."""
+    """Expose bounded P2 rollout signals from installed and persisted facts."""
+
+    if not isinstance(window_hours, int):
+        window_hours = int(getattr(window_hours, "default", 24))
 
     installed_packs = [
         _public_value(item)
@@ -162,7 +260,12 @@ def monitoring(
     preflight_scopes: Counter[str] = Counter()
     content_valid_count = 0
     publish_ready_count = 0
-    preflights = db.query(ExecutionReleasePreflight).all()
+    window_start = utcnow() - timedelta(hours=window_hours)
+    preflights = (
+        db.query(ExecutionReleasePreflight)
+        .filter(ExecutionReleasePreflight.created_at >= window_start)
+        .all()
+    )
     for row in preflights:
         report = row.report or {}
         preflight_scopes[row.scope] += 1
@@ -211,15 +314,30 @@ def monitoring(
         if node.execution_binding_digest not in live_bindings
     )
     run_statuses = Counter(
-        status
-        for (status,) in db.query(ExecutionRun.status)
-        .filter(ExecutionRun.release_id.is_not(None))
-        .all()
+        {
+            status: count
+            for status, count in db.query(
+                ExecutionRun.status, func.count(ExecutionRun.id)
+            )
+            .filter(
+                ExecutionRun.release_id.is_not(None),
+                ExecutionRun.created_at >= window_start,
+            )
+            .group_by(ExecutionRun.status)
+            .all()
+        }
     )
     receipt_actions = Counter(
-        action
-        for (action,) in db.query(ExecutionWorkflowActivationReceipt.action)
-        .all()
+        {
+            action: count
+            for action, count in db.query(
+                ExecutionWorkflowActivationReceipt.action,
+                func.count(ExecutionWorkflowActivationReceipt.id),
+            )
+            .filter(ExecutionWorkflowActivationReceipt.created_at >= window_start)
+            .group_by(ExecutionWorkflowActivationReceipt.action)
+            .all()
+        }
     )
     shadow_mismatch_count = (
         db.query(ExecutionAuditLog)
@@ -231,7 +349,10 @@ def monitoring(
     )
     return {
         "observed_at": utcnow().isoformat(),
+        "window_hours": window_hours,
+        "window_started_at": window_start.isoformat(),
         "registry_revision": registry_revision(),
+        "rollout_profile": settings.EXECUTION_V2_ROLLOUT_PROFILE,
         "pack_readiness": sorted(
             pack_readiness, key=lambda item: str(item["pack_id"])
         ),
@@ -510,4 +631,5 @@ def migration_preview(
         workflow_id=payload.workflow_id,
         source=payload.source,
         actor=auth.user,
+        target_profile=payload.target_profile,
     )

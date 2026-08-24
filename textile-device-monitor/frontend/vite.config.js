@@ -28,5 +28,9 @@ export default defineConfig({
     setupFiles: './tests/setup.js',
     include: ['src/**/*.test.{js,jsx}'],
     restoreMocks: false,
+    pool: 'forks',
+    minWorkers: 1,
+    maxWorkers: 1,
+    testTimeout: 15_000,
   },
 });

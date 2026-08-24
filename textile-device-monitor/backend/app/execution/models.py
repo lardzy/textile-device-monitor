@@ -738,6 +738,7 @@ class ExecutionHumanTask(Base):
     title = Column(String(200), nullable=False)
     description = Column(Text)
     form_schema = Column(JSON_VARIANT, nullable=False, default=dict)
+    renderer_contract = Column(JSON_VARIANT, nullable=False, default=dict)
     draft_data = Column(JSON_VARIANT, nullable=False, default=dict)
     result_data = Column(JSON_VARIANT, nullable=False, default=dict)
     status = Column(String(30), nullable=False, default="open", index=True)
@@ -762,6 +763,109 @@ class ExecutionHumanTask(Base):
     )
 
     node_run = relationship("ExecutionNodeRun", back_populates="human_task")
+    approval_receipts = relationship(
+        "ExecutionHumanApprovalReceipt",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="ExecutionHumanApprovalReceipt.created_at",
+    )
+
+
+class ExecutionHumanApprovalReceipt(Base):
+    __tablename__ = "execution_human_approval_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "human_task_id",
+            "task_revision",
+            name="uq_execution_human_approval_receipt_task_revision",
+        ),
+        Index(
+            "ix_execution_human_approval_receipt_run",
+            "run_id",
+            "created_at",
+        ),
+        Index(
+            "ix_execution_human_approval_receipt_subject",
+            "subject_type",
+            "subject_digest",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    run_id = Column(
+        String(36),
+        ForeignKey("execution_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    node_run_id = Column(
+        String(36),
+        ForeignKey("execution_node_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    human_task_id = Column(
+        String(36),
+        ForeignKey("execution_human_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    task_revision = Column(Integer, nullable=False)
+    subject_type = Column(String(100), nullable=False)
+    subject_digest = Column(String(64), nullable=False)
+    decision = Column(String(20), nullable=False)
+    actor_user_id = Column(
+        String(36), ForeignKey("execution_users.id"), nullable=False
+    )
+    authorization_snapshot = Column(JSON_VARIANT, nullable=False, default=dict)
+    reason = Column(Text)
+    receipt_digest = Column(String(64), nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    task = relationship("ExecutionHumanTask", back_populates="approval_receipts")
+    actor = relationship("ExecutionUser")
+    consumption = relationship(
+        "ExecutionHumanApprovalReceiptConsumption",
+        back_populates="receipt",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class ExecutionHumanApprovalReceiptConsumption(Base):
+    """Immutable, idempotent binding of one approval to one publish attempt."""
+
+    __tablename__ = "execution_human_approval_receipt_consumptions"
+    __table_args__ = (
+        Index(
+            "ix_execution_human_approval_receipt_consumption_node_run",
+            "node_run_id",
+            "created_at",
+        ),
+    )
+
+    approval_receipt_id = Column(
+        String(36),
+        ForeignKey(
+            "execution_human_approval_receipts.id", ondelete="CASCADE"
+        ),
+        primary_key=True,
+    )
+    run_id = Column(
+        String(36),
+        ForeignKey("execution_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    node_run_id = Column(
+        String(36),
+        ForeignKey("execution_node_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mutation_id = Column(String(100), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    receipt = relationship(
+        "ExecutionHumanApprovalReceipt", back_populates="consumption"
+    )
 
 
 class ExecutionEvent(Base):

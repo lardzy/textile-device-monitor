@@ -110,46 +110,46 @@
   "dependencies": {
     "connectors": [],
     "engine": {
-      "version_range": ">=2.0.0 <3.0.0"
+      "version_range": ">=2.1.0 <3.0.0"
     },
     "node_types": [
       {
         "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "35e4ed428526bf9e6f94b1dc57596a62be8f4babdbb7b1149782147cac40e686",
+        "implementation_digest": "c2a19a7696d1cf77e5e8ac89c69b573c98568204639ed5ff3c17c74e441747c6",
         "type": "core.start",
         "type_version": 1
       },
       {
         "contract_digest": "b1d4fe1f4f4a2232ab9fc36729303118c5f850fe62ffd9ae38d2c665dcb4acd4",
-        "implementation_digest": "c524e75661520caf905ecd10084984702f920f914d620022c73093d15e97e642",
+        "implementation_digest": "a6e48309a3a3b18c52ec15fdaae26d64e8cbebdda64678ae40d2eb822dfbdd83",
         "type": "file.index_query",
         "type_version": 1
       },
       {
         "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "3d5076d613c9d5b9616849e7ccbc7707c7dad7fd3cbbd6ba064af9e5d6c0681d",
+        "implementation_digest": "28edf64262c2f6b1f0cd4458bce1223145a6bc1b3a219359ae1903e43d58d4cb",
         "type": "core.end",
         "type_version": 1
       }
     ],
     "packs": [
       {
-        "distribution_digest": "44fd834d399eee40259ecf7a636a2bb186ac048205af6ed1e8b13cc1d5cce45f",
+        "distribution_digest": "05f2b9b45de0d4453d93bf8d7ca120e6e89b2ffd7a6738c5723f88db3ffb5735",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.0.0"
+        "version_range": "2.1.0"
       },
       {
-        "distribution_digest": "bff8fba354af5e35c219c56944db46d86db13247bb886b92eeb628997761747c",
+        "distribution_digest": "e24b71773af4911345608092897f4ec0aad48b5cd19dac9793baa0c1ee9cea1f",
         "pack_id": "textile.execution-v1-compat",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.0.0"
+        "version_range": "2.1.0"
       }
     ]
   },
@@ -159,7 +159,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "6f963c099db4e5ac72ab9f4caf6ed807d8fea8a0d190f93a5f80e6a233b87f4b",
+    "digest": "6acdaecb75647d0e908857f066851c9d5a7aad7d454554eadd07db919d027a04",
     "scope": "document_without_integrity",
     "signatures": []
   },

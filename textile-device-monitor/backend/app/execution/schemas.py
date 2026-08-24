@@ -171,6 +171,7 @@ class WorkflowV1MigrationPreviewRequest(BaseModel):
 
     workflow_id: str = Field(min_length=1, max_length=36)
     source: Literal["published", "draft"] = "published"
+    target_profile: Literal["compat_v1", "native_p2"] = "compat_v1"
 
 
 class RunCreate(BaseModel):

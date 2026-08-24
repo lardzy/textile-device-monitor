@@ -53,7 +53,13 @@
       "properties": {
         "inputs": {"type": "array", "items": {"$ref": "#/$defs/port"}},
         "outputs": {"type": "array", "items": {"$ref": "#/$defs/port"}},
-        "condition_mode": {"enum": ["none", "edge_conditions", "node_expression"]}
+        "condition_mode": {"enum": ["none", "edge_conditions", "node_expression"]},
+        "graph_role": {"enum": ["entry", "exit", "ordinary"]},
+        "join_modes": {
+          "type": "array",
+          "items": {"enum": ["all_selected", "first_selected", "collect_selected"]},
+          "uniqueItems": true
+        }
       },
       "additionalProperties": false
     },
@@ -130,8 +136,22 @@
       "required": ["state", "publish_mode", "replacement", "migration_ids"],
       "properties": {
         "state": {"enum": ["active", "deprecated", "retired"]},
-        "publish_mode": {"enum": ["allowed", "blocked"]},
-        "replacement": {"type": ["string", "null"]},
+        "publish_mode": {"enum": ["allowed", "allowed_with_warning", "test_only", "blocked"]},
+        "replacement": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "string"},
+            {
+              "type": "object",
+              "required": ["type", "type_version"],
+              "properties": {
+                "type": {"$ref": "#/$defs/nodeType"},
+                "type_version": {"type": "integer", "minimum": 1}
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
         "migration_ids": {"type": "array", "items": {"$ref": "#/$defs/identifier"}, "uniqueItems": true}
       },
       "additionalProperties": false
@@ -171,7 +191,10 @@
     "schemaBinding": {
       "type": "object",
       "required": ["source"],
-      "properties": {"source": {"enum": ["node_spec", "workflow_output_schema", "node_config", "operation_spec", "query_spec"]}},
+      "properties": {
+        "source": {"enum": ["node_spec", "workflow_input_schema", "workflow_output_schema", "node_config", "operation_spec", "query_spec"]},
+        "pointer": {"$ref": "#/$defs/jsonPointer"}
+      },
       "additionalProperties": false
     },
     "port": {

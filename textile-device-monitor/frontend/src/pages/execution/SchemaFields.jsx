@@ -33,6 +33,24 @@ const formItemRules = (name, schema, required = []) => {
       },
     });
   }
+  if ((Array.isArray(schema.type) ? schema.type : [schema.type]).includes('array')) {
+    rules.push({
+      validator: async (_, value) => {
+        if (value == null && !required.includes(name)) {
+          return;
+        }
+        if (!Array.isArray(value)) {
+          throw new Error(`${schema.title || name}必须是数组`);
+        }
+        if (schema.minItems != null && value.length < schema.minItems) {
+          throw new Error(`${schema.title || name}至少需要 ${schema.minItems} 项`);
+        }
+        if (schema.maxItems != null && value.length > schema.maxItems) {
+          throw new Error(`${schema.title || name}最多允许 ${schema.maxItems} 项`);
+        }
+      },
+    });
+  }
   return rules;
 };
 
@@ -88,9 +106,40 @@ export default function SchemaFields({
     const copySources = (
       Array.isArray(field['x-copy-sources']) ? field['x-copy-sources'] : []
     ).filter(source => source && source.text);
+    const fieldTypes = Array.isArray(field.type) ? field.type : [field.type];
+    const isScalarArray = fieldTypes.includes('array');
+    const arrayItemType = field.items?.type;
+    const normalize = isScalarArray
+      ? (value) => {
+        if (!Array.isArray(value)) {
+          return value;
+        }
+        if (arrayItemType === 'number' || arrayItemType === 'integer') {
+          return value.map(item => Number(item));
+        }
+        if (arrayItemType === 'boolean') {
+          return value.map(item => item === true || item === 'true');
+        }
+        return value;
+      }
+      : undefined;
 
     let control;
-    if (Array.isArray(field.enum)) {
+    if (isScalarArray) {
+      const allowed = Array.isArray(field.items?.enum)
+        ? field.items.enum
+        : arrayItemType === 'boolean'
+          ? [true, false]
+          : [];
+      control = (
+        <Select
+          {...common}
+          mode={allowed.length > 0 ? 'multiple' : 'tags'}
+          options={allowed.map(value => ({ value, label: String(value) }))}
+          tokenSeparators={[',', '，']}
+        />
+      );
+    } else if (Array.isArray(field.enum)) {
       control = (
         <Select
           {...common}
@@ -152,10 +201,11 @@ export default function SchemaFields({
             disabled={common.disabled}
           />
           <Form.Item
-            name={fieldName}
-            noStyle
-            initialValue={initialValue}
-            rules={formItemRules(name, field, required)}
+          name={fieldName}
+          noStyle
+          initialValue={initialValue}
+          normalize={normalize}
+          rules={formItemRules(name, field, required)}
           >
             {control}
           </Form.Item>
@@ -170,6 +220,7 @@ export default function SchemaFields({
         label={field.title || name}
         tooltip={field.description}
         initialValue={initialValue}
+        normalize={normalize}
         rules={formItemRules(name, field, required)}
       >
         {control}

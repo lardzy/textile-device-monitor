@@ -19,7 +19,11 @@ from app.execution.v2.canonical import (
     resource_set_digest,
     select_highest_stable,
 )
-from app.execution.v2.examples import build_readonly_file_query_smoke_release
+from app.execution.v2.examples import (
+    build_controlled_xlsx_write_canary_release,
+    build_native_human_file_selection_smoke_release,
+    build_readonly_file_query_smoke_release,
+)
 from app.execution.v2.registry import (
     NodeSpecRegistry,
     executable_binding_for,
@@ -102,19 +106,52 @@ def test_semver_selects_highest_stable_and_never_masks_broken_highest():
 def test_installed_registry_freezes_all_current_compatibility_contracts():
     registry = get_installed_registry()
     specs = registry.list_node_specs()
-    assert len(specs) == 39
-    assert sum(item.publishable for item in specs) == 37
-    assert sum(not item.publishable for item in specs) == 2
-    assert len(registry.list_packs()) == 3
+    compatibility = [item for item in specs if item.source == "v1_registry_adapter"]
+    native = [item for item in specs if item.source == "resource"]
+    assert len(compatibility) == 39
+    assert len(native) == 18
+    assert sum(item.publishable for item in compatibility) == 37
+    assert sum(not item.publishable for item in compatibility) == 2
+    assert all(item.publishable for item in native)
+    assert len(registry.list_packs()) == 5
     assert len(registry.list_assets()) == 11
     assert len(registry.list_connectors()) == 1
     assert len(registry.list_connectors()[0]["operations"]) == 7
     assert len(registry.revision) == 64
-    assert len({(item.type, item.type_version) for item in specs}) == 39
+    assert len({(item.type, item.type_version) for item in compatibility}) == 39
+    for pack in registry.packs.all():
+        assert pack.manifest["distribution_digest"] == pack.distribution_digest
+        for descriptor in pack.manifest["provides"]["nodes"]:
+            spec = registry.resolve_node_spec(
+                descriptor["type"],
+                descriptor["type_version"],
+                descriptor["contract_digest"],
+            )
+            assert descriptor["implementation_digest"] == (
+                spec.implementation_digest
+            )
+
+
+def test_native_contracts_are_closed_and_workbook_copy_preferred_is_native():
+    registry = get_installed_registry()
+    native = [
+        item for item in registry.list_node_specs() if item.source == "resource"
+    ]
+    for spec in native:
+        for schema in (
+            spec.config_schema,
+            spec.input_schema,
+            spec.output_schema,
+        ):
+            assert schema["type"] == "object"
+            assert schema["additionalProperties"] is False
+    preferred = registry.resolve_node_spec("workbook.copy", 1)
+    assert preferred.source == "resource"
+    assert preferred.pack_id == "textile.execution-v1-compat"
 
 
 def test_pack_digest_is_bound_to_declared_implementation_source_bytes():
-    pack = get_installed_registry().resolve_pack("textile.execution-kernel", "2.0.0")
+    pack = get_installed_registry().resolve_pack("textile.execution-kernel", "2.1.0")
     manifest = deepcopy(pack.manifest)
     manifest.pop("distribution_digest", None)
     package_root = resources.files("app.execution")
@@ -194,12 +231,12 @@ def test_api_installed_readiness_is_separate_from_worker_callable_readiness():
         reset_installed_registry_cache()
 
 
-def test_worker_self_check_advertises_37_ready_compatibility_bindings():
+def test_worker_self_check_advertises_compatibility_and_native_bindings():
     ExecutionWorker(worker_id="v2-contract-test")
     reset_installed_registry_cache()
     document = worker_capability_document()
-    assert len(document["nodes"]) == 39
-    assert sum(item["ready"] for item in document["nodes"]) == 37
+    assert len(document["nodes"]) == 57
+    assert sum(item["ready"] for item in document["nodes"]) == 55
     assert {item["type"] for item in document["nodes"] if not item["ready"]} == {
         "external.legacy_inspection",
         "external.new_inspection",
@@ -286,6 +323,50 @@ def test_readonly_smoke_release_is_schema_valid_and_digest_pinned():
     assert query["config"]["root_slot"] == "source"
 
 
+@pytest.mark.parametrize(
+    ("name", "builder"),
+    [
+        (
+            "v2-native-human-file-selection-smoke.json",
+            build_native_human_file_selection_smoke_release,
+        ),
+        (
+            "v2-controlled-xlsx-write-canary.json",
+            build_controlled_xlsx_write_canary_release,
+        ),
+    ],
+)
+def test_p2_example_releases_are_deterministic_and_digest_pinned(name, builder):
+    first = builder()
+    second = builder()
+    assert canonical_json_bytes(first) == canonical_json_bytes(second)
+    assert json.loads((DOCS_ROOT / "examples" / name).read_text()) == first
+    unsigned = deepcopy(first)
+    unsigned.pop("integrity")
+    assert first["integrity"]["digest"] == canonical_sha256(unsigned)
+
+
+def test_p1_compatibility_worker_capability_identity_is_frozen():
+    snapshot = json.loads(
+        (RESOURCE_ROOT / "snapshots" / "p1-worker-d1fb01b.json").read_text()
+    )
+    assert snapshot == {
+        "baseline_commit": "d1fb01bbd12e3b020f1e27a2ecbeab20bf039ac4",
+        "capability_digest": (
+            "7c3849d8ad705fbff9c9cc7cb706f27ef3805f38323616bdb99fc3b25688c4f1"
+        ),
+        "engine_version": "2.0.0",
+        "node_count": 39,
+        "protocol_version": "2.0",
+        "ready_count": 37,
+    }
+    ExecutionWorker(worker_id="p2-snapshot-test")
+    reset_installed_registry_cache()
+    assert worker_capability_document()["capability_digest"] != snapshot[
+        "capability_digest"
+    ]
+
+
 def test_readonly_smoke_passes_content_preflight_without_worker_registration():
     engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(bind=engine)
@@ -358,6 +439,43 @@ def test_all_nine_new_install_workflows_generate_deterministic_valid_candidates(
                 assert first["candidate"] == second["candidate"]
                 assert first["binding_suggestions"] == second["binding_suggestions"]
                 assert first["diff"]["active_pointer_changed"] is False
+
+                native_first = preview_v1_migration(
+                    db,
+                    workflow_id=workflow.id,
+                    source="published",
+                    actor=actor,
+                    target_profile="native_p2",
+                )
+                native_second = preview_v1_migration(
+                    db,
+                    workflow_id=workflow.id,
+                    source="published",
+                    actor=actor,
+                    target_profile="native_p2",
+                )
+                assert native_first["content_valid"] is True, (
+                    workflow.slug,
+                    native_first["issues"],
+                )
+                assert canonical_json_bytes(native_first["candidate"]) == (
+                    canonical_json_bytes(native_second["candidate"])
+                )
+                expected_status = (
+                    "p2_complete"
+                    if workflow.slug
+                    in {
+                        "electron-source-selection",
+                        "hemp-cotton-source-selection",
+                        "special-wool-source-selection",
+                        "system-controlled-xlsx-write-test",
+                    }
+                    else "p3_p4_deferred"
+                )
+                assert native_first["migration_status"] == expected_status
+                assert bool(native_first["blockers"]) is (
+                    expected_status == "p3_p4_deferred"
+                )
     finally:
         engine.dispose()
 

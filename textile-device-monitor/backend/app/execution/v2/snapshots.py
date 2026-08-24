@@ -29,7 +29,7 @@ from app.execution.v2.registry import (
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-BASELINE_COMMIT = "6d9a23f89d8efb7066bf5737919bcb490576169f"
+BASELINE_COMMIT = "d1fb01bbd12e3b020f1e27a2ecbeab20bf039ac4"
 
 
 def _column_contract(model: type[Any]) -> list[dict[str, Any]]:

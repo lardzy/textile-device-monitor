@@ -29,6 +29,15 @@ export const getExecutionV2Packs = async () =>
 export const getExecutionV2Assets = async () =>
   listPayload(await executionV2Client.get('/assets'), ['items', 'assets']);
 
+export const getExecutionV2RendererCapabilities = () =>
+  executionV2Client.get('/renderer-capabilities');
+
+export const getExecutionV2Monitoring = (windowHours = 24) =>
+  executionV2Client.get('/monitoring', { params: { window_hours: windowHours } });
+
+export const getWorkflowReleasesV2 = (params = {}) =>
+  executionV2Client.get('/workflow-releases', { params });
+
 export const preflightWorkflowReleaseV2 = document =>
   executionV2Client.post('/workflow-releases/preflight', { document });
 
@@ -69,10 +78,15 @@ export const rollbackWorkflowReleaseV2 = (workflowId, payload) =>
     payload,
   );
 
-export const previewWorkflowV1Migration = (workflowId, source = 'published') =>
+export const previewWorkflowV1Migration = (
+  workflowId,
+  source = 'published',
+  targetProfile = 'compat_v1',
+) =>
   executionV2Client.post('/migrations/v1/preview', {
     workflow_id: workflowId,
     source,
+    target_profile: targetProfile,
   });
 
 export { executionV2Client };

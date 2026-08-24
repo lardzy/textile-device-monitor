@@ -131,6 +131,9 @@ class Settings(BaseSettings):
     # ``shadow`` computes exact capability decisions without enforcing them,
     # and ``enforced`` permits v2 releases to use digest-pinned dispatch.
     EXECUTION_CONTRACT_MODE: str = "legacy"
+    # Monotonic P2 capability gate.  Staged releases may contain higher
+    # capabilities, while publish/rollback/new-run checks use this profile.
+    EXECUTION_V2_ROLLOUT_PROFILE: str = "p1_readonly"
     EXECUTION_ENVIRONMENT_ID: str = "local"
     EXECUTION_RELEASE_PREFLIGHT_TTL_MINUTES: int = 15
     EXECUTION_RELEASE_JSON_MAX_BYTES: int = 8 * 1024 * 1024
@@ -438,6 +441,17 @@ class Settings(BaseSettings):
         if contract_mode not in {"legacy", "shadow", "enforced"}:
             raise RuntimeError(
                 "EXECUTION_CONTRACT_MODE must be legacy, shadow, or enforced"
+            )
+        rollout_profile = self.EXECUTION_V2_ROLLOUT_PROFILE.strip().lower()
+        if rollout_profile not in {
+            "p1_readonly",
+            "p2_human",
+            "p2_local_write",
+            "p2_publish",
+        }:
+            raise RuntimeError(
+                "EXECUTION_V2_ROLLOUT_PROFILE must be p1_readonly, "
+                "p2_human, p2_local_write, or p2_publish"
             )
         if not self.EXECUTION_ENVIRONMENT_ID.strip():
             raise RuntimeError("EXECUTION_ENVIRONMENT_ID must not be empty")

@@ -710,7 +710,17 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
             ),
             "/execution/v2/packs": ("GET", "workflow.design", False),
             "/execution/v2/assets": ("GET", "workflow.design", False),
+            "/execution/v2/renderer-capabilities": (
+                "GET",
+                "workflow.design",
+                False,
+            ),
             "/execution/v2/monitoring": ("GET", "audit.read", False),
+            "/execution/v2/workflow-releases": (
+                "GET",
+                "workflow.design",
+                False,
+            ),
             "/execution/v2/workflow-releases/preflight": (
                 "POST",
                 "workflow.design",
@@ -782,10 +792,10 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
             )
 
         auth = AuthContext(session=None, user=self.admin)
-        self.assertEqual(len(packs(_auth=auth)["items"]), 3)
+        self.assertEqual(len(packs(_auth=auth)["items"]), 5)
         self.assertGreaterEqual(len(assets(_auth=auth)["items"]), 1)
         specs = node_specs(node_type=None, _auth=auth)["items"]
-        self.assertEqual(len(specs), 39)
+        self.assertEqual(len(specs), 57)
         selected_spec = specs[0]
         selected_detail = node_spec(
             selected_spec["type"],
@@ -799,7 +809,7 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
         )
         monitor = monitoring(_auth=auth, db=self.db)
         self.assertEqual(len(monitor["registry_revision"]), 64)
-        self.assertEqual(len(monitor["pack_readiness"]), 3)
+        self.assertEqual(len(monitor["pack_readiness"]), 5)
 
         document = build_readonly_file_query_smoke_release()
         content = content_preflight(
@@ -870,6 +880,26 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
         )
         self.assertEqual(
             canonical_json_bytes(exported), canonical_json_bytes(document)
+        )
+        with self.assertRaises(ExecutionApiError) as unavailable:
+            rollback_release(
+                workflow_id,
+                WorkflowReleaseRollbackRequest(
+                    target_local_version=local_version,
+                    reason="worker unavailable",
+                ),
+                auth=auth,
+                db=self.db,
+            )
+        self.assertEqual(
+            unavailable.exception.code,
+            "rollback_node_capability_unavailable",
+        )
+        self.db.rollback()
+        record_worker_heartbeat(
+            self.db,
+            worker_id="release-v2-api-worker",
+            capability_document=worker_capability_document(),
         )
         rolled_back = rollback_release(
             workflow_id,

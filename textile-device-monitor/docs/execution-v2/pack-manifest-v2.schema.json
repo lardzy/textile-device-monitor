@@ -5,7 +5,8 @@
   "type": "object",
   "required": [
     "manifest_schema_version", "pack_id", "pack_version",
-    "engine_version_range", "resource_paths", "provides", "assets"
+    "engine_version_range", "distribution_digest", "resource_paths",
+    "provides", "assets"
   ],
   "properties": {
     "manifest_schema_version": {"const": "1.0"},
@@ -35,7 +36,10 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["type", "type_version", "source"],
+            "required": [
+              "type", "type_version", "source", "contract_digest",
+              "implementation_digest", "handler_channel"
+            ],
             "properties": {
               "type": {"$ref": "#/$defs/nodeType"},
               "type_version": {"type": "integer", "minimum": 1},
@@ -43,9 +47,22 @@
               "spec_resource": {"type": "string"},
               "contract_digest": {"$ref": "#/$defs/sha256"},
               "implementation_digest": {"$ref": "#/$defs/sha256"},
-              "handler_channel": {"enum": ["kernel_builtin", "human", "external_operation", "worker_callable", "placeholder"]}
+              "implementation_resources": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/resourcePath"}
+              },
+              "handler_channel": {"enum": ["kernel_builtin", "human", "external_operation", "worker_callable", "placeholder"]},
+              "preferred": {"type": "boolean", "default": false}
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {"properties": {"source": {"const": "resource"}}},
+                "then": {"required": ["spec_resource", "handler_channel"]}
+              }
+            ]
           },
           "uniqueItems": true
         },
@@ -62,6 +79,20 @@
             },
             "additionalProperties": false
           }
+        },
+        "renderers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["capability", "version", "contract_digest"],
+            "properties": {
+              "capability": {"$ref": "#/$defs/identifier"},
+              "version": {"$ref": "#/$defs/semver"},
+              "contract_digest": {"$ref": "#/$defs/sha256"}
+            },
+            "additionalProperties": false
+          },
+          "uniqueItems": true
         }
       },
       "additionalProperties": false

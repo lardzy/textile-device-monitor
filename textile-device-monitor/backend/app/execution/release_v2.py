@@ -50,6 +50,7 @@ from app.execution.models import (
     utcnow,
 )
 from app.execution.validation import (
+    ValidationResult,
     definition_checksum,
     validate_definition,
     workflow_contract_checksum,
@@ -61,7 +62,7 @@ from app.execution.v2.canonical import (
 )
 
 
-ENGINE_VERSION = "2.0.0"
+ENGINE_VERSION = "2.1.0"
 CONTRACT_FORMAT = "workflow-release-v2"
 SIDE_EFFECT_ORDER = {
     "none": 0,
@@ -75,6 +76,12 @@ SIDE_EFFECT_SUMMARY = {
     "reversible_local_write": "local_write",
     "durable_write": "publish",
     "external_write": "external_write",
+}
+ROLLOUT_PROFILE_RANK = {
+    "p1_readonly": 0,
+    "p2_human": 1,
+    "p2_local_write": 2,
+    "p2_publish": 3,
 }
 SLOT_GROUPS = (
     "root_slots",
@@ -146,6 +153,49 @@ def _execution_kind(binding: dict[str, Any]) -> str:
     if isinstance(execution, dict):
         return str(execution.get("kind") or "")
     return str(execution or binding.get("execution_kind") or "")
+
+
+def rollout_profile_blockers(
+    node_instances: list[dict[str, Any]],
+    *,
+    profile: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return deterministic P2 rollout blockers for immutable node bindings."""
+
+    selected = (profile or settings.EXECUTION_V2_ROLLOUT_PROFILE).strip().lower()
+    rank = ROLLOUT_PROFILE_RANK.get(selected, -1)
+    blockers: list[dict[str, Any]] = []
+    for instance in sorted(node_instances, key=lambda item: item.get("node_id", "")):
+        kind = str(instance.get("execution_kind") or "")
+        side_effect = str(instance.get("side_effect_class") or "none")
+        source = str(instance.get("source") or "v1_registry_adapter")
+        code: str | None = None
+        if kind == "external_side_effect" or side_effect == "external_write":
+            code = "external_write_blocked_until_p4"
+        elif source == "v1_registry_adapter" and side_effect in {
+            "reversible_local_write",
+            "durable_write",
+        }:
+            code = "compatibility_write_blocked_p2"
+        elif kind == "human" and (source != "resource" or rank < 1):
+            code = "native_human_profile_required"
+        elif side_effect == "reversible_local_write" and (
+            source != "resource" or rank < 2
+        ):
+            code = "local_write_profile_required"
+        elif side_effect == "durable_write" and (
+            source != "resource" or rank < 3
+        ):
+            code = "publish_profile_required"
+        if code is not None:
+            blockers.append(
+                {
+                    "node_id": instance.get("node_id"),
+                    "code": code,
+                    "profile": selected,
+                }
+            )
+    return blockers
 
 
 def _validate_document_shape(document: dict[str, Any]) -> list[dict[str, str]]:
@@ -297,13 +347,111 @@ def _schema_issues(
     return issues
 
 
+def _portable_human_form_schema_issues(
+    schema: Any, path: str
+) -> list[dict[str, str]]:
+    if not isinstance(schema, dict):
+        return [_issue("human_form_schema_invalid", path, "form_schema must be an object schema")]
+    try:
+        Draft202012Validator.check_schema(schema)
+    except Exception as exc:
+        return [_issue("human_form_schema_invalid", path, str(exc))]
+    forbidden = {
+        "$ref",
+        "$dynamicRef",
+        "if",
+        "then",
+        "else",
+        "not",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "dependentSchemas",
+        "patternProperties",
+        "unevaluatedProperties",
+        "contentEncoding",
+        "contentMediaType",
+    }
+    issues: list[dict[str, str]] = []
+
+    def visit(value: Any, current_path: str, *, root: bool = False) -> None:
+        if not isinstance(value, dict):
+            issues.append(
+                _issue(
+                    "human_form_schema_not_supported",
+                    current_path,
+                    "Every form field schema must be an object",
+                )
+            )
+            return
+        blocked = sorted(forbidden.intersection(value))
+        if blocked:
+            issues.append(
+                _issue(
+                    "human_form_schema_not_supported",
+                    current_path,
+                    f"Unsupported form keywords: {', '.join(blocked)}",
+                )
+            )
+        declared_type = value.get("type")
+        types = set(declared_type) if isinstance(declared_type, list) else {declared_type}
+        types.discard(None)
+        types.discard("null")
+        if root and types != {"object"}:
+            issues.append(
+                _issue(
+                    "human_form_schema_not_supported",
+                    current_path,
+                    "The root form schema must be an object",
+                )
+            )
+        if "object" in types:
+            if value.get("additionalProperties") is not False:
+                issues.append(
+                    _issue(
+                        "human_form_schema_not_supported",
+                        current_path,
+                        "Form object schemas must be closed",
+                    )
+                )
+            properties = value.get("properties") or {}
+            if not isinstance(properties, dict):
+                issues.append(
+                    _issue(
+                        "human_form_schema_invalid",
+                        f"{current_path}.properties",
+                        "properties must be an object",
+                    )
+                )
+            else:
+                for name in sorted(properties):
+                    visit(properties[name], f"{current_path}.properties.{name}")
+        if "array" in types:
+            items = value.get("items")
+            item_type = items.get("type") if isinstance(items, dict) else None
+            item_types = set(item_type) if isinstance(item_type, list) else {item_type}
+            if "object" in item_types or "array" in item_types or items is None:
+                issues.append(
+                    _issue(
+                        "human_form_schema_not_supported",
+                        f"{current_path}.items",
+                        "P2 forms support scalar arrays only",
+                    )
+                )
+            elif isinstance(items, dict):
+                visit(items, f"{current_path}.items")
+
+    visit(schema, path, root=True)
+    return issues
+
+
 def _effective_schemas(
     node: dict[str, Any],
     binding: dict[str, Any],
     document: dict[str, Any],
 ) -> tuple[Any, Any]:
-    node_type = node["type"]
     definition = document["definition"]
+    node_type = node["type"]
     if node_type == "core.start":
         schema = deepcopy(definition["input_schema"])
         return schema, deepcopy(schema)
@@ -311,15 +459,36 @@ def _effective_schemas(
         schema = deepcopy(definition["output_schema"])
         return schema, deepcopy(schema)
     config = node.get("config") or {}
-    if node_type in {"human.form", "human.input"} and isinstance(
-        config.get("form_schema"), (dict, bool)
-    ):
-        output = deepcopy(config["form_schema"])
-        return deepcopy(binding.get("input_schema") or {}), output
-    return (
-        deepcopy(binding.get("input_schema") or {}),
-        deepcopy(binding.get("output_schema") or {}),
-    )
+
+    def pointer(root: Any, value: str | None) -> Any:
+        current = root
+        for part in str(value or "").split("/")[1:]:
+            key = part.replace("~1", "/").replace("~0", "~")
+            if not isinstance(current, dict) or key not in current:
+                raise LookupError(value)
+            current = current[key]
+        return current
+
+    def resolve(direction: str) -> Any:
+        bindings = binding.get("schema_bindings") or {}
+        schema_binding = bindings.get(direction) or {"source": "node_spec"}
+        source = schema_binding.get("source")
+        if source == "node_spec":
+            return deepcopy(binding.get(f"{direction}_schema") or {})
+        if source == "workflow_input_schema":
+            return deepcopy(definition["input_schema"])
+        if source == "workflow_output_schema":
+            return deepcopy(definition["output_schema"])
+        if source == "node_config":
+            return deepcopy(pointer(config, schema_binding.get("pointer")))
+        raise LookupError(source)
+
+    try:
+        return resolve("input"), resolve("output")
+    except LookupError as exc:
+        raise ValueError(
+            f"effective schema binding cannot be resolved for {node_type}: {exc}"
+        ) from exc
 
 
 def _binding_digest(binding: dict[str, Any]) -> str:
@@ -492,6 +661,13 @@ def _resolve_dependencies(
     declared_capabilities: set[str] = set()
     used_operation_keys: set[tuple[str, str, int]] = set()
     pack_by_id = {pack.get("pack_id"): pack for pack in resolved_packs}
+    resource_slots = {
+        group: {
+            slot["slot_id"]: slot
+            for slot in document["resources"].get(group) or []
+        }
+        for group in SLOT_GROUPS
+    }
     for index, node in enumerate(document["definition"]["nodes"]):
         identity = (node["type"], node["type_version"])
         used_identities.add(identity)
@@ -558,7 +734,34 @@ def _resolve_dependencies(
                 f"$.definition.nodes[{index}].config",
             )
         )
-        input_schema, output_schema = _effective_schemas(node, binding, document)
+        if identity == ("human.form", 1):
+            issues.extend(
+                _portable_human_form_schema_issues(
+                    (node.get("config") or {}).get("form_schema"),
+                    f"$.definition.nodes[{index}].config.form_schema",
+                )
+            )
+        if node.get("runtime_policy"):
+            issues.append(
+                _issue(
+                    "runtime_policy_not_supported_p2",
+                    f"$.definition.nodes[{index}].runtime_policy",
+                    "P2 uses the fixed engine lease, retry and fail_run policy",
+                )
+            )
+        try:
+            input_schema, output_schema = _effective_schemas(
+                node, binding, document
+            )
+        except ValueError as exc:
+            issues.append(
+                _issue(
+                    "node_schema_binding_invalid",
+                    f"$.definition.nodes[{index}]",
+                    str(exc),
+                )
+            )
+            input_schema, output_schema = {}, {}
         kind = _execution_kind(binding)
         execution_kinds.add(kind)
         side_effect_class = str(binding.get("side_effect_class") or "none")
@@ -575,6 +778,34 @@ def _resolve_dependencies(
         if SIDE_EFFECT_ORDER[summarized] > SIDE_EFFECT_ORDER[max_side_effect]:
             max_side_effect = summarized
         requirements = spec_value.get("requirements") or {}
+        resources = requirements.get("resources") or {}
+        config = node.get("config") or {}
+        access_rank = {"read": 0, "write": 1, "publish": 2}
+        for requirement in resources.get("root_slots") or []:
+            pointer = str(requirement.get("config_pointer") or "")
+            key = pointer[1:] if pointer.startswith("/") else ""
+            slot_id = config.get(key) if key else None
+            if slot_id in (None, "") and not requirement.get("required"):
+                continue
+            declared_slot = resource_slots["root_slots"].get(slot_id)
+            if declared_slot is None:
+                issues.append(
+                    _issue(
+                        "node_root_slot_missing",
+                        f"$.definition.nodes[{index}].config.{key}",
+                        "Node config does not reference a declared root slot",
+                    )
+                )
+                continue
+            required_access = str(requirement.get("access") or "read")
+            if access_rank[declared_slot["access"]] < access_rank[required_access]:
+                issues.append(
+                    _issue(
+                        "root_access_mismatch",
+                        f"$.definition.nodes[{index}].config.{key}",
+                        "Declared root slot does not provide the required access",
+                    )
+                )
         for requirement in requirements.get("capabilities") or []:
             capability_id = requirement.get("capability_id")
             if capability_id:
@@ -631,6 +862,16 @@ def _resolve_dependencies(
                 "pack_version": binding["pack_version"],
                 "execution_kind": kind,
                 "execution_binding_digest": _binding_digest(binding),
+                "source": binding.get("source"),
+                "side_effect_class": side_effect_class,
+                "handler_channel": binding.get("handler_channel"),
+                "schema_bindings": deepcopy(binding.get("schema_bindings") or {}),
+                "ports": deepcopy(binding.get("ports") or {}),
+                "suspension": deepcopy(binding.get("suspension")),
+                "renderer_contract": deepcopy(
+                    binding.get("renderer_contract") or {}
+                ),
+                "lifecycle": deepcopy(binding.get("lifecycle") or {}),
                 "publishable": bool(binding.get("publishable")),
                 "installed_ready": bool(binding.get("ready")),
                 "effective_input_schema": input_schema,
@@ -920,7 +1161,7 @@ def _content_semantic_issues(
     # slot to the legacy const when one exists; an actual environment identity
     # is still required and revalidated during publish preflight.
     legacy_root_by_slot: dict[str, str] = {}
-    from app.execution.registry import node_registry
+    from app.execution.registry import NodeRegistry, NodeType, node_registry
 
     for node in document["definition"].get("nodes") or []:
         node_type = node_registry.get(
@@ -989,7 +1230,98 @@ def _content_semantic_issues(
     projection = compile_runtime_projection(
         document, SimpleNamespace(binding=bindings)
     )
-    result = validate_definition(projection, for_publish=False)
+    dependency_by_identity = {
+        (item["type"], item["type_version"]): item
+        for item in document["dependencies"].get("node_types") or []
+    }
+    semantic_registry = NodeRegistry()
+    compatibility_node_ids: set[str] = set()
+
+    def project_config_schema(schema: Any) -> Any:
+        if not isinstance(schema, dict):
+            return deepcopy(schema)
+        value = deepcopy(schema)
+        properties = value.get("properties")
+        if isinstance(properties, dict):
+            projected: dict[str, Any] = {}
+            for key, item in properties.items():
+                if key == "root_slot":
+                    target = "root_id"
+                elif key.endswith("_root_slot"):
+                    target = key[: -len("_root_slot")] + "_root_id"
+                elif key.endswith("_role_slot"):
+                    target = key[: -len("_role_slot")] + "_role_key"
+                elif key.endswith("_rule_slot"):
+                    target = key[: -len("_rule_slot")] + "_rule_key"
+                else:
+                    target = key
+                projected[target] = item
+            value["properties"] = projected
+            value["required"] = [
+                (
+                    "root_id"
+                    if key == "root_slot"
+                    else key[: -len("_root_slot")] + "_root_id"
+                    if key.endswith("_root_slot")
+                    else key[: -len("_role_slot")] + "_role_key"
+                    if key.endswith("_role_slot")
+                    else key[: -len("_rule_slot")] + "_rule_key"
+                    if key.endswith("_rule_slot")
+                    else key
+                )
+                for key in value.get("required") or []
+            ]
+        return value
+
+    registered: set[tuple[str, int]] = set()
+    for portable_node, projected_node in zip(
+        document["definition"]["nodes"], projection["nodes"], strict=True
+    ):
+        identity = (
+            portable_node["type"],
+            portable_node["type_version"],
+        )
+        dependency = dependency_by_identity.get(identity)
+        if dependency is None:
+            continue
+        try:
+            installed = _registry_api().resolve_node_spec(
+                identity[0], identity[1], dependency["contract_digest"]
+            )
+        except (LookupError, ValueError, TypeError):
+            continue
+        if installed.source == "v1_registry_adapter":
+            compatibility_node_ids.add(projected_node["id"])
+        if identity in registered:
+            continue
+        if installed.source == "v1_registry_adapter":
+            node_type = node_registry.get(*identity)
+            if node_type is None:
+                continue
+        else:
+            spec = installed.spec
+            config_schema = project_config_schema(spec["config_schema"])
+            node_type = NodeType(
+                type=identity[0],
+                version=identity[1],
+                name=spec["name"],
+                category=spec["category"],
+                description=spec["description"],
+                execution_kind=spec["execution"]["kind"],
+                required_config=tuple(config_schema.get("required") or ()),
+                config_schema=config_schema,
+                input_schema=deepcopy(installed.input_schema),
+                output_schema=deepcopy(installed.output_schema),
+                publishable=installed.publishable,
+            )
+        semantic_registry.register(node_type)
+        registered.add(identity)
+    result = validate_definition(
+        projection,
+        registry=semantic_registry,
+        for_publish=False,
+        compatibility_node_ids=compatibility_node_ids,
+    )
     return [
         _issue(
             issue.code,
@@ -1100,15 +1432,19 @@ def preflight_release(
                     "Execution v2 publish is enabled only in enforced mode",
                 )
             )
+    node_instances = dependency_lock.get("node_instances") or []
+    profile = settings.EXECUTION_V2_ROLLOUT_PROFILE.strip().lower()
+    profile_blockers = rollout_profile_blockers(
+        node_instances,
+        profile=profile,
+    )
     rollout_ready = bool(
         content_valid
-        and computed_capabilities.get("side_effect_level") == "none"
-        and computed_capabilities.get("requires_human_approval") is False
+        and not profile_blockers
         and all(
-            item.get("execution_kind") == "automatic"
-            and item.get("publishable") is True
+            item.get("publishable") is True
             and item.get("installed_ready") is True
-            for item in dependency_lock.get("node_instances") or []
+            for item in node_instances
         )
     )
     if content_valid:
@@ -1131,12 +1467,21 @@ def preflight_release(
                         level="warning",
                     )
                 )
-    if content_valid and not rollout_ready:
+    for blocker in profile_blockers:
+        issues.append(
+            _issue(
+                blocker["code"],
+                f"$.definition.nodes[{blocker['node_id']}]",
+                f"Node is blocked by rollout profile {profile}",
+                level="warning",
+            )
+        )
+    if content_valid and not rollout_ready and profile == "p1_readonly":
         issues.append(
             _issue(
                 "p1_publish_gate_blocked",
                 "$.capabilities",
-                "P1 publishes only automatic, none/read-only releases",
+                "The default p1_readonly profile does not admit this Release",
                 level="warning",
             )
         )
@@ -1157,6 +1502,8 @@ def preflight_release(
         "computed_capabilities": computed_capabilities,
         "asset_lock": asset_lock,
         "binding_revision": binding.revision if binding is not None else None,
+        "rollout_profile": profile,
+        "rollout_blockers": profile_blockers,
     }
     token = _new_token()
     ttl = int(settings.EXECUTION_RELEASE_PREFLIGHT_TTL_MINUTES)
@@ -1537,14 +1884,24 @@ def compile_runtime_projection(
             }
         )
     nodes = []
+    native_join_modes: dict[str, str] = {}
     for node in definition["nodes"]:
         value = deepcopy(node)
         value["config"] = _project_config_value(value.get("config") or {}, bindings)
         value.pop("runtime_policy", None)
         nodes.append(value)
+        if value.get("type") == "flow.join":
+            native_join_modes[str(value.get("id"))] = str(
+                (value.get("config") or {}).get("mode") or "all_selected"
+            )
     edges = []
     for edge in definition["edges"]:
         value = deepcopy(edge)
+        join_mode = native_join_modes.get(str(value.get("target")))
+        if join_mode is not None:
+            value["join_policy"] = (
+                "any" if join_mode == "first_selected" else "all"
+            )
         if value.get("join_policy") == "all":
             value.pop("join_policy", None)
         edges.append(value)
@@ -1563,6 +1920,110 @@ def compile_runtime_projection(
         "nodes": nodes,
         "edges": edges,
     }
+
+
+def _validate_v2_runtime_projection(
+    document: dict[str, Any], projection: dict[str, Any]
+) -> ValidationResult:
+    """Run the established DAG validator with a release-scoped registry.
+
+    Native contracts deliberately never enter the global v1 ``node_registry``.
+    The projection validator therefore materializes only the exact contracts
+    pinned by this Release, while marking compatibility nodes so legacy domain
+    policies cannot leak onto native primitives.
+    """
+
+    from app.execution.registry import NodeRegistry, NodeType, node_registry
+
+    dependencies = {
+        (item["type"], item["type_version"]): item
+        for item in document["dependencies"].get("node_types") or []
+    }
+    semantic_registry = NodeRegistry()
+    compatibility_node_ids: set[str] = set()
+    registered: set[tuple[str, int]] = set()
+
+    def projected_config_schema(schema: Any) -> Any:
+        if not isinstance(schema, dict):
+            return deepcopy(schema)
+        value = deepcopy(schema)
+        properties = value.get("properties")
+        if not isinstance(properties, dict):
+            return value
+        projected: dict[str, Any] = {}
+        for key, item in properties.items():
+            if key == "root_slot":
+                target = "root_id"
+            elif key.endswith("_root_slot"):
+                target = key[: -len("_root_slot")] + "_root_id"
+            elif key.endswith("_role_slot"):
+                target = key[: -len("_role_slot")] + "_role_key"
+            elif key.endswith("_rule_slot"):
+                target = key[: -len("_rule_slot")] + "_rule_key"
+            else:
+                target = key
+            projected[target] = item
+        value["properties"] = projected
+        value["required"] = [
+            (
+                "root_id"
+                if key == "root_slot"
+                else key[: -len("_root_slot")] + "_root_id"
+                if key.endswith("_root_slot")
+                else key[: -len("_role_slot")] + "_role_key"
+                if key.endswith("_role_slot")
+                else key[: -len("_rule_slot")] + "_rule_key"
+                if key.endswith("_rule_slot")
+                else key
+            )
+            for key in value.get("required") or []
+        ]
+        return value
+
+    for portable, projected in zip(
+        document["definition"]["nodes"],
+        projection["nodes"],
+        strict=True,
+    ):
+        identity = (portable["type"], portable["type_version"])
+        dependency = dependencies.get(identity)
+        if dependency is None:
+            continue
+        installed = _registry_api().resolve_node_spec(
+            identity[0], identity[1], dependency["contract_digest"]
+        )
+        if installed.source == "v1_registry_adapter":
+            compatibility_node_ids.add(str(projected["id"]))
+        if identity in registered:
+            continue
+        if installed.source == "v1_registry_adapter":
+            node_type = node_registry.get(*identity)
+            if node_type is None:
+                continue
+        else:
+            spec = installed.spec
+            config_schema = projected_config_schema(spec["config_schema"])
+            node_type = NodeType(
+                type=identity[0],
+                version=identity[1],
+                name=spec["name"],
+                category=spec["category"],
+                description=spec["description"],
+                execution_kind=spec["execution"]["kind"],
+                required_config=tuple(config_schema.get("required") or ()),
+                config_schema=config_schema,
+                input_schema=deepcopy(installed.input_schema),
+                output_schema=deepcopy(installed.output_schema),
+                publishable=installed.publishable,
+            )
+        semantic_registry.register(node_type)
+        registered.add(identity)
+    return validate_definition(
+        projection,
+        registry=semantic_registry,
+        for_publish=True,
+        compatibility_node_ids=compatibility_node_ids,
+    )
 
 
 def _release_row(db: Session, release_id: str) -> ExecutionWorkflowRelease:
@@ -1615,7 +2076,7 @@ def publish_release(
         )
     document = release.portable_document
     projection = compile_runtime_projection(document, binding)
-    validation = validate_definition(projection, for_publish=True)
+    validation = _validate_v2_runtime_projection(document, projection)
     if not validation.valid:
         raise ExecutionApiError(
             422,
@@ -1940,29 +2401,20 @@ def _validate_rollback_target(
             "rollback_dependency_lock_invalid",
             "目标版本 dependency lock 摘要不一致",
         )
-    registry_api = _registry_api()
+    profile_blockers = rollout_profile_blockers(lock.get("node_instances") or [])
+    if profile_blockers:
+        raise ExecutionApiError(
+            409,
+            "rollback_rollout_profile_blocked",
+            "目标版本超出当前 rollout profile",
+            details={"blockers": profile_blockers},
+        )
+    heartbeat_threshold = utcnow() - timedelta(
+        seconds=int(settings.EXECUTION_WORKER_HEARTBEAT_TIMEOUT_SECONDS)
+    )
     for instance in lock.get("node_instances") or []:
-        try:
-            installed = _public_value(
-                registry_api.executable_binding_for(
-                    instance["type"],
-                    instance["type_version"],
-                    instance["contract_digest"],
-                )
-            )
-        except (LookupError, RuntimeError, ValueError, TypeError) as exc:
-            raise ExecutionApiError(
-                409,
-                "rollback_node_binding_unavailable",
-                "目标版本的精确节点实现当前不可用",
-                details={"node_id": instance.get("node_id")},
-            ) from exc
         if (
-            installed.get("implementation_digest")
-            != instance.get("implementation_digest")
-            or _binding_digest(installed)
-            != instance.get("execution_binding_digest")
-            or canonical_sha256(instance.get("effective_input_schema"))
+            canonical_sha256(instance.get("effective_input_schema"))
             != instance.get("effective_input_schema_digest")
             or canonical_sha256(instance.get("effective_output_schema"))
             != instance.get("effective_output_schema_digest")
@@ -1970,10 +2422,34 @@ def _validate_rollback_target(
             raise ExecutionApiError(
                 409,
                 "rollback_node_binding_mismatch",
-                "目标版本的节点实现或 effective schema 摘要不一致",
+                "目标版本的 effective schema 摘要不一致",
+                details={"node_id": instance.get("node_id")},
+            )
+        compatible = (
+            db.query(ExecutionWorkerNodeCapability.id)
+            .join(
+                ExecutionWorkerHeartbeat,
+                ExecutionWorkerHeartbeat.worker_id
+                == ExecutionWorkerNodeCapability.worker_id,
+            )
+            .filter(
+                ExecutionWorkerNodeCapability.execution_binding_digest
+                == instance.get("execution_binding_digest"),
+                ExecutionWorkerNodeCapability.ready.is_(True),
+                ExecutionWorkerHeartbeat.status == "running",
+                ExecutionWorkerHeartbeat.last_seen_at >= heartbeat_threshold,
+            )
+            .first()
+        )
+        if compatible is None:
+            raise ExecutionApiError(
+                409,
+                "rollback_node_capability_unavailable",
+                "目标版本没有 fresh ready Worker 提供精确执行能力",
                 details={"node_id": instance.get("node_id")},
             )
 
+    registry_api = _registry_api()
     asset_lock = deepcopy(target.asset_lock or {})
     recorded_asset_digest = asset_lock.pop("digest", None)
     if not recorded_asset_digest or canonical_sha256(asset_lock) != recorded_asset_digest:
@@ -2132,7 +2608,18 @@ def rollback_workflow(
 
 def _compat_node_dependency(node: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     registry_api = _registry_api()
-    spec = registry_api.resolve_node_spec(node["type"], int(node.get("type_version") or 1))
+    identity = (node["type"], int(node.get("type_version") or 1))
+    matching = [
+        item
+        for item in registry_api.get_installed_registry().list_node_specs()
+        if (item.type, item.type_version) == identity
+        and item.source == "v1_registry_adapter"
+    ]
+    if len(matching) != 1:
+        raise LookupError(
+            f"v1 compatibility NodeSpec not installed: {identity[0]}@{identity[1]}"
+        )
+    spec = matching[0]
     value = _public_value(spec)
     dependency = {
         "type": value["type"],
@@ -2427,12 +2914,337 @@ def _migrate_v1_definition(
     return migrated, suggestions
 
 
+P2_COMPLETE_WORKFLOW_SLUGS = {
+    "electron-source-selection",
+    "hemp-cotton-source-selection",
+    "special-wool-source-selection",
+    "system-controlled-xlsx-write-test",
+}
+
+
+def _installed_node_for_source(
+    node_type: str,
+    type_version: int,
+    source: str,
+):
+    matching = [
+        item
+        for item in _registry_api().get_installed_registry().list_node_specs()
+        if item.type == node_type
+        and item.type_version == type_version
+        and item.source == source
+    ]
+    if len(matching) != 1:
+        raise LookupError(
+            f"exact {source} NodeSpec unavailable: {node_type}@{type_version}"
+        )
+    return matching[0]
+
+
+def _rebuild_candidate_dependencies(candidate: dict[str, Any]) -> None:
+    dependencies: dict[tuple[str, int], dict[str, Any]] = {}
+    packs: dict[str, dict[str, Any]] = {}
+    for node in candidate["definition"]["nodes"]:
+        identity = (node["type"], int(node.get("type_version") or 1))
+        preferred_source = (
+            "resource"
+            if node.pop("__native_p2", False)
+            else "v1_registry_adapter"
+        )
+        installed = _installed_node_for_source(
+            identity[0], identity[1], preferred_source
+        )
+        dependencies[identity] = {
+            "type": identity[0],
+            "type_version": identity[1],
+            "contract_digest": installed.contract_digest,
+            "implementation_digest": installed.implementation_digest,
+        }
+        pack = _registry_api().get_installed_registry().resolve_pack(
+            installed.pack_id,
+            installed.pack_version,
+            installed.distribution_digest,
+        )
+        packs[pack.pack_id] = {
+            "pack_id": pack.pack_id,
+            "version_range": pack.pack_version,
+            "distribution_digest": pack.distribution_digest,
+            "required_on": ["api", "worker"],
+        }
+    # Connector dependencies from deferred compatibility nodes remain intact;
+    # pack ownership for them is already present in the compat candidate.
+    for existing in candidate["dependencies"].get("packs") or []:
+        if existing.get("required_on") == ["api", "bridge"]:
+            packs[existing["pack_id"]] = existing
+    candidate["dependencies"]["engine"] = {
+        "version_range": ">=2.1.0 <3.0.0"
+    }
+    candidate["dependencies"]["node_types"] = sorted(
+        dependencies.values(),
+        key=lambda item: (item["type"], item["type_version"]),
+    )
+    candidate["dependencies"]["packs"] = sorted(
+        packs.values(), key=lambda item: item["pack_id"]
+    )
+
+
+def _native_marker(node: dict[str, Any]) -> dict[str, Any]:
+    node["__native_p2"] = True
+    return node
+
+
+def _native_p2_candidate(
+    workflow: ExecutionWorkflow,
+    compat_candidate: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    candidate = deepcopy(compat_candidate)
+    transformations: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = []
+    nodes = candidate["definition"]["nodes"]
+    edges = candidate["definition"]["edges"]
+    if workflow.slug in {
+        "electron-source-selection",
+        "hemp-cotton-source-selection",
+        "special-wool-source-selection",
+    }:
+        node_by_id = {node["id"]: node for node in nodes}
+        query = node_by_id["query"]
+        original_query_type = query["type"]
+        original_config = deepcopy(query.get("config") or {})
+        query["type"] = "file.query"
+        query["type_version"] = 1
+        query["config"] = {
+            "root_slot": original_config["root_slot"],
+            "recent_days": original_config.get("recent_days", 7),
+            "limit": original_config.get("limit", 6),
+            "sort": "modified_desc",
+            "projection": [
+                "id",
+                "root_id",
+                "relative_path",
+                "name",
+                "suffix",
+                "size",
+                "modified_at",
+                "category",
+                "fingerprint",
+                "metadata",
+            ],
+            **(
+                {"extensions": [".sif", ".bmp", ".txt"]}
+                if original_query_type == "electron.group"
+                else {}
+            ),
+        }
+        _native_marker(query)
+        selection_source = "$.nodes.query.output.items"
+        if original_query_type == "electron.group":
+            group_id = f"{query['id']}-group"
+            group_node = _native_marker(
+                {
+                    "id": group_id,
+                    "type": "file.group",
+                    "type_version": 1,
+                    "name": "按采集名称分组",
+                    "config": {
+                        "group_strategy": "same_acquisition_name",
+                        "limit": original_config.get("limit", 6),
+                    },
+                    "input_mapping": {
+                        "items": "$.nodes.query.output.items"
+                    },
+                    "ui": {
+                        "x": (query.get("ui") or {}).get("x", 280) + 130,
+                        "y": (query.get("ui") or {}).get("y", 180),
+                    },
+                }
+            )
+            query_index = nodes.index(query)
+            nodes.insert(query_index + 1, group_node)
+            outgoing = [edge for edge in edges if edge["source"] == query["id"]]
+            for edge in outgoing:
+                edge["target"] = group_id
+            edges.append(
+                {
+                    "id": f"{query['id']}-group-to-select",
+                    "source": group_id,
+                    "target": "select",
+                    "join_policy": "all",
+                }
+            )
+            selection_source = f"$.nodes.{group_id}.output.groups"
+            transformations.append(
+                {
+                    "migration_id": "electron-group-v1-to-file-query-group-v1",
+                    "source_node_id": query["id"],
+                    "source": {"type": "electron.group", "type_version": 1},
+                    "targets": [
+                        {"node_id": query["id"], "type": "file.query", "type_version": 1},
+                        {"node_id": group_id, "type": "file.group", "type_version": 1},
+                    ],
+                    "edge_changes": ["query outgoing edge retargeted through derived group node"],
+                }
+            )
+        else:
+            transformations.append(
+                {
+                    "migration_id": "file-index-query-v1-to-file-query-v1",
+                    "source_node_id": query["id"],
+                    "source": {"type": original_query_type, "type_version": 1},
+                    "targets": [{"node_id": query["id"], "type": "file.query", "type_version": 1}],
+                    "config_changes": ["root_slot preserved; stable sort and projection frozen"],
+                }
+            )
+        select = node_by_id["select"]
+        old_select_type = select["type"]
+        old_select_config = select.get("config") or {}
+        select["type"] = "human.select"
+        select["type_version"] = 1
+        select["config"] = {
+            "title": old_select_config.get("title") or "选择文件",
+            "description": old_select_config.get("description") or "",
+            "item_kind": "artifact",
+            "min_selected": 1,
+            "max_selected": 100 if old_select_config.get("allow_multiple", True) else 1,
+            "require_primary": bool(old_select_config.get("require_primary", False)),
+            "auto_submit_single_candidate": bool(
+                old_select_config.get("auto_submit_single_candidate", False)
+            ),
+        }
+        select["input_mapping"] = {"items": selection_source}
+        _native_marker(select)
+        transformations.append(
+            {
+                "migration_id": "human-file-selection-v1-to-human-select-v1",
+                "source_node_id": select["id"],
+                "source": {"type": old_select_type, "type_version": 1},
+                "targets": [{"node_id": select["id"], "type": "human.select", "type_version": 1}],
+                "mapping_changes": [f"items <- {selection_source}"],
+            }
+        )
+        result = node_by_id["result"]
+        old_result_type = result["type"]
+        result["type"] = "data.aggregate"
+        result["type_version"] = 1
+        result["config"] = {"mode": "collect", "conflict": "error"}
+        result["input_mapping"] = {
+            "items": "$.nodes.select.output.selected_items"
+        }
+        _native_marker(result)
+        transformations.append(
+            {
+                "migration_id": "result-aggregate-v1-to-data-aggregate-v1",
+                "source_node_id": result["id"],
+                "source": {"type": old_result_type, "type_version": 1},
+                "targets": [{"node_id": result["id"], "type": "data.aggregate", "type_version": 1}],
+            }
+        )
+    elif workflow.slug == "system-controlled-xlsx-write-test":
+        node_by_id = {node["id"]: node for node in nodes}
+        replacements = {
+            "classify": ("workbook.classify", 1),
+            "extract": ("workbook.extract_fields", 1),
+            "copy": ("workbook.copy", 1),
+            "write": ("workbook.write_cells", 2),
+            "verify": ("workbook.verify", 2),
+            "confirm": ("human.approval", 1),
+            "publish": ("artifact.publish", 2),
+        }
+        for node_id, target in replacements.items():
+            node = node_by_id[node_id]
+            source_identity = {"type": node["type"], "type_version": node.get("type_version", 1)}
+            node["type"], node["type_version"] = target
+            _native_marker(node)
+            transformations.append(
+                {
+                    "migration_id": f"{source_identity['type'].replace('.', '-')}-to-{target[0].replace('.', '-')}-v{target[1]}",
+                    "source_node_id": node_id,
+                    "source": source_identity,
+                    "targets": [{"node_id": node_id, "type": target[0], "type_version": target[1]}],
+                }
+            )
+        node_by_id["classify"]["config"] = {
+            "data_only": True,
+            "types": [
+                {
+                    "name": "controlled-test-workbook",
+                    "features": [
+                        {"sheet": "Sheet1", "cell": "A1", "operator": "nonempty"}
+                    ],
+                }
+            ],
+        }
+        node_by_id["extract"]["config"] = {
+            "data_only": True,
+            "fail_on_error": False,
+            "fields": [
+                {"name": "source_a1", "sheet": "Sheet1", "cell": "A1", "required": False}
+            ],
+        }
+        node_by_id["copy"]["config"] = {}
+        node_by_id["write"]["config"] = {}
+        node_by_id["verify"]["config"] = {}
+        node_by_id["confirm"]["config"] = {"title": "确认测试发布"}
+        node_by_id["confirm"]["input_mapping"] = {
+            "subject": {
+                "type": "workbook_mutation",
+                "digest": "$.nodes.verify.output.subject_digest",
+                "summary": "$.nodes.verify.output.verification",
+            }
+        }
+        publish_config = node_by_id["publish"].get("config") or {}
+        node_by_id["publish"]["config"] = {
+            "publish_root_slot": publish_config["publish_root_slot"]
+        }
+        node_by_id["publish"]["input_mapping"] = {
+            "mutation_id": "$.inputs.mutation_id",
+            "working_copy": "$.nodes.copy.output.working_copy",
+            "target": "$.inputs.target",
+            "verification_receipt": "$.nodes.verify.output",
+            "approval_receipt_id": "$.nodes.confirm.output.approval_receipt.id",
+        }
+    else:
+        for node in nodes:
+            if node["type"].startswith("external."):
+                phase = "P4"
+                code = "external_connector_deferred"
+            elif node["type"] not in {"core.start", "core.end"}:
+                phase = "P3"
+                code = "domain_primitive_deferred"
+            else:
+                continue
+            blockers.append(
+                {
+                    "phase": phase,
+                    "code": code,
+                    "node_id": node["id"],
+                    "message": f"{node['type']} remains a compatibility node",
+                }
+            )
+    candidate["definition"]["edges"] = sorted(
+        edges, key=lambda edge: str(edge.get("id"))
+    )
+    candidate["release"]["release_note"] = (
+        "Deterministic native P2 migration candidate"
+    )
+    # Migration diagnostics belong to the preview envelope.  Keep the portable
+    # Release document itself within the frozen v2 schema so the downloaded
+    # candidate can be fed straight back into content preflight.
+    _rebuild_candidate_dependencies(candidate)
+    scratch: list[dict[str, str]] = []
+    _lock, computed = _resolve_dependencies(candidate, scratch)
+    candidate["capabilities"] = computed
+    candidate["integrity"]["digest"] = _release_digest(candidate)
+    return candidate, transformations, blockers
+
+
 def preview_v1_migration(
     db: Session,
     *,
     workflow_id: str,
     source: str,
     actor: ExecutionUser,
+    target_profile: str = "compat_v1",
 ) -> dict[str, Any]:
     del actor
     workflow = db.get(ExecutionWorkflow, workflow_id)
@@ -2454,23 +3266,76 @@ def preview_v1_migration(
     candidate, suggestions = _migrate_v1_definition(
         db, workflow, definition, source_version
     )
+    transformations: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = []
+    if target_profile == "native_p2":
+        candidate, transformations, blockers = _native_p2_candidate(
+            workflow, candidate
+        )
     issues = _validate_document_shape(candidate)
     if not issues:
         issues.extend(_verify_integrity(candidate, _release_digest(candidate)))
         _lock, _capabilities = _resolve_dependencies(candidate, issues)
         issues.extend(_content_semantic_issues(candidate))
     content_valid = not any(issue["level"] == "error" for issue in issues)
+    dependency_source = {}
+    for dependency in candidate["dependencies"].get("node_types") or []:
+        try:
+            installed = _registry_api().resolve_node_spec(
+                dependency["type"],
+                dependency["type_version"],
+                dependency["contract_digest"],
+            )
+        except (LookupError, TypeError, ValueError):
+            continue
+        dependency_source[(installed.type, installed.type_version)] = installed.source
+    native_count = sum(
+        dependency_source.get((node["type"], node["type_version"])) == "resource"
+        for node in candidate["definition"]["nodes"]
+    )
+    compatibility_count = len(candidate["definition"]["nodes"]) - native_count
+    migration_status = (
+        "p2_complete"
+        if target_profile == "native_p2"
+        and workflow.slug in P2_COMPLETE_WORKFLOW_SLUGS
+        and not blockers
+        else "p3_p4_deferred"
+        if target_profile == "native_p2"
+        else "compatibility_preview"
+    )
     return {
         "workflow_id": workflow.id,
         "source": source,
+        "target_profile": target_profile,
+        "migration_status": migration_status,
         "candidate": candidate,
         "binding_suggestions": suggestions,
+        "transformations": transformations,
+        "native_node_count": native_count,
+        "compatibility_node_count": compatibility_count,
+        "blockers": blockers,
         "diff": {
             "source_schema_version": definition.get("schema_version"),
             "target_format_version": "2.0",
             "node_count": len(candidate["definition"]["nodes"]),
             "edge_count": len(candidate["definition"]["edges"]),
             "active_pointer_changed": False,
+            "transformations": transformations,
+            "config_changes": [
+                item
+                for transformation in transformations
+                for item in transformation.get("config_changes", [])
+            ],
+            "mapping_changes": [
+                item
+                for transformation in transformations
+                for item in transformation.get("mapping_changes", [])
+            ],
+            "edge_changes": [
+                item
+                for transformation in transformations
+                for item in transformation.get("edge_changes", [])
+            ],
         },
         "content_valid": content_valid,
         "publish_ready": False,

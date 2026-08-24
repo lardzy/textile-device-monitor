@@ -8,7 +8,7 @@ from Workflow Release JSON.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from functools import cache, lru_cache
@@ -25,8 +25,34 @@ from app.execution.v2.canonical import (
 )
 from jsonschema import Draft202012Validator
 
-ENGINE_VERSION = "2.0.0"
-PROTOCOL_VERSION = "2.0"
+ENGINE_VERSION = "2.1.0"
+PROTOCOL_VERSION = "2.1"
+
+_TRUSTED_RENDERER_PROTOCOLS = {
+    ("human.form", "1.0.0"): "native.form.v1",
+    ("human.select", "1.0.0"): "native.select.v1",
+    ("human.approval", "1.0.0"): "native.approval.v1",
+    ("human.decision", "1.0.0"): "native.decision.v1",
+    ("file.batch_place.conflict", "1.0.0"): "retry_with_decision.v1",
+}
+
+
+def _trusted_renderer_contracts() -> dict[tuple[str, str], dict[str, Any]]:
+    return {
+        identity: {
+            "capability": identity[0],
+            "version": identity[1],
+            "protocol": protocol,
+            "contract_digest": canonical_sha256(
+                {
+                    "capability": identity[0],
+                    "version": identity[1],
+                    "protocol": protocol,
+                }
+            ),
+        }
+        for identity, protocol in _TRUSTED_RENDERER_PROTOCOLS.items()
+    }
 
 LEGACY_NODE_OPERATION_REFS = {
     "external.legacy_regenerated_fiber_count_upload": (
@@ -165,6 +191,8 @@ class InstalledExecutable:
     handler_channel: str
     installed_ready: bool
     runtime_ready: bool
+    source: str
+    handler: Callable[[Any], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -185,6 +213,8 @@ class InstalledNodeSpec:
     ready: bool
     spec: dict[str, Any]
     handler_channel: str
+    source: str
+    preferred: bool
 
     def public_dict(self) -> dict[str, Any]:
         value = deepcopy(self.spec)
@@ -197,11 +227,26 @@ class InstalledNodeSpec:
                 "distribution_digest": self.distribution_digest,
                 "publishable": self.publishable,
                 "ready": self.ready,
+                "source": self.source,
+                "preferred": self.preferred,
             }
         )
         return value
 
     def execution_binding(self) -> dict[str, Any]:
+        renderer = deepcopy(
+            (self.spec.get("ui_schema") or {}).get("renderer") or {}
+        )
+        if renderer:
+            renderer = deepcopy(
+                _trusted_renderer_contracts().get(
+                    (
+                        str(renderer.get("capability") or ""),
+                        str(renderer.get("version") or ""),
+                    ),
+                    {},
+                )
+            )
         binding = {
             "type": self.type,
             "type_version": self.type_version,
@@ -213,9 +258,18 @@ class InstalledNodeSpec:
             "execution_kind": self.execution["kind"],
             "side_effect_class": self.side_effect_class,
             "handler_channel": self.handler_channel,
+            "source": self.source,
+            "preferred": self.preferred,
             "config_schema": deepcopy(self.config_schema),
             "input_schema": deepcopy(self.input_schema),
             "output_schema": deepcopy(self.output_schema),
+            "schema_bindings": deepcopy(self.spec.get("schema_bindings") or {}),
+            "ports": deepcopy(self.spec.get("ports") or {}),
+            "requirements": deepcopy(self.spec.get("requirements") or {}),
+            "suspension": deepcopy(self.spec.get("suspension")),
+            "renderer_contract": renderer,
+            "lifecycle": deepcopy(self.spec.get("lifecycle") or {}),
+            "extensions": deepcopy(self.spec.get("extensions") or {}),
             "publishable": self.publishable,
             "ready": self.ready,
         }
@@ -231,6 +285,7 @@ class InstalledNodeSpec:
                 "distribution_digest",
                 "execution_kind",
                 "handler_channel",
+                "source",
             )
         }
         binding["execution_binding_digest"] = canonical_sha256(digest_fields)
@@ -281,6 +336,7 @@ class NodeSpecRegistry:
     def __init__(self, specs: Iterable[InstalledNodeSpec]) -> None:
         self._by_identity: dict[tuple[str, int], dict[str, InstalledNodeSpec]] = {}
         self._owners: dict[tuple[str, int], str] = {}
+        self._preferred: dict[tuple[str, int], InstalledNodeSpec] = {}
         for spec in specs:
             identity = (spec.type, spec.type_version)
             previous_owner = self._owners.setdefault(identity, spec.pack_id)
@@ -292,6 +348,17 @@ class NodeSpecRegistry:
                     f"duplicate NodeSpec contract: {identity} {spec.contract_digest}"
                 )
             versions[spec.contract_digest] = spec
+            if spec.preferred:
+                if identity in self._preferred:
+                    raise ValueError(
+                        f"node identity has multiple preferred contracts: {identity}"
+                    )
+                self._preferred[identity] = spec
+        for identity, contracts in self._by_identity.items():
+            if len(contracts) > 1 and identity not in self._preferred:
+                raise ValueError(
+                    f"node identity requires one preferred contract: {identity}"
+                )
 
     def all(self) -> list[InstalledNodeSpec]:
         return sorted(
@@ -319,16 +386,15 @@ class NodeSpecRegistry:
                     f"NodeSpec contract not installed: {node_type}@{type_version} {contract_digest}"
                 )
             return spec
-        if len(contracts) != 1:
-            raise LookupError(
-                f"NodeSpec contract digest required: {node_type}@{type_version}"
-            )
-        return next(iter(contracts.values()))
+        if len(contracts) == 1:
+            return next(iter(contracts.values()))
+        return self._preferred[(node_type, type_version)]
 
 
 class ExecutableRegistry:
     def __init__(self, executables: Iterable[InstalledExecutable]) -> None:
         self._items: dict[tuple[str, int, str], InstalledExecutable] = {}
+        self._by_binding_digest: dict[str, InstalledExecutable] = {}
         for executable in executables:
             key = (
                 executable.node_type,
@@ -345,6 +411,23 @@ class ExecutableRegistry:
             return self._items[key]
         except KeyError as exc:
             raise LookupError(f"executable binding not installed: {key}") from exc
+
+    def index_binding(
+        self, spec: InstalledNodeSpec, executable: InstalledExecutable
+    ) -> None:
+        digest = spec.execution_binding()["execution_binding_digest"]
+        existing = self._by_binding_digest.get(digest)
+        if existing is not None and existing != executable:
+            raise ValueError(f"duplicate execution binding digest: {digest}")
+        self._by_binding_digest[digest] = executable
+
+    def resolve_binding_digest(self, digest: str) -> InstalledExecutable:
+        try:
+            return self._by_binding_digest[digest]
+        except KeyError as exc:
+            raise LookupError(
+                f"execution binding is not installed: {digest}"
+            ) from exc
 
 
 class AssetRegistry:
@@ -456,6 +539,8 @@ class InstalledRegistry:
         self.executables = executables
         self.assets = assets
         self.connectors = connectors
+        for spec in node_specs.all():
+            executables.index_binding(spec, executables.resolve(spec))
         self.revision = canonical_sha256(
             {
                 "engine_version": ENGINE_VERSION,
@@ -547,14 +632,28 @@ class InstalledRegistry:
         executable = self.executables.resolve(spec)
         return replace(spec, ready=executable.installed_ready).execution_binding()
 
+    def handler_for_binding(self, execution_binding_digest: str) -> Callable[[Any], Any] | None:
+        executable = self.executables.resolve_binding_digest(
+            execution_binding_digest
+        )
+        if not executable.runtime_ready:
+            raise LookupError(
+                f"execution binding handler is not ready: {execution_binding_digest}"
+            )
+        return executable.handler
+
     def worker_capability_document(self) -> dict[str, Any]:
         nodes: list[dict[str, Any]] = []
         for spec in self.node_specs.all():
             executable = self.executables.resolve(spec)
-            runtime_ready = executable.handler_channel != "placeholder"
-            if executable.handler_channel == "worker_callable":
+            runtime_ready = executable.runtime_ready
+            if (
+                executable.source == "v1_registry_adapter"
+                and executable.handler_channel == "worker_callable"
+            ):
                 runtime_ready = (
-                    node_registry.executor(spec.type, spec.type_version) is not None
+                    node_registry.executor(spec.type, spec.type_version)
+                    is not None
                 )
             binding = replace(spec, ready=runtime_ready).execution_binding()
             nodes.append(
@@ -919,6 +1018,70 @@ def _load_manifests() -> list[dict[str, Any]]:
     return manifests
 
 
+def _node_spec_from_resource(
+    path: str, identity: tuple[str, int]
+) -> dict[str, Any]:
+    document = _load_json_resource(path.removeprefix("v2/resources/"))
+    candidates: list[dict[str, Any]]
+    if isinstance(document.get("nodes"), list):
+        candidates = [item for item in document["nodes"] if isinstance(item, dict)]
+    else:
+        candidates = [document]
+    matching = [
+        item
+        for item in candidates
+        if (item.get("type"), item.get("type_version")) == identity
+    ]
+    if len(matching) != 1:
+        raise ValueError(
+            f"NodeSpec resource must contain exactly one {identity}: {path}"
+        )
+    return deepcopy(matching[0])
+
+
+def _native_schema_is_closed(schema: dict[str, Any] | bool) -> bool:
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return False
+    return schema.get("additionalProperties") is False
+
+
+def _implementation_digest(
+    *,
+    pack: InstalledPack,
+    descriptor: dict[str, Any],
+    contract_digest: str,
+) -> str:
+    declared_paths = descriptor.get("implementation_resources")
+    resource_paths = (
+        list(declared_paths)
+        if isinstance(declared_paths, list) and declared_paths
+        else list(pack.manifest["resource_paths"])
+    )
+    manifest_paths = set(pack.manifest["resource_paths"])
+    if any(path not in manifest_paths for path in resource_paths):
+        raise ValueError(
+            f"implementation resource is outside pack distribution: "
+            f"{descriptor['type']}@{descriptor['type_version']}"
+        )
+    package_root = resources.files("app.execution")
+    inventory = [
+        (path, package_root.joinpath(path).read_bytes())
+        for path in resource_paths
+    ]
+    return canonical_sha256(
+        {
+            "pack_id": pack.pack_id,
+            "pack_version": pack.pack_version,
+            "type": descriptor["type"],
+            "type_version": descriptor["type_version"],
+            "contract_digest": contract_digest,
+            "source": descriptor["source"],
+            "handler_channel": descriptor.get("handler_channel"),
+            "resources_digest": resource_set_digest(inventory),
+        }
+    )
+
+
 def _build_installed_registry() -> InstalledRegistry:
     manifests = _load_manifests()
     packs: list[InstalledPack] = []
@@ -936,20 +1099,43 @@ def _build_installed_registry() -> InstalledRegistry:
         )
     pack_registry = PackRegistry(packs)
     pack_by_identity = {(pack.pack_id, pack.pack_version): pack for pack in packs}
+    trusted_renderers = _trusted_renderer_contracts()
+    renderer_owner: dict[tuple[str, str], str] = {}
+    for manifest in manifests:
+        for renderer in (manifest["provides"].get("renderers") or []):
+            identity = (renderer["capability"], renderer["version"])
+            trusted = trusted_renderers.get(identity)
+            if trusted is None or renderer["contract_digest"] != trusted["contract_digest"]:
+                raise ValueError(f"unknown or damaged renderer contract: {identity}")
+            previous = renderer_owner.setdefault(identity, manifest["pack_id"])
+            if previous != manifest["pack_id"]:
+                raise ValueError(f"renderer capability has multiple owners: {identity}")
 
-    descriptor_by_node: dict[tuple[str, int], tuple[InstalledPack, dict[str, Any]]] = {}
+    descriptors: list[tuple[InstalledPack, dict[str, Any]]] = []
+    owner_by_node: dict[tuple[str, int], str] = {}
     for manifest in manifests:
         pack = pack_by_identity[(manifest["pack_id"], manifest["pack_version"])]
         for descriptor in manifest["provides"]["nodes"]:
             identity = (descriptor["type"], descriptor["type_version"])
-            if identity in descriptor_by_node:
+            previous_owner = owner_by_node.setdefault(identity, pack.pack_id)
+            if previous_owner != pack.pack_id:
                 raise ValueError(f"node identity has multiple pack owners: {identity}")
-            descriptor_by_node[identity] = (pack, descriptor)
+            descriptors.append((pack, descriptor))
 
     current_nodes = {(node.type, node.version): node for node in node_registry.all()}
-    if descriptor_by_node.keys() != current_nodes.keys():
-        missing = sorted(current_nodes.keys() - descriptor_by_node.keys())
-        extra = sorted(descriptor_by_node.keys() - current_nodes.keys())
+    compat_descriptors: dict[
+        tuple[str, int], tuple[InstalledPack, dict[str, Any]]
+    ] = {}
+    for pack, descriptor in descriptors:
+        if descriptor["source"] != "v1_registry_adapter":
+            continue
+        identity = (descriptor["type"], descriptor["type_version"])
+        if identity in compat_descriptors:
+            raise ValueError(f"duplicate v1 compatibility descriptor: {identity}")
+        compat_descriptors[identity] = (pack, descriptor)
+    if compat_descriptors.keys() != current_nodes.keys():
+        missing = sorted(current_nodes.keys() - compat_descriptors.keys())
+        extra = sorted(compat_descriptors.keys() - current_nodes.keys())
         raise ValueError(
             f"v1 compatibility owner set does not match registry; missing={missing}, extra={extra}"
         )
@@ -958,7 +1144,7 @@ def _build_installed_registry() -> InstalledRegistry:
     node_specs: list[InstalledNodeSpec] = []
     executables: list[InstalledExecutable] = []
     for identity, node_type in current_nodes.items():
-        pack, descriptor = descriptor_by_node[identity]
+        pack, descriptor = compat_descriptors[identity]
         handler_channel = descriptor["handler_channel"]
         spec_document = _compat_node_spec(
             node_type,
@@ -969,16 +1155,10 @@ def _build_installed_registry() -> InstalledRegistry:
         contract_digest = canonical_sha256(spec_document)
         if descriptor.get("contract_digest") not in (None, contract_digest):
             raise ValueError(f"NodeSpec digest mismatch: {identity}")
-        implementation_digest = canonical_sha256(
-            {
-                "pack_id": pack.pack_id,
-                "pack_version": pack.pack_version,
-                "distribution_digest": pack.distribution_digest,
-                "type": node_type.type,
-                "type_version": node_type.version,
-                "contract_digest": contract_digest,
-                "handler_channel": handler_channel,
-            }
+        implementation_digest = _implementation_digest(
+            pack=pack,
+            descriptor=descriptor,
+            contract_digest=contract_digest,
         )
         if descriptor.get("implementation_digest") not in (
             None,
@@ -1004,6 +1184,8 @@ def _build_installed_registry() -> InstalledRegistry:
             ready=installed_ready,
             spec=spec_document,
             handler_channel=handler_channel,
+            source="v1_registry_adapter",
+            preferred=bool(descriptor.get("preferred", False)),
         )
         node_specs.append(installed_spec)
         executables.append(
@@ -1015,6 +1197,103 @@ def _build_installed_registry() -> InstalledRegistry:
                 handler_channel=handler_channel,
                 installed_ready=installed_ready,
                 runtime_ready=runtime_ready,
+                source="v1_registry_adapter",
+            )
+        )
+
+    from app.execution.v2.native_handlers import native_handler
+
+    manifest_resources = {
+        (manifest["pack_id"], manifest["pack_version"]): set(
+            manifest["resource_paths"]
+        )
+        for manifest in manifests
+    }
+    for pack, descriptor in descriptors:
+        if descriptor["source"] != "resource":
+            continue
+        identity = (descriptor["type"], descriptor["type_version"])
+        spec_path = str(descriptor["spec_resource"])
+        if spec_path not in manifest_resources[(pack.pack_id, pack.pack_version)]:
+            raise ValueError(
+                f"NodeSpec resource is not included in pack digest: {spec_path}"
+            )
+        spec_document = _node_spec_from_resource(spec_path, identity)
+        spec_validator.validate(spec_document)
+        if spec_document["execution"]["owner"]["pack_id"] != pack.pack_id:
+            raise ValueError(f"NodeSpec owner does not match manifest: {identity}")
+        renderer = (spec_document.get("ui_schema") or {}).get("renderer")
+        if isinstance(renderer, dict):
+            renderer_identity = (
+                str(renderer.get("capability") or ""),
+                str(renderer.get("version") or ""),
+            )
+            if renderer_owner.get(renderer_identity) != pack.pack_id:
+                raise ValueError(
+                    f"NodeSpec renderer is not declared by owner pack: {renderer_identity}"
+                )
+        for schema_key in ("config_schema", "input_schema", "output_schema"):
+            if not _native_schema_is_closed(spec_document[schema_key]):
+                raise ValueError(
+                    f"native NodeSpec {schema_key} must be a closed object: {identity}"
+                )
+        contract_digest = canonical_sha256(spec_document)
+        if descriptor.get("contract_digest") not in (None, contract_digest):
+            raise ValueError(f"NodeSpec digest mismatch: {identity}")
+        implementation_digest = _implementation_digest(
+            pack=pack,
+            descriptor=descriptor,
+            contract_digest=contract_digest,
+        )
+        if descriptor.get("implementation_digest") not in (
+            None,
+            implementation_digest,
+        ):
+            raise ValueError(f"implementation digest mismatch: {identity}")
+        handler_channel = descriptor["handler_channel"]
+        handler = (
+            native_handler(identity[0], identity[1])
+            if handler_channel in {"worker_callable", "kernel_builtin"}
+            else None
+        )
+        execution_kind = spec_document["execution"]["kind"]
+        installed_ready = handler_channel != "placeholder" and (
+            execution_kind != "automatic" or handler is not None
+        )
+        runtime_ready = bool(pack.ready and installed_ready)
+        lifecycle_mode = spec_document["lifecycle"]["publish_mode"]
+        installed_spec = InstalledNodeSpec(
+            type=identity[0],
+            type_version=identity[1],
+            contract_digest=contract_digest,
+            implementation_digest=implementation_digest,
+            pack_id=pack.pack_id,
+            pack_version=pack.pack_version,
+            distribution_digest=pack.distribution_digest,
+            execution=deepcopy(spec_document["execution"]),
+            config_schema=deepcopy(spec_document["config_schema"]),
+            input_schema=deepcopy(spec_document["input_schema"]),
+            output_schema=deepcopy(spec_document["output_schema"]),
+            side_effect_class=spec_document["side_effect"]["class"],
+            publishable=lifecycle_mode != "blocked",
+            ready=installed_ready,
+            spec=spec_document,
+            handler_channel=handler_channel,
+            source="resource",
+            preferred=bool(descriptor.get("preferred", False)),
+        )
+        node_specs.append(installed_spec)
+        executables.append(
+            InstalledExecutable(
+                node_type=identity[0],
+                type_version=identity[1],
+                contract_digest=contract_digest,
+                implementation_digest=implementation_digest,
+                handler_channel=handler_channel,
+                installed_ready=installed_ready,
+                runtime_ready=runtime_ready,
+                source="resource",
+                handler=handler,
             )
         )
 
@@ -1129,6 +1408,19 @@ def list_assets() -> list[dict[str, Any]]:
     return get_installed_registry().list_assets()
 
 
+def list_renderer_capabilities() -> list[dict[str, Any]]:
+    installed = get_installed_registry()
+    declared = {
+        (item["capability"], item["version"])
+        for pack in installed.packs.all()
+        for item in (pack.manifest["provides"].get("renderers") or [])
+    }
+    return [
+        {**value, "ready": identity in declared}
+        for identity, value in sorted(_trusted_renderer_contracts().items())
+    ]
+
+
 def resolve_asset(asset_id: str, version: str) -> InstalledAsset:
     return get_installed_registry().assets.resolve(asset_id, version)
 
@@ -1163,6 +1455,14 @@ def executable_binding_for(
 
 def worker_capability_document() -> dict[str, Any]:
     return get_installed_registry().worker_capability_document()
+
+
+def handler_for_binding(execution_binding_digest: str) -> Callable[[Any], Any] | None:
+    """Resolve only a trusted handler installed for an exact immutable binding."""
+
+    return get_installed_registry().handler_for_binding(
+        execution_binding_digest
+    )
 
 
 def list_connectors() -> list[dict[str, Any]]:

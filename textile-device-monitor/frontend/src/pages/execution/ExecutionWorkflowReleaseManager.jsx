@@ -41,6 +41,10 @@ import {
   applyWorkflowReleaseV2,
   exportWorkflowReleaseV2,
   getWorkflowReleaseV2,
+  getWorkflowReleasesV2,
+  getExecutionV2Monitoring,
+  getExecutionV2Packs,
+  getExecutionV2RendererCapabilities,
   preflightStagedWorkflowReleaseV2,
   preflightWorkflowReleaseV2,
   previewWorkflowV1Migration,
@@ -185,6 +189,8 @@ export default function ExecutionWorkflowReleaseManager() {
   const [migrationWorkflows, setMigrationWorkflows] = useState([]);
   const [migrationPreview, setMigrationPreview] = useState(null);
   const [migrationLoading, setMigrationLoading] = useState(false);
+  const [releaseList, setReleaseList] = useState([]);
+  const [registryHealth, setRegistryHealth] = useState(null);
   const currentReleaseId = routeReleaseId || releaseIdOf(release);
   const currentWorkflowId = workflowIdOf(release) || searchParams.get('workflow_id');
 
@@ -236,6 +242,38 @@ export default function ExecutionWorkflowReleaseManager() {
       .then(setRoots)
       .catch(() => setRoots([]));
   }, []);
+
+  const loadRegistryDashboard = useCallback(async () => {
+    const [releaseResult, packResult, rendererResult, monitoringResult] = await Promise.allSettled([
+      getWorkflowReleasesV2({ limit: 30 }),
+      getExecutionV2Packs(),
+      getExecutionV2RendererCapabilities(),
+      getExecutionV2Monitoring(24),
+    ]);
+    if (releaseResult.status === 'fulfilled') {
+      setReleaseList(releaseResult.value?.items || []);
+    }
+    const packs = packResult.status === 'fulfilled' ? packResult.value : [];
+    const rendererPayload = rendererResult.status === 'fulfilled'
+      ? rendererResult.value
+      : null;
+    const monitoringPayload = monitoringResult.status === 'fulfilled'
+      ? monitoringResult.value
+      : null;
+    setRegistryHealth({
+      packs,
+      renderers: rendererPayload?.items || [],
+      registryRevision: rendererPayload?.registry_revision
+        || monitoringPayload?.registry_revision,
+      rolloutProfile: rendererPayload?.rollout_profile
+        || monitoringPayload?.rollout_profile,
+      monitoring: monitoringPayload,
+    });
+  }, []);
+
+  useEffect(() => {
+    loadRegistryDashboard();
+  }, [loadRegistryDashboard]);
 
   const requiredBindings = useMemo(
     () => bindingRowsOf(publishReport || contentReport, release),
@@ -422,8 +460,13 @@ export default function ExecutionWorkflowReleaseManager() {
       const {
         workflow_id: workflowId,
         source,
+        target_profile: targetProfile,
       } = await migrationForm.validateFields();
-      const payload = await previewWorkflowV1Migration(workflowId, source);
+      const payload = await previewWorkflowV1Migration(
+        workflowId,
+        source,
+        targetProfile,
+      );
       setMigrationPreview(payload);
       message.success('候选与差异已生成；当前流程未发生改变');
     } catch (requestError) {
@@ -491,6 +534,63 @@ export default function ExecutionWorkflowReleaseManager() {
           message="Release v2 与旧画布严格隔离"
           description="此页面只处理 format_version=2.0 的 portable Release。预检不会创建流程；apply 只创建 staged Release；只有发布会移动 active pointer。"
         />
+        {registryHealth && (
+          <Card title="Registry / Pack / Renderer / Rollout 状态" size="small">
+            <Descriptions size="small" column={{ xs: 1, md: 2, xl: 4 }}>
+              <Descriptions.Item label="Rollout profile">
+                <Tag color="blue">{registryHealth.rolloutProfile || '未知'}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Registry revision">
+                <Text code copyable>{registryHealth.registryRevision || '—'}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Pack readiness">
+                {registryHealth.packs.filter(item => item.ready !== false).length}
+                /{registryHealth.packs.length}
+              </Descriptions.Item>
+              <Descriptions.Item label="Renderer readiness">
+                {registryHealth.renderers.filter(item => item.ready).length}
+                /{registryHealth.renderers.length}
+              </Descriptions.Item>
+              <Descriptions.Item label="24h shadow mismatch">
+                {registryHealth.monitoring?.shadow_mismatch?.count ?? '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="能力不可用节点">
+                {registryHealth.monitoring?.node_capability_unavailable?.unavailable_node_count ?? '—'}
+              </Descriptions.Item>
+            </Descriptions>
+          </Card>
+        )}
+        {!routeReleaseId && releaseList.length > 0 && (
+          <Card title="Workflow Release 列表（最近 30 项）" size="small">
+            <List
+              dataSource={releaseList}
+              renderItem={item => (
+                <List.Item
+                  actions={[
+                    <Button
+                      key="open"
+                      type="link"
+                      onClick={() => navigate(`/execution/admin/releases/${item.id}`)}
+                    >
+                      打开
+                    </Button>,
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={<Space>{item.source_slug}<Tag>{item.status}</Tag></Space>}
+                    description={(
+                      <Space wrap>
+                        <Tag color="purple">native {item.native_node_type_count ?? 0}</Tag>
+                        <Tag>compat {item.compatibility_node_type_count ?? 0}</Tag>
+                        <Text type="secondary">{item.release_digest}</Text>
+                      </Space>
+                    )}
+                  />
+                </List.Item>
+              )}
+            />
+          </Card>
+        )}
         {loadError && (
           <Alert
             showIcon
@@ -729,7 +829,11 @@ export default function ExecutionWorkflowReleaseManager() {
           description="此操作不会 apply、发布或改变任何流程的 active pointer。"
           style={{ marginBottom: 16 }}
         />
-        <Form form={migrationForm} layout="vertical" initialValues={{ source: 'published' }}>
+        <Form
+          form={migrationForm}
+          layout="vertical"
+          initialValues={{ source: 'published', target_profile: 'compat_v1' }}
+        >
           <Form.Item
             name="workflow_id"
             label="v1 草稿流程"
@@ -752,6 +856,14 @@ export default function ExecutionWorkflowReleaseManager() {
               ]}
             />
           </Form.Item>
+          <Form.Item name="target_profile" label="迁移目标" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'compat_v1', label: 'compat_v1（保持 P1 行为）' },
+                { value: 'native_p2', label: 'native_p2（基础节点迁移）' },
+              ]}
+            />
+          </Form.Item>
         </Form>
         {migrationPreview && (
           <>
@@ -759,6 +871,47 @@ export default function ExecutionWorkflowReleaseManager() {
             <Paragraph type="secondary">
               预览结果仅用于评审，不提供本轮激活入口。
             </Paragraph>
+            <Space wrap style={{ marginBottom: 12 }}>
+              <Tag color={migrationPreview.content_valid ? 'success' : 'error'}>
+                {migrationPreview.content_valid ? 'candidate 有效' : 'candidate 无效'}
+              </Tag>
+              <Tag color={migrationPreview.migration_status === 'p2_complete' ? 'success' : 'warning'}>
+                {migrationPreview.migration_status}
+              </Tag>
+              <Tag color="purple">native {migrationPreview.native_node_count ?? 0}</Tag>
+              <Tag>compat {migrationPreview.compatibility_node_count ?? 0}</Tag>
+              <Button
+                icon={<DownloadOutlined />}
+                onClick={() => downloadJson(
+                  migrationPreview.candidate,
+                  `${migrationPreview.candidate?.release?.slug || 'candidate'}-native-p2.json`,
+                )}
+              >
+                下载 candidate
+              </Button>
+              <Button
+                disabled={!migrationPreview.content_valid}
+                onClick={() => {
+                  setDocumentText(JSON.stringify(migrationPreview.candidate, null, 2));
+                  setContentReport(null);
+                  setPublishReport(null);
+                  setMigrationOpen(false);
+                  message.success('candidate 已载入，可继续执行内容预检');
+                }}
+              >
+                载入预检
+              </Button>
+            </Space>
+            {(migrationPreview.blockers || []).map(blocker => (
+              <Alert
+                key={`${blocker.node_id}-${blocker.code}`}
+                showIcon
+                type="warning"
+                message={`${blocker.phase} · ${blocker.node_id}`}
+                description={`${blocker.code}：${blocker.message}`}
+                style={{ marginBottom: 8 }}
+              />
+            ))}
             <pre className="execution-release-preview">
               {JSON.stringify(migrationPreview, null, 2)}
             </pre>

@@ -46,6 +46,7 @@ from app.execution.models import (
     ExecutionExternalOperation,
     ExecutionFileMutation,
     ExecutionFileIndexEntry,
+    ExecutionHumanApprovalReceipt,
     ExecutionHumanTask,
     ExecutionNodeAttempt,
     ExecutionNodeRun,
@@ -115,6 +116,7 @@ RUN_RESULT_ACCEPTING_STATUSES = {
     # section. Keep accepting only that publish result until it is reconciled.
     "failure_pending",
 }
+NATIVE_APPROVAL_RECEIPT_TTL = timedelta(hours=1)
 
 
 logger = logging.getLogger(__name__)
@@ -480,7 +482,7 @@ def _validate_index_candidate(
     candidate: dict[str, Any],
     gateway: FileGateway,
 ) -> None:
-    members = candidate.get("files")
+    members = candidate.get("files") or candidate.get("items")
     values = members if isinstance(members, list) and members else [candidate]
     allowed_roots = _declared_root_ids(run)
     for value in values:
@@ -543,13 +545,249 @@ def _validate_index_candidate(
             )
 
 
+def _native_human_submission(
+    db: Session,
+    *,
+    run: ExecutionRun,
+    node_run: ExecutionNodeRun,
+    task: ExecutionHumanTask | None,
+    data: dict[str, Any],
+    actor: ExecutionUser | None,
+) -> dict[str, Any] | None:
+    contract = _v2_node_instance_contract(run, node_run)
+    if contract is None or contract.get("source") != "resource":
+        return None
+    node = _definition_node_map(run).get(node_run.node_id) or {}
+    config = node.get("config") or {}
+    suspension = contract.get("suspension") or {}
+    resume_protocol = str(suspension.get("resume_protocol") or "")
+    if (
+        contract.get("execution_kind") == "automatic"
+        and suspension.get("resume_protocol") == "retry_with_decision"
+    ):
+        if task is None:
+            raise ExecutionApiError(
+                500,
+                "native_suspension_task_missing",
+                "自动节点恢复决定缺少 HumanTask 上下文",
+            )
+        persisted = (node_run.input_data or {}).get("_native_suspension") or {}
+        state = persisted.get("state") or {}
+        decision = str(data.get("decision") or "")
+        if decision not in {"overwrite", "cancel"}:
+            raise ExecutionApiError(
+                422,
+                "file_batch_place_decision_invalid",
+                "批量放置决定必须是 overwrite 或 cancel",
+            )
+        return {
+            "_native_retry_with_decision": True,
+            "decision": decision,
+            "plan_digest": state.get("plan_digest"),
+        }
+    if resume_protocol == "native.form.v1":
+        _assert_declared_root_refs(run, data)
+        return dict(data)
+    if resume_protocol == "native.select.v1":
+        selected_values = data.get("selected_ids")
+        if not isinstance(selected_values, list):
+            raise ExecutionApiError(
+                422,
+                "human_select_ids_required",
+                "选择任务只接受稳定 selected_ids",
+            )
+        selected_ids = list(dict.fromkeys(str(value) for value in selected_values))
+        minimum = int(config.get("min_selected") or 0)
+        maximum = int(config.get("max_selected") or 1)
+        if not minimum <= len(selected_ids) <= maximum:
+            raise ExecutionApiError(
+                422,
+                "human_select_count_invalid",
+                "选择数量不符合节点契约",
+                details={"minimum": minimum, "maximum": maximum},
+            )
+        offered = {
+            str(item.get("id")): item
+            for item in (node_run.input_data or {}).get("items") or []
+            if isinstance(item, dict) and item.get("id")
+        }
+        if any(value not in offered for value in selected_ids):
+            raise ExecutionApiError(
+                409,
+                "human_select_candidate_not_offered",
+                "所选稳定 ID 不属于当前任务候选",
+            )
+        gateway = build_file_gateway(db)
+        selected_items: list[dict[str, Any]] = []
+        for candidate_id in selected_ids:
+            candidate = offered[candidate_id]
+            _validate_index_candidate(
+                db,
+                run=run,
+                candidate=candidate,
+                gateway=gateway,
+            )
+            selected_items.append(deepcopy(candidate))
+        primary_id = data.get("primary_id")
+        primary_id = str(primary_id) if primary_id not in (None, "") else None
+        if primary_id is None and config.get("require_primary") and len(selected_ids) == 1:
+            primary_id = selected_ids[0]
+        if config.get("require_primary") and primary_id not in selected_ids:
+            raise ExecutionApiError(
+                422,
+                "human_select_primary_invalid",
+                "主项必须属于 selected_ids",
+            )
+        primary_item = offered.get(primary_id) if primary_id is not None else None
+        from app.execution.v2.canonical import canonical_sha256
+
+        selection = {
+            "selected_ids": selected_ids,
+            "selected_items": selected_items,
+            "primary_id": primary_id,
+            "primary_item": deepcopy(primary_item),
+        }
+        return {
+            **selection,
+            "selection_digest": canonical_sha256(selection),
+        }
+    if resume_protocol == "native.decision.v1":
+        decision = str(data.get("decision") or "")
+        allowed = {
+            str(item.get("value"))
+            for item in config.get("options") or []
+            if isinstance(item, dict) and item.get("value")
+        }
+        if decision not in allowed:
+            raise ExecutionApiError(
+                422,
+                "human_decision_invalid",
+                "decision 不属于节点声明的 options",
+            )
+        reason = data.get("reason")
+        if reason is not None:
+            reason = str(reason)
+        from app.execution.v2.canonical import canonical_sha256
+
+        receipt = {"decision": decision, "reason": reason}
+        return {**receipt, "decision_digest": canonical_sha256(receipt)}
+    if resume_protocol == "native.approval.v1":
+        if task is None or actor is None:
+            raise ExecutionApiError(
+                500,
+                "approval_actor_context_missing",
+                "批准任务缺少服务端 actor 上下文",
+            )
+        decision = str(data.get("decision") or "").lower()
+        if decision not in {"approved", "rejected"}:
+            raise ExecutionApiError(
+                422,
+                "human_approval_decision_invalid",
+                "批准任务 decision 必须是 approved 或 rejected",
+            )
+        subject = (node_run.input_data or {}).get("subject") or {}
+        subject_type = str(subject.get("type") or "")
+        subject_digest = str(subject.get("digest") or "")
+        if not subject_type or not re.fullmatch(r"[0-9a-f]{64}", subject_digest):
+            raise ExecutionApiError(
+                409,
+                "approval_subject_invalid",
+                "批准任务的 subject 快照无效",
+            )
+        role_keys = sorted(
+            key
+            for (key,) in db.query(ExecutionRole.key)
+            .join(ExecutionUserRole, ExecutionUserRole.role_id == ExecutionRole.id)
+            .filter(ExecutionUserRole.user_id == actor.id)
+            .all()
+        )
+        authorization_snapshot = {
+            "actor_role": actor.role,
+            "role_keys": role_keys,
+            "assigned_user_id": task.assigned_user_id,
+            "candidate_role_key": task.candidate_role_key,
+            "claimed_by_id": task.claimed_by_id,
+        }
+        from app.execution.v2.canonical import canonical_sha256
+
+        created_at = utcnow()
+        expires_at = created_at + NATIVE_APPROVAL_RECEIPT_TTL
+        receipt_id = str(uuid4())
+        payload = {
+            "id": receipt_id,
+            "run_id": run.id,
+            "node_run_id": node_run.id,
+            "human_task_id": task.id,
+            "task_revision": task.revision,
+            "subject_type": subject_type,
+            "subject_digest": subject_digest,
+            "decision": decision,
+            "actor_user_id": actor.id,
+            "authorization_snapshot": authorization_snapshot,
+            "reason": str(data.get("reason") or "") or None,
+            "expires_at": expires_at.isoformat(),
+            "created_at": created_at.isoformat(),
+        }
+        receipt_digest = canonical_sha256(payload)
+        receipt = ExecutionHumanApprovalReceipt(
+            id=receipt_id,
+            run_id=run.id,
+            node_run_id=node_run.id,
+            human_task_id=task.id,
+            task_revision=task.revision,
+            subject_type=subject_type,
+            subject_digest=subject_digest,
+            decision=decision,
+            actor_user_id=actor.id,
+            authorization_snapshot=authorization_snapshot,
+            reason=payload["reason"],
+            receipt_digest=receipt_digest,
+            expires_at=expires_at,
+            created_at=created_at,
+        )
+        db.add(receipt)
+        public_receipt = {
+            "id": receipt.id,
+            "subject_type": subject_type,
+            "subject_digest": subject_digest,
+            "decision": decision,
+            "actor_user_id": actor.id,
+            "decided_at": created_at.isoformat(),
+            "receipt_digest": receipt_digest,
+        }
+        if decision == "rejected":
+            return {
+                "_human_rejected": True,
+                "reason": receipt.reason,
+                "approval_receipt": public_receipt,
+            }
+        return {"approval_receipt": public_receipt}
+    raise ExecutionApiError(
+        503,
+        "native_human_handler_unavailable",
+        "未知的原生 Human suspension contract",
+    )
+
+
 def _normalize_human_submission(
     db: Session,
     *,
     run: ExecutionRun,
     node_run: ExecutionNodeRun,
     data: dict[str, Any],
+    task: ExecutionHumanTask | None = None,
+    actor: ExecutionUser | None = None,
 ) -> dict[str, Any]:
+    native = _native_human_submission(
+        db,
+        run=run,
+        node_run=node_run,
+        task=task,
+        data=data,
+        actor=actor,
+    )
+    if native is not None:
+        return native
     if node_run.node_type == "human.image_selection":
         selected_ids = data.get("selected_image_ids")
         if not isinstance(selected_ids, list) or not 1 <= len(selected_ids) <= 10:
@@ -2065,7 +2303,57 @@ def create_run(
             raise ExecutionApiError(409, "workflow_not_published", "流程尚未发布")
         definition = version.definition
         capabilities = deepcopy(version.capabilities or {})
-        validation = validate_definition(definition, for_publish=True)
+        if version.release_id is not None:
+            from app.execution.registry import NodeRegistry, NodeType
+
+            v2_registry = NodeRegistry()
+            compatibility_node_ids: set[str] = set()
+            registered: set[tuple[str, int]] = set()
+            instances = {
+                str(item.get("node_id")): item
+                for item in (version.dependency_lock or {}).get(
+                    "node_instances", []
+                )
+                if isinstance(item, dict) and item.get("node_id")
+            }
+            for node in definition.get("nodes") or []:
+                contract = instances.get(str(node.get("id"))) or {}
+                identity = (
+                    str(node.get("type") or ""),
+                    int(node.get("type_version") or 1),
+                )
+                if contract.get("source") != "resource":
+                    compatibility_node_ids.add(str(node.get("id")))
+                if identity in registered:
+                    continue
+                v2_registry.register(
+                    NodeType(
+                        identity[0],
+                        identity[1],
+                        str(node.get("name") or identity[0]),
+                        "v2",
+                        "immutable v2 runtime projection",
+                        execution_kind=str(
+                            contract.get("execution_kind") or "automatic"
+                        ),
+                        input_schema=deepcopy(
+                            contract.get("effective_input_schema") or {}
+                        ),
+                        output_schema=deepcopy(
+                            contract.get("effective_output_schema") or {}
+                        ),
+                        publishable=bool(contract.get("publishable", True)),
+                    )
+                )
+                registered.add(identity)
+            validation = validate_definition(
+                definition,
+                registry=v2_registry,
+                for_publish=True,
+                compatibility_node_ids=compatibility_node_ids,
+            )
+        else:
+            validation = validate_definition(definition, for_publish=True)
     if not validation.valid:
         raise ExecutionApiError(
             422,
@@ -2185,6 +2473,18 @@ def create_run(
                 "deployed_contract_invalid",
                 "已发布的 v2 版本包含无效节点执行绑定",
                 details={"invalid_node_ids": invalid_binding_nodes},
+            )
+        from app.execution.release_v2 import rollout_profile_blockers
+
+        profile_blockers = rollout_profile_blockers(
+            list(v2_node_instances.values())
+        )
+        if profile_blockers:
+            raise ExecutionApiError(
+                409,
+                "rollout_profile_blocked",
+                "当前 rollout profile 不允许创建该 v2 Run",
+                details={"blockers": profile_blockers},
             )
 
     run = ExecutionRun(
@@ -3165,6 +3465,7 @@ def _resolve_outgoing_edges(
     node_run: ExecutionNodeRun,
     *,
     skipped: bool = False,
+    selected_edge_ids: set[str] | None = None,
 ) -> None:
     edges = (
         db.query(ExecutionEdgeRun)
@@ -3184,7 +3485,19 @@ def _resolve_outgoing_edges(
         return
 
     context = _run_context(db, node_run.run)
-    if node_run.node_type == "branch.condition":
+    if selected_edge_ids is not None:
+        unknown = selected_edge_ids - {edge.edge_id for edge in edges}
+        if unknown:
+            raise ExecutionApiError(
+                500,
+                "native_edge_selection_invalid",
+                "受信 handler 返回了不存在的出边",
+                details={"edge_ids": sorted(unknown)},
+            )
+        selected_ids = {
+            edge.id for edge in edges if edge.edge_id in selected_edge_ids
+        }
+    elif node_run.node_type == "branch.condition":
         matching = [
             edge
             for edge in edges
@@ -4177,6 +4490,9 @@ def complete_node(
     node_run_id: str,
     lease_token: str,
     output_data: Optional[dict[str, Any]] = None,
+    globals_patch: Optional[dict[str, Any]] = None,
+    globals_conflict: Optional[str] = None,
+    selected_edge_ids: Optional[set[str]] = None,
 ) -> ExecutionNodeRun:
     run, node_run = _lock_run_and_node(db, node_run_id)
     _ensure_run_accepts_result(run)
@@ -4186,6 +4502,17 @@ def complete_node(
             "节点租约已失效，当前结果不会被接受",
             node_id=node_run.node_id,
         )
+    if isinstance(globals_patch, dict) and globals_conflict == "error":
+        conflicts = sorted(
+            set(globals_patch).intersection((run.global_data or {}).keys())
+        )
+        if conflicts:
+            raise ExecutionApiError(
+                409,
+                "data_assign_conflict",
+                "data.assign 将覆盖已有 globals 字段",
+                details={"keys": conflicts},
+            )
     now = utcnow()
     node_run.status = "succeeded"
     node_run.output_data = output_data or {}
@@ -4201,13 +4528,14 @@ def complete_node(
         status="succeeded",
         output_data=node_run.output_data,
     )
-    if node_run.node_type == "variables.set":
+    values = globals_patch
+    if values is None and node_run.node_type == "variables.set":
         values = node_run.output_data.get("globals")
-        if isinstance(values, dict):
-            # Merge only after acquiring the run lock. Mutating context.run in
-            # the executor allowed parallel variable nodes to overwrite each
-            # other's updates before either completion obtained the lock.
-            run.global_data = {**(run.global_data or {}), **values}
+    if isinstance(values, dict):
+        # Merge only after acquiring the run lock. Mutating context.run in the
+        # executor allowed parallel variable nodes to overwrite each other's
+        # updates before either completion obtained the lock.
+        run.global_data = {**(run.global_data or {}), **values}
     if node_run.node_type == "core.end":
         run.output_data = node_run.output_data
     if run.status in {"cancel_pending", "failure_pending"}:
@@ -4230,7 +4558,11 @@ def complete_node(
         )
         return node_run
     db.flush()
-    _resolve_outgoing_edges(db, node_run)
+    _resolve_outgoing_edges(
+        db,
+        node_run,
+        selected_edge_ids=selected_edge_ids,
+    )
     _activate_resolved_nodes(db, run)
     append_run_event(
         db,
@@ -4351,11 +4683,78 @@ def _create_human_task(
     context.run = run
     context.node_run = node_run
     config = context.node.get("config") or {}
+    contract = _v2_node_instance_contract(run, node_run)
+    native_human = bool(
+        contract is not None
+        and contract.get("source") == "resource"
+        and contract.get("execution_kind") == "human"
+    )
+    native_suspension = bool(
+        contract is not None
+        and contract.get("source") == "resource"
+        and (contract.get("suspension") or {}).get("kind") == "human_task"
+    )
+    native_task = native_human or native_suspension
+    resume_protocol = str(
+        ((contract or {}).get("suspension") or {}).get("resume_protocol") or ""
+    )
+    suspension_payload = (
+        (context.input_data or {}).get("_native_suspension") or {}
+        if native_suspension
+        else {}
+    )
     form_schema = (
         form_schema_override
         if form_schema_override is not None
         else config.get("form_schema") or {}
     )
+    if native_human and form_schema_override is None:
+        if resume_protocol == "native.select.v1":
+            form_schema = {
+                "type": "object",
+                "properties": {
+                    "selected_ids": {
+                        "type": "array",
+                        "minItems": int(config.get("min_selected") or 0),
+                        "maxItems": int(config.get("max_selected") or 1),
+                        "uniqueItems": True,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "primary_id": {"type": ["string", "null"]},
+                },
+                "required": ["selected_ids"],
+                "additionalProperties": False,
+            }
+        elif resume_protocol == "native.approval.v1":
+            form_schema = {
+                "type": "object",
+                "properties": {
+                    "decision": {
+                        "type": "string",
+                        "enum": ["approved", "rejected"],
+                    },
+                    "reason": {"type": "string", "maxLength": 2000},
+                },
+                "required": ["decision"],
+                "additionalProperties": False,
+            }
+        elif resume_protocol == "native.decision.v1":
+            form_schema = {
+                "type": "object",
+                "properties": {
+                    "decision": {
+                        "type": "string",
+                        "enum": [
+                            str(item.get("value"))
+                            for item in config.get("options") or []
+                            if isinstance(item, dict) and item.get("value")
+                        ],
+                    },
+                    "reason": {"type": "string", "maxLength": 2000},
+                },
+                "required": ["decision"],
+                "additionalProperties": False,
+            }
     if node_run.node_type == "human.confirm" and not form_schema:
         form_schema = {
             "type": "object",
@@ -4374,7 +4773,9 @@ def _create_human_task(
             "required": ["approved"],
             "additionalProperties": False,
         }
-    candidate_role = config.get("candidate_role")
+    candidate_role = config.get("candidate_role") or config.get(
+        "candidate_role_key"
+    )
     if candidate_role is not None:
         candidate_role = str(candidate_role)
         role_exists = (
@@ -4405,9 +4806,38 @@ def _create_human_task(
         db.add(task)
     else:
         task.revision += 1
-    task.title = config.get("title") or context.node_run.node_name
-    task.description = config.get("description")
+    task.title = (
+        suspension_payload.get("title")
+        or config.get("title")
+        or context.node_run.node_name
+    )
+    task.description = suspension_payload.get("description") or config.get(
+        "description"
+    )
+    renderer_contract: dict[str, Any] = {}
+    if native_task:
+        from app.execution.v2.canonical import canonical_sha256
+
+        renderer_contract = {
+            **deepcopy(contract.get("renderer_contract") or {}),
+            "node_type": node_run.node_type,
+            "type_version": node_run.node_type_version,
+            "contract_digest": contract.get("contract_digest"),
+            "suspension": deepcopy(contract.get("suspension")),
+            "submission_schema_digest": canonical_sha256(form_schema),
+        }
+        if suspension_payload.get("renderer_payload") is not None:
+            renderer_contract["payload"] = deepcopy(
+                suspension_payload.get("renderer_payload")
+            )
+        if reopened and task.renderer_contract not in ({}, renderer_contract):
+            raise ExecutionApiError(
+                409,
+                "human_renderer_contract_changed",
+                "既有人工任务的 renderer contract 不允许变更",
+            )
     task.form_schema = form_schema
+    task.renderer_contract = renderer_contract
     task.draft_data = {}
     task.result_data = {}
     task.status = "open"
@@ -4444,28 +4874,12 @@ def _create_human_task(
 
 
 def _execute_builtin(context: NodeExecutionContext) -> dict[str, Any]:
-    node_type = context.node_run.node_type
-    if node_type in {"core.start", "parallel.split", "parallel.join", "branch.condition"}:
-        return context.input_data
-    if node_type == "variables.set":
-        values = _resolve_value(
-            (context.node.get("config") or {}).get("values") or {},
-            _run_context(context.db, context.run),
-        )
-        return {"globals": values}
-    if node_type == "result.aggregate":
-        return context.input_data
-    if node_type == "core.end":
-        return context.input_data
-    raise ExecutionApiError(
-        503,
-        "node_capability_unavailable",
-        f"节点“{context.node_run.node_name}”尚未配置运行适配器",
-        details={
-            "node_id": context.node_run.node_id,
-            "node_type": context.node_run.node_type,
-        },
+    from app.execution.v2.kernel_handlers import execute_compat_builtin
+
+    context.resolve_run_value = lambda value: _resolve_value(
+        value, _run_context(context.db, context.run)
     )
+    return execute_compat_builtin(context)
 
 
 def _v2_node_instance_contract(
@@ -4570,10 +4984,18 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
             error_message="运行快照中缺少节点定义",
         )
         return
+    globals_patch: dict[str, Any] | None = None
+    globals_conflict: str | None = None
+    selected_edge_ids: set[str] | None = None
     try:
         persisted_placement_request = (
             (node_run.input_data or {}).get("placement_request")
             if report_image_placement_node_config(node)
+            else None
+        )
+        persisted_native_suspension_request = (
+            (node_run.input_data or {}).get("_native_suspension_request")
+            if getattr(node_run, "execution_binding_digest", None)
             else None
         )
         input_data = _node_input(db, node_run.run, node)
@@ -4593,6 +5015,14 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
             direction="input",
             value=input_data,
         )
+        if isinstance(persisted_native_suspension_request, dict):
+            # Internal resume state is appended only after portable input
+            # validation.  It cannot be injected by node mapping or Release
+            # JSON, yet remains durable across the next claim attempt.
+            input_data = {
+                **input_data,
+                "_native_suspension_request": persisted_native_suspension_request,
+            }
         node_run.input_data = input_data
         attempt = (
             db.query(ExecutionNodeAttempt)
@@ -4620,16 +5050,63 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
         if execution_kind == "human" or (
             execution_kind is None and node_run.node_type in HUMAN_NODE_TYPES
         ):
-            auto_output = _auto_submit_single_candidate(db, context)
-            if auto_output is None:
-                auto_output = _auto_complete_paper_existing_record_decision(
-                    context
+            immutable_contract = _v2_node_instance_contract(
+                node_run.run, node_run
+            )
+            native_human = bool(
+                immutable_contract is not None
+                and immutable_contract.get("source") == "resource"
+            )
+            auto_output = None
+            if native_human:
+                config = node.get("config") or {}
+                candidates = input_data.get("items") or []
+                resume_protocol = str(
+                    (immutable_contract.get("suspension") or {}).get(
+                        "resume_protocol"
+                    )
+                    or ""
                 )
-            if auto_output is None:
-                auto_output = _auto_complete_paper_judgement(context)
-            if auto_output is None:
-                auto_output = auto_complete_report_image_placement(context)
+                if (
+                    resume_protocol == "native.select.v1"
+                    and config.get("auto_submit_single_candidate") is True
+                    and len(candidates) == 1
+                    and int(config.get("min_selected") or 0) <= 1
+                    and int(config.get("max_selected") or 1) >= 1
+                ):
+                    candidate_id = str(candidates[0].get("id") or "")
+                    auto_output = _native_human_submission(
+                        db,
+                        run=node_run.run,
+                        node_run=node_run,
+                        task=None,
+                        data={
+                            "selected_ids": [candidate_id],
+                            "primary_id": (
+                                candidate_id
+                                if config.get("require_primary")
+                                else None
+                            ),
+                        },
+                        actor=None,
+                    )
+            else:
+                auto_output = _auto_submit_single_candidate(db, context)
+                if auto_output is None:
+                    auto_output = _auto_complete_paper_existing_record_decision(
+                        context
+                    )
+                if auto_output is None:
+                    auto_output = _auto_complete_paper_judgement(context)
+                if auto_output is None:
+                    auto_output = auto_complete_report_image_placement(context)
             if auto_output is not None:
+                _validate_v2_node_payload(
+                    node_run.run,
+                    node_run,
+                    direction="output",
+                    value=auto_output,
+                )
                 complete_node(
                     db,
                     node_run_id=node_run.id,
@@ -4637,11 +5114,13 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                     output_data=auto_output,
                 )
             else:
-                form_schema = _paper_existing_record_form_schema(context)
-                if form_schema is None:
-                    form_schema = _paper_judgement_form_schema(context)
-                if form_schema is None:
-                    form_schema = report_image_placement_form_schema(context)
+                form_schema = None
+                if not native_human:
+                    form_schema = _paper_existing_record_form_schema(context)
+                    if form_schema is None:
+                        form_schema = _paper_judgement_form_schema(context)
+                    if form_schema is None:
+                        form_schema = report_image_placement_form_schema(context)
                 _create_human_task(
                     db,
                     context,
@@ -4655,15 +5134,82 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                 return
             _prepare_external_operation_wait(db, context)
             return
-        executor = node_registry.executor(
-            node_run.node_type,
-            node_run.node_type_version,
-        )
+        contract = _v2_node_instance_contract(node_run.run, node_run)
+        executor = None
+        if contract is not None and contract.get("source") == "resource":
+            from app.execution.v2.registry import handler_for_binding
+
+            try:
+                executor = handler_for_binding(
+                    node_run.execution_binding_digest
+                )
+            except LookupError as exc:
+                raise ExecutionApiError(
+                    503,
+                    "node_capability_unavailable",
+                    "当前 Worker 不提供节点锁定的 exact handler",
+                    details={
+                        "node_id": node_run.node_id,
+                        "execution_binding_digest": node_run.execution_binding_digest,
+                    },
+                ) from exc
+        else:
+            executor = node_registry.executor(
+                node_run.node_type,
+                node_run.node_type_version,
+            )
         output = (
             executor(context)
             if executor is not None
             else _execute_builtin(context)
         )
+        if contract is not None and contract.get("source") == "resource":
+            from app.execution.v2.native_handlers import NodeExecutionResult
+
+            if isinstance(output, NodeExecutionResult):
+                if output.suspension is not None:
+                    declared_suspension = contract.get("suspension") or {}
+                    requested_suspension = output.suspension
+                    if (
+                        declared_suspension.get("kind") != "human_task"
+                        or requested_suspension.get("kind") != "human_task"
+                        or requested_suspension.get("resume_protocol")
+                        != declared_suspension.get("resume_protocol")
+                    ):
+                        raise ExecutionApiError(
+                            503,
+                            "native_suspension_contract_mismatch",
+                            "handler 请求的 suspension 与已锁定 NodeSpec 不一致",
+                        )
+                    form_schema = requested_suspension.get("form_schema")
+                    if not isinstance(form_schema, dict):
+                        raise ExecutionApiError(
+                            503,
+                            "native_suspension_schema_missing",
+                            "handler 未提供受限的 Human submission schema",
+                        )
+                    context.input_data = {
+                        key: value
+                        for key, value in input_data.items()
+                        if key != "_native_suspension_request"
+                    }
+                    context.input_data["_native_suspension"] = deepcopy(
+                        requested_suspension
+                    )
+                    _create_human_task(
+                        db,
+                        context,
+                        form_schema_override=form_schema,
+                    )
+                    return
+                globals_patch = output.globals_patch
+                globals_conflict = output.globals_conflict
+                selected_edge_ids = (
+                    set(output.selected_edge_ids)
+                    if output.selected_edge_ids is not None
+                    else None
+                )
+                output = output.output
         if not isinstance(output, dict):
             output = {"value": output}
         _validate_v2_node_payload(
@@ -4689,12 +5235,24 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
             error_message=str(exc),
         )
     else:
-        complete_node(
-            db,
-            node_run_id=node_run.id,
-            lease_token=lease_token,
-            output_data=output,
-        )
+        try:
+            complete_node(
+                db,
+                node_run_id=node_run.id,
+                lease_token=lease_token,
+                output_data=output,
+                globals_patch=globals_patch,
+                globals_conflict=globals_conflict,
+                selected_edge_ids=selected_edge_ids,
+            )
+        except ExecutionApiError as exc:
+            fail_node(
+                db,
+                node_run_id=node_run.id,
+                lease_token=lease_token,
+                error_code=exc.code,
+                error_message=exc.message,
+            )
 
 
 def claim_human_task(
@@ -4864,7 +5422,132 @@ def submit_human_task(
         run=run,
         node_run=node_run,
         data=data,
+        task=task,
+        actor=actor,
     )
+    if normalized_data.pop("_human_rejected", False):
+        reason = str(normalized_data.get("reason") or "人工任务已拒绝")
+        task.status = "rejected"
+        task.result_data = normalized_data
+        task.completed_by_id = actor.id
+        task.completed_at = utcnow()
+        task.revision += 1
+        node_run.status = "failed"
+        node_run.error_code = "human_task_rejected"
+        node_run.error_message = reason
+        node_run.finished_at = utcnow()
+        run.error_code = node_run.error_code
+        run.error_message = reason
+        _cancel_failure_siblings(
+            db,
+            run=run,
+            failed_node_id=node_run.id,
+            actor_user_id=actor.id,
+        )
+        append_run_event(
+            db,
+            run_id=task.run_id,
+            event_type="human_task.rejected",
+            actor_type="user",
+            actor_id=actor.id,
+            payload={"task_id": task.id, "node_id": node_run.node_id},
+        )
+        return task
+    if normalized_data.pop("_native_retry_with_decision", False):
+        task.status = "completed"
+        task.result_data = deepcopy(normalized_data)
+        task.completed_by_id = actor.id
+        task.completed_at = utcnow()
+        task.revision += 1
+        previous_run_status = run.status
+        clean_input = {
+            key: value
+            for key, value in (node_run.input_data or {}).items()
+            if key not in {
+                "_native_suspension",
+                "_native_suspension_request",
+            }
+        }
+        node_run.input_data = {
+            **clean_input,
+            "_native_suspension_request": deepcopy(normalized_data),
+        }
+        node_run.status = "ready"
+        node_run.output_data = {}
+        node_run.ready_at = utcnow()
+        node_run.finished_at = None
+        node_run.error_code = None
+        node_run.error_message = None
+        node_run.lease_owner = None
+        node_run.lease_token = None
+        node_run.lease_expires_at = None
+        db.flush()
+        append_run_event(
+            db,
+            run_id=task.run_id,
+            event_type="human_task.completed",
+            actor_type="user",
+            actor_id=actor.id,
+            payload={"task_id": task.id, "node_id": node_run.node_id},
+        )
+        append_run_event(
+            db,
+            run_id=task.run_id,
+            event_type="node.ready",
+            actor_type="user",
+            actor_id=actor.id,
+            payload={
+                "node_id": node_run.node_id,
+                "reason": "native_retry_with_decision",
+            },
+        )
+        _refresh_run_status(db, run)
+        if run.status != previous_run_status:
+            append_run_event(
+                db,
+                run_id=task.run_id,
+                event_type=f"run.{run.status}",
+                payload={"status": run.status},
+            )
+        return task
+    try:
+        _validate_v2_node_payload(
+            run,
+            node_run,
+            direction="output",
+            value=normalized_data,
+        )
+    except ExecutionApiError as exc:
+        task.status = "completed_rejected_contract"
+        task.result_data = normalized_data
+        task.completed_by_id = actor.id
+        task.completed_at = utcnow()
+        task.revision += 1
+        node_run.status = "failed"
+        node_run.error_code = exc.code
+        node_run.error_message = exc.message
+        node_run.finished_at = utcnow()
+        run.error_code = exc.code
+        run.error_message = exc.message
+        _cancel_failure_siblings(
+            db,
+            run=run,
+            failed_node_id=node_run.id,
+            actor_user_id=actor.id,
+        )
+        append_run_event(
+            db,
+            run_id=task.run_id,
+            event_type="human_task.contract_rejected",
+            actor_type="user",
+            actor_id=actor.id,
+            payload={
+                "task_id": task.id,
+                "node_id": node_run.node_id,
+                "code": exc.code,
+            },
+        )
+        return task
     task.status = "completed"
     task.result_data = normalized_data
     task.completed_by_id = actor.id
@@ -4970,8 +5653,25 @@ def reject_human_task(
             "人工任务对应节点已不再等待处理",
             status=node_run.status,
         )
+    rejected_result: dict[str, Any] = {"reason": reason}
+    contract = _v2_node_instance_contract(run, node_run)
+    resume_protocol = str(
+        ((contract or {}).get("suspension") or {}).get("resume_protocol") or ""
+    )
+    if resume_protocol == "native.approval.v1":
+        native_result = _native_human_submission(
+            db,
+            run=run,
+            node_run=node_run,
+            task=task,
+            data={"decision": "rejected", "reason": reason},
+            actor=actor,
+        )
+        if native_result is not None:
+            native_result.pop("_human_rejected", None)
+            rejected_result = native_result
     task.status = "rejected"
-    task.result_data = {"reason": reason}
+    task.result_data = rejected_result
     task.completed_by_id = actor.id
     task.completed_at = utcnow()
     task.revision += 1

@@ -641,6 +641,29 @@ def _version_dict(version: ExecutionWorkflowVersion) -> dict[str, Any]:
 
 
 def _human_task_dict(task: ExecutionHumanTask) -> dict[str, Any]:
+    node_run = task.node_run
+    run = node_run.run if node_run is not None else None
+    contract: dict[str, Any] = {}
+    instances = (
+        (run.dependency_lock or {}).get("node_instances")
+        if run is not None
+        else None
+    )
+    if isinstance(instances, list):
+        contract = next(
+            (
+                item
+                for item in instances
+                if isinstance(item, dict)
+                and item.get("node_id") == node_run.node_id
+            ),
+            {},
+        )
+    elif isinstance(instances, dict):
+        candidate = instances.get(node_run.node_id)
+        contract = candidate if isinstance(candidate, dict) else {}
+    renderer_contract = task.renderer_contract or {}
+    approval = task.approval_receipts[-1] if task.approval_receipts else None
     value = {
         "id": task.id,
         "run_id": task.run_id,
@@ -661,6 +684,28 @@ def _human_task_dict(task: ExecutionHumanTask) -> dict[str, Any]:
         "due_at": task.due_at.isoformat() if task.due_at else None,
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
+        "node_type": node_run.node_type if node_run is not None else None,
+        "type_version": (
+            node_run.node_type_version if node_run is not None else None
+        ),
+        "contract_digest": contract.get("contract_digest"),
+        "renderer_contract": renderer_contract,
+        "submission_schema_digest": renderer_contract.get(
+            "submission_schema_digest"
+        ),
+        "approval_receipt": (
+            {
+                "id": approval.id,
+                "subject_type": approval.subject_type,
+                "subject_digest": approval.subject_digest,
+                "decision": approval.decision,
+                "actor_user_id": approval.actor_user_id,
+                "decided_at": approval.created_at.isoformat(),
+                "receipt_digest": approval.receipt_digest,
+            }
+            if approval is not None
+            else None
+        ),
     }
     if task.node_run is not None and task.node_run.run is not None:
         value["run"] = {

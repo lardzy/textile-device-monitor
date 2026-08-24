@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,8 +9,16 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import Session
 
 from app import db_migrations
+from app.execution.models import (
+    ExecutionCategory,
+    ExecutionRun,
+    ExecutionUser,
+    ExecutionWorkflow,
+    ExecutionWorkflowVersion,
+)
 from app.execution.validation import workflow_contract_checksum
 
 
@@ -67,7 +76,9 @@ def test_empty_database_upgrades_to_execution_head(tmp_path):
         assert "execution_deployment_bindings" in tables
         assert "execution_workflow_activation_receipts" in tables
         assert "execution_worker_node_capabilities" in tables
-        assert len({name for name in tables if name.startswith("execution_")}) == 36
+        assert "execution_human_approval_receipts" in tables
+        assert "execution_human_approval_receipt_consumptions" in tables
+        assert len({name for name in tables if name.startswith("execution_")}) == 38
         storage_root_columns = {
             column["name"]: column
             for column in inspect(engine).get_columns(
@@ -75,6 +86,11 @@ def test_empty_database_upgrades_to_execution_head(tmp_path):
             )
         }
         assert storage_root_columns["binding_revision"]["nullable"] is False
+        human_task_columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("execution_human_tasks")
+        }
+        assert human_task_columns["renderer_contract"]["nullable"] is False
     finally:
         engine.dispose()
 
@@ -102,9 +118,171 @@ def test_existing_baseline_is_preflighted_stamped_and_upgraded(tmp_path):
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0008_execution_v2_contracts"
+        assert revision == "0009_execution_v2_primitives"
     finally:
         engine.dispose()
+
+
+def test_0008_to_0009_preserves_existing_version_run_and_lock_bytes(tmp_path):
+    database_path = tmp_path / "execution_v2_history_test.db"
+    database_url = f"sqlite:///{database_path}"
+    config = _config(database_url)
+    command.upgrade(config, "0008_execution_v2_contracts")
+    engine = create_engine(database_url)
+    definition = {"schema_version": "1.0", "nodes": [], "edges": []}
+    dependency_lock = {
+        "lock_version": "1.0",
+        "node_instances": [],
+        "digest": "2" * 64,
+    }
+    binding = {
+        "environment": "test",
+        "revision": 3,
+        "bindings": {"root_slots": {}},
+    }
+    asset_lock = {"assets": [], "digest": "3" * 64}
+    now = datetime(2026, 8, 21, tzinfo=timezone.utc)
+    with Session(engine) as db:
+        db.add_all(
+            [
+                ExecutionCategory(
+                    id="category-p2-history",
+                    key="p2-history",
+                    name="P2 history",
+                ),
+                ExecutionUser(
+                    id="user-p2-history",
+                    username="p2-history",
+                    display_name="P2 history",
+                    password_hash="unused",
+                    role="admin",
+                ),
+            ]
+        )
+        db.flush()
+        workflow = ExecutionWorkflow(
+            id="workflow-p2-history",
+            slug="p2-history",
+            category_id="category-p2-history",
+            name="P2 history",
+            draft_definition=definition,
+            management_mode="release_v2",
+            draft_revision=1,
+            published_version_number=1,
+            capabilities={"declared": [], "side_effect_level": "none"},
+            required_input_count=0,
+            created_by_id="user-p2-history",
+            updated_by_id="user-p2-history",
+        )
+        version = ExecutionWorkflowVersion(
+            id="version-p2-history",
+            workflow_id=workflow.id,
+            version_number=1,
+            schema_version="1.0",
+            definition=definition,
+            checksum="4" * 64,
+            capabilities={"declared": [], "side_effect_level": "none"},
+            contract_checksum="5" * 64,
+            contract_format="workflow_release_v2",
+            release_digest="6" * 64,
+            dependency_lock=dependency_lock,
+            dependency_lock_digest="2" * 64,
+            deployment_binding_snapshot=binding,
+            deployment_binding_digest="7" * 64,
+            asset_lock=asset_lock,
+            engine_version="2.0.0",
+            deployed_contract_checksum="8" * 64,
+            published_by_id="user-p2-history",
+            published_at=now,
+        )
+        run = ExecutionRun(
+            id="run-p2-history",
+            workflow_id=workflow.id,
+            workflow_version_id=version.id,
+            created_by_id="user-p2-history",
+            idempotency_key="p2-history",
+            inspection_number="P2-HISTORY",
+            mode="test",
+            status="completed",
+            definition_snapshot=definition,
+            definition_checksum="4" * 64,
+            capabilities_snapshot={
+                "declared": [],
+                "side_effect_level": "none",
+            },
+            contract_checksum="5" * 64,
+            contract_format="workflow_release_v2",
+            release_digest="6" * 64,
+            dependency_lock=dependency_lock,
+            dependency_lock_digest="2" * 64,
+            deployment_binding_snapshot=binding,
+            deployment_binding_digest="7" * 64,
+            asset_lock=asset_lock,
+            engine_version_snapshot="2.0.0",
+            deployed_contract_checksum="8" * 64,
+            input_data={},
+            global_data={},
+            output_data={},
+        )
+        db.add_all([workflow, version, run])
+        db.commit()
+    columns = (
+        "definition, checksum, contract_checksum, dependency_lock, "
+        "dependency_lock_digest, deployment_binding_snapshot, "
+        "deployment_binding_digest, asset_lock, engine_version, "
+        "deployed_contract_checksum"
+    )
+    with engine.connect() as connection:
+        version_before = tuple(
+            connection.execute(
+                text(
+                    f"SELECT {columns} FROM execution_workflow_versions "
+                    "WHERE id = 'version-p2-history'"
+                )
+            ).one()
+        )
+        run_before = tuple(
+            connection.execute(
+                text(
+                    "SELECT definition_snapshot, definition_checksum, "
+                    "contract_checksum, dependency_lock, dependency_lock_digest, "
+                    "deployment_binding_snapshot, deployment_binding_digest, "
+                    "asset_lock, engine_version_snapshot, "
+                    "deployed_contract_checksum FROM execution_runs "
+                    "WHERE id = 'run-p2-history'"
+                )
+            ).one()
+        )
+    engine.dispose()
+
+    command.upgrade(config, "0009_execution_v2_primitives")
+    upgraded = create_engine(database_url)
+    try:
+        with upgraded.connect() as connection:
+            version_after = tuple(
+                connection.execute(
+                    text(
+                        f"SELECT {columns} FROM execution_workflow_versions "
+                        "WHERE id = 'version-p2-history'"
+                    )
+                ).one()
+            )
+            run_after = tuple(
+                connection.execute(
+                    text(
+                        "SELECT definition_snapshot, definition_checksum, "
+                        "contract_checksum, dependency_lock, "
+                        "dependency_lock_digest, deployment_binding_snapshot, "
+                        "deployment_binding_digest, asset_lock, "
+                        "engine_version_snapshot, deployed_contract_checksum "
+                        "FROM execution_runs WHERE id = 'run-p2-history'"
+                    )
+                ).one()
+            )
+        assert version_after == version_before
+        assert run_after == run_before
+    finally:
+        upgraded.dispose()
 
 
 def test_execution_contract_migration_backfills_versions_and_runs(tmp_path):
