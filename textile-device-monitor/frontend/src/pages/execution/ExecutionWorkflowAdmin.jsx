@@ -15,6 +15,7 @@ import {
 } from 'antd';
 import {
   EditOutlined,
+  FileTextOutlined,
   PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
@@ -30,6 +31,16 @@ import ExecutionProjectRuleEditor from './ExecutionProjectRuleEditor';
 import './execution.css';
 
 const { Text } = Typography;
+
+const releasePathFor = (workflow) => {
+  const releaseId = workflow.active_release_id
+    || workflow.current_release_id
+    || workflow.release_id;
+  if (releaseId) {
+    return `/execution/admin/releases/${releaseId}`;
+  }
+  return `/execution/admin/releases?workflow_id=${encodeURIComponent(workflow.id || workflow.workflow_id)}`;
+};
 
 export default function ExecutionWorkflowAdmin() {
   const [form] = Form.useForm();
@@ -110,6 +121,11 @@ export default function ExecutionWorkflowAdmin() {
       render: (value, row) => (
         <div className="execution-admin-workflow-name">
           <Text strong>{value || row.title}</Text>
+          <span>
+            <Tag color={row.management_mode === 'release_v2' ? 'purple' : 'default'}>
+              {row.management_mode === 'release_v2' ? 'Release v2' : 'v1 草稿'}
+            </Tag>
+          </span>
           <Text type="secondary">{row.description || '暂无说明'}</Text>
           {row.match_rule && (
             <Text type="secondary">
@@ -137,9 +153,11 @@ export default function ExecutionWorkflowAdmin() {
       title: '状态',
       dataIndex: 'status',
       width: 130,
-      render: (value, row) => row.published_version
-        ? <Tag color="success">已发布 v{row.published_version.version || row.published_version}</Tag>
-        : <Tag color="warning">{value === 'archived' ? '已归档' : '仅草稿'}</Tag>,
+      render: (value, row) => row.management_mode === 'release_v2'
+        ? <Tag color="purple">Release 管理</Tag>
+        : row.published_version
+          ? <Tag color="success">已发布 v{row.published_version.version || row.published_version}</Tag>
+          : <Tag color="warning">{value === 'archived' ? '已归档' : '仅草稿'}</Tag>,
     },
     {
       title: '草稿版本',
@@ -157,7 +175,15 @@ export default function ExecutionWorkflowAdmin() {
       title: '操作',
       key: 'actions',
       width: 200,
-      render: (_, row) => (
+      render: (_, row) => row.management_mode === 'release_v2' ? (
+        <Button
+          type="link"
+          icon={<FileTextOutlined />}
+          onClick={() => navigate(releasePathFor(row))}
+        >
+          Release 管理
+        </Button>
+      ) : (
         <Space size={0}>
           <Button
             type="link"
@@ -183,13 +209,19 @@ export default function ExecutionWorkflowAdmin() {
     <div className="execution-page execution-admin-page">
       <ExecutionChrome
         title="流程管理"
-        subtitle="设计、验证和发布可复用的检测执行流程"
+        subtitle="v1 草稿继续使用画布；Workflow Release v2 通过独立管理页分发"
         backTo={{ path: '/execution', label: '流程目录' }}
         actions={(
           <Space>
             <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
+            <Button
+              icon={<FileTextOutlined />}
+              onClick={() => navigate('/execution/admin/releases')}
+            >
+              Workflow Release v2
+            </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              新建流程
+              新建 v1 草稿
             </Button>
           </Space>
         )}

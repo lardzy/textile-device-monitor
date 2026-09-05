@@ -140,6 +140,14 @@ def ensure_storage_roots(db: Session) -> None:
         else:
             # Paths are deployment configuration, never accepted from workflow
             # JSON or a user request.
+            previous_contract = (
+                root.local_path,
+                root.access_mode,
+                root.category_key,
+            )
+            next_contract = (str(path), access_mode, category)
+            if previous_contract != next_contract:
+                root.binding_revision = int(root.binding_revision or 1) + 1
             root.local_path = str(path)
             root.access_mode = access_mode
             root.category_key = category

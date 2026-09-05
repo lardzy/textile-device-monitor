@@ -290,7 +290,13 @@ def _translate_file_error(exc: Exception) -> ExecutionApiError:
 
 
 def _require_run_write_contract(run: ExecutionRun) -> None:
-    if (run.capabilities_snapshot or {}).get("write") is not True:
+    capabilities = run.capabilities_snapshot or {}
+    v1_write_enabled = capabilities.get("write") is True
+    v2_write_enabled = capabilities.get("side_effect_level") in {
+        "local_write",
+        "publish",
+    }
+    if not (v1_write_enabled or v2_write_enabled):
         raise ExecutionApiError(
             403,
             "workflow_write_capability_required",
@@ -490,6 +496,7 @@ def plan_file_mutation(
     source_ref: ArtifactRef,
     node_run_id: Optional[str] = None,
     working_relative_path: Optional[str] = None,
+    detached_io: bool = False,
 ) -> dict[str, Any]:
     """Persist a source-bound plan before any working-copy side effect."""
 
@@ -513,22 +520,9 @@ def plan_file_mutation(
             access="write",
         )
         normalized_id = validate_mutation_id(mutation_id)
-        existing = (
-            db.query(ExecutionFileMutation)
-            .filter(ExecutionFileMutation.mutation_id == normalized_id)
-            .with_for_update()
-            .one_or_none()
-        )
-        if existing is not None and existing.run_id != run.id:
-            raise ExecutionApiError(
-                409,
-                "mutation_id_conflict",
-                "mutation_id 已被其他流程运行使用",
-            )
-
+        run_id = run.id
         gateway = build_file_gateway(db)
         source_path = gateway.resolve(source_ref, expected_type="file")
-        source_fingerprint = fingerprint_file(source_path)
         working_ref = ArtifactRef(
             "execution_staging",
             working_relative_path
@@ -537,6 +531,24 @@ def plan_file_mutation(
                 f"{source_path.name}"
             ),
         )
+        if detached_io:
+            # Root resolution is complete and the remaining work is pure file
+            # I/O.  Do not retain a business transaction while hashing a file.
+            db.flush()
+            db.commit()
+        source_fingerprint = fingerprint_file(source_path)
+        existing = (
+            db.query(ExecutionFileMutation)
+            .filter(ExecutionFileMutation.mutation_id == normalized_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if existing is not None and existing.run_id != run_id:
+            raise ExecutionApiError(
+                409,
+                "mutation_id_conflict",
+                "mutation_id 已被其他流程运行使用",
+            )
 
         if existing is not None:
             _bind_mutation_stage(
@@ -598,7 +610,7 @@ def plan_file_mutation(
             with db.begin_nested():
                 source_artifact = _artifact(
                     db,
-                    run_id=run.id,
+                    run_id=run_id,
                     node_run_id=node_run_id,
                     ref=source_ref,
                     role="source",
@@ -606,7 +618,7 @@ def plan_file_mutation(
                 )
                 mutation = ExecutionFileMutation(
                     mutation_id=normalized_id,
-                    run_id=run.id,
+                    run_id=run_id,
                     node_run_id=node_run_id,
                     source_artifact_id=source_artifact.id,
                     status="planned",
@@ -626,6 +638,7 @@ def plan_file_mutation(
                 source_ref=source_ref,
                 node_run_id=node_run_id,
                 working_relative_path=working_relative_path,
+                detached_io=detached_io,
             )
         return {
             "mutation_id": mutation.mutation_id,
@@ -650,6 +663,7 @@ def prepare_file_mutation(
     run: ExecutionRun,
     mutation_id: str,
     node_run_id: Optional[str] = None,
+    detached_io: bool = False,
 ) -> dict[str, Any]:
     _require_run_write_contract(run)
     _require_run_root_access(
@@ -657,9 +671,10 @@ def prepare_file_mutation(
         root_id="execution_staging",
         access="write",
     )
+    run_id = run.id
     mutation = _mutation_for_run(
         db,
-        run_id=run.id,
+        run_id=run_id,
         mutation_id=mutation_id,
         lock=True,
     )
@@ -678,17 +693,53 @@ def prepare_file_mutation(
             "当前变更已进入写入阶段，不能重新创建工作副本",
         )
     source_ref, working_ref = _planned_refs(db, mutation)
+    normalized_mutation_id = mutation.mutation_id
     _require_run_root_access(
         run,
         root_id=source_ref.root_id,
         access="read",
     )
+    service = _mutation_service(db)
     try:
-        receipt = _mutation_service(db).prepare_working_copy(
-            mutation.mutation_id,
+        if detached_io:
+            db.flush()
+            db.commit()
+        receipt = service.prepare_working_copy(
+            normalized_mutation_id,
             source_ref,
             working_relative_path=working_ref.relative_path,
         )
+        if detached_io:
+            mutation = _mutation_for_run(
+                db,
+                run_id=run_id,
+                mutation_id=mutation_id,
+                lock=True,
+            )
+            _bind_mutation_stage(
+                mutation,
+                stage="copy",
+                node_run_id=node_run_id,
+                allow_create=mutation.status in {"planned", "failed"},
+            )
+            if mutation.status in {"written", "verified", "published"}:
+                return _copy_receipt_from_database(db, mutation, reused=True)
+            if mutation.status == "failed" and mutation.working_artifact_id:
+                raise ExecutionApiError(
+                    409,
+                    "mutation_stage_conflict",
+                    "当前变更已进入写入阶段，不能重新创建工作副本",
+                )
+            current_source_ref, current_working_ref = _planned_refs(db, mutation)
+            if (
+                current_source_ref != source_ref
+                or current_working_ref != working_ref
+            ):
+                raise ExecutionApiError(
+                    409,
+                    "mutation_plan_conflict",
+                    "文件变更计划在副本创建期间发生变化",
+                )
         if _fingerprint_key(receipt.source_fingerprint) != mutation.source_fingerprint:
             raise ExecutionApiError(
                 409,
@@ -704,7 +755,7 @@ def prepare_file_mutation(
             )
         working_artifact = _artifact(
             db,
-            run_id=run.id,
+            run_id=run_id,
             node_run_id=node_run_id,
             ref=receipt.working_ref,
             role="working",
@@ -723,10 +774,24 @@ def prepare_file_mutation(
         db.flush()
         return receipt.as_dict()
     except ExecutionApiError as exc:
+        if detached_io:
+            mutation = _mutation_for_run(
+                db,
+                run_id=run_id,
+                mutation_id=mutation_id,
+                lock=True,
+            )
         _record_mutation_error(db, mutation, exc, status="failed")
         raise
     except (MutationError, StorageError, OSError, ValueError) as exc:
         error = _translate_file_error(exc)
+        if detached_io:
+            mutation = _mutation_for_run(
+                db,
+                run_id=run_id,
+                mutation_id=mutation_id,
+                lock=True,
+            )
         _record_mutation_error(db, mutation, error, status="failed")
         raise error from exc
 
@@ -739,6 +804,7 @@ def write_file_mutation(
     writes: Any,
     node_run_id: Optional[str] = None,
     expected_working_ref: Optional[ArtifactRef] = None,
+    detached_io: bool = False,
 ) -> dict[str, Any]:
     _require_run_write_contract(run)
     _require_run_root_access(
@@ -746,9 +812,10 @@ def write_file_mutation(
         root_id="execution_staging",
         access="write",
     )
+    run_id = run.id
     mutation = _mutation_for_run(
         db,
-        run_id=run.id,
+        run_id=run_id,
         mutation_id=mutation_id,
         lock=True,
     )
@@ -783,17 +850,42 @@ def write_file_mutation(
                 "mutation_change_plan_mismatch",
                 "写入内容与 mutation_id 已绑定的变更计划不一致",
             )
+    service = _mutation_service(db)
     try:
-        previous_status = mutation.status
-        receipt = _mutation_service(db).write_xlsx_cells(
-            mutation.mutation_id,
+        normalized_mutation_id = mutation.mutation_id
+        if detached_io:
+            db.flush()
+            db.commit()
+        receipt = service.write_xlsx_cells(
+            normalized_mutation_id,
             working_ref,
             normalized_writes,
         )
+        if detached_io:
+            mutation = _mutation_for_run(
+                db,
+                run_id=run_id,
+                mutation_id=mutation_id,
+                lock=True,
+            )
+            _bind_mutation_stage(
+                mutation,
+                stage="write",
+                node_run_id=node_run_id,
+                allow_create=mutation.status in {"prepared", "written", "failed"},
+            )
+            _, current_working_ref = _planned_refs(db, mutation)
+            if current_working_ref != working_ref:
+                raise ExecutionApiError(
+                    409,
+                    "mutation_working_copy_mismatch",
+                    "工作副本在写入期间发生变化",
+                )
+        previous_status = mutation.status
         previous_working_artifact_id = mutation.working_artifact_id
         updated_artifact = _artifact(
             db,
-            run_id=run.id,
+            run_id=run_id,
             node_run_id=node_run_id,
             ref=receipt.working_ref,
             role="working",
@@ -824,6 +916,13 @@ def write_file_mutation(
         raise
     except (MutationError, StorageError, OSError, ValueError) as exc:
         error = _translate_file_error(exc)
+        if detached_io:
+            mutation = _mutation_for_run(
+                db,
+                run_id=run_id,
+                mutation_id=mutation_id,
+                lock=True,
+            )
         _record_mutation_error(db, mutation, error, status="failed")
         raise error from exc
 
@@ -837,6 +936,7 @@ def verify_file_mutation(
     writes: Any = None,
     node_run_id: Optional[str] = None,
     expected_working_ref: Optional[ArtifactRef] = None,
+    detached_io: bool = False,
 ) -> dict[str, Any]:
     _require_run_write_contract(run)
     _require_run_root_access(
@@ -850,9 +950,10 @@ def verify_file_mutation(
             root_id=target_ref.root_id,
             access="publish",
         )
+    run_id = run.id
     mutation = _mutation_for_run(
         db,
-        run_id=run.id,
+        run_id=run_id,
         mutation_id=mutation_id,
         lock=True,
     )
@@ -905,11 +1006,52 @@ def verify_file_mutation(
                 "已发布的变更不能重新绑定到其他目标",
             )
         return recorded
+    service = _mutation_service(db)
+    working_path = service._gateway.resolve(working_ref, expected_type="file")
     try:
-        receipt = _mutation_service(db).verify_xlsx_cells(
+        if detached_io:
+            db.flush()
+            db.commit()
+        receipt = service.verify_xlsx_cells(
             working_ref,
             planned_writes,
         )
+        detached_fingerprint = (
+            fingerprint_file(working_path) if detached_io else None
+        )
+        if detached_io:
+            mutation = _mutation_for_run(
+                db,
+                run_id=run_id,
+                mutation_id=mutation_id,
+                lock=True,
+            )
+            _bind_mutation_stage(
+                mutation,
+                stage="verify",
+                node_run_id=node_run_id,
+                allow_create=mutation.status in {"written", "failed"},
+            )
+            if mutation.status not in {
+                "written",
+                "verified",
+                "published",
+                "failed",
+            }:
+                raise ExecutionApiError(
+                    409,
+                    "mutation_not_written",
+                    "核对期间变更状态发生变化",
+                )
+            working_artifact, current_working_ref = _working_artifact_identity(
+                db, mutation
+            )
+            if current_working_ref != working_ref:
+                raise ExecutionApiError(
+                    409,
+                    "mutation_working_copy_mismatch",
+                    "工作副本在核对期间发生变化",
+                )
         if not receipt.verified:
             error = ExecutionApiError(
                 409,
@@ -919,7 +1061,19 @@ def verify_file_mutation(
             )
             _record_mutation_error(db, mutation, error, status="failed")
             raise error
-        _require_working_copy_unchanged(db, mutation, working_ref)
+        if detached_io:
+            if (
+                detached_fingerprint is None
+                or detached_fingerprint.sha256 != working_artifact.content_sha256
+                or detached_fingerprint.size != working_artifact.size_bytes
+            ):
+                raise ExecutionApiError(
+                    409,
+                    "mutation_working_copy_changed",
+                    "工作副本在核对后发生变化，请重新执行写入与核对",
+                )
+        else:
+            _require_working_copy_unchanged(db, mutation, working_ref)
         mutation.status = "verified"
         mutation.node_run_id = node_run_id or mutation.node_run_id
         mutation.verification_result = {
@@ -940,6 +1094,13 @@ def verify_file_mutation(
         db.flush()
         return mutation.verification_result
     except ExecutionApiError as exc:
+        if detached_io:
+            mutation = _mutation_for_run(
+                db,
+                run_id=run_id,
+                mutation_id=mutation_id,
+                lock=True,
+            )
         if exc.code in {
             "mutation_working_copy_changed",
             "workbook_verification_failed",
@@ -948,6 +1109,13 @@ def verify_file_mutation(
         raise
     except (MutationError, StorageError, OSError, ValueError) as exc:
         error = _translate_file_error(exc)
+        if detached_io:
+            mutation = _mutation_for_run(
+                db,
+                run_id=run_id,
+                mutation_id=mutation_id,
+                lock=True,
+            )
         _record_mutation_error(db, mutation, error, status="failed")
         raise error from exc
 
@@ -1176,6 +1344,7 @@ def publish_file_mutation(
     lease_token: str,
     publish_node: dict[str, Any],
     expected_working_ref: Optional[ArtifactRef] = None,
+    approval_actor_user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     run, node_run, mutation = _lock_publish_fence(
         db,
@@ -1217,14 +1386,22 @@ def publish_file_mutation(
             "mutation_working_copy_mismatch",
             "发布文件不是该变更计划的工作副本",
         )
-    confirmation_task = require_publish_confirmation(
-        db,
-        run=run,
-        publish_node=publish_node,
-        mutation_id=mutation_id,
-        target_ref=target_ref,
-        approval_context=approval_context,
-    )
+    if approval_actor_user_id is None:
+        confirmation_task = require_publish_confirmation(
+            db,
+            run=run,
+            publish_node=publish_node,
+            mutation_id=mutation_id,
+            target_ref=target_ref,
+            approval_context=approval_context,
+        )
+        published_by_id = confirmation_task.completed_by_id
+    else:
+        # Native v2 publication validates an immutable approval receipt in its
+        # trusted handler before entering this fenced physical-I/O primitive.
+        # Keeping the actor id explicit prevents the legacy confirmation-node
+        # lookup from being accidentally reused as the v2 trust boundary.
+        published_by_id = approval_actor_user_id
     expected_approval_context = approval_context
     if run.mode == "test":
         result = {
@@ -1245,6 +1422,8 @@ def publish_file_mutation(
     if mutation.status == "published":
         return _publish_receipt_from_database(db, mutation)
 
+    run_id = run.id
+    service = _mutation_service(db)
     mutation.status = "publishing"
     mutation.publish_fence_token = lease_token
     mutation.publish_started_at = utcnow()
@@ -1257,14 +1436,14 @@ def publish_file_mutation(
     db.commit()
 
     try:
-        receipt = _mutation_service(db).publish(
+        receipt = service.publish(
             mutation_id,
             working_ref,
             target_ref,
         )
         run, node_run, mutation = _lock_publish_fence(
             db,
-            run_id=run.id,
+            run_id=run_id,
             node_run_id=node_run_id,
             mutation_id=mutation_id,
             lease_token=lease_token,
@@ -1272,7 +1451,7 @@ def publish_file_mutation(
         )
         artifact = _artifact(
             db,
-            run_id=run.id,
+            run_id=run_id,
             node_run_id=node_run.id,
             ref=receipt.published_ref,
             role="published",
@@ -1297,7 +1476,7 @@ def publish_file_mutation(
                     target_storage_root_id=artifact.storage_root_id,
                     target_relative_path=artifact.relative_path,
                     content_sha256=artifact.content_sha256,
-                    published_by_id=confirmation_task.completed_by_id,
+                    published_by_id=published_by_id,
                     details=receipt.as_dict(),
                 )
             )
@@ -1320,7 +1499,7 @@ def publish_file_mutation(
         db.rollback()
         run, node_run, mutation = _lock_publish_fence(
             db,
-            run_id=run.id,
+            run_id=run_id,
             node_run_id=node_run_id,
             mutation_id=mutation_id,
             lease_token=lease_token,
@@ -1338,7 +1517,7 @@ def _working_ref_from_input(value: Any) -> ArtifactRef:
     return _source_ref(value)
 
 
-def _copy_executor(context) -> dict[str, Any]:
+def _copy_executor(context, *, detached_io: bool = False) -> dict[str, Any]:
     config = context.node.get("config") or {}
     source = (
         context.input_data.get("source")
@@ -1357,16 +1536,18 @@ def _copy_executor(context) -> dict[str, Any]:
         source_ref=source_ref,
         node_run_id=context.node_run.id,
         working_relative_path=config.get("working_relative_path"),
+        detached_io=detached_io,
     )
     return prepare_file_mutation(
         context.db,
         run=context.run,
         mutation_id=mutation_id,
         node_run_id=context.node_run.id,
+        detached_io=detached_io,
     )
 
 
-def _write_executor(context) -> dict[str, Any]:
+def _write_executor(context, *, detached_io: bool = False) -> dict[str, Any]:
     working = context.input_data.get("working_copy") or context.input_data.get(
         "working_ref"
     )
@@ -1383,10 +1564,11 @@ def _write_executor(context) -> dict[str, Any]:
         ),
         node_run_id=context.node_run.id,
         expected_working_ref=_working_ref_from_input(working),
+        detached_io=detached_io,
     )
 
 
-def _verify_executor(context) -> dict[str, Any]:
+def _verify_executor(context, *, detached_io: bool = False) -> dict[str, Any]:
     working = context.input_data.get("working_copy") or context.input_data.get(
         "working_ref"
     )
@@ -1405,6 +1587,7 @@ def _verify_executor(context) -> dict[str, Any]:
         ),
         node_run_id=context.node_run.id,
         expected_working_ref=_working_ref_from_input(working),
+        detached_io=detached_io,
     )
 
 

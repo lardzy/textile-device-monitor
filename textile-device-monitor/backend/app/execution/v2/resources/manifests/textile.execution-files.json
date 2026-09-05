@@ -1,0 +1,88 @@
+{
+  "assets": [],
+  "distribution_digest": "d9bc2226d8efbaaa6d69dbbe83d08a02f7de204d79b758574b3eb8206a1702f4",
+  "engine_version_range": ">=2.1.0 <3.0.0",
+  "extensions": {
+    "textile": {
+      "trusted_loader": "execution-files"
+    }
+  },
+  "manifest_schema_version": "1.0",
+  "pack_id": "textile.execution-files",
+  "pack_version": "1.0.0",
+  "provides": {
+    "capabilities": [
+      {
+        "capability_id": "file.index.read",
+        "version": "1.0.0"
+      },
+      {
+        "capability_id": "file.batch.atomic-place",
+        "version": "1.0.0"
+      },
+      {
+        "capability_id": "artifact.atomic-publish",
+        "version": "2.0.0"
+      }
+    ],
+    "connectors": [],
+    "nodes": [
+      {
+        "contract_digest": "6ddaa432eedf18f96f1aeb839be0ed6a2b72c811e97587601fa00aeac16dc5b5",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "9ce8ea8cc27006d9ddce77469eea969ad6f54d4dfb7c651516ecf779ac3d358b",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
+        "type": "file.query",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "8def108b6b408c7787204631c2202262a2066a60c19b5bb1bba77c311f482f96",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "ddf205c801a0f3950a29b0e6e984b5c07098545f9abcb361b0a0edc03ae01732",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
+        "type": "file.group",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "4f41296c527a23020d4e209a223308acf7272006ae30aa7e0f331755f547b3eb",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "9713b8728d8ea03887181072cb50a220ddefd2c843bded10ccfd392e32f9a11d",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
+        "type": "file.batch_place",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "f8f40977f40d7de6e34ac5ea6200f57521704fdb39e07804a18bfbd9f716ab54",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "5879bdb3e36cac48dd81d214f0ae7d1dad52e325fd481bca50109df68c28d210",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
+        "type": "artifact.publish",
+        "type_version": 2
+      }
+    ],
+    "renderers": [
+      {
+        "capability": "file.batch_place.conflict",
+        "contract_digest": "946e87763a41d59eb350d69cd2591c21e9207c1edd0d2c79a8c6975a8f1778c6",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "resource_paths": [
+    "mutation_runtime.py",
+    "mutations.py",
+    "persistence.py",
+    "report_image_placement.py",
+    "storage.py",
+    "v2/native_handlers.py",
+    "v2/resources/node_specs/files-p2-nodes.json"
+  ]
+}

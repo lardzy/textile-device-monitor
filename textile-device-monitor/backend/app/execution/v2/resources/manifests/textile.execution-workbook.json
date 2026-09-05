@@ -1,0 +1,80 @@
+{
+  "assets": [],
+  "distribution_digest": "48d611077085d4de69b878d6aad0e15b127a5c32d40db6d0f314978ef1c40029",
+  "engine_version_range": ">=2.1.0 <3.0.0",
+  "extensions": {
+    "textile": {
+      "trusted_loader": "execution-workbook"
+    }
+  },
+  "manifest_schema_version": "1.0",
+  "pack_id": "textile.execution-workbook",
+  "pack_version": "1.0.0",
+  "provides": {
+    "capabilities": [
+      {
+        "capability_id": "workbook.read",
+        "version": "1.0.0"
+      },
+      {
+        "capability_id": "workbook.write-cells",
+        "version": "2.0.0"
+      },
+      {
+        "capability_id": "workbook.verify",
+        "version": "2.0.0"
+      }
+    ],
+    "connectors": [],
+    "nodes": [
+      {
+        "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "1c2ab31658340b72166a0311941095f94201f590d1bc6d5203587931e01595d3",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
+        "type": "workbook.classify",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "367c2b03bbf8a1efc6c78e4ba2e3b5b51d9f0614d46a2aac905c1f8e2cf00add",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
+        "type": "workbook.extract_fields",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "6ec5391d82e0d73ca4e62adfd250886df7763f735b218c8802e681346eab48a6",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
+        "type": "workbook.write_cells",
+        "type_version": 2
+      },
+      {
+        "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "c534fc7d02f8de82c68b4fb3415a8bcde19eeebf9774b02a75f123264cb07675",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
+        "type": "workbook.verify",
+        "type_version": 2
+      }
+    ]
+  },
+  "resource_paths": [
+    "excel_runtime.py",
+    "mutation_runtime.py",
+    "mutations.py",
+    "storage.py",
+    "v2/native_handlers.py",
+    "v2/resources/node_specs/workbook-p2-nodes.json"
+  ]
+}

@@ -36,6 +36,11 @@ import MicroscopyRecordHumanTask, {
 } from './MicroscopyRecordHumanTask';
 import ReportImagePlacementPrompt from './ReportImagePlacementPrompt';
 import SchemaFields from './SchemaFields';
+import NativeHumanTaskRenderer from './NativeHumanTaskRenderer';
+import {
+  hasNativeRendererContract,
+  resolveTrustedHumanRenderer,
+} from '../../utils/executionHumanRenderers';
 
 const { Paragraph, Text } = Typography;
 
@@ -97,6 +102,18 @@ export default function HumanTaskCard({
     type: 'object',
     properties: {},
   };
+  const rendererContract = task.renderer_contract || {};
+  const trustedNativeRenderer = resolveTrustedHumanRenderer(rendererContract);
+  const nativeNodeRequiresRenderer = [
+    'human.form',
+    'human.select',
+    'human.approval',
+    'human.decision',
+    'file.batch_place',
+  ].includes(task.node_type);
+  const unknownNativeRenderer = (
+    hasNativeRendererContract(rendererContract) || nativeNodeRequiresRenderer
+  ) && !trustedNativeRenderer;
   const taskKind = microscopyTaskKind(task, nodeRun);
   const hasMicroscopyTask = [
     'microscopy_record_input',
@@ -109,6 +126,10 @@ export default function HumanTaskCard({
     delete properties.selected_folder_ids;
     delete properties.selected_image_ids;
     delete properties.primary_image_id;
+    if (trustedNativeRenderer?.capability === 'human.select') {
+      delete properties.selected_ids;
+      delete properties.primary_id;
+    }
     if (hasMicroscopyTask) {
       delete properties.selected_project_key;
       delete properties.sample_name;
@@ -125,7 +146,7 @@ export default function HumanTaskCard({
       delete properties.printed;
     }
     return { ...schema, properties };
-  }, [hasMicroscopyTask, schema]);
+  }, [hasMicroscopyTask, schema, trustedNativeRenderer?.capability]);
   const candidatePayload = nodeRun?.input_data?.files
     || nodeRun?.input_data?.result_files
     || nodeRun?.input_data?.results
@@ -196,6 +217,15 @@ export default function HumanTaskCard({
 
   const valuesForSubmit = () => {
     const values = form.getFieldsValue();
+    if (trustedNativeRenderer?.capability === 'human.select') {
+      const selectedIds = Array.isArray(values.selected_ids)
+        ? values.selected_ids.map(value => String(value))
+        : [];
+      return {
+        selected_ids: selectedIds,
+        primary_id: values.primary_id ? String(values.primary_id) : null,
+      };
+    }
     if (taskKind === 'microscopy_print_confirmation') {
       const artifact = nodeRun?.input_data?.artifact
         || nodeRun?.input_data?.print_context?.artifact
@@ -288,6 +318,10 @@ export default function HumanTaskCard({
       : initialSelectedFiles;
     form.setFieldsValue({
       ...values,
+      selected_ids: Array.isArray(values.selected_ids)
+        ? values.selected_ids.map(value => String(value))
+        : undefined,
+      primary_id: values.primary_id ? String(values.primary_id) : undefined,
       selected_files: defaultedSelectedFiles,
       primary_file_id: candidateId(values.primary_file)
         || values.primary_file_id
@@ -591,9 +625,25 @@ export default function HumanTaskCard({
             message="该任务已由其他人员领取"
             description="任务提交后收件箱会自动更新，请勿在多个账号之间重复处理。"
           />
+        ) : unknownNativeRenderer ? (
+          <Alert
+            showIcon
+            type="error"
+            message="当前前端不信任此 Human renderer"
+            description="任务已 fail-closed；请升级前端或核对 renderer capability、version 与 contract digest。"
+          />
         ) : (
           <>
-          {hasImageSelection && (
+          {trustedNativeRenderer ? (
+            <NativeHumanTaskRenderer
+              renderer={trustedNativeRenderer}
+              rendererContract={rendererContract}
+              form={form}
+              schema={schema}
+              inputData={nodeRun?.input_data || {}}
+              disabled={working}
+            />
+          ) : hasImageSelection && (
             <Form.Item label="图片结果选择" required>
               {imageListTruncated && (
                 <Alert
@@ -707,7 +757,7 @@ export default function HumanTaskCard({
               </Form.Item>
             </Form.Item>
           )}
-          {!hasImageSelection && candidates.length > 0 && (hasResultDetails ? (
+          {!trustedNativeRenderer && !hasImageSelection && candidates.length > 0 && (hasResultDetails ? (
             <Form.Item
               label={isPaperQualitativeSelection
                 ? `纸类原始记录（${candidates.length}，单选）`
@@ -819,7 +869,7 @@ export default function HumanTaskCard({
               </Checkbox.Group>
             </Form.Item>
           ))}
-          {hasMicroscopyTask && (
+          {!trustedNativeRenderer && hasMicroscopyTask && (
             <MicroscopyRecordHumanTask
               taskKind={taskKind}
               form={form}
@@ -830,8 +880,8 @@ export default function HumanTaskCard({
               disabled={working}
             />
           )}
-          {placementPlan && <ReportImagePlacementPrompt plan={placementPlan} />}
-          <SchemaFields schema={formSchema} />
+          {!trustedNativeRenderer && placementPlan && <ReportImagePlacementPrompt plan={placementPlan} />}
+          {!trustedNativeRenderer && <SchemaFields schema={formSchema} />}
           <Space wrap>
             <Button loading={working} onClick={() => execute('save')}>保存草稿</Button>
             <Button

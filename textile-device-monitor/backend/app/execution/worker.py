@@ -100,8 +100,9 @@ class _LeaseHeartbeat:
 
 
 class _WorkerHeartbeat:
-    def __init__(self, worker_id: str) -> None:
+    def __init__(self, worker_id: str, capability_document: dict) -> None:
         self.worker_id = worker_id
+        self.capability_document = capability_document
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self.interval = max(
@@ -118,6 +119,7 @@ class _WorkerHeartbeat:
                 db,
                 worker_id=self.worker_id,
                 status=status,
+                capability_document=self.capability_document,
             )
             db.commit()
 
@@ -153,6 +155,12 @@ class ExecutionWorker:
             1,
             microscopy_check_record_executor,
         )
+        # Build the immutable v2 capability set only after every execution
+        # channel has registered and the Pack registry has verified its
+        # manifests, resources and handlers.
+        from app.execution.v2.registry import worker_capability_document
+
+        self.capability_document = worker_capability_document()
         self.worker_id = worker_id or default_worker_id()
         self._stopping = False
         self._next_outbox_cleanup_at = 0.0
@@ -253,7 +261,7 @@ class ExecutionWorker:
         signal.signal(signal.SIGINT, self.stop)
         wait_for_current_database_schema()
         logger.info("Execution worker %s started", self.worker_id)
-        with _WorkerHeartbeat(self.worker_id):
+        with _WorkerHeartbeat(self.worker_id, self.capability_document):
             while not self._stopping:
                 if not self.run_once():
                     time.sleep(max(poll_seconds, 0.05))

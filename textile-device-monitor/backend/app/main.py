@@ -9,7 +9,17 @@ import uvicorn
 
 from app.database import SessionLocal
 from app.config import settings
-from app.api import area, devices, execution, history, ocr, queue, results, stats
+from app.api import (
+    area,
+    devices,
+    execution,
+    execution_v2,
+    history,
+    ocr,
+    queue,
+    results,
+    stats,
+)
 from app.execution.catalog import bootstrap_execution_system
 from app.execution.persistence import ensure_storage_roots
 from app.execution.worker_state import (
@@ -58,6 +68,7 @@ app.include_router(ocr.router, prefix="/api")
 app.include_router(area.router, prefix="/api")
 if settings.EXECUTION_ENABLED:
     app.include_router(execution.router, prefix="/api")
+    app.include_router(execution_v2.router, prefix="/api")
 
 
 @app.get("/")

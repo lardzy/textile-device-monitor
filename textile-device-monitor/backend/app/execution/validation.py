@@ -351,26 +351,46 @@ def _iter_mapping_references(
     value: Any,
     *,
     path: str,
-) -> list[tuple[str, str]]:
-    references: list[tuple[str, str]] = []
+    target_schema: dict[str, Any] | None = None,
+) -> list[tuple[str, str, dict[str, Any] | None]]:
+    references: list[tuple[str, str, dict[str, Any] | None]] = []
     if isinstance(value, dict):
+        properties = (
+            target_schema.get("properties")
+            if isinstance(target_schema, dict)
+            else None
+        )
         for key, nested in value.items():
+            nested_schema = (
+                properties.get(key)
+                if isinstance(properties, dict)
+                and isinstance(properties.get(key), dict)
+                else None
+            )
             references.extend(
                 _iter_mapping_references(
                     nested,
                     path=f"{path}.{key}",
+                    target_schema=nested_schema,
                 )
             )
     elif isinstance(value, list):
+        item_schema = (
+            target_schema.get("items")
+            if isinstance(target_schema, dict)
+            and isinstance(target_schema.get("items"), dict)
+            else None
+        )
         for index, nested in enumerate(value):
             references.extend(
                 _iter_mapping_references(
                     nested,
                     path=f"{path}[{index}]",
+                    target_schema=item_schema,
                 )
             )
     elif isinstance(value, str) and value.startswith("$."):
-        references.append((path, value))
+        references.append((path, value, target_schema))
     return references
 
 
@@ -567,6 +587,7 @@ def validate_definition(
     *,
     registry: NodeRegistry = node_registry,
     for_publish: bool = False,
+    compatibility_node_ids: set[str] | None = None,
 ) -> ValidationResult:
     raw_nodes = document.get("nodes")
     if isinstance(raw_nodes, list) and any(
@@ -578,6 +599,7 @@ def validate_definition(
             executable,
             registry=registry,
             for_publish=for_publish,
+            compatibility_node_ids=compatibility_node_ids,
         )
         parked_issues: list[ValidationIssue] = []
         seen_ids: set[str] = set()
@@ -936,7 +958,10 @@ def validate_definition(
         condition = edge.get("condition")
         _inspect_values(condition, f"{path}.condition", issues)
         source_node = node_by_id.get(source)
-        if source_node is not None and source_node.get("type") == "branch.condition":
+        if source_node is not None and source_node.get("type") in {
+            "branch.condition",
+            "flow.branch",
+        }:
             _validate_condition(
                 condition,
                 path=f"{path}.condition",
@@ -978,15 +1003,16 @@ def validate_definition(
                 if isinstance(input_properties, dict)
                 else None
             )
-            for reference_path, expression in _iter_mapping_references(
+            for reference_path, expression, reference_target_schema in _iter_mapping_references(
                 mapping_value,
                 path=f"$.nodes[{node_id}].input_mapping.{mapping_key}",
+                target_schema=target_schema,
             ):
                 _validate_mapping_reference(
                     expression=expression,
                     path=reference_path,
                     target_node_id=node_id,
-                    target_schema=target_schema,
+                    target_schema=reference_target_schema,
                     input_schema=document.get("input_schema") or {},
                     global_schema=document.get("global_schema") or {},
                     node_by_id=node_by_id,
@@ -996,7 +1022,7 @@ def validate_definition(
                 )
 
     for source_id, node in node_by_id.items():
-        if node.get("type") != "branch.condition":
+        if node.get("type") not in {"branch.condition", "flow.branch"}:
             continue
         branch_edges = [
             edge
@@ -1021,6 +1047,10 @@ def validate_definition(
         for node_id, node in node_by_id.items()
         if node.get("type")
         == "external.legacy_regenerated_fiber_count_upload"
+        and (
+            compatibility_node_ids is None
+            or node_id in compatibility_node_ids
+        )
     ]
     for external_id, external_node in external_upload_nodes:
         config = external_node.get("config") or {}
@@ -1114,6 +1144,10 @@ def validate_definition(
         for node_id, node in node_by_id.items()
         if node.get("type")
         == "external.legacy_special_wool_image_upload"
+        and (
+            compatibility_node_ids is None
+            or node_id in compatibility_node_ids
+        )
     ]
     for external_id, external_node in special_wool_image_nodes:
         config = external_node.get("config") or {}
@@ -1183,6 +1217,10 @@ def validate_definition(
         (node_id, node)
         for node_id, node in node_by_id.items()
         if node.get("type") == "external.legacy_special_wool_review"
+        and (
+            compatibility_node_ids is None
+            or node_id in compatibility_node_ids
+        )
     ]
     for review_id, review_node in special_wool_review_nodes:
         config = review_node.get("config") or {}
@@ -1230,6 +1268,10 @@ def validate_definition(
         for node_id, node in node_by_id.items()
         if node.get("type")
         == "external.legacy_microscopy_check_record_entry"
+        and (
+            compatibility_node_ids is None
+            or node_id in compatibility_node_ids
+        )
     ]
     for entry_id, entry_node in final_entry_nodes:
         config = entry_node.get("config") or {}
@@ -1344,6 +1386,10 @@ def validate_definition(
         (node_id, node)
         for node_id, node in node_by_id.items()
         if node.get("type") == "artifact.publish"
+        and (
+            compatibility_node_ids is None
+            or node_id in compatibility_node_ids
+        )
     ]
     if len(publish_nodes) > 1:
         issues.append(

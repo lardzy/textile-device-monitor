@@ -52,7 +52,9 @@ from app.api.execution import (
     publish_run_mutation,
 )
 from app.execution.engine import (
+    claim_human_task,
     claim_next_node,
+    complete_node,
     renew_node_lease,
     set_run_control_status,
 )
@@ -68,6 +70,7 @@ from app.execution.models import (
     ExecutionArtifactRelation,
     ExecutionAuditLog,
     ExecutionCategory,
+    ExecutionEdgeRun,
     ExecutionEvent,
     ExecutionExternalAttempt,
     ExecutionExternalOperation,
@@ -81,6 +84,8 @@ from app.execution.models import (
     ExecutionRun,
     ExecutionStorageRoot,
     ExecutionUser,
+    ExecutionWorkerHeartbeat,
+    ExecutionWorkerNodeCapability,
     ExecutionWorkflow,
     utcnow,
 )
@@ -219,7 +224,11 @@ def test_postgres_rearms_same_fence_after_two_prewrite_failures():
             slug=_unique("pg-rearm-workflow"),
             category_id=category.id,
             name="PostgreSQL 安全重臂测试",
-            draft_definition={"schema_version": "1.0", "nodes": [], "edges": []},
+            draft_definition={
+                "schema_version": "1.0",
+                "nodes": [],
+                "edges": [],
+            },
             capabilities={"external_write": True},
             created_by_id=user.id,
             updated_by_id=user.id,
@@ -529,6 +538,605 @@ def ready_node_case():
         except Exception:
             cleanup.rollback()
             raise
+        finally:
+            cleanup.close()
+
+
+@pytest.fixture
+def v2_exact_binding_claim_case():
+    """Create one v2-ready node advertised by two exact-capability Workers."""
+
+    db = SessionLocal()
+    ids: dict[str, object] = {}
+    binding_digest = "a" * 64
+    worker_ids = [
+        _unique("pg-v2-worker-a"),
+        _unique("pg-v2-worker-b"),
+    ]
+    try:
+        user = ExecutionUser(
+            username=_unique("pg-v2-claim-user"),
+            display_name="PostgreSQL v2 精确领取测试",
+            password_hash="not-used-by-this-test",
+            role="user",
+        )
+        category = ExecutionCategory(
+            key=_unique("pgv2c"),
+            name="PostgreSQL v2 精确领取测试",
+        )
+        db.add_all([user, category])
+        db.flush()
+
+        workflow = ExecutionWorkflow(
+            slug=_unique("pg-v2-claim-workflow"),
+            category_id=category.id,
+            name="PostgreSQL v2 精确领取测试",
+            draft_definition={"schema_version": "1.0", "nodes": [], "edges": []},
+            draft_revision=1,
+            management_mode="release_v2",
+            capabilities={"read": True},
+            created_by_id=user.id,
+            updated_by_id=user.id,
+        )
+        db.add(workflow)
+        db.flush()
+
+        definition_snapshot = {
+            "schema_version": "1.0",
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "core.start",
+                    "type_version": 1,
+                    "name": "开始",
+                    "config": {},
+                }
+            ],
+            "edges": [],
+        }
+        capabilities_snapshot = {"read": True}
+        run = ExecutionRun(
+            workflow_id=workflow.id,
+            created_by_id=user.id,
+            idempotency_key=_unique("pg-v2-claim-run"),
+            inspection_number=_unique("pg-v2-claim-inspection"),
+            mode="test",
+            status="queued",
+            definition_snapshot=definition_snapshot,
+            definition_checksum="0" * 64,
+            capabilities_snapshot=capabilities_snapshot,
+            contract_checksum=workflow_contract_checksum(
+                definition_snapshot,
+                capabilities_snapshot,
+            ),
+            deployed_contract_checksum="f" * 64,
+            input_data={},
+            global_data={},
+            output_data={},
+        )
+        db.add(run)
+        db.flush()
+
+        node_run = ExecutionNodeRun(
+            run_id=run.id,
+            node_id="start",
+            node_type="core.start",
+            node_type_version=1,
+            node_name="开始",
+            execution_kind="automatic",
+            execution_binding_digest=binding_digest,
+            status="ready",
+        )
+        db.add(node_run)
+        now = utcnow()
+        for worker_id in worker_ids:
+            db.add(
+                ExecutionWorkerHeartbeat(
+                    worker_id=worker_id,
+                    status="running",
+                    started_at=now,
+                    last_seen_at=now,
+                    capabilities={},
+                    protocol_version="2.0",
+                    engine_version="2.0.0",
+                    capability_digest="d" * 64,
+                )
+            )
+            db.add(
+                ExecutionWorkerNodeCapability(
+                    worker_id=worker_id,
+                    execution_binding_digest=binding_digest,
+                    node_type="core.start",
+                    node_type_version=1,
+                    contract_digest="b" * 64,
+                    implementation_digest="c" * 64,
+                    pack_id="textile.execution-kernel",
+                    pack_version="2.0.0",
+                    execution_kind="automatic",
+                    ready=True,
+                )
+            )
+        db.commit()
+
+        ids = {
+            "user_id": user.id,
+            "category_id": category.id,
+            "workflow_id": workflow.id,
+            "run_id": run.id,
+            "node_run_id": node_run.id,
+        }
+        yield {
+            **ids,
+            "binding_digest": binding_digest,
+            "worker_ids": worker_ids,
+        }
+    finally:
+        db.close()
+        cleanup = SessionLocal()
+        try:
+            run_id = ids.get("run_id")
+            node_run_id = ids.get("node_run_id")
+            if run_id is not None:
+                cleanup.query(ExecutionOutbox).filter(
+                    ExecutionOutbox.aggregate_id == run_id
+                ).delete(synchronize_session=False)
+                cleanup.query(ExecutionEvent).filter(
+                    ExecutionEvent.run_id == run_id
+                ).delete(synchronize_session=False)
+            if node_run_id is not None:
+                cleanup.query(ExecutionNodeAttempt).filter(
+                    ExecutionNodeAttempt.node_run_id == node_run_id
+                ).delete(synchronize_session=False)
+                cleanup.query(ExecutionNodeRun).filter(
+                    ExecutionNodeRun.id == node_run_id
+                ).delete(synchronize_session=False)
+            if run_id is not None:
+                cleanup.query(ExecutionRun).filter(
+                    ExecutionRun.id == run_id
+                ).delete(synchronize_session=False)
+            workflow_id = ids.get("workflow_id")
+            if workflow_id is not None:
+                cleanup.query(ExecutionWorkflow).filter(
+                    ExecutionWorkflow.id == workflow_id
+                ).delete(synchronize_session=False)
+            category_id = ids.get("category_id")
+            if category_id is not None:
+                cleanup.query(ExecutionCategory).filter(
+                    ExecutionCategory.id == category_id
+                ).delete(synchronize_session=False)
+            cleanup.query(ExecutionWorkerNodeCapability).filter(
+                ExecutionWorkerNodeCapability.worker_id.in_(worker_ids)
+            ).delete(synchronize_session=False)
+            cleanup.query(ExecutionWorkerHeartbeat).filter(
+                ExecutionWorkerHeartbeat.worker_id.in_(worker_ids)
+            ).delete(synchronize_session=False)
+            user_id = ids.get("user_id")
+            if user_id is not None:
+                cleanup.query(ExecutionUser).filter(
+                    ExecutionUser.id == user_id
+                ).delete(synchronize_session=False)
+            cleanup.commit()
+        except Exception:
+            cleanup.rollback()
+            raise
+        finally:
+            cleanup.close()
+
+
+def test_v2_exact_binding_is_claimed_once_under_skip_locked(
+    v2_exact_binding_claim_case,
+    monkeypatch,
+):
+    """Two compatible v2 Workers still create only one claim/attempt."""
+
+    monkeypatch.setattr(settings, "EXECUTION_CONTRACT_MODE", "enforced")
+    start = threading.Barrier(2)
+    first_claimed = threading.Event()
+    loser_finished = threading.Event()
+    release_winner = threading.Event()
+
+    def claim(worker_id: str):
+        db = SessionLocal()
+        try:
+            start.wait(timeout=10)
+            node = claim_next_node(db, worker_id=worker_id, lease_seconds=30)
+            if node is None:
+                db.commit()
+                loser_finished.set()
+                return None
+            result = {
+                "node_run_id": node.id,
+                "binding_digest": node.execution_binding_digest,
+                "lease_token": node.lease_token,
+            }
+            first_claimed.set()
+            if not release_winner.wait(timeout=10):
+                raise AssertionError(
+                    "competing v2 Worker did not finish while the winner held "
+                    "the PostgreSQL row lock"
+                )
+            db.commit()
+            return result
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(claim, worker_id)
+            for worker_id in v2_exact_binding_claim_case["worker_ids"]
+        ]
+        try:
+            assert first_claimed.wait(timeout=10)
+            assert loser_finished.wait(timeout=10)
+        finally:
+            release_winner.set()
+        results = [future.result(timeout=10) for future in futures]
+
+    successful = [result for result in results if result is not None]
+    assert len(successful) == 1
+    assert successful[0]["node_run_id"] == (
+        v2_exact_binding_claim_case["node_run_id"]
+    )
+    assert successful[0]["binding_digest"] == (
+        v2_exact_binding_claim_case["binding_digest"]
+    )
+    assert successful[0]["lease_token"]
+
+    verification = SessionLocal()
+    try:
+        node = verification.get(
+            ExecutionNodeRun,
+            v2_exact_binding_claim_case["node_run_id"],
+        )
+        assert node is not None
+        assert node.status == "running"
+        assert node.attempt_count == 1
+        attempts = (
+            verification.query(ExecutionNodeAttempt)
+            .filter(ExecutionNodeAttempt.node_run_id == node.id)
+            .all()
+        )
+        assert len(attempts) == 1
+        assert attempts[0].execution_kind == "automatic"
+        assert attempts[0].execution_binding_digest == (
+            v2_exact_binding_claim_case["binding_digest"]
+        )
+    finally:
+        verification.close()
+
+
+def test_human_task_claim_revision_is_compare_and_swap_under_row_lock():
+    """Two claimers using one revision produce exactly one durable owner."""
+
+    setup = SessionLocal()
+    ids: dict[str, str] = {}
+    try:
+        user = ExecutionUser(
+            username=_unique("pg-human-user"),
+            display_name="PostgreSQL Human CAS",
+            password_hash="not-used-by-this-test",
+            role="admin",
+        )
+        category = ExecutionCategory(
+            key=_unique("pg-human-category"),
+            name="PostgreSQL Human CAS",
+        )
+        setup.add_all([user, category])
+        setup.flush()
+        workflow = ExecutionWorkflow(
+            slug=_unique("pg-human-workflow"),
+            category_id=category.id,
+            name="PostgreSQL Human CAS",
+            draft_definition={"schema_version": "1.0", "nodes": [], "edges": []},
+            capabilities={},
+            created_by_id=user.id,
+            updated_by_id=user.id,
+        )
+        setup.add(workflow)
+        setup.flush()
+        run = ExecutionRun(
+            workflow_id=workflow.id,
+            created_by_id=user.id,
+            idempotency_key=_unique("pg-human-run"),
+            inspection_number="PG-HUMAN-CAS",
+            mode="live",
+            status="waiting_human",
+            definition_snapshot={"schema_version": "1.0", "nodes": [], "edges": []},
+            definition_checksum="1" * 64,
+            capabilities_snapshot={},
+            contract_checksum="2" * 64,
+            input_data={},
+            global_data={},
+            output_data={},
+        )
+        setup.add(run)
+        setup.flush()
+        node = ExecutionNodeRun(
+            run_id=run.id,
+            node_id="human",
+            node_type="human.input",
+            node_type_version=1,
+            node_name="Human",
+            status="waiting_human",
+        )
+        setup.add(node)
+        setup.flush()
+        task = ExecutionHumanTask(
+            run_id=run.id,
+            node_run_id=node.id,
+            title="Human CAS",
+            form_schema={"type": "object", "additionalProperties": False},
+            renderer_contract={},
+            status="open",
+            revision=1,
+        )
+        setup.add(task)
+        setup.commit()
+        ids = {
+            "user_id": user.id,
+            "category_id": category.id,
+            "workflow_id": workflow.id,
+            "run_id": run.id,
+            "node_id": node.id,
+            "task_id": task.id,
+        }
+    finally:
+        setup.close()
+
+    start = threading.Barrier(2)
+    winner_locked = threading.Event()
+    release_winner = threading.Event()
+
+    def claim():
+        db = SessionLocal()
+        try:
+            actor = db.get(ExecutionUser, ids["user_id"])
+            start.wait(timeout=10)
+            try:
+                task = claim_human_task(
+                    db,
+                    task_id=ids["task_id"],
+                    expected_revision=1,
+                    actor=actor,
+                )
+            except ExecutionApiError as exc:
+                db.rollback()
+                return exc.code
+            winner_locked.set()
+            if not release_winner.wait(timeout=10):
+                raise AssertionError("Human CAS contender did not reach the row lock")
+            db.commit()
+            return f"claimed:{task.claimed_by_id}:{task.revision}"
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(claim), pool.submit(claim)]
+            assert winner_locked.wait(timeout=10)
+            time.sleep(0.2)
+            release_winner.set()
+            results = [future.result(timeout=10) for future in futures]
+        assert sum(value.startswith("claimed:") for value in results) == 1
+        assert results.count("human_task_revision_conflict") == 1
+
+        verification = SessionLocal()
+        try:
+            task = verification.get(ExecutionHumanTask, ids["task_id"])
+            assert task.status == "claimed"
+            assert task.claimed_by_id == ids["user_id"]
+            assert task.revision == 2
+        finally:
+            verification.close()
+    finally:
+        cleanup = SessionLocal()
+        try:
+            cleanup.query(ExecutionOutbox).filter(
+                ExecutionOutbox.aggregate_id == ids["run_id"]
+            ).delete(synchronize_session=False)
+            cleanup.query(ExecutionEvent).filter(
+                ExecutionEvent.run_id == ids["run_id"]
+            ).delete(synchronize_session=False)
+            cleanup.query(ExecutionHumanTask).filter_by(id=ids["task_id"]).delete()
+            cleanup.query(ExecutionNodeRun).filter_by(id=ids["node_id"]).delete()
+            cleanup.query(ExecutionRun).filter_by(id=ids["run_id"]).delete()
+            cleanup.query(ExecutionWorkflow).filter_by(
+                id=ids["workflow_id"]
+            ).delete()
+            cleanup.query(ExecutionCategory).filter_by(
+                id=ids["category_id"]
+            ).delete()
+            cleanup.query(ExecutionUser).filter_by(id=ids["user_id"]).delete()
+            cleanup.commit()
+        finally:
+            cleanup.close()
+
+
+def test_first_selected_join_is_activated_once_when_edges_finish_concurrently():
+    """A late selected edge must not schedule a second join execution."""
+
+    setup = SessionLocal()
+    ids: dict[str, object] = {}
+    try:
+        user = ExecutionUser(
+            username=_unique("pg-join-user"),
+            display_name="PostgreSQL join concurrency",
+            password_hash="not-used-by-this-test",
+            role="admin",
+        )
+        category = ExecutionCategory(
+            key=_unique("pg-join-category"),
+            name="PostgreSQL join concurrency",
+        )
+        setup.add_all([user, category])
+        setup.flush()
+        workflow = ExecutionWorkflow(
+            slug=_unique("pg-join-workflow"),
+            category_id=category.id,
+            name="PostgreSQL join concurrency",
+            draft_definition={"schema_version": "1.0", "nodes": [], "edges": []},
+            capabilities={},
+            created_by_id=user.id,
+            updated_by_id=user.id,
+        )
+        setup.add(workflow)
+        setup.flush()
+        run = ExecutionRun(
+            workflow_id=workflow.id,
+            created_by_id=user.id,
+            idempotency_key=_unique("pg-join-run"),
+            inspection_number="PG-JOIN",
+            mode="live",
+            status="running",
+            definition_snapshot={"schema_version": "1.0", "nodes": [], "edges": []},
+            definition_checksum="3" * 64,
+            capabilities_snapshot={},
+            contract_checksum="4" * 64,
+            input_data={},
+            global_data={},
+            output_data={},
+        )
+        setup.add(run)
+        setup.flush()
+        sources = []
+        attempts = []
+        for label in ("a", "b"):
+            source = ExecutionNodeRun(
+                run_id=run.id,
+                node_id=f"source-{label}",
+                node_type="data.aggregate",
+                node_type_version=1,
+                node_name=label,
+                status="running",
+                lease_owner=f"worker-{label}",
+                lease_token=f"lease-{label}",
+                attempt_count=1,
+            )
+            setup.add(source)
+            setup.flush()
+            sources.append(source)
+            attempts.append(
+                ExecutionNodeAttempt(
+                    node_run_id=source.id,
+                    attempt_number=1,
+                    worker_id=f"worker-{label}",
+                    lease_token=f"lease-{label}",
+                    status="running",
+                )
+            )
+        join = ExecutionNodeRun(
+            run_id=run.id,
+            node_id="join",
+            node_type="flow.join",
+            node_type_version=1,
+            node_name="join",
+            status="pending",
+        )
+        setup.add(join)
+        setup.add_all(attempts)
+        setup.add_all(
+            [
+                ExecutionEdgeRun(
+                    run_id=run.id,
+                    edge_id=f"edge-{label}",
+                    source_node_id=f"source-{label}",
+                    target_node_id="join",
+                    status="pending",
+                    join_policy="any",
+                )
+                for label in ("a", "b")
+            ]
+        )
+        setup.commit()
+        ids = {
+            "user_id": user.id,
+            "category_id": category.id,
+            "workflow_id": workflow.id,
+            "run_id": run.id,
+            "node_ids": [source.id for source in sources] + [join.id],
+            "source_ids": [source.id for source in sources],
+        }
+    finally:
+        setup.close()
+
+    start = threading.Barrier(2)
+
+    def finish(node_id: str, lease_token: str):
+        db = SessionLocal()
+        try:
+            start.wait(timeout=10)
+            complete_node(
+                db,
+                node_run_id=node_id,
+                lease_token=lease_token,
+                output_data={"value": node_id},
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(finish, ids["source_ids"][0], "lease-a"),
+                pool.submit(finish, ids["source_ids"][1], "lease-b"),
+            ]
+            for future in futures:
+                future.result(timeout=10)
+        verification = SessionLocal()
+        try:
+            join = (
+                verification.query(ExecutionNodeRun)
+                .filter_by(run_id=ids["run_id"], node_id="join")
+                .one()
+            )
+            assert join.status == "ready"
+            ready_events = [
+                event
+                for event in verification.query(ExecutionEvent)
+                .filter_by(run_id=ids["run_id"], event_type="node.ready")
+                .all()
+                if (event.payload or {}).get("node_id") == "join"
+            ]
+            assert len(ready_events) == 1
+        finally:
+            verification.close()
+    finally:
+        cleanup = SessionLocal()
+        try:
+            cleanup.query(ExecutionOutbox).filter(
+                ExecutionOutbox.aggregate_id == ids["run_id"]
+            ).delete(synchronize_session=False)
+            cleanup.query(ExecutionEvent).filter(
+                ExecutionEvent.run_id == ids["run_id"]
+            ).delete(synchronize_session=False)
+            cleanup.query(ExecutionEdgeRun).filter(
+                ExecutionEdgeRun.run_id == ids["run_id"]
+            ).delete(synchronize_session=False)
+            cleanup.query(ExecutionNodeAttempt).filter(
+                ExecutionNodeAttempt.node_run_id.in_(ids["node_ids"])
+            ).delete(synchronize_session=False)
+            cleanup.query(ExecutionNodeRun).filter(
+                ExecutionNodeRun.id.in_(ids["node_ids"])
+            ).delete(synchronize_session=False)
+            cleanup.query(ExecutionRun).filter_by(id=ids["run_id"]).delete()
+            cleanup.query(ExecutionWorkflow).filter_by(
+                id=ids["workflow_id"]
+            ).delete()
+            cleanup.query(ExecutionCategory).filter_by(
+                id=ids["category_id"]
+            ).delete()
+            cleanup.query(ExecutionUser).filter_by(id=ids["user_id"]).delete()
+            cleanup.commit()
         finally:
             cleanup.close()
 

@@ -63,6 +63,7 @@ import {
 import {
   createWorkflowNode,
   definitionFromCanvas,
+  isWorkflowReleaseV2Document,
   normalizeWorkflowDefinition,
   validateWorkflowDefinition,
 } from '../../utils/executionWorkflow';
@@ -93,6 +94,15 @@ const responseRevision = (payload, workflow) =>
   ?? workflow?.draft_revision
   ?? payload?.revision
   ?? 0;
+
+const releaseManagerPathFor = (workflow, workflowId) => {
+  const releaseId = workflow?.active_release_id
+    || workflow?.current_release_id
+    || workflow?.release_id;
+  return releaseId
+    ? `/execution/admin/releases/${releaseId}`
+    : `/execution/admin/releases?workflow_id=${encodeURIComponent(workflowId)}`;
+};
 
 const schemaDefaults = schema => Object.fromEntries(
   Object.entries(schema?.properties || {})
@@ -1007,6 +1017,16 @@ export default function ExecutionWorkflowDesigner() {
 
   const hydrate = useCallback((payload) => {
     const nextWorkflow = getWorkflowIdentity(payload);
+    setWorkflow(nextWorkflow);
+    if (nextWorkflow?.management_mode === 'release_v2') {
+      // Release v2 has a different graph and contract shape. Never feed it to
+      // the legacy canvas normalizer, even for a read-only rendering attempt.
+      setDefinition(null);
+      setNodes([]);
+      setEdges([]);
+      setReady(false);
+      return;
+    }
     const normalized = normalizeWorkflowDefinition(
       responseDefinition(payload, nextWorkflow),
       {
@@ -1014,7 +1034,6 @@ export default function ExecutionWorkflowDesigner() {
         category: nextWorkflow?.category,
       },
     );
-    setWorkflow(nextWorkflow);
     setDefinition(normalized);
     setNodes(normalized.nodes);
     setEdges(normalized.edges);
@@ -1453,6 +1472,13 @@ export default function ExecutionWorkflowDesigner() {
     }
     try {
       const parsed = JSON.parse(await file.text());
+      if (isWorkflowReleaseV2Document(parsed)) {
+        navigate('/execution/admin/releases', {
+          state: { releaseDocument: parsed },
+        });
+        message.info('Workflow Release v2 已转交独立管理页，未进入 v1 画布');
+        return;
+      }
       const candidate = normalizeWorkflowDefinition(parsed.definition || parsed);
       const errors = validateWorkflowDefinition(
         definitionFromCanvas(candidate, candidate.nodes, candidate.edges, candidate.viewport),
@@ -1530,6 +1556,33 @@ export default function ExecutionWorkflowDesigner() {
   }
 
   if (loadError || !definition) {
+    if (workflow?.management_mode === 'release_v2') {
+      return (
+        <div className="execution-page execution-admin-page">
+          <ExecutionChrome
+            title={workflow?.name || 'Workflow Release v2'}
+            subtitle="此流程由不可变 Release 管理，v1 草稿画布保持只读"
+            backTo={{ path: '/execution/admin', label: '流程管理' }}
+          />
+          <div className="execution-release-managed-notice">
+            <Alert
+              showIcon
+              type="info"
+              message="该流程不能在 v1 草稿设计器中编辑"
+              description="Release v2 的 JSON、依赖锁和部署绑定必须通过独立管理页预检和发布。"
+              action={(
+                <Button
+                  type="primary"
+                  onClick={() => navigate(releaseManagerPathFor(workflow, workflowId))}
+                >
+                  前往 Workflow Release 管理
+                </Button>
+              )}
+            />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="execution-route-loading">
         <Alert
@@ -1573,6 +1626,7 @@ export default function ExecutionWorkflowDesigner() {
         onBack={leaveDesigner}
         actions={(
           <Space>
+            <Tag color="default">v1 草稿设计器</Tag>
             <Tag color={saveStatus.color} icon={saveStatus.icon}>{saveStatus.text}</Tag>
             <Button
               icon={<SaveOutlined />}
