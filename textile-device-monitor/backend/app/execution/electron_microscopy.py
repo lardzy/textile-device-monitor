@@ -519,7 +519,7 @@ def _folder_id(relative_folder: str) -> str:
     return f"electron-folder:{digest}"
 
 
-def _indexed_electron_images(
+def find_microscopy_images(
     db: Session,
     *,
     inspection_number: str,
@@ -725,7 +725,7 @@ def electron_microscopy_match(
         db,
         rule_key or microscopy_rule_key(resolved_family.key),
     )
-    images = _indexed_electron_images(db, inspection_number=inspection_number)
+    images = find_microscopy_images(db, inspection_number=inspection_number)
     if not rule.enabled:
         return {
             **images,
@@ -790,14 +790,24 @@ def _electron_microscopy_executor(context) -> dict[str, Any]:
             or None
         ),
     )
+    return microscopy_image_candidates(
+        match, family=family,
+        require_full_task_match=bool(
+            (context.node.get("config") or {}).get("require_full_task_match", False)
+        ),
+    )
+
+
+def microscopy_image_candidates(
+    match: dict[str, Any], *, family=None, require_full_task_match: bool = False,
+) -> dict[str, Any]:
+    """Validate a query result without repeating file or task-cache reads."""
+    family = family or MICROSCOPY_RECORD_FAMILIES[MICROSCOPY_FAMILY_KEY]
     missing = [
         item
         for item in ("source_root", "folder", "task_item_name", "test_method")
         if item not in match["matched_conditions"]
     ]
-    require_full_task_match = bool(
-        (context.node.get("config") or {}).get("require_full_task_match", False)
-    )
     if missing and require_full_task_match:
         raise ExecutionApiError(
             422,

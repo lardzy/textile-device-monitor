@@ -1,8 +1,8 @@
 # 当前 39 个节点迁移矩阵
 
-> 状态：2026-09-17 P3 首批进度同步；39 项是旧节点迁移规划，不是当前全部安装能力清单。
+> 状态：2026-09-17 P3 第二批进度同步；39 项是旧节点迁移规划，不是当前全部安装能力清单。
 >
-> 代码基线：`feature/execution-system` 合并提交 `3b5bf1b`，加工作区中的 P2 接替、简化与 P3 首批实现；SpecialWool 的 `picture_records=[]`、`picture_count=0` 与 `main_record_verified` 继续保留在 P0 快照。
+> 代码基线：`feature/execution-system` 提交 `cca2c4d`，加 P3 第二批共享服务；SpecialWool 的 `picture_records=[]`、`picture_count=0` 与 `main_record_verified` 继续保留在 P0 快照。
 >
 > 枚举来源：`backend/app/execution/registry.py::_register_builtins()`
 >
@@ -12,7 +12,7 @@
 
 旧注册表共 **39 个 `type@type_version`**，其中 37 个可发布，两个连接器占位类型不可发布。另有 **20 份原生契约**（P2 18 份、P3 再生纤 2 份），实际 Worker 合计 59 个绑定、57 ready；兼容与原生 `workbook.copy@1` 存在不同绑定，不能把 59 当作去重类型数。下表统计旧注册表。
 
-P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切已实现。四条 `native_p2` 完整候选为电镜、麻棉、特种毛原始资料选择和受控 Excel 内部验收；`native_p3` 新增再生纤面积法/根数法，完整候选覆盖 **6/9**。已进行隔离 API/Worker、浏览器和 LibreOffice 容器验证，尚未接管生产。边界见[P2 接替验收](./p2-replacement-acceptance.md)和[P3 首批验收](./p3-regenerated-fiber-acceptance.md)。
+P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切已实现。四条 `native_p2` 完整候选为电镜、麻棉、特种毛原始资料选择和受控 Excel 内部验收；`native_p3` 新增再生纤面积法/根数法，完整候选覆盖 **6/9**。已进行隔离 API/Worker、浏览器和 LibreOffice 容器验证，尚未接管生产。电镜/纸纤维共享服务与直接 API 已交付，原生契约及完整业务迁移仍待完成。边界见[P2 接替验收](./p2-replacement-acceptance.md)、[P3 首批](./p3-regenerated-fiber-acceptance.md)和[P3 第二批](./p3-domain-services-acceptance.md)。
 
 | 维度 | 分布 |
 | --- | --- |
@@ -48,7 +48,7 @@ P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切�
 | P0 契约冻结 | 导出 9 份内置流程、39 份 NodeSpec v1 事实快照、典型输入输出、失败码和副作用回执 | golden fixtures 可重复；当前流程 checksum 和节点覆盖固定 |
 | P1 NodeSpec v2 接入 | 补齐 schema、资源、UI、side-effect、executor binding；把旧 `execution_kind` 转为 `execution.kind` 分派；建立 v1 compatibility router | 不改工作流即可由 v2 registry 执行所有旧快照 |
 | P2 基础节点收敛 | 引入 `human.form/select/approval`、`file.query/group`、`data.*`、`flow.*`、通用 workbook 原语 | 新工作流不再依赖人工节点隐藏标志或固定节点 ID |
-| P3 领域能力拆分 | 已合并再生纤方法节点并提供共享查询/读取 API；下一批拆分电镜/纸纤维查询与模板渲染 | 领域 golden 输出、模板和图片结果逐字段/逐摘要等价；再生纤本地合成语料通过，现场语料待验收 |
+| P3 领域能力拆分 | 已合并再生纤方法节点；电镜/纸纤维查询、校验和渲染已抽成共享服务与直接 API，原生契约及迁移适配待完成 | 领域 golden 输出、模板和图片结果逐字段/逐摘要等价；本地合成语料通过，现场语料待验收 |
 | P4 Connector 化 | 引入 Connector manifest、OperationSpec/QuerySpec registry、精确 Worker/Bridge capability 调度；迁移七种旧系统写入与受限只读查询 | 新写入 release 只引用 `external.operation@1 + operation_ref`；只读 query 不获得写入权限；未知写入结果仍需对账 |
 | P5 特例退场 | 清除 engine/validation/frontend 硬编码；在无草稿、发布版和运行快照引用后停止创建 v1 | 全库引用审计为零；回放、滚动升级和回滚验收通过 |
 
@@ -56,7 +56,7 @@ P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切�
 
 表中目标 ID 是分阶段目标，P2 基础类型和 P3 再生纤类型已实现，其他领域与 P4 外部类型仍待实现。具体可运行性以已安装 NodeSpec、Worker 精确能力和 rollout profile 为准。改名或合并的新 type 从 1 起步；破坏性契约变化递增 `type_version`，Pack 单独使用 SemVer。
 
-再生纤查询/结果读取已统一为带 `method=area|count` 的两个领域节点，复用 `human.select`；唯一有效候选自动完成，多候选一次选择。旧四个节点成为同一服务的适配入口，直接 API 不创建 Run。下一批依次进行电镜/纸纤维拆分、Connector 通用执行、设计器与旧实现退场。
+再生纤查询/结果读取已统一为带 `method=area|count` 的两个领域节点，复用 `human.select`；唯一有效候选自动完成，多候选一次选择。旧四个节点成为同一服务的适配入口，直接 API 不创建 Run。电镜/纸纤维也已拆出共享服务和直接 API，继续补齐原生契约与迁移适配，再推进 Connector 通用执行、设计器与旧实现退场。
 
 <!-- node-matrix:start -->
 | # | 当前 `type@version` | 当前类别 / kind | 主决策 | 目标 NodeSpec / `operation_ref` | 理由 | 阶段 | 兼容与回归要点 |
@@ -79,9 +79,9 @@ P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切�
 | 16 | `external.legacy_special_wool_qualitative_upload@1` | 连接器 / `external_side_effect` | Connector 化＋合并节点壳 | `external.operation@1` + `legacy_fibrecheck.paper_fiber.qualitative_upload@1` | 纸纤维原始记录上传与图片型上传共享基础协议，但输入和“不生成图片子记录”后置条件必须独立 | P4 | v1 alias 保持单文件上限、主文件、项目身份和零图片验证；回归 `.xls` 内容摘要、重复上传与部分远端成功 |
 | 17 | `external.legacy_special_wool_review@1` | 连接器 / `external_side_effect` | Connector 化＋合并节点壳 | `external.operation@1` + `legacy_fibrecheck.special_wool.image_review@1` | 图片类特纤复核要求主记录身份与零图片子记录证明，适合独立 operation spec，而不是 engine 类型分支 | P4 | 上传 receipt 作为 provenance 输入；回归主记录匹配、复核顺序、`picture_count=0` 前后不变、已复核幂等和 after-remote-write 失败 |
 | 18 | `external.new_inspection@1` | 连接器 / `automatic`，不可发布 | Connector 化并移出图 | Connector dependency slot，例如 `inspection_system`；无可执行 NodeSpec | 尚无实现的系统占位不应占用图节点类型；真正接入时新增 Connector pack 和 operation specs | P4 | 老草稿保留只读占位和明确缺依赖提示；继续禁止发布，不能误认为配置 credential 后即可执行 |
-| 19 | `file.electron_microscopy_gbt36422@1` | 文件 / `automatic` | 拆分 | `file.query@1` + `connector.query@1`（`automatic/read_only`，`legacy_fibrecheck.task_snapshot.read@1`）+ `microscopy.image_candidates@1` | 当前同时负责索引查询、编号目录/图片候选、旧系统任务缓存刷新和规则校验，具有不同等待、失败和复用边界 | P3/P4 | P3 先用 v1 composite adapter 保持旧图；P4 只允许同步/持久化缓存 QuerySpec，异步 Bridge 查询需另升内核语义。回归目录、1–10 张、truncated、pending/empty/stale 和项目身份 |
+| 19 | `file.electron_microscopy_gbt36422@1` | 文件 / `automatic` | 拆分 | `file.query@1` + `connector.query@1`（`automatic/read_only`，`legacy_fibrecheck.task_snapshot.read@1`）+ `microscopy.image_candidates@1` | 索引图片查询、快照组合和领域校验已分离；旧节点与直接查询 API 共用服务 | P3 服务已实现 / P4 待完成 | v1 composite adapter 保持旧图；原生包装待补。P4 只允许同步/持久化缓存 QuerySpec，异步 Bridge 查询需另升内核语义。回归目录、1–10 张、truncated、pending/empty/stale 和项目身份 |
 | 20 | `file.index_query@1` | 文件 / `automatic` | 保留并泛化 | `file.query@1` | 持久化索引查询是基础能力；filters、sort、limit 和 projection 应完整声明，物理 root 仍由 slot 绑定 | P2 | v1 alias 固定旧“最近天数＋编号”行为；回归路径不可逃逸、稳定排序、索引陈旧、limit 和空结果 |
-| 21 | `file.paper_fiber_gbt4688_qualitative@1` | 文件 / `automatic` | 拆分 | `file.query@1` + `workbook.extract_fields@1` + `connector.query@1`（`automatic/read_only`，`legacy_fibrecheck.task_snapshot.read@1`）+ `paper_fiber.candidate_validate@1` | 当前混合目录搜索、`Sheet1!W32` 读取、任务快照和 GB/T 4688 项目规则；这些能力应能分别重试和组合 | P3/P4 | P3 先用 v1 composite adapter；P4 的 QuerySpec 限同步/缓存读。golden 回归 W32 显示值、损坏/缺 sheet、100% 独立词匹配、任务缓存状态和项目快照 |
+| 21 | `file.paper_fiber_gbt4688_qualitative@1` | 文件 / `automatic` | 拆分 | `file.query@1` + `workbook.extract_fields@1` + `connector.query@1`（`automatic/read_only`，`legacy_fibrecheck.task_snapshot.read@1`）+ `paper_fiber.candidate_validate@1` | 本地查询/字段读取、快照组合和领域校验已分离；等待快照时复用本次文件查询 | P3 服务已实现 / P4 待完成 | v1 adapter 与直接 API 共用服务，原生包装待补；规则修订重新查询。P4 QuerySpec 限同步/缓存读。golden 回归 W32/M32、损坏/缺 sheet、100% 独立词匹配、任务状态和项目快照 |
 | 22 | `file.regenerated_fiber_area_method@1` | 文件 / `automatic` | 合并 | `regenerated_fiber.find_records@1`，`method=area` | 与根数法共用匹配、profile/index 缓存和候选契约，差异应进入受限 method rule，不复制节点类型 | P3 已实现 | alias 固定 `method=area`；回归工作表识别、编号边界、已保存单元格、缓存 fingerprint、候选排序和诊断 |
 | 23 | `file.regenerated_fiber_count_method@1` | 文件 / `automatic` | 合并 | `regenerated_fiber.find_records@1`，`method=count` | 与面积法只有强类型方法规则差异，适合共享领域节点；不降级为任意单元格查询 | P3 已实现 | alias 固定 `method=count`；与 v1 对同一语料逐候选/digest 比较，覆盖历史 `.xls/.xlsx` 与异常文件 |
 | 24 | `human.confirm@1` | 人工 / `human` | 保留并收紧 | `human.approval@1` | 批准/驳回是通用人工原语，应产出带 subject digest、actor、decision 和时间的 durable receipt | P2 | v1 alias 接受旧 `{approved,...}` 结果；回归候选角色、拒绝路径、过期 subject、防篡改和 artifact.publish 只接受匹配 receipt |
@@ -96,8 +96,8 @@ P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切�
 | 33 | `result.regenerated_fiber_count_method@1` | 结果 / `automatic` | 合并 | `regenerated_fiber.read_results@1`，`method=count` | 复用同一复杂领域读取器能减少重复，但不能用通用 extract 节点替代其格式、百分比和插图规则 | P3 已实现 | alias 固定 count profile；与 v1 比较 success/failed 计数、显示精度、平衡组分、图片定位及失败隔离 |
 | 34 | `variables.set@1` | 基础 / `automatic` | 保留并改名 | `data.assign@1` | 受限变量赋值是基础数据原语；应声明写入 namespace、类型和冲突策略，禁止动态代码 | P2 | v1 alias 默认写 globals 且保持求值顺序；回归嵌套映射、null、覆盖、schema 不匹配和重放确定性 |
 | 35 | `workbook.copy@1` | Excel / `automatic` | 保留 | `workbook.copy@1`（NodeSpec v2） | 工作副本与 mutation ledger 是受控写入链的必要起点，不能用普通文件复制绕过来源摘要和暂存 root | P1–P2 | 直接兼容 v1；回归 source digest、mutation id 幂等、暂存路径隔离、崩溃残留和源文件变化 |
-| 36 | `workbook.microscopy_check_record@1` | Excel / `automatic` | 拆分 | `microscopy.check_record.render@1` wrapper + `workbook.render_template@1` 底座 | 模板加载/渲染可复用，但选图数量绑定、唯一项目身份和旧系统登记 workbook 契约必须留在领域 wrapper | P3 | v1 executor 保留；对 1–10 张图逐个 golden 文件/关键单元格/摘要比较，回归 template binding、复用、项目歧义和 `.xls` 兼容 |
-| 37 | `workbook.microscopy_original_record@1` | Excel / `automatic` | 拆分 | `microscopy.original_record.render@1` wrapper + `workbook.render_template@1` + image placement capability | 字段绑定、模板渲染、图片放置和打印元数据可分层；但 GB/T 36422/横截面业务校验仍由领域 wrapper 守卫 | P3 | v1 executor 保留；回归两种 record family、1–10 图、日期/样品字段、版式、content digest、打印元数据与失败时无半成品 |
+| 36 | `workbook.microscopy_check_record@1` | Excel / `automatic` | 拆分 | `microscopy.check_record.render@1` wrapper + `workbook.render_template@1` 底座 | 共享渲染服务及下载 API 已实现；选图数量绑定和旧登记格式继续由领域服务处理 | P3 服务已实现 | 原生包装待补，v1 executor 保留；安装的 10 个 family/count 模板逐字节对比。移除复制后的重复摘要，保留最终单元格/BIFF 校验，回归 binding、复用和 `.xls` 兼容 |
+| 37 | `workbook.microscopy_original_record@1` | Excel / `automatic` | 拆分 | `microscopy.original_record.render@1` wrapper + `workbook.render_template@1` + image placement capability | 字段构造和共享渲染已抽出；下载 API 不创建 Run，旧节点继续持久化制品 | P3 服务已实现 | 原生包装待补，v1 executor 保留；两种 family 的字段、图片摘要、版式与打印信息对比；修复 `.xls` 边缘舍入误拦截，仍检查比例和重叠，失败清理临时文件 |
 | 38 | `workbook.verify@1` | Excel / `automatic` | 保留并收紧 | `workbook.verify@2` | 保存后重读核对是 controlled write 的独立安全节点；输出应是绑定 mutation/artifact digest 的 verification receipt | P2 | v1 快照继续旧契约；migrator 显式生成 expectations。回归公式/值/类型差异、目标摘要、失败不可批准和重试确定性 |
 | 39 | `workbook.write_cells@1` | Excel / `automatic` | 保留并收紧 | `workbook.write_cells@2` | 受控字段写入可复用，但 writes 必须是强类型 cell/range operations，并继续依附 mutation ledger | P2 | v1 writes adapter；回归 `.xls/.xlsx`、值/公式/日期/格式、越界、部分失败回滚、重复 attempt 和 working copy digest |
 <!-- node-matrix:end -->

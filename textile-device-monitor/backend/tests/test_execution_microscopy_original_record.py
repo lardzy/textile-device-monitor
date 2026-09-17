@@ -17,6 +17,7 @@ from xlutils.copy import copy as copy_workbook
 
 from app.database import Base
 from app.execution.errors import ExecutionApiError
+from app.execution.microscopy_families import microscopy_family_from_config
 from app.execution.microscopy_original_record import (
     CANVAS_HEIGHT,
     CANVAS_WIDTH,
@@ -37,7 +38,9 @@ from app.execution.microscopy_original_record import (
     _template_path,
     _verify_generated_workbook,
     layout_images,
+    original_record_cells,
     prepare_original_record_choices,
+    render_original_record_workbook,
     resolve_microscopy_legacy_template_binding,
     sample_name_v1_candidates,
     split_judgement_basis_options,
@@ -348,6 +351,31 @@ class MicroscopyOriginalRecordPureFunctionTests(unittest.TestCase):
             )
             self.assertTrue(result["verified"], result["issues"])
             self.assertTrue(result["non_overlapping"])
+
+    def test_touching_image_edges_allow_only_small_xls_rounding(self):
+        # Real UNO saved these adjacent 72 mm shapes with a 0.03 mm overlap.
+        ratios = [1.6, 4 / 3, 2 / 3, 4 / 3, 2 / 3]
+        placements = layout_images(ratios)
+        expected = [
+            {"source_id": str(item.index), "aspect_ratio": ratio, **item.as_dict()}
+            for item, ratio in zip(placements, ratios)
+        ]
+        actual = [
+            {
+                "index": item.index, "source_id": str(item.index),
+                "logical": item.as_dict(), "resize_with_cell": False,
+            }
+            for item in placements
+        ]
+        for rounding, valid in ((3, True), (20, False)):
+            with self.subTest(rounding=rounding):
+                actual[1]["logical"]["x"] = placements[1].x - rounding
+                result = _persisted_images_geometry(
+                    actual, expected_images=expected,
+                    canvas_width=CANVAS_WIDTH, canvas_height=CANVAS_HEIGHT,
+                )
+                self.assertEqual(result["verified"], valid, result)
+                self.assertEqual(result["non_overlapping"], valid)
 
     def test_reopened_geometry_rejects_square_conversion_and_overlap(self):
         ratios = [2.0, 0.5]
@@ -866,6 +894,30 @@ class MicroscopyOriginalRecordExecutorTests(unittest.TestCase):
     "set EXECUTION_RUN_UNO_INTEGRATION_TESTS=1 inside the worker image",
 )
 class MicroscopyOriginalRecordUnoIntegrationTests(unittest.TestCase):
+    def test_shared_renderer_accepts_real_xls_edge_rounding(self):
+        sizes = [(160, 100), (800, 600), (400, 600), (800, 600), (400, 600)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            images = []
+            for index, size in enumerate(sizes):
+                path = root / f"source-{index}.png"
+                Image.new("RGB", size, "white").save(path)
+                images.append((str(index), path))
+            for family_key, count in (("microscopy", 5), ("cross_section", 3)):
+                with self.subTest(family=family_key):
+                    family = microscopy_family_from_config({"record_family": family_key})
+                    cells = original_record_cells(
+                        {"sample_name": "边界舍入验证"},
+                        inspection_number="26W006701", judgement_required=False, family=family,
+                    )
+                    target = root / f"{family_key}.xls"
+                    result = render_original_record_workbook(
+                        target, cells=cells, selected=images[:count],
+                    )
+                    self.assertTrue(target.is_file())
+                    self.assertTrue(result["all_images_geometry_verified"])
+                    self.assertTrue(result["multi_image_non_overlap_verified"])
+
     def test_real_xls_reopen_validates_non_square_1_2_5_and_10_images(self):
         source_sizes = [
             (1280, 960),

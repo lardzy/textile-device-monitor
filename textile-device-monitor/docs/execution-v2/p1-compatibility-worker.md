@@ -43,9 +43,9 @@ exact binding retain the compatibility execution path; the frozen P1 image is
 needed only when deployed versions or unfinished Runs carry P1 bindings.
 Kernel Pack 2.1.1 added grouped-file input support to `human.select@1`.
 The 2026-09-17 P3 batch uses Engine 2.2.0, Kernel Pack 2.1.2,
-textile.execution-v1-compat 2.1.1, legacy_fibrecheck.v1-compat 1.0.1 and
+textile.execution-v1-compat 2.1.2, legacy_fibrecheck.v1-compat 1.0.1 and
 textile.regenerated-fiber 1.0.0 (protocol 2.1; 59 bindings, 57 ready).
-The shared regenerated-fiber services change the compatibility Pack's implementation
+The shared regenerated-fiber, microscopy and paper-fiber services change the compatibility Pack's implementation
 identity without rewriting existing frozen identities. If an environment
 has deployed/unfinished older P2 bindings, retain its frozen Worker as well,
 with the 0010 schema overlay;

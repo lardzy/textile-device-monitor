@@ -594,6 +594,45 @@ def _result(
     }
 
 
+def render_check_record_workbook(
+    target: Path, *, cells: dict[str, str], template_binding: dict[str, Any], family=None,
+) -> dict[str, Any]:
+    """Render and verify the registration file without manufacturing a Run."""
+    family = family or microscopy_family_from_config(None)
+    template = _template_path(template_binding)
+    expected_template_sha = str(template_binding["local_asset_sha256"])
+    if not template.is_file() or _sha256(template) != expected_template_sha:
+        raise ExecutionApiError(
+            503,
+            "microscopy_legacy_template_asset_invalid",
+            f"旧系统{family.check_item_name}模板资产缺失或版本校验失败",
+            details={
+                "image_count": template_binding["image_count"],
+                "local_asset_name": template_binding["local_asset_name"],
+            },
+        )
+
+    with tempfile.TemporaryDirectory(
+        prefix="microscopy-check-record-",
+        dir=str(target.parent),
+    ) as temporary_directory:
+        working = Path(temporary_directory) / "working.xls"
+        shutil.copyfile(template, working)
+        from app.execution.biff_patch import patch_workbook_file
+
+        patch_workbook_file(working, working, _build_biff_edits(cells))
+        verification = _verify_patched_workbook(
+            working,
+            template=template,
+            cells=cells,
+            expected_cells=list(cells),
+        )
+        os.replace(working, target)
+        fsync_file(target)
+
+    return verification
+
+
 def microscopy_check_record_executor(context) -> dict[str, Any]:
     """Generate the Sheet1 workbook consumed by CheckRecord registration."""
 
@@ -648,19 +687,6 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
             reused=True,
         )
 
-    template = _template_path(template_binding)
-    expected_template_sha = str(template_binding["local_asset_sha256"])
-    if not template.is_file() or _sha256(template) != expected_template_sha:
-        raise ExecutionApiError(
-            503,
-            "microscopy_legacy_template_asset_invalid",
-            f"旧系统{family.check_item_name}模板资产缺失或版本校验失败",
-            details={
-                "image_count": image_count,
-                "local_asset_name": template_binding["local_asset_name"],
-            },
-        )
-
     gateway = build_file_gateway(context.db)
     target_ref = ArtifactRef(STAGING_ROOT_ID, relative_path)
     target = gateway.resolve(target_ref, must_exist=False, for_write=True)
@@ -672,29 +698,9 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
             "检验记录登记暂存路径已存在但没有匹配的制品记录",
         )
 
-    with tempfile.TemporaryDirectory(
-        prefix="microscopy-check-record-",
-        dir=str(target.parent),
-    ) as temporary_directory:
-        working = Path(temporary_directory) / "working.xls"
-        shutil.copyfile(template, working)
-        if _sha256(working) != expected_template_sha:
-            raise ExecutionApiError(
-                500,
-                "microscopy_check_record_template_copy_failed",
-                "检验记录登记模板工作副本校验失败",
-            )
-        from app.execution.biff_patch import patch_workbook_file
-
-        patch_workbook_file(working, working, _build_biff_edits(cells))
-        verification = _verify_patched_workbook(
-            working,
-            template=template,
-            cells=cells,
-            expected_cells=list(cells),
-        )
-        os.replace(working, target)
-        fsync_file(target)
+    verification = render_check_record_workbook(
+        target, cells=cells, template_binding=template_binding, family=family,
+    )
 
     fingerprint = fingerprint_file(target)
     root = storage_root_by_key(context.db, STAGING_ROOT_ID)
@@ -714,7 +720,7 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
             "request_digest": request_digest,
             "generator_version": MICROSCOPY_CHECK_RECORD_GENERATOR_VERSION,
             "template_binding": template_binding,
-            "template_sha256": expected_template_sha,
+            "template_sha256": template_binding["local_asset_sha256"],
             "image_count": image_count,
             "sheet_name": MICROSCOPY_CHECK_RECORD_SHEET_NAME,
             # Every approved microscopy template maps BI7++BK7. BI7 is the

@@ -420,7 +420,7 @@ def paper_task_project_match(
     return evaluate_task_facts(snapshot, task_facts)
 
 
-def paper_fiber_match(
+def find_paper_fiber_records(
     db: Session,
     *,
     inspection_number: str,
@@ -442,10 +442,6 @@ def paper_fiber_match(
             "candidates": [],
             "candidate_preview": None,
             "matched_conditions": [],
-            "full_match": False,
-            "task_cache_state": "disabled",
-            "task_snapshot": None,
-            "matched_task_project": None,
             "cache_updated": False,
             "rule_key": rule.key,
             "rule_revision": rule.revision,
@@ -482,25 +478,11 @@ def paper_fiber_match(
         else []
     )
     query_complete = _is_complete_inspection_number(query_text)
-    task = cached_task_snapshot(db, inspection_number=query_text)
-    task_conditions, matched_project = paper_task_project_match(
-        task.get("snapshot"),
-        rule.task_facts,
-    )
-    matched_conditions: list[str] = []
+    matched_conditions = []
     if root_ready:
         matched_conditions.append("source_root")
     if entries:
         matched_conditions.append("folder")
-    matched_conditions.extend(task_conditions)
-    full_match = all(
-        item in matched_conditions
-        for item in (
-            "source_root",
-            "folder",
-            *[fact.condition_key for fact in rule.task_facts],
-        )
-    )
 
     result_probe = rule.probe("qualitative_result")
     probe_worksheet = (
@@ -609,13 +591,57 @@ def paper_fiber_match(
         "candidates": candidates,
         "candidate_preview": candidate_preview,
         "matched_conditions": matched_conditions,
-        "full_match": full_match,
-        "task_cache_state": task["cache_state"],
-        "task_snapshot": task.get("snapshot"),
-        "matched_task_project": matched_project,
-        "cache_updated": bool(task.get("refresh_queued")) or profiles_updated,
+        "cache_updated": profiles_updated,
         "rule_key": rule.key,
         "rule_revision": rule.revision,
+    }
+
+
+def paper_fiber_match(
+    db: Session,
+    *,
+    inspection_number: str,
+    gateway: Optional[FileGateway] = None,
+    result_limit: int = 6,
+    rule_key: Optional[str] = None,
+    rule: Optional[ResolvedRule] = None,
+    records: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Combine local records with the cached task; callers may reuse one scan."""
+    rule = rule or resolve_rule(db, rule_key or PAPER_FIBER_RULE_KEY)
+    reuse = records is not None and (
+        records.get("rule_key"), records.get("rule_revision")
+    ) == (rule.key, rule.revision)
+    local = records if reuse else find_paper_fiber_records(
+        db,
+        inspection_number=inspection_number,
+        gateway=gateway,
+        result_limit=result_limit,
+        rule=rule,
+    )
+    task = (
+        cached_task_snapshot(db, inspection_number=str(inspection_number or "").strip())
+        if rule.enabled else {"cache_state": "disabled"}
+    )
+    conditions, project = paper_task_project_match(task.get("snapshot"), rule.task_facts)
+    conditions = [
+        item for item in local["matched_conditions"]
+        if item in {"source_root", "folder"}
+    ] + conditions
+    required_conditions = ["source_root", "folder"] + [
+        fact.condition_key for fact in rule.task_facts
+    ]
+    return {
+        **local,
+        "matched_conditions": conditions,
+        "full_match": rule.enabled and all(
+            item in conditions
+            for item in required_conditions
+        ),
+        "task_cache_state": task["cache_state"],
+        "task_snapshot": task.get("snapshot"),
+        "matched_task_project": project,
+        "cache_updated": local["cache_updated"] or bool(task.get("refresh_queued")),
     }
 
 
@@ -633,19 +659,18 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
         )
     result_limit = min(int(config.get("limit", 6)), 6)
     rule_key = str(config.get("match_rule") or "").strip() or None
-    # The snapshot bridge polls every ~15 seconds, so a snapshot that is
-    # still pending typically lands within a few seconds of run start (the
-    # catalog recommendation already queued the refresh).  Wait briefly
-    # instead of failing outright; the worker lease heartbeat keeps this
-    # node's claim alive while we poll.
+    # The catalog may have already queued a snapshot refresh. Wait briefly
+    # while reusing the local scan; the worker heartbeat keeps the claim alive.
     wait_seconds = max(0, int(settings.EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS))
     deadline = time.monotonic() + wait_seconds
+    match = None
     while True:
         match = paper_fiber_match(
             context.db,
             inspection_number=inspection_number,
             result_limit=result_limit,
             rule_key=rule_key,
+            records=match,
         )
         missing = [
             item
@@ -676,6 +701,23 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
         time.sleep(2)
         context.db.expire_all()
 
+    return paper_fiber_candidates(
+        match, require_full_task_match=bool(config.get("require_full_task_match", False)),
+    )
+
+
+def paper_fiber_candidates(
+    match: dict[str, Any], *, require_full_task_match: bool = False,
+) -> dict[str, Any]:
+    """Apply the domain requirements once after task-snapshot waiting ends."""
+    missing = [
+        item for item in ("source_root", "folder", "task_item_name", "test_method")
+        if item not in match["matched_conditions"]
+    ]
+    task_conditions_missing = any(
+        item in missing for item in ("task_item_name", "test_method")
+    )
+    cache_state = str(match["task_cache_state"])
     # Downstream nodes map ``matched_task_project`` unconditionally, so a run
     # that continues without task facts would fail later with a bare
     # ``mapping_value_missing``.  Fail fast here with actionable errors.
@@ -700,7 +742,7 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
                     "task_cache_state": cache_state,
                 },
             )
-    if missing and bool(config.get("require_full_task_match", False)):
+    if missing and require_full_task_match:
         raise ExecutionApiError(
             422,
             "paper_fiber_rule_not_matched",

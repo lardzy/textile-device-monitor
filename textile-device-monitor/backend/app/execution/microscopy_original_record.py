@@ -95,6 +95,9 @@ MICROSCOPY_BIFF_EXCEL_X_SCALE = 1.0
 # the image canvas is a deliberately small, format-aware acceptance window.
 PERSISTED_GEOMETRY_TOLERANCE_RATIO = 0.01
 PERSISTED_ASPECT_RATIO_TOLERANCE = 0.01
+# .xls drawing anchors round on save. Allow at most 0.1 mm at touching edges;
+# the general geometry tolerance is too broad for checking actual overlap.
+PERSISTED_EDGE_TOLERANCE = 10
 OLE_COMPOUND_FILE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 _MULTI_VALUE_SEPARATOR = re.compile(r"[，,、]+")
@@ -740,7 +743,10 @@ def _persisted_images_geometry(
             overlap_height = min(
                 left["y"] + left["height"], right["y"] + right["height"]
             ) - max(left["y"], right["y"])
-            if overlap_width > 2 and overlap_height > 2:
+            if (
+                overlap_width > PERSISTED_EDGE_TOLERANCE
+                and overlap_height > PERSISTED_EDGE_TOLERANCE
+            ):
                 non_overlapping = False
                 issues.append(
                     {
@@ -991,12 +997,12 @@ def _resolve_selected_images(
 
 
 def _prepare_images(
-    images: Sequence[tuple[ExecutionFileIndexEntry, Path]],
+    images: Sequence[tuple[str, Path]],
     directory: Path,
 ) -> list[PreparedImage]:
     prepared: list[PreparedImage] = []
     Image.MAX_IMAGE_PIXELS = 100_000_000
-    for index, (entry, path) in enumerate(images):
+    for index, (image_id, path) in enumerate(images):
         target = directory / f"image-{index + 1:02d}.png"
         try:
             with Image.open(path) as source:
@@ -1011,18 +1017,18 @@ def _prepare_images(
                 422,
                 "selected_image_invalid",
                 "所选图片无法读取或格式不受支持",
-                details={"image_id": entry.id},
+                details={"image_id": image_id},
             ) from exc
         if width <= 0 or height <= 0:
             raise ExecutionApiError(
                 422,
                 "selected_image_invalid",
                 "所选图片尺寸无效",
-                details={"image_id": entry.id},
+                details={"image_id": image_id},
             )
         prepared.append(
             PreparedImage(
-                source_id=entry.id,
+                source_id=image_id,
                 source_path=path,
                 prepared_path=target,
                 width=width,
@@ -1299,20 +1305,11 @@ def _existing_artifact_output(
     return artifact
 
 
-def _microscopy_original_record_executor(context) -> dict[str, Any]:
-    family = _node_family(context)
-    input_data = context.input_data or {}
-    inspection_number = _safe_inspection_number(
-        input_data.get("inspection_number") or context.run.inspection_number
-    )
-    task_snapshot = _current_task_snapshot(context, input_data)
-    choices = prepare_original_record_choices(task_snapshot, family=family)
-    submitted_judgement_flag = input_data.get("judgement_required")
-    judgement_required = (
-        choices["judgement_required"]
-        if submitted_judgement_flag is None
-        else _truthy_judgement_flag(submitted_judgement_flag)
-    )
+def original_record_cells(
+    input_data: dict[str, Any], *, inspection_number: str,
+    judgement_required: bool, family=None,
+) -> dict[str, str]:
+    family = family or _families.MICROSCOPY_RECORD_FAMILIES[_families.MICROSCOPY_FAMILY_KEY]
     cells = _cell_payload(
         inspection_number=inspection_number,
         sample_name=input_data.get("sample_name"),
@@ -1332,52 +1329,16 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         # 39-8B 模板 A1 是记录类别下拉框；横截面家族必须选“纤维横截面原始
         # 记录”，微观形貌家族保持模板原文（微观形貌原始记录）不动。
         cells["A1"] = family.record_title
-    selected = _resolve_selected_images(
-        context.db,
-        selected_image_ids=input_data.get("selected_image_ids"),
-        offered_images=input_data.get("selected_images"),
-    )
-    template_binding = resolve_microscopy_legacy_template_binding(
-        len(selected),
-        declared_binding=input_data.get("template_binding"),
-        family=family,
-    )
-    request_digest = _request_digest(
-        inspection_number=inspection_number,
-        cells=cells,
-        images=selected,
-        template_binding=template_binding,
-    )
-    filename = f"{inspection_number}-{MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME}"
-    relative_path = (
-        f"original-records/{context.run.id}/{context.node_run.id}/{filename}"
-    )
-    existing = _existing_artifact_output(
-        context.db,
-        run_id=context.run.id,
-        node_run_id=context.node_run.id,
-        relative_path=relative_path,
-        request_digest=request_digest,
-    )
-    if existing is not None:
-        original_record = _artifact_output(existing)
-        return {
-            "artifact_id": existing.id,
-            "original_record": original_record,
-            "source_inspection_number": inspection_number,
-            "inspection_number": inspection_number,
-            "selected_image_ids": [entry.id for entry, _path in selected],
-            "image_count": len(selected),
-            "template_binding": template_binding,
-            "verification": (existing.metadata_json or {}).get("verification") or {},
-            "print": {
-                "sheet_name": MICROSCOPY_SHEET_NAME,
-                "print_area": MICROSCOPY_PRINT_AREA,
-                "available": True,
-            },
-            "reused": True,
-        }
+    return cells
 
+
+def render_original_record_workbook(
+    target: Path,
+    *,
+    cells: dict[str, str],
+    selected: list[tuple[str, Path]],
+) -> dict[str, Any]:
+    """Render one approved workbook; ownership/persistence belongs to the caller."""
     template = _template_path()
     if not template.is_file() or _sha256(template) != MICROSCOPY_TEMPLATE_SHA256:
         raise ExecutionApiError(
@@ -1385,17 +1346,6 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
             "microscopy_template_invalid",
             "微观形貌原始记录模板缺失或版本校验失败",
         )
-    gateway = build_file_gateway(context.db)
-    target_ref = ArtifactRef(STAGING_ROOT_ID, relative_path)
-    target = gateway.resolve(target_ref, must_exist=False, for_write=True)
-    gateway.ensure_parent(target_ref)
-    if target.exists():
-        raise ExecutionApiError(
-            409,
-            "artifact_file_conflict",
-            "原始记录暂存路径已存在但没有匹配的制品记录",
-        )
-
     with tempfile.TemporaryDirectory(
         prefix="microscopy-original-record-",
         dir=str(target.parent),
@@ -1446,6 +1396,88 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         )
         os.replace(working, target)
         fsync_file(target)
+
+    return verification
+
+
+def _microscopy_original_record_executor(context) -> dict[str, Any]:
+    family = _node_family(context)
+    input_data = context.input_data or {}
+    inspection_number = _safe_inspection_number(
+        input_data.get("inspection_number") or context.run.inspection_number
+    )
+    task_snapshot = _current_task_snapshot(context, input_data)
+    choices = prepare_original_record_choices(task_snapshot, family=family)
+    submitted_judgement_flag = input_data.get("judgement_required")
+    judgement_required = (
+        choices["judgement_required"]
+        if submitted_judgement_flag is None
+        else _truthy_judgement_flag(submitted_judgement_flag)
+    )
+    cells = original_record_cells(
+        input_data, inspection_number=inspection_number,
+        judgement_required=judgement_required, family=family,
+    )
+    selected = _resolve_selected_images(
+        context.db,
+        selected_image_ids=input_data.get("selected_image_ids"),
+        offered_images=input_data.get("selected_images"),
+    )
+    template_binding = resolve_microscopy_legacy_template_binding(
+        len(selected),
+        declared_binding=input_data.get("template_binding"),
+        family=family,
+    )
+    request_digest = _request_digest(
+        inspection_number=inspection_number,
+        cells=cells,
+        images=selected,
+        template_binding=template_binding,
+    )
+    filename = f"{inspection_number}-{MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME}"
+    relative_path = (
+        f"original-records/{context.run.id}/{context.node_run.id}/{filename}"
+    )
+    existing = _existing_artifact_output(
+        context.db,
+        run_id=context.run.id,
+        node_run_id=context.node_run.id,
+        relative_path=relative_path,
+        request_digest=request_digest,
+    )
+    if existing is not None:
+        original_record = _artifact_output(existing)
+        return {
+            "artifact_id": existing.id,
+            "original_record": original_record,
+            "source_inspection_number": inspection_number,
+            "inspection_number": inspection_number,
+            "selected_image_ids": [entry.id for entry, _path in selected],
+            "image_count": len(selected),
+            "template_binding": template_binding,
+            "verification": (existing.metadata_json or {}).get("verification") or {},
+            "print": {
+                "sheet_name": MICROSCOPY_SHEET_NAME,
+                "print_area": MICROSCOPY_PRINT_AREA,
+                "available": True,
+            },
+            "reused": True,
+        }
+
+    gateway = build_file_gateway(context.db)
+    target_ref = ArtifactRef(STAGING_ROOT_ID, relative_path)
+    target = gateway.resolve(target_ref, must_exist=False, for_write=True)
+    gateway.ensure_parent(target_ref)
+    if target.exists():
+        raise ExecutionApiError(
+            409,
+            "artifact_file_conflict",
+            "原始记录暂存路径已存在但没有匹配的制品记录",
+        )
+
+    verification = render_original_record_workbook(
+        target, cells=cells, selected=[(entry.id, path) for entry, path in selected],
+    )
 
     fingerprint = fingerprint_file(target)
     root = storage_root_by_key(context.db, STAGING_ROOT_ID)

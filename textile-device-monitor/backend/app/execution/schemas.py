@@ -22,11 +22,14 @@ class RegeneratedFiberQueryRequest(BaseModel):
     limit: int = Field(default=6, ge=1, le=6)
 
 
-class RegeneratedFiberFileReference(BaseModel):
+class IndexedFileReference(BaseModel):
     id: str = Field(min_length=1)
     root_id: str = Field(min_length=1)
     relative_path: str = Field(min_length=1)
     fingerprint: str = Field(min_length=1)
+
+
+class RegeneratedFiberFileReference(IndexedFileReference):
     name: Optional[str] = None
     suffix: Optional[str] = None
     size: Optional[int] = None
@@ -38,6 +41,39 @@ class RegeneratedFiberReadRequest(BaseModel):
     method: Literal["area", "count"]
     root_id: str = "regenerated_fiber_records"
     files: list[RegeneratedFiberFileReference] = Field(min_length=1, max_length=6)
+
+
+class MicroscopyQueryRequest(BaseModel):
+    inspection_number: str = Field(min_length=1, max_length=200)
+    record_family: Literal["microscopy", "cross_section"] = "microscopy"
+    match_rule: Optional[str] = None
+
+
+class PaperFiberQueryRequest(BaseModel):
+    inspection_number: str = Field(min_length=1, max_length=200)
+    limit: int = Field(default=6, ge=1, le=6)
+    match_rule: Optional[str] = None
+
+
+class MicroscopyRecordFields(BaseModel):
+    inspection_number: str = Field(min_length=1, max_length=100)
+    record_family: Literal["microscopy", "cross_section"] = "microscopy"
+    judgement_required: bool
+    sample_identification: str = ""
+    judgement_basis: str = ""
+    indicator_requirement: str = ""
+    test_result: str = ""
+    judgement: str = ""
+    remark: str = ""
+
+
+class MicroscopyOriginalRecordRequest(MicroscopyRecordFields):
+    sample_name: str = Field(min_length=1)
+    images: list[IndexedFileReference] = Field(min_length=1, max_length=10)
+
+
+class MicroscopyCheckRecordRequest(MicroscopyRecordFields):
+    image_count: int = Field(ge=1, le=10)
 
 
 class UserCreate(BaseModel):

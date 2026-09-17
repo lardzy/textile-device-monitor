@@ -5,11 +5,13 @@ import hmac
 import json
 import logging
 import mimetypes
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -57,6 +59,22 @@ from app.execution.engine import (
     submit_human_task,
 )
 from app.execution.errors import ExecutionApiError, conflict, not_found
+from app.execution.microscopy_families import microscopy_family_from_config
+from app.execution.microscopy_original_record import (
+    MICROSCOPY_MEDIA_TYPE,
+    MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME,
+    _resolve_selected_images,
+    _safe_inspection_number,
+    original_record_cells,
+    prepare_original_record_choices,
+    render_original_record_workbook,
+    resolve_microscopy_legacy_template_binding,
+)
+from app.execution.microscopy_check_record import (
+    microscopy_check_record_cells,
+    render_check_record_workbook,
+)
+from app.execution.paper_fiber import paper_fiber_match
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
     approve_prepared_external_operation,
@@ -141,6 +159,7 @@ from app.execution.electron_microscopy import (
     ELECTRON_ROOT_ID,
     claim_task_snapshot_refresh,
     complete_task_snapshot_refresh,
+    electron_microscopy_match,
     fail_task_snapshot_refresh,
     request_task_snapshot_refresh,
     task_snapshot_status as read_task_snapshot_status,
@@ -148,6 +167,10 @@ from app.execution.electron_microscopy import (
 from app.execution.schemas import (
     RegeneratedFiberQueryRequest,
     RegeneratedFiberReadRequest,
+    MicroscopyQueryRequest,
+    MicroscopyOriginalRecordRequest,
+    MicroscopyCheckRecordRequest,
+    PaperFiberQueryRequest,
     CredentialUpsert,
     ExternalBridgeClaimRequest,
     ExternalBridgeCompleteRequest,
@@ -1977,6 +2000,99 @@ def test_project_rule(
         "candidate_count": candidate_count,
         "candidate_preview": preview,
     }
+
+
+@router.post("/microscopy/query")
+def query_microscopy(
+    payload: MicroscopyQueryRequest,
+    auth: AuthContext = Depends(permission("workflow.read", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    family = microscopy_family_from_config(payload.model_dump())
+    result = electron_microscopy_match(
+        db, inspection_number=payload.inspection_number,
+        family=family, rule_key=payload.match_rule,
+    )
+    db.commit()
+    return {
+        **result,
+        "supported_image_counts": sorted(family.template_bindings),
+        "record_choices": (
+            prepare_original_record_choices(result["task_snapshot"], family=family)
+            if result["task_snapshot"] else None
+        ),
+    }
+
+
+@router.post("/paper-fiber/query")
+def query_paper_fiber(
+    payload: PaperFiberQueryRequest,
+    auth: AuthContext = Depends(permission("workflow.read", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    result = paper_fiber_match(
+        db, inspection_number=payload.inspection_number,
+        result_limit=payload.limit, rule_key=payload.match_rule,
+    )
+    db.commit()
+    return result
+
+
+def _workbook_download(filename: str, render: Callable[[Path], Any]) -> Response:
+    with tempfile.TemporaryDirectory(prefix="execution-workbook-download-") as directory:
+        target = Path(directory) / filename
+        render(target)
+        return Response(
+            content=target.read_bytes(), media_type=MICROSCOPY_MEDIA_TYPE,
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        )
+
+
+@router.post("/microscopy/render/original-record")
+def download_microscopy_original_record(
+    payload: MicroscopyOriginalRecordRequest,
+    auth: AuthContext = Depends(permission("workflow.read", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    family = microscopy_family_from_config(payload.model_dump())
+    number = _safe_inspection_number(payload.inspection_number)
+    selected = _resolve_selected_images(
+        db, selected_image_ids=[image.id for image in payload.images],
+        offered_images=[image.model_dump() for image in payload.images],
+    )
+    resolve_microscopy_legacy_template_binding(len(selected), family=family)
+    cells = original_record_cells(
+        payload.model_dump(), inspection_number=number,
+        judgement_required=payload.judgement_required, family=family,
+    )
+    images = [(entry.id, path) for entry, path in selected]
+    # Rendering can invoke LibreOffice. Release the read transaction first.
+    db.commit()
+    return _workbook_download(
+        f"{number}-{MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME}",
+        lambda target: render_original_record_workbook(target, cells=cells, selected=images),
+    )
+
+
+@router.post("/microscopy/render/check-record")
+def download_microscopy_check_record(
+    payload: MicroscopyCheckRecordRequest,
+    auth: AuthContext = Depends(permission("workflow.read", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    family = microscopy_family_from_config(payload.model_dump())
+    binding = resolve_microscopy_legacy_template_binding(payload.image_count, family=family)
+    cells = microscopy_check_record_cells(
+        **payload.model_dump(exclude={"record_family", "image_count"}),
+        test_method=family.test_method, check_item_name=family.check_item_name,
+    )
+    db.commit()
+    return _workbook_download(
+        f"{cells['AS4']}-{family.check_record_filename_segment}-检验记录登记.xls",
+        lambda target: render_check_record_workbook(
+            target, cells=cells, template_binding=binding, family=family,
+        ),
+    )
 
 
 @router.post("/regenerated-fiber/query")

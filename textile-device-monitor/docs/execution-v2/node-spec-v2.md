@@ -1,6 +1,6 @@
 # NodeSpec v2 评审设计
 
-状态（2026-09-17）：规范与实现并行。P1 精确能力基座、18 份原生 P2 契约及人工/受控写入已实现；P3 首批增加再生纤查询/读取两份原生契约，累计 20 份。电镜/纸纤维拆分、P4 通用 Connector 和 v2 画布仍待完成。最新状态见 [Workflow Release v2](./workflow-release-v2.md) 与[P3 首批验收](./p3-regenerated-fiber-acceptance.md)。
+状态（2026-09-17）：规范与实现并行。P1 精确能力基座、18 份原生 P2 契约及人工/受控写入已实现；P3 首批增加再生纤查询/读取两份原生契约，累计 20 份。电镜/纸纤维共享服务与直接 API 已拆出，原生契约、P4 通用 Connector 和 v2 画布仍待完成。最新状态见 [Workflow Release v2](./workflow-release-v2.md)、[P3 首批验收](./p3-regenerated-fiber-acceptance.md)和[P3 第二批](./p3-domain-services-acceptance.md)。
 
 规范版本：`schema_version = "2.0"`
 
@@ -1050,6 +1050,7 @@ Workflow Release 的依赖字段约定：
 
 ### P3：领域能力拆分
 
+- 已实现再生纤原生查询/读取；电镜/纸纤维已抽出共享查询、校验及渲染服务和直接 API，旧节点共用。后两者仍需原生契约与迁移适配。
 - 按迁移矩阵拆分文件查询、模板渲染和领域守卫；通用底座不得替代显微/再生纤维 wrapper。
 - 新类型从 `type_version=1` 起步；只有保留原 type 且发生 breaking change 才递增到 2。
 
