@@ -55,10 +55,10 @@ export const updateWorkflowReleaseBindingV2 = (releaseId, payload) =>
     payload,
   );
 
-export const preflightStagedWorkflowReleaseV2 = releaseId =>
+export const preflightStagedWorkflowReleaseV2 = (releaseId, payload = {}) =>
   executionV2Client.post(
     `/workflow-releases/${encodeURIComponent(releaseId)}/preflight`,
-    {},
+    payload,
   );
 
 export const publishWorkflowReleaseV2 = (releaseId, preflightToken) =>
@@ -82,11 +82,22 @@ export const previewWorkflowV1Migration = (
   workflowId,
   source = 'published',
   targetProfile = 'compat_v1',
+  targetSlug,
 ) =>
   executionV2Client.post('/migrations/v1/preview', {
     workflow_id: workflowId,
     source,
     target_profile: targetProfile,
+    ...(targetSlug ? { target_slug: targetSlug } : {}),
   });
+
+export const getWorkflowReplacementV2 = workflowId =>
+  executionV2Client.get(`/workflows/${encodeURIComponent(workflowId)}/replacement`);
+
+export const activateWorkflowReplacementV2 = (workflowId, payload) =>
+  executionV2Client.post(`/workflows/${encodeURIComponent(workflowId)}/replacement/activate`, payload);
+
+export const revertWorkflowReplacementV2 = (workflowId, payload) =>
+  executionV2Client.post(`/workflows/${encodeURIComponent(workflowId)}/replacement/revert`, payload);
 
 export { executionV2Client };

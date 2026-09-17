@@ -47,6 +47,7 @@ from app.execution.engine import (
     complete_node,
     create_run,
     effective_human_task_form_schema,
+    effective_human_task_renderer_contract,
     fail_node,
     reject_human_task,
     resolve_node_input,
@@ -123,7 +124,9 @@ from app.execution.regenerated_fiber import (
     _specialized_node_type,
     _specialized_record_family,
     catalog_recommendations,
+    find_regenerated_fiber_records,
 )
+from app.execution.regenerated_fiber_results import read_regenerated_fiber_records
 from app.execution.project_rules import (
     default_rule_key_for_node_type,
     ensure_default_project_rules,
@@ -143,6 +146,8 @@ from app.execution.electron_microscopy import (
     task_snapshot_status as read_task_snapshot_status,
 )
 from app.execution.schemas import (
+    RegeneratedFiberQueryRequest,
+    RegeneratedFiberReadRequest,
     CredentialUpsert,
     ExternalBridgeClaimRequest,
     ExternalBridgeCompleteRequest,
@@ -399,6 +404,7 @@ def _ensure_workflow_visible(
 ) -> None:
     if (
         _published_workflow_capabilities(workflow).get("hidden")
+        and workflow.archived_at is None
         and not has_permission(db, auth.user, "workflow.design")
     ):
         raise not_found("流程", workflow.id)
@@ -592,6 +598,9 @@ def _workflow_dict(
             workflow, "management_mode", "draft_v1"
         ),
         "active_release_id": active_release_id,
+        "archived_at": workflow.archived_at.isoformat() if workflow.archived_at else None,
+        "replaces_workflow_id": workflow.replaces_workflow_id,
+        "replacement_pending": bool(workflow.replaces_workflow_id and not workflow.is_enabled),
         "category": _category_dict(workflow.category),
         "draft_revision": workflow.draft_revision,
         "published_version": workflow.published_version_number,
@@ -601,9 +610,10 @@ def _workflow_dict(
         "is_enabled": workflow.is_enabled,
         "availability": {
             "available": workflow.is_enabled
+            and workflow.archived_at is None
             and workflow.availability_code is None,
-            "code": workflow.availability_code,
-            "message": workflow.availability_message,
+            "code": "workflow_archived" if workflow.archived_at else workflow.availability_code,
+            "message": "该流程已归档，请使用接替流程" if workflow.archived_at else workflow.availability_message,
         },
         "created_at": workflow.created_at.isoformat(),
         "updated_at": workflow.updated_at.isoformat(),
@@ -619,6 +629,11 @@ def _workflow_dict(
         # 运行准备页只读取不可变的已发布版本，绝不把管理员草稿暴露给普通用户。
         value["published_definition"] = published_definition
     if db is not None:
+        replacement = db.query(ExecutionWorkflow).filter(ExecutionWorkflow.replaces_workflow_id == workflow.id).one_or_none()
+        value["replacement_workflow"] = (
+            {"id": replacement.id, "slug": replacement.slug, "name": replacement.name, "is_enabled": replacement.is_enabled}
+            if replacement else None
+        )
         value["match_rule"] = _workflow_match_rule_summary(
             db, published_definition
         )
@@ -662,7 +677,7 @@ def _human_task_dict(task: ExecutionHumanTask) -> dict[str, Any]:
     elif isinstance(instances, dict):
         candidate = instances.get(node_run.node_id)
         contract = candidate if isinstance(candidate, dict) else {}
-    renderer_contract = task.renderer_contract or {}
+    renderer_contract = effective_human_task_renderer_contract(task)
     approval = task.approval_receipts[-1] if task.approval_receipts else None
     value = {
         "id": task.id,
@@ -1963,6 +1978,27 @@ def test_project_rule(
         "candidate_preview": preview,
     }
 
+
+@router.post("/regenerated-fiber/query")
+def query_regenerated_fiber(
+    payload: RegeneratedFiberQueryRequest,
+    auth: AuthContext = Depends(permission("workflow.read", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    result = find_regenerated_fiber_records(db, **payload.model_dump())
+    db.commit()  # Persist the existing workbook profile cache.
+    return result
+
+
+@router.post("/regenerated-fiber/read-results")
+def read_regenerated_fiber(
+    payload: RegeneratedFiberReadRequest,
+    auth: AuthContext = Depends(permission("workflow.read", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    return read_regenerated_fiber_records(db, **payload.model_dump(exclude_none=True))
+
+
 @router.get("/catalog/recommendations")
 def workflow_recommendations(
     inspection_number: str = Query(default="", max_length=200),
@@ -1976,6 +2012,13 @@ def workflow_recommendations(
         preferred_categories=preferred_categories,
         include_hidden=has_permission(db, auth.user, "workflow.design"),
     )
+    from app.execution.workflow_replacement import is_catalog_workflow
+
+    visible_ids = {
+        workflow.id for workflow in db.query(ExecutionWorkflow).all()
+        if is_catalog_workflow(workflow)
+    }
+    items = [item for item in items if item["workflow_id"] in visible_ids]
     if cache_updated:
         db.commit()
     item_query_states = {
@@ -2106,6 +2149,7 @@ def import_workflow(
 def workflows(
     categories: list[str] = Query(default=[]),
     query: Optional[str] = Query(default=None, max_length=200),
+    include_archived: bool = Query(default=False),
     auth: AuthContext = Depends(permission("workflow.read")),
     db: Session = Depends(get_db),
 ):
@@ -2118,6 +2162,9 @@ def workflows(
             | (ExecutionWorkflow.description.ilike(f"%{query}%"))
         )
     include_draft = has_permission(db, auth.user, "workflow.design")
+    from app.execution.workflow_replacement import is_catalog_workflow
+
+    include_inactive = include_archived is True and include_draft
     if ensure_default_project_rules(db):
         db.commit()
     items = []
@@ -2126,8 +2173,10 @@ def workflows(
         ExecutionCategory.sort_order.asc(),
         ExecutionWorkflow.updated_at.desc(),
     ).all():
+        if not include_inactive and not is_catalog_workflow(item):
+            continue
         published_capabilities = _published_workflow_capabilities(item)
-        if published_capabilities.get("system_deprecated"):
+        if published_capabilities.get("system_deprecated") and not include_inactive:
             continue
         if published_capabilities.get("hidden") and not include_draft:
             continue
@@ -2315,7 +2364,6 @@ def test_workflow(
             global_data=payload.global_data,
             idempotency_key=payload.idempotency_key,
             mode="test",
-            draft_definition=workflow.draft_definition,
             target_sample_number=payload.target_sample_number,
         )
         db.commit()

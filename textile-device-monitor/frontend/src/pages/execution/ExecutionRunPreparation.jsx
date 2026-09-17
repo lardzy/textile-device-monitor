@@ -8,38 +8,25 @@ import {
 import {
   Alert,
   Button,
-  Descriptions,
+  Collapse,
   Divider,
   Form,
   Result,
   Space,
   Spin,
-  Tag,
-  Typography,
   message,
 } from 'antd';
-import {
-  ApartmentOutlined,
-  CheckCircleOutlined,
-  FileSearchOutlined,
-  PlayCircleOutlined,
-} from '@ant-design/icons';
+import { PlayCircleOutlined } from '@ant-design/icons';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  createExecutionRun,
+  startExecutionRun,
   getExecutionWorkflow,
 } from '../../api/execution';
-import {
-  clearExecutionRunRequest,
-  prepareExecutionRunRequest,
-} from '../../utils/executionRunRequest';
 import { normalizeWorkflowDefinition } from '../../utils/executionWorkflow';
 import ExecutionChrome from './ExecutionChrome';
 import SchemaFields from './SchemaFields';
 import WorkflowCanvas from './WorkflowCanvas';
 import './execution.css';
-
-const { Paragraph, Text, Title } = Typography;
 
 const withInspectionNumber = (schema = {}) => ({
   type: 'object',
@@ -61,40 +48,42 @@ const schemaDefaults = schema => Object.fromEntries(
     .map(([name, field]) => [name, field.default]),
 );
 
-const categoryNameOf = workflow => (
-  workflow?.category?.name
-  || workflow?.category_name
-  || '未分类'
-);
-
 const availabilityOf = workflow => (
   workflow?.is_enabled !== false
+  && !workflow?.archived_at
+  && !workflow?.replacement_pending
   && workflow?.availability?.available !== false
   && Boolean(workflow?.published_version)
 );
 
-export default function ExecutionRunPreparation() {
+export default function ExecutionRunPreparation({
+  initialWorkflow = null,
+  inspectionNumber,
+  onStarted,
+} = {}) {
   const { workflowId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialNumberRef = useRef(searchParams.get('number') || '');
+  const initialNumberRef = useRef(inspectionNumber ?? searchParams.get('number') ?? '');
+  const embedded = Boolean(initialWorkflow);
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [workflow, setWorkflow] = useState(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
   const [error, setError] = useState(null);
 
   const loadWorkflow = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setWorkflow(await getExecutionWorkflow(workflowId));
+      setWorkflow(initialWorkflow || await getExecutionWorkflow(workflowId));
     } catch (requestError) {
       setError(requestError);
     } finally {
       setLoading(false);
     }
-  }, [workflowId]);
+  }, [initialWorkflow, workflowId]);
 
   useEffect(() => {
     loadWorkflow();
@@ -115,9 +104,9 @@ export default function ExecutionRunPreparation() {
     ),
     [definition.input_schema, workflow?.input_schema],
   );
-  const globalSchema = workflow?.global_schema
+  const globalSchema = useMemo(() => workflow?.global_schema
     || definition.global_schema
-    || { type: 'object', properties: {} };
+    || { type: 'object', properties: {} }, [workflow?.global_schema, definition.global_schema]);
   const canStart = availabilityOf(workflow);
 
   useEffect(() => {
@@ -134,6 +123,7 @@ export default function ExecutionRunPreparation() {
   }, [form, globalSchema, inputSchema, workflow]);
 
   const keepNumberInUrl = (_, values) => {
+    if (embedded) return;
     const next = new URLSearchParams(searchParams);
     const number = values.input_data?.inspection_number?.trim();
     if (number) {
@@ -160,26 +150,24 @@ export default function ExecutionRunPreparation() {
     if (targetNumber) {
       inputData.target_sample_number = targetNumber;
     }
-    const request = prepareExecutionRunRequest({
+    const payload = {
       workflow_id: workflow.id,
       inspection_number: normalizedNumber,
       ...(targetNumber ? { target_sample_number: targetNumber } : {}),
       input_data: inputData,
       global_data: values.global_data || {},
-    });
+    };
+    if (creatingRef.current || !canStart) return;
+    creatingRef.current = true;
     setCreating(true);
     try {
-      const result = await createExecutionRun(request.payload);
-      const run = result?.run || result;
-      const runId = run?.id || run?.run_id;
-      if (!runId) {
-        throw new Error('服务器未返回运行编号');
-      }
-      clearExecutionRunRequest(request.signature);
-      navigate(`/execution/runs/${runId}`, { replace: true });
+      const run = await startExecutionRun(payload);
+      if (onStarted) onStarted(run);
+      else navigate(`/execution/runs/${run.id || run.run_id}`, { replace: true });
     } catch (requestError) {
       message.error(requestError.message || '创建执行任务失败');
     } finally {
+      creatingRef.current = false;
       setCreating(false);
     }
   };
@@ -210,14 +198,23 @@ export default function ExecutionRunPreparation() {
   }
 
   return (
-    <div className="execution-preparation">
-      <ExecutionChrome
+    <div className={`execution-preparation${embedded ? ' execution-preparation--embedded' : ''}`}>
+      {!embedded && <ExecutionChrome
         title={workflow.name || '执行准备'}
-        subtitle="先核对流程与输入，确认后才会创建运行记录"
+        subtitle="填写本次任务信息后开始执行"
         backTo={{ path: '/execution', label: '流程目录' }}
-      />
+      />}
 
-      {!canStart && (
+      {workflow.archived_at && (
+        <Alert
+          banner showIcon type="info" message="该流程已归档"
+          description="历史运行和人工待办仍可继续访问。新任务请使用接替流程。"
+          action={workflow.replacement_workflow?.is_enabled && (
+            <Button onClick={() => navigate(`/execution/workflows/${workflow.replacement_workflow.id}/start?${searchParams.toString()}`)}>前往新流程</Button>
+          )}
+        />
+      )}
+      {!canStart && !workflow.archived_at && (
         <Alert
           banner
           showIcon
@@ -227,114 +224,46 @@ export default function ExecutionRunPreparation() {
         />
       )}
 
-      <main className="execution-preparation__grid">
-        <aside className="execution-preparation__form">
-          <div className="execution-workspace__section-title">
-            <div>
-              <Text className="execution-eyebrow">RUN INPUTS</Text>
-              <Title level={4}>本次执行信息</Title>
-            </div>
-            <Tag color="blue">执行前</Tag>
-          </div>
-          <Alert
-            showIcon
-            type="info"
-            message="尚未创建运行记录"
-            description="可先查看流程图并补充编号；只有点击“开始执行”后才会进入执行记录。"
-          />
-          <Form
-            form={form}
-            layout="vertical"
-            onFinish={startRun}
-            onValuesChange={keepNumberInUrl}
-            className="execution-preparation__input-form"
+      <main className="execution-preparation__form">
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={startRun}
+          onValuesChange={keepNumberInUrl}
+          className="execution-preparation__input-form"
+        >
+          <Divider orientation="left">必填与选填信息</Divider>
+          <SchemaFields schema={inputSchema} namePrefix="input_data" />
+          {Object.keys(globalSchema?.properties || {}).length > 0 && (
+            <>
+              <Divider orientation="left">流程全局变量</Divider>
+              <SchemaFields schema={globalSchema} namePrefix="global_data" />
+            </>
+          )}
+          <Button
+            type="primary"
+            size="large"
+            block
+            htmlType="submit"
+            icon={<PlayCircleOutlined />}
+            loading={creating}
+            disabled={!canStart}
           >
-            <Divider orientation="left">必填与选填信息</Divider>
-            <SchemaFields schema={inputSchema} namePrefix="input_data" />
-            {Object.keys(globalSchema?.properties || {}).length > 0 && (
-              <>
-                <Divider orientation="left">流程全局变量</Divider>
-                <SchemaFields schema={globalSchema} namePrefix="global_data" />
-              </>
-            )}
-            <Button
-              type="primary"
-              size="large"
-              block
-              htmlType="submit"
-              icon={<PlayCircleOutlined />}
-              loading={creating}
-              disabled={!canStart}
-            >
-              确认并开始执行
-            </Button>
-          </Form>
-        </aside>
-
-        <section className="execution-preparation__canvas">
-          <div className="execution-canvas-toolbar">
-            <div>
-              <Text strong>已发布流程</Text>
-              <Text type="secondary">此处仅用于核对，运行开始后按该版本执行</Text>
-            </div>
-            <Tag color="geekblue">v{workflow.published_version || '—'}</Tag>
-          </div>
+            开始执行
+          </Button>
+        </Form>
+        {!embedded && <Collapse style={{ marginTop: 24 }} items={[{
+          key: 'definition',
+          label: `查看流程 · v${workflow.published_version || '—'}`,
+          children: <div style={{ height: 360 }}>
           <WorkflowCanvas
             nodes={definition.nodes}
             edges={definition.edges}
             readonly
             fitView
           />
-        </section>
-
-        <aside className="execution-preparation__summary">
-          <Text className="execution-eyebrow">BEFORE START</Text>
-          <Title level={4}>执行前核对</Title>
-          <Descriptions
-            column={1}
-            size="small"
-            items={[
-              {
-                key: 'workflow',
-                label: '流程',
-                children: workflow.name,
-              },
-              {
-                key: 'category',
-                label: '类别',
-                children: categoryNameOf(workflow),
-              },
-              {
-                key: 'version',
-                label: '发布版本',
-                children: `v${workflow.published_version || '—'}`,
-              },
-              {
-                key: 'mode',
-                label: '运行模式',
-                children: '正式运行',
-              },
-            ]}
-          />
-          <Divider />
-          <div className="execution-preparation__steps">
-            <div>
-              <CheckCircleOutlined />
-              <span><strong>已选择流程</strong><small>当前使用不可变的已发布版本</small></span>
-            </div>
-            <div>
-              <FileSearchOutlined />
-              <span><strong>补齐运行信息</strong><small>检验编号会用于文件匹配和后续审计</small></span>
-            </div>
-            <div>
-              <ApartmentOutlined />
-              <span><strong>进入执行工作台</strong><small>创建后可随时从“执行记录”返回</small></span>
-            </div>
-          </div>
-          <Paragraph type="secondary" className="execution-preparation__note">
-            返回流程目录不会产生空白记录；开始执行后，输入内容将锁定并保存在运行快照中。
-          </Paragraph>
-        </aside>
+          </div>,
+        }]} />}
       </main>
     </div>
   );

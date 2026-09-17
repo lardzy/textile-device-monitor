@@ -15,6 +15,31 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=500)
 
 
+class RegeneratedFiberQueryRequest(BaseModel):
+    method: Literal["area", "count"]
+    inspection_number: str = Field(min_length=1, max_length=200)
+    root_id: str = "regenerated_fiber_records"
+    limit: int = Field(default=6, ge=1, le=6)
+
+
+class RegeneratedFiberFileReference(BaseModel):
+    id: str = Field(min_length=1)
+    root_id: str = Field(min_length=1)
+    relative_path: str = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+    name: Optional[str] = None
+    suffix: Optional[str] = None
+    size: Optional[int] = None
+    modified_at: Optional[str] = None
+    category: Optional[str] = None
+
+
+class RegeneratedFiberReadRequest(BaseModel):
+    method: Literal["area", "count"]
+    root_id: str = "regenerated_fiber_records"
+    files: list[RegeneratedFiberFileReference] = Field(min_length=1, max_length=6)
+
+
 class UserCreate(BaseModel):
     username: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=2, max_length=100)
     display_name: str = Field(min_length=1, max_length=100)
@@ -171,7 +196,39 @@ class WorkflowV1MigrationPreviewRequest(BaseModel):
 
     workflow_id: str = Field(min_length=1, max_length=36)
     source: Literal["published", "draft"] = "published"
-    target_profile: Literal["compat_v1", "native_p2"] = "compat_v1"
+    target_profile: Literal["compat_v1", "native_p2", "native_p3"] = "compat_v1"
+    target_slug: Optional[str] = Field(
+        default=None, min_length=1, max_length=100,
+        pattern=r"^[a-z][a-z0-9_-]*$",
+    )
+
+
+class WorkflowReplacementSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_id: str = Field(min_length=1, max_length=36)
+    version_id: str = Field(min_length=1, max_length=36)
+    version_number: int = Field(ge=1)
+    draft_revision: int = Field(ge=1)
+    definition_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    contract_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class WorkflowReleasePublishPreflightRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    replacement_source: Optional[WorkflowReplacementSource] = None
+
+
+class WorkflowReplacementActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_source_revision: int = Field(ge=1)
+    expected_target_revision: int = Field(ge=1)
+    expected_source_version: int = Field(ge=1)
+    expected_target_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=2000)
+    activation_audit_id: Optional[int] = Field(default=None, ge=1)
 
 
 class RunCreate(BaseModel):

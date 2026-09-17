@@ -139,17 +139,32 @@ describe('ExecutionRunPreparation', () => {
     resetExecutionRunRequestCache();
   });
 
+  it('归档详情保留历史说明，禁止新运行并跳转到新流程', async () => {
+    installHandlers();
+    server.use(http.get('/api/execution/v1/workflows/wf-count', () => HttpResponse.json({
+      ...workflow, archived_at: '2026-09-05T00:00:00Z', is_enabled: false,
+      replacement_workflow: { id: 'wf-new', name: '新流程', is_enabled: true },
+    })));
+    server.use(http.get('/api/execution/v1/workflows/wf-new', () => HttpResponse.json({ ...workflow, id: 'wf-new', name: '新流程' })));
+    const user = userEvent.setup();
+    renderPreparation('/execution/workflows/wf-count/start?number=260162847');
+    expect(await screen.findByText('该流程已归档')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /开始执行/ })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '前往新流程' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/execution/workflows/wf-new/start?number=260162847'));
+  });
+
   it('允许无编号查看流程，补齐必填信息后才创建运行', async () => {
     installHandlers();
     const user = userEvent.setup();
     renderPreparation();
 
-    expect(await screen.findByText('尚未创建运行记录')).toBeInTheDocument();
-    expect(screen.getByText('已发布流程')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /开始执行/ })).toBeInTheDocument();
+    expect(screen.getByText('查看流程 · v3')).toBeInTheDocument();
     expect(screen.getAllByText('再生纤-根数法').length).toBeGreaterThan(0);
     expect(screen.getByRole('textbox', { name: '检验编号' })).toHaveValue('');
 
-    await user.click(screen.getByRole('button', { name: /确认并开始执行/ }));
+    await user.click(screen.getByRole('button', { name: /开始执行/ }));
     expect(await screen.findByText('请填写检验编号')).toBeInTheDocument();
 
     await user.type(screen.getByRole('textbox', { name: '检验编号' }), '260162847');
@@ -159,7 +174,7 @@ describe('ExecutionRunPreparation', () => {
         '/execution/workflows/wf-count/start?number=260162847',
       );
     });
-    await user.click(screen.getByRole('button', { name: /确认并开始执行/ }));
+    await user.click(screen.getByRole('button', { name: /开始执行/ }));
 
     expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
   });
@@ -182,13 +197,13 @@ describe('ExecutionRunPreparation', () => {
     expect(await screen.findByRole('textbox', { name: '检验编号' }))
       .toHaveValue('260162847');
     await user.type(screen.getByRole('spinbutton', { name: '样品数量' }), '2');
-    await user.click(screen.getByRole('button', { name: /确认并开始执行/ }));
+    await user.click(screen.getByRole('button', { name: /开始执行/ }));
     await waitFor(() => expect(keys).toHaveLength(1));
     await waitFor(() => expect(
-      screen.getByRole('button', { name: /确认并开始执行/ }),
+      screen.getByRole('button', { name: /开始执行/ }),
     ).toBeEnabled());
 
-    await user.click(screen.getByRole('button', { name: /确认并开始执行/ }));
+    await user.click(screen.getByRole('button', { name: /开始执行/ }));
 
     expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
@@ -216,7 +231,7 @@ describe('ExecutionRunPreparation', () => {
       screen.getByRole('textbox', { name: '目标样品编号' }),
       '260187115-1',
     );
-    await user.click(screen.getByRole('button', { name: /确认并开始执行/ }));
+    await user.click(screen.getByRole('button', { name: /开始执行/ }));
 
     expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
   });

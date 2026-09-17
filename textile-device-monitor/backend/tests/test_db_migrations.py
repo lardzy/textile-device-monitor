@@ -118,12 +118,13 @@ def test_existing_baseline_is_preflighted_stamped_and_upgraded(tmp_path):
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0009_execution_v2_primitives"
+        assert revision == "0010_workflow_replacement"
     finally:
         engine.dispose()
 
 
-def test_0008_to_0009_preserves_existing_version_run_and_lock_bytes(tmp_path):
+@pytest.mark.parametrize("target_revision", ["0009_execution_v2_primitives", "0010_workflow_replacement"])
+def test_0008_upgrade_preserves_existing_version_run_and_lock_bytes(tmp_path, target_revision):
     database_path = tmp_path / "execution_v2_history_test.db"
     database_url = f"sqlite:///{database_path}"
     config = _config(database_url)
@@ -224,7 +225,12 @@ def test_0008_to_0009_preserves_existing_version_run_and_lock_bytes(tmp_path):
             global_data={},
             output_data={},
         )
-        db.add_all([workflow, version, run])
+        # Insert only 0008 columns: the current ORM also contains 0010 fields.
+        db.execute(ExecutionWorkflow.__table__.insert().values(**{
+            key: value for key, value in vars(workflow).items()
+            if not key.startswith("_")
+        }))
+        db.add_all([version, run])
         db.commit()
     columns = (
         "definition, checksum, contract_checksum, dependency_lock, "
@@ -255,7 +261,7 @@ def test_0008_to_0009_preserves_existing_version_run_and_lock_bytes(tmp_path):
         )
     engine.dispose()
 
-    command.upgrade(config, "0009_execution_v2_primitives")
+    command.upgrade(config, target_revision)
     upgraded = create_engine(database_url)
     try:
         with upgraded.connect() as connection:

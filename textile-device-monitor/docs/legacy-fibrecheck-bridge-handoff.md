@@ -1,6 +1,10 @@
 # FibreCheck 集中式 Windows Bridge 交接手册
 
-> 最后更新：2026-08-05
+> 2026-09-17 当前代码：普通任务默认由 Worker 自动交付，无需重复输入样品号或逐次批准，自动交付没有批准倒计时。写入可按业务更正；通用更正接口仍在 P4。
+> Bridge 默认空闲轮询 2 秒，完成任务立即领取下一项；每项仍独立启动 Writer。已有安装需把 `BridgeConfig.psd1` 的 `PollSeconds` 改为 2 并重启 Bridge。协调进程退出后的 5 秒重启退避仍保留。
+> 根数法准备时复制和解析一次；自动交付复用结果，领取时只核对真实内容摘要，不因文件时间变化而重复解析。任务详情提供排队、执行和总耗时。见[实施记录](./execution-v2/simplification-batch-1.md)。
+>
+> 以下现场记录的历史更新时间：2026-08-05
 > 适用环境：Windows 11 ARM64（x64/x86 模拟层）及后续部门内常驻 Windows 主机
 > 当前状态：`260187115-1` 首次受控真实写入已完成并通过写后核验；代码复查后
 > 已暂停第二次真实写入，先完成副作用许可、取消、账号隔离与并发安全门禁
@@ -93,7 +97,7 @@ external.legacy_regenerated_fiber_count_upload@1
 5. 记录源文件 fingerprint、SHA-256、检验员、固定业务字段和目标样品编号；
 6. 绑定运行创建人的旧系统凭据 ID、凭据 revision 和账号作用域；
 7. 创建持久化外部操作及跨运行样品业务围栏；
-8. 等待用户再次输入完整样品编号并确认；
+8. 默认由 Worker 自动交付；手动批准接口仅供明确关闭自动交付的旧部署兼容；
 9. 批准把本地状态从 `prepared` 改为 `approved`；已启用的 Bridge 随后可以领取；
 10. Bridge 通过 `claim/heartbeat/stage/complete/fail` 持久化 attempt、租约、阶段和回执。
 
@@ -102,8 +106,8 @@ external.legacy_regenerated_fiber_count_upload@1
 
 Bridge 与 Writer 链路已经能够调用 FibreCheck 官方 DAL、复制原始记录并保存主单。
 因此批准不再是无副作用动作：若 `EXECUTION_BRIDGE_ENABLED=true`、令牌已配置且
-Windows Bridge 正在运行，批准后的任务可以立即进入真实写入。安全复查完成前
-必须保持独立总开关为 `false`；已有令牌可以原样保留。
+Windows Bridge 正在运行，自动交付后的任务可以立即进入真实写入。部署时按实际可用的
+Writer 配置能力开关；日常任务不要求用户再走一遍批准步骤。
 默认发布的再生纤根数法流程仍未自动串入这个外部节点，避免普通流程被连接器阻塞。
 
 关键实现位置：
@@ -118,7 +122,7 @@ Windows Bridge 正在运行，批准后的任务可以立即进入真实写入�
 - `tools/legacy_fibrecheck_bridge/`
 - `tools/legacy_fibrecheck_writer/`
 
-预检默认有效 30 分钟，批准默认有效 15 分钟。过期记录由 execution-worker
+手动兼容路径中，预检默认有效 30 分钟，批准默认有效 15 分钟；自动交付的 `approval_expires_at=None`。过期记录由 execution-worker
 自动转为 `expired`，对应等待节点和运行结束为失败，释放同一样品业务围栏。
 
 ## 3. Windows 环境需要准备的材料
@@ -287,7 +291,7 @@ csc.exe 直接编译）：
 - Bridge 端点（独立总开关 + `X-Execution-Bridge-Key` 令牌；关闭/未配置 503，
   令牌不匹配 401）：
   `claim`、`heartbeat`、`stage`、`complete`、`fail`；
-- 领取前复核：批准 TTL、凭据 revision、账号绑定、源文件指纹/SHA-256/I8；
+- 领取前复核：适用的批准 TTL、凭据 revision、账号绑定和源文件 SHA-256；根数法 I8 复用相同字节的准备结果；
 - `in_progress` 参与取消状态机（cancel_pending + heartbeat 回 abort_requested）；
 - 租约过期清扫：按阶段回 approved 或转 reconciliation_required；
 - 17 项 Bridge 测试 + 36 项外部操作回归全过。

@@ -310,7 +310,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         )
         definition = workflow.draft_definition
         self.assertTrue(validate_definition(definition, for_publish=True).valid)
-        self.assertIn(
+        self.assertNotIn(
             "print-confirm",
             {node["id"] for node in definition["nodes"]},
         )
@@ -318,14 +318,6 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             {
                 "id": "e6",
                 "source": "generate-record",
-                "target": "print-confirm",
-            },
-            definition["edges"],
-        )
-        self.assertIn(
-            {
-                "id": "e7",
-                "source": "print-confirm",
                 "target": "upload-record",
             },
             definition["edges"],
@@ -376,7 +368,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
                 "legacy_existing_record_decision"
             ]
         )
-        # 运行时不再读取该标记；含打印确认的契约时代均不携带它。
+        # 新定义不再携带已经停止使用的容量标记。
         self.assertNotIn(
             "allow_multi_copy_over_capacity",
             registration_decision["config"],
@@ -658,7 +650,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflow.draft_revision, 2)
         self.assertEqual(workflow.published_version_number, 2)
-        self.assertIn(
+        self.assertNotIn(
             "print-confirm",
             {node["id"] for node in workflow.draft_definition["nodes"]},
         )
@@ -666,12 +658,12 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             {
                 "id": "e6",
                 "source": "generate-record",
-                "target": "print-confirm",
+                "target": "upload-record",
             },
             workflow.draft_definition["edges"],
         )
 
-    def test_previous_full_workflow_is_upgraded_with_print_pause(self):
+    def test_previous_full_workflow_is_upgraded_without_print_pause(self):
         workflow = self.db.query(ExecutionWorkflow).filter_by(
             slug="electron-microscopy-gbt36422"
         ).one()
@@ -708,7 +700,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflow.draft_revision, 2)
         self.assertEqual(workflow.published_version_number, 2)
-        self.assertIn(
+        self.assertNotIn(
             "print-confirm",
             {node["id"] for node in workflow.draft_definition["nodes"]},
         )
@@ -717,7 +709,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             for node in workflow.draft_definition["nodes"]
             if node["id"] == "registration-decision"
         )
-        # 运行时不再读取该标记；含打印确认的契约时代均不携带它。
+        # 新定义不再携带已经停止使用的容量标记。
         self.assertNotIn("allow_multi_copy_over_capacity", registration["config"])
 
     def test_system_owned_print_choice_without_completion_is_upgraded(self):
@@ -752,7 +744,7 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
         self.db.refresh(workflow)
 
         self.assertEqual(workflow.draft_revision, 2)
-        self.assertIn(
+        self.assertNotIn(
             "print-confirm",
             {node["id"] for node in workflow.draft_definition["nodes"]},
         )
@@ -760,14 +752,6 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
             {
                 "id": "e6",
                 "source": "generate-record",
-                "target": "print-confirm",
-            },
-            workflow.draft_definition["edges"],
-        )
-        self.assertIn(
-            {
-                "id": "e7",
-                "source": "print-confirm",
                 "target": "upload-record",
             },
             workflow.draft_definition["edges"],

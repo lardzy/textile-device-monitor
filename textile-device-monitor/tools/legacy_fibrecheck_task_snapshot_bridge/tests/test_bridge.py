@@ -415,5 +415,24 @@ class ProbeProcessTests(unittest.TestCase):
         self.assertFalse(output_paths[0].exists())
 
 
+class ContinuousPollingTests(unittest.TestCase):
+    def test_drains_ready_tasks_without_sleep_and_waits_two_seconds_when_idle(self):
+        with patch.dict(bridge.os.environ, {'TEST_LOOP_TOKEN': 'test', 'EXECUTION_TASK_SNAPSHOT_BRIDGE_TOKEN': 'test'}), patch.object(
+            bridge, "run_one_cycle", side_effect=['completed', 'completed', 'idle'] + [KeyboardInterrupt()]
+        ) as cycle, patch.object(bridge.time, "sleep") as sleep:
+            with self.assertRaises(KeyboardInterrupt):
+                bridge.main(['--api-base', 'http://localhost/api/execution/v1', '--bridge-id', 'test-loop', '--fibrecheck-dir', 'unused', '--token-env', 'TEST_LOOP_TOKEN'])
+        self.assertEqual(cycle.call_count, 4)
+        sleep.assert_called_once_with(2.0)
+
+    def test_once_keeps_single_task_command_behavior(self):
+        with patch.dict(bridge.os.environ, {'TEST_LOOP_TOKEN': 'test', 'EXECUTION_TASK_SNAPSHOT_BRIDGE_TOKEN': 'test'}), patch.object(
+            bridge, "run_one_cycle", return_value='completed'
+        ) as cycle, patch.object(bridge.time, "sleep") as sleep:
+            self.assertEqual(bridge.main(['--api-base', 'http://localhost/api/execution/v1', '--bridge-id', 'test-loop', '--fibrecheck-dir', 'unused', '--token-env', 'TEST_LOOP_TOKEN'] + ["--once"]), 0)
+        cycle.assert_called_once()
+        sleep.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

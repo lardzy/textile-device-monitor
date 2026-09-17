@@ -1,6 +1,17 @@
 # Workflow Release v2 可评审设计
 
-状态：Draft，供架构评审；尚未实现，不代表当前导入 API 已接受此格式。
+状态（2026-09-17）：P0/P1 发布基座、P2 基础能力和归档接替已实现。首批简化包括目录直接启动、同页补齐输入、自动准备发布、打印解耦和 Bridge 连续处理，见[实施记录](./simplification-batch-1.md)。P3 首批已完成再生纤面积法/根数法的共享服务、直接 API、原生节点和迁移候选，完整候选覆盖 **6/9**，见[P3 验收记录](./p3-regenerated-fiber-acceptance.md)。生产接管尚未执行。本文同时保留后续目标设计，以下按阶段标明当前交付边界。
+
+| 阶段 | 当前实现与验证边界 |
+|---|---|
+| P0 | 39 份旧节点契约、9 条内置流程与外部操作事实快照；现场业务输出等价性仍需验收 |
+| P1 | 预检、导入、绑定、不可变发布/运行快照、导出、版本回滚及精确 Worker 能力匹配 |
+| P2 | 18 份原生基础契约、四条完整迁移候选，以及新 Workflow ID/slug 的归档接替、回切、目录和管理入口 |
+| P3 | 再生纤首批已实现：查询/读取两个原生节点共用 `method=area\|count`，复用 `human.select`；累计 20 份原生契约、59 个能力绑定/57 ready、六条完整候选。电镜/纸纤维领域拆分待完成 |
+| P4 | 已有 Connector/Operation 契约元数据；通用 `external.operation`、`connector.query` 运行链未完成 |
+| P5 | 已有 Release 管理页；v2 可视化画布、全库引用清理及 v1 执行器退场未完成 |
+
+P2 四条指电镜、麻棉、特种毛原始资料选择，以及受控 Excel 内部验收候选；P3 新增再生纤面积法/根数法。迁移预览选择 `target_profile=native_p3` 可生成以上六条候选，原 `native_p2` 行为保留。候选生成始终返回 `publish_ready=false`，发布页统一完成绑定保存、检查和发布；接替仍是明确的管理动作。覆盖率不表示已经替换生产流程。
 
 配套机器可读约束：[workflow-release-v2.schema.json](./workflow-release-v2.schema.json)。该文件使用 JSON Schema Draft 2020-12。节点契约见 [NodeSpec v2](./node-spec-v2.md)，现有节点迁移结论见[当前 39 个节点迁移矩阵](./current-node-migration-matrix.md)。
 
@@ -18,7 +29,7 @@ Workflow Release v2 是一个**可移植、不可变、可预检**的工作流�
 - 新外部系统、协议或远端写入行为，通过 Connector Pack/Bridge 分发；
 - 只有新增内核状态、调度或持久化语义时才升级执行系统核心。
 
-当前 `ExecutionWorkflowVersion` 已保存不可变 definition、checksum、capabilities 和 contract checksum，`ExecutionRun` 又固定运行快照，这是 v2 可以渐进落地的基础，见 [models.py](../../backend/app/execution/models.py)。当前导入只校验格式、两个 checksum 和 v1 definition，然后创建或覆盖草稿；当前导出只包含草稿 definition 和 workflow metadata，见 [execution.py](../../backend/app/api/execution.py) 与 [catalog.py](../../backend/app/execution/catalog.py)。
+`ExecutionWorkflowVersion` 和 `ExecutionRun` 已保存不可变定义、能力、依赖锁、绑定、资产和摘要快照，见 [models.py](../../backend/app/execution/models.py)。v1 草稿导入/导出仍由 [execution.py](../../backend/app/api/execution.py) 管理；v2 使用独立的 [execution_v2.py](../../backend/app/api/execution_v2.py) 发布生命周期。v1 入口不能编辑 v2-managed 或已归档 Workflow。
 
 ## 2. 目标
 
@@ -27,7 +38,7 @@ Workflow Release v2 是一个**可移植、不可变、可预检**的工作流�
 3. 工作流只引用逻辑资源槽，部署环境负责绑定本地资源。
 4. 节点实例固定正整数 `type_version`；运行时进一步固定 Pack identity、SemVer 和 implementation digest。
 5. 发布是原子的，运行中的旧实例继续使用原有快照；任何历史版本都可安全回滚。
-6. 保留当前人工暂停、外部操作 fence、回执和 `reconciliation_required` 安全边界。
+6. 只在需要业务判断或补充资料时暂停；保留操作幂等、回执和未知结果处置。可更正的外部写入不默认增加人工批准。
 7. 格式本身可由标准 JSON Schema 工具做结构校验，并由执行系统继续做跨字段和业务语义校验。
 
 ## 3. 非目标
@@ -60,7 +71,7 @@ Workflow Release v2 是一个**可移植、不可变、可预检**的工作流�
 
 无外部资产时，单个 `workflow-release.json` 即为完整交付物。
 
-包含二进制资产时，推荐使用扩展名为 `.twr` 的 ZIP 容器：
+以下 `.twr` 是后续独立交付的容器设计，当前 API 尚不支持，裸 JSON 只能引用已安装 registry 资产。包含二进制资产时，目标格式使用扩展名为 `.twr` 的 ZIP 容器：
 
 ```text
 workflow-release.twr
@@ -231,7 +242,7 @@ portable release 只声明槽，不携带绑定值。
 5. 目标存储完成内容寻址落库后，再创建 staged release；
 6. 发布版本引用的资产不可原地覆盖；更新模板必须形成新 asset version/digest 和新 workflow release。
 
-大文件不允许 base64 塞入 JSON。裸 JSON 只能引用 registry 中已有的内容；离线分发使用 `.twr`。
+大文件不允许 base64 塞入 JSON。当前裸 JSON 只能引用 registry 中已有的内容；`.twr` 离线资产分发尚待实现。
 
 ## 12. Capabilities
 
@@ -309,7 +320,7 @@ preflight 应返回稳定的机器可读报告：release identity/digest、error
 ### 发布
 
 1. preflight 通过后创建 staged release、asset refs 和 dependency lock；
-2. 具有发布权限的用户显式批准；涉及外部写入时仍遵循更高权限/双人批准策略；
+2. 具有发布权限的用户点击“检查并发布”；页面自动保存改动的绑定、执行预检并发布。外部写入不默认要求双人批准；仅明确需要人工复核的业务配置相应节点；
 3. 单个数据库事务写入不可变 WorkflowVersion、contract checksum、lock 和审计日志，再原子更新 active pointer；
 4. 发布后不得修改 definition、依赖 lock、资产摘要或 capabilities；任何变化都产生新的正整数 release version；
 5. Run 创建时把 definition、capabilities、dependency lock 和 binding revision 固定为快照。
@@ -319,6 +330,16 @@ preflight 应返回稳定的机器可读报告：release identity/digest、error
 回滚不是修改旧版本，也不是覆盖同一 `slug + release_version`。推荐把 active pointer 原子指向已通过当前依赖/绑定预检的历史版本，并记录 rollback receipt：操作者、原因、from/to version、两个 digest 和预检报告 id。
 
 已经开始的 Run 不迁移、不重启，继续使用原快照。只有回滚之后创建的 Run 使用目标历史版本。若历史版本依赖已不可用，回滚必须失败，除非先恢复对应 Pack/Connector/资产；不得偷偷改用“看起来兼容”的新实现。
+
+### 旧流程归档、新 v2 接替（本轮已实现）
+
+生产迁移使用新的 Workflow ID 与 slug。`0010_workflow_replacement` 增加 `Workflow.archived_at`、唯一的 `replaces_workflow_id` 和 `Release.migration_source`；本地来源记录包含来源 Workflow/Version ID、版本号、revision、定义及契约摘要，不进入 portable JSON。
+
+发布预检接收可选 `replacement_source` 并冻结到一次性预检记录；发布时重新验证。首次发布接替流程保持停用，后续发布或版本回滚保持既有启停状态。独立流程的原 API 发布行为兼容。
+
+`POST /api/execution/v2/workflows/{new_id}/replacement/activate` 原子完成归档/停用旧流程、启用新流程。`replacement/revert` 校验最新接替审计编号，恢复旧流程切换前的启停/可用状态，并停用新流程。两者复用 `workflow.publish` 权限、CSRF 和审计，要求 `enforced`，同时验证双方版本与 revision，按 Workflow ID 顺序锁定两行。审计保存双方身份、版本、摘要、原因和前后状态。
+
+Run 创建在检查归档/启用和读取当前版本之前取得 Workflow 行锁；归档流程禁止新增运行、草稿测试、编辑和发布。默认目录初始化不会改写或重新启用归档流程。普通目录/推荐隐藏归档流程和未启用的接替流程，管理页可查看。旧流程详情展示新入口，历史 Run、待办和外部操作仍使用原记录、原快照。
 
 ## 16. v1 兼容与迁移
 
@@ -332,15 +353,15 @@ preflight 应返回稳定的机器可读报告：release identity/digest、error
 6. 把 `credential_slots.system_key` 映射为 connector/credential kind 槽；
 7. 从节点契约重新计算 capabilities；
 8. 对当前未完整声明的 config/input 字段先使用 compatibility NodeSpec，不静默丢弃；
-9. 在 `migration` 写入 v1 format/version/source digest；
+9. 在 `migration` 写入 v1 format/version/source digest；摘要取自排除停放节点之前的原始来源定义；
 10. 生成 v2 candidate，完整 preflight 通过后才能作为新 release 发布。
 
 迁移不改已有 `ExecutionWorkflowVersion` 和 `ExecutionRun.definition_snapshot`。现有历史 checksum 继续用于审计；v2 的 RFC 8785 digest 是新身份，不与 v1 checksum 假定相等。
 
-过渡期建议支持：
+当前兼容入口：
 
-- v1 import：兼容入口，内部转换为 v2 staged draft；
-- v1 export：只用于旧端兼容并标记 deprecated；
+- v1 import/export：继续管理原 v1 草稿，不自动转换或接管；
+- v1 migration preview：先排除停放节点及关联边，再生成依赖；可选 `target_slug`，界面建议 `<原slug>-v2` 并重新封装完整性摘要，未传字段时保持原 slug；
 - v2 export：只允许已发布 immutable release，不能继续把可变草稿伪装成 release；
 - 对旧系统默认 builder 先生成 golden v1/v2 对照，确认图、表单、文件结果和外部副作用边界等价。
 
@@ -852,6 +873,8 @@ JSON Schema 是第一层，不是完整安全边界。实现还必须：
 
 ## 19. 验收条件
 
+以下为完整目标的验收条件；本轮已验证与待生产验收的范围见[接替验收说明](./p2-replacement-acceptance.md)。Release 自带 fixtures 的执行器尚未实现，普通自动化测试不能等同于该交付。
+
 1. Schema 自身可通过 `Draft202012Validator.check_schema()`。
 2. 上述完整示例可通过结构 Schema，增加未知顶层/节点/edge 字段会失败。
 3. 在 config 中加入 `password`、`executor` 或绝对/UNC 路径会失败或被语义扫描拒绝。
@@ -863,15 +886,16 @@ JSON Schema 是第一层，不是完整安全边界。实现还必须：
 9. fixture 执行不触发 CIFS、UNO、真实数据库或旧系统写入。
 10. v1 的 9 个当前内置工作流都能生成通过 preflight 的 v2 release，并有行为等价证据。
 
-## 20. 待评审问题
+## 20. 已确认决策与待评审事项
 
-1. 是否接受 `release_version` 以来源工作流为准，允许目标环境出现版本号间隙；还是需要同时保留 source version 与 local version？
-2. 生产环境是否从 v2 首发起就强制 Ed25519 签名，还是先允许可信内网人工导入？
-3. Pack/Connector 的 `distribution_digest` 和 node `implementation_digest` 应默认强 pin，还是仅对受控写入节点强制？`contract_digest` 在本设计中已必填，不在此选项内。
-4. dependency lock 是仅保存在数据库，还是在导出已发布 release 时作为独立、带环境标识的 companion 文件提供？本设计不把它放入 portable release。
-5. root slot 的 access 是否继续只分 `read/write/publish`，还是需要补充 `delete`、`move` 等更细权限？
-6. rollback 应直接移动 active pointer，还是始终生成一个内容相同、版本号递增的新 release？本文建议移动 pointer 并写不可变 rollback receipt。
-7. 是否接受 v2 首版继续沿用字符串 mapping；若要立即引入显式 expression AST，会扩大迁移和前端改造范围。
-8. fixtures 是否作为所有 external-write release 的强制发布门槛？建议强制至少一个正常夹具和一个 reconciliation/failure 夹具。
-9. bundle 单资产上限目前 Schema 为 1 GiB；环境总包上限、压缩率上限和文件数上限应取何值？
-10. role/rule 的本地绑定是否允许“按 selector 自动选择”，还是所有生产绑定都要求人工确认？
+已确认并落地：来源 release version 与本地 version 分开保存；dependency lock、部署绑定与本地接替身份留在数据库；版本回滚移动指针并写回执；继续使用受限字符串 mapping；生产迁移采用“旧流程归档，新 ID/slug 的 v2 接替”。首批接替三条业务选择流程，受控 Excel 保持内部验收用途。业务回退调用 `replacement/revert`，保持 `enforced` 和数据库向前迁移。
+
+仍待评审或后续交付：
+
+1. 环境签名策略、portable 文档的实现 pin 默认策略，以及是否导出单独的本地 lock companion。
+2. root 权限细分、role/credential 绑定和完整资源绑定界面；当前已支持根目录及项目规则版本的最小绑定界面。
+3. Release 内置 fixture 执行器与外部写入正常/失败/对账 fixture 门槛。
+4. `.twr` 实现及总包大小、压缩率、文件数限制。
+5. P3 再生纤首批已完成，下一批拆分电镜/纸纤维；P4 完成通用 Connector 链、更正及未知结果自动核对；P5 完成 NodeSpec 画布，并在引用审计、业务回放与回滚验收后逐项停止旧执行器。
+
+`.twr`、Release 内置 fixture 执行器和完整绑定界面单独登记交付，不计入本轮 P2 接替完成度。

@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -42,6 +42,8 @@ from app.execution.schemas import (
     WorkflowReleaseBindingRequest,
     WorkflowReleasePreflightRequest,
     WorkflowReleasePublishRequest,
+    WorkflowReleasePublishPreflightRequest,
+    WorkflowReplacementActionRequest,
     WorkflowReleaseRollbackRequest,
     WorkflowV1MigrationPreviewRequest,
 )
@@ -549,6 +551,7 @@ def update_deployment_binding(
 @router.post("/workflow-releases/{release_id}/preflight")
 def staged_preflight(
     release_id: str,
+    payload: Optional[WorkflowReleasePublishPreflightRequest] = Body(default=None),
     auth: AuthContext = Depends(permission("workflow.publish", csrf=True)),
     db: Session = Depends(get_db),
 ):
@@ -559,6 +562,11 @@ def staged_preflight(
         actor=auth.user,
         release=release,
         scope="publish",
+        replacement_source=(
+            payload.replacement_source.model_dump()
+            if isinstance(payload, WorkflowReleasePublishPreflightRequest) and payload.replacement_source
+            else None
+        ),
     )
     db.commit()
     return report
@@ -632,4 +640,44 @@ def migration_preview(
         source=payload.source,
         actor=auth.user,
         target_profile=payload.target_profile,
+        target_slug=payload.target_slug,
     )
+
+
+@router.get("/workflows/{workflow_id}/replacement")
+def get_replacement(
+    workflow_id: str,
+    _auth: AuthContext = Depends(permission("workflow.design")),
+    db: Session = Depends(get_db),
+):
+    from app.execution.workflow_replacement import replacement_view
+
+    return replacement_view(db, workflow_id)
+
+
+@router.post("/workflows/{workflow_id}/replacement/activate")
+def activate_replacement(
+    workflow_id: str,
+    payload: WorkflowReplacementActionRequest,
+    auth: AuthContext = Depends(permission("workflow.publish", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    from app.execution.workflow_replacement import switch_replacement
+
+    result = switch_replacement(db, workflow_id=workflow_id, action="activate", actor=auth.user, **payload.model_dump())
+    db.commit()
+    return result
+
+
+@router.post("/workflows/{workflow_id}/replacement/revert")
+def revert_replacement(
+    workflow_id: str,
+    payload: WorkflowReplacementActionRequest,
+    auth: AuthContext = Depends(permission("workflow.publish", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    from app.execution.workflow_replacement import switch_replacement
+
+    result = switch_replacement(db, workflow_id=workflow_id, action="revert", actor=auth.user, **payload.model_dump())
+    db.commit()
+    return result

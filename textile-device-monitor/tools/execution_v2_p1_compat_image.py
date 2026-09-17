@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Verify or build the frozen P1 compatibility Worker image.
 
-The build context is always materialized from the exact P1 commit.  The sole
-overlay is Alembic 0009, which lets the old Worker pass the schema-head guard
+The build context is always materialized from the exact P1 commit.  The only
+overlays are Alembic 0009/0010, which let the old Worker pass the schema-head guard
 without changing application or Pack bytes.  Docker is invoked only with the
 explicit ``--build`` flag.
 """
@@ -18,6 +18,10 @@ from pathlib import Path
 
 
 BASELINE = "d1fb01bbd12e3b020f1e27a2ecbeab20bf039ac4"
+MIGRATION_OVERLAYS = (
+    "0009_execution_v2_primitives.py",
+    "0010_workflow_replacement.py",
+)
 EXPECTED_CAPABILITY = {
     "baseline_commit": BASELINE,
     "protocol_version": "2.0",
@@ -82,9 +86,9 @@ def verify() -> tuple[Path, Path, str]:
     actual = json.loads(snapshot_path.read_text(encoding="utf-8"))
     if actual != EXPECTED_CAPABILITY:
         raise SystemExit("P1 capability snapshot does not match the frozen baseline")
-    migration = project_root / "backend/alembic/versions/0009_execution_v2_primitives.py"
-    if not migration.is_file():
-        raise SystemExit("0009_execution_v2_primitives.py is missing")
+    for name in MIGRATION_OVERLAYS:
+        if not (project_root / "backend/alembic/versions" / name).is_file():
+            raise SystemExit(f"{name} is missing")
     baseline_backend = f"{prefix + '/' if prefix else ''}backend"
     _run(
         "git",
@@ -111,15 +115,11 @@ def build(tag: str) -> None:
         )
         try:
             baseline_project = worktree / prefix if prefix else worktree
-            source_migration = (
-                project_root
-                / "backend/alembic/versions/0009_execution_v2_primitives.py"
-            )
-            target_migration = (
-                baseline_project
-                / "backend/alembic/versions/0009_execution_v2_primitives.py"
-            )
-            shutil.copyfile(source_migration, target_migration)
+            for name in MIGRATION_OVERLAYS:
+                shutil.copyfile(
+                    project_root / "backend/alembic/versions" / name,
+                    baseline_project / "backend/alembic/versions" / name,
+                )
             _run(
                 "docker",
                 "build",

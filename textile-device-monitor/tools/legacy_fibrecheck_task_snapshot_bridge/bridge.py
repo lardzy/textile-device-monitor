@@ -23,7 +23,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 
 DEFAULT_TOKEN_ENV = "EXECUTION_BRIDGE_TOKEN"
-DEFAULT_POLL_SECONDS = 15.0
+DEFAULT_POLL_SECONDS = 2.0
 # 后端默认领取租约为 180 秒；探针必须更早超时，才能给完成回传和
 # 短暂网络抖动保留足够余量。
 DEFAULT_PROBE_TIMEOUT_SECONDS = 90.0
@@ -571,7 +571,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             outcome = "failed"
         if args.once:
             return 0 if outcome in {"idle", "completed"} else 1
-        time.sleep(args.poll_seconds)
+        if outcome != "completed":
+            time.sleep(args.poll_seconds)
 
 
 if __name__ == "__main__":

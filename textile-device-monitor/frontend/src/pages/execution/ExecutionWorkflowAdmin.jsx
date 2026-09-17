@@ -58,7 +58,7 @@ export default function ExecutionWorkflowAdmin() {
     setError(null);
     try {
       const [workflowRows, categoryRows] = await Promise.all([
-        getExecutionWorkflows({ include_drafts: true }),
+        getExecutionWorkflows({ include_drafts: true, include_archived: true }),
         getExecutionCategories(),
       ]);
       setWorkflows(workflowRows);
@@ -153,7 +153,11 @@ export default function ExecutionWorkflowAdmin() {
       title: '状态',
       dataIndex: 'status',
       width: 130,
-      render: (value, row) => row.management_mode === 'release_v2'
+      render: (value, row) => row.archived_at
+        ? <Tag>已归档</Tag>
+        : row.replacement_pending
+          ? <Tag color="warning">待接替 / 已回切</Tag>
+          : row.management_mode === 'release_v2'
         ? <Tag color="purple">Release 管理</Tag>
         : row.published_version
           ? <Tag color="success">已发布 v{row.published_version.version || row.published_version}</Tag>
@@ -190,9 +194,9 @@ export default function ExecutionWorkflowAdmin() {
             icon={<EditOutlined />}
             onClick={() => navigate(`/execution/admin/workflows/${row.id || row.workflow_id}`)}
           >
-            设计
+            {row.archived_at ? '查看归档' : '设计'}
           </Button>
-          {row.match_rule?.rule_key && (
+          {!row.archived_at && row.match_rule?.rule_key && (
             <Button
               type="link"
               onClick={() => setRuleEditorKey(row.match_rule.rule_key)}

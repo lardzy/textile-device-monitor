@@ -40,6 +40,7 @@ from app.execution.engine import (
 from app.execution.errors import ExecutionApiError
 from app.execution.models import (
     ExecutionEdgeRun,
+    ExecutionExternalOperation,
     ExecutionFileIndexEntry,
     ExecutionHumanTask,
     ExecutionNodeAttempt,
@@ -448,11 +449,11 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertEqual(
             [node["id"] for node in definition["nodes"][3:]],
             [
-                "upload-record",
-                "review-record",
                 "registration-decision",
                 "registration-branch",
                 "judgement-input",
+                "upload-record",
+                "review-record",
                 "register-result",
                 "end",
                 "cancelled-end",
@@ -1007,6 +1008,10 @@ class PaperFiberBackendTests(unittest.TestCase):
                 "task": {"check_basis": None},
             },
         )
+        output = _auto_complete_paper_judgement(context)
+        self.assertEqual(output["sample_identity"], "正面")
+        self.assertTrue(output["auto_submitted"])
+        self.assertFalse(output["identity_count_mismatch"])
         schema = _paper_judgement_form_schema(context)
         identity = schema["properties"]["sample_identity"]
         self.assertEqual(identity["default"], "正面")
@@ -1198,6 +1203,26 @@ class PaperFiberBackendTests(unittest.TestCase):
         )
 
     def test_completed_legacy_judgement_reopens_before_final_entry(self):
+        # 已启动的历史流程仍然先上传、复核，再收集判定信息。
+        workflow = self.db.query(ExecutionWorkflow).filter_by(
+            slug=PAPER_FIBER_WORKFLOW_SLUG
+        ).one()
+        version = self.db.query(ExecutionWorkflowVersion).filter_by(
+            workflow_id=workflow.id, version_number=workflow.published_version_number
+        ).one()
+        historical = deepcopy(version.definition)
+        targets = {
+            "select": "upload-record",
+            "review-record": "registration-decision",
+            "judgement-input": "register-result",
+        }
+        for edge in historical["edges"]:
+            if edge["source"] in targets:
+                edge["target"] = targets[edge["source"]]
+        version.definition = historical
+        version.checksum = definition_checksum(historical)
+        version.contract_checksum = workflow_contract_checksum(historical, version.capabilities)
+        self.db.commit()
         run = self._paper_run("paper-judgement-completed-upgrade")
         selection = (
             self.db.query(ExecutionNodeRun)
@@ -1334,6 +1359,51 @@ class PaperFiberBackendTests(unittest.TestCase):
         self.assertEqual(judgement.status, "succeeded")
         self.assertEqual(entry.status, "ready")
         self.assertEqual(edge.status, "selected")
+
+    def _run_to_registration(self, **project_fields):
+        self._index(self._xls("26W006701/record.xls", "木浆 100"))
+        self._task_snapshot("26W006701")
+        cached = self.db.query(ExecutionTaskSnapshotCache).one()
+        snapshot = deepcopy(cached.snapshot)
+        snapshot["projects"][0].update(project_fields)
+        cached.snapshot = snapshot
+        self.db.commit()
+        run = self._paper_run("paper-before-write")
+        for expected in ("start", "query", "select"):
+            self.assertEqual(self._execute_one().node_id, expected)
+        return run
+
+    def test_required_judgement_is_collected_before_any_external_write(self):
+        run = self._run_to_registration(give_judgement=1)
+        with patch("app.execution.engine._refresh_paper_registration_context"):
+            self.assertEqual(self._execute_one().node_id, "registration-decision")
+        self.assertEqual(self._execute_one().node_id, "registration-branch")
+        judgement = self._execute_one()
+        self.assertEqual(judgement.node_id, "judgement-input")
+        self.assertEqual(judgement.status, "waiting_human")
+        self.assertEqual(self.db.query(ExecutionExternalOperation).count(), 0)
+        upload = self.db.query(ExecutionNodeRun).filter_by(run_id=run.id, node_id="upload-record").one()
+        self.assertEqual(upload.attempt_count, 0)
+        self.assertEqual(self.db.query(ExecutionHumanTask).count(), 1)
+
+    def test_cancelling_existing_registration_never_uploads_or_reviews(self):
+        run = self._run_to_registration(register_count=1)
+        with patch("app.execution.engine._refresh_paper_registration_context"):
+            self._execute_one()
+        task = self.db.query(ExecutionHumanTask).one()
+        task = claim_human_task(self.db, task_id=task.id, expected_revision=task.revision, actor=self.user)
+        self.db.commit()
+        submit_human_task(self.db, task_id=task.id, expected_revision=task.revision,
+                          data={"existing_record_action": "cancel"}, actor=self.user)
+        self.db.commit()
+        self.assertEqual(self._execute_one().node_id, "registration-branch")
+        self.assertEqual(self._execute_one().node_id, "cancelled-end")
+        self.db.refresh(run)
+        self.assertEqual(run.status, "completed")
+        self.assertEqual(self.db.query(ExecutionExternalOperation).count(), 0)
+        for node in self.db.query(ExecutionNodeRun).filter_by(run_id=run.id):
+            if node.node_type.startswith("external."):
+                self.assertEqual(node.attempt_count, 0)
 
     def test_workflow_rejects_multiple_files_and_auto_marks_single_primary(self):
         first = self._xls("26W006701/first.xls", "木浆 100")

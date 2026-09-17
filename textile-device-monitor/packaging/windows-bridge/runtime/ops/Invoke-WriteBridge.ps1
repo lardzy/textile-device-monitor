@@ -127,8 +127,8 @@ if ($Once) {
     exit $ExitCode
 }
 
-# bridge.py 每完成一个任务即主动退出（一任务一进程的隔离设计），
-# 因此长期驻留必须靠外层守护循环重启；空闲轮询异常（如后端重启）也一并兜底。
+# Bridge 连续领取任务，每项任务仍单独启动 Writer。
+# 仅进程异常退出时等待后重启；正常任务之间没有固定空档。
 while ($true) {
     & $Python @BridgeArgs
     $ExitCode = $LASTEXITCODE

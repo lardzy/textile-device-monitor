@@ -341,6 +341,7 @@ def match_regenerated_fiber_workbooks(
     result_limit: int = 6,
     rule_key: Optional[str] = None,
     project_rule=None,
+    root_id: Optional[str] = None,
 ) -> dict[str, Any]:
     legacy_rule = REGENERATED_FIBER_RULES.get(node_type)
     if legacy_rule is None:
@@ -372,7 +373,7 @@ def match_regenerated_fiber_workbooks(
     worksheet_probe = project_rule.probe("worksheet_check")
     rule = replace(
         legacy_rule,
-        root_id=project_rule.source_root_id or legacy_rule.root_id,
+        root_id=root_id or project_rule.source_root_id or legacy_rule.root_id,
         worksheet=(
             worksheet_probe.sheet
             if worksheet_probe is not None and worksheet_probe.sheet
@@ -587,6 +588,12 @@ def _specialized_node_type(
         if (
             isinstance(node, dict)
             and node.get("disabled") is not True
+            and node.get("type") == "regenerated_fiber.find_records"
+        ):
+            return regenerated_fiber_node_type((node.get("config") or {}).get("method"))
+        if (
+            isinstance(node, dict)
+            and node.get("disabled") is not True
             and node.get("type")
             in {
                 *REGENERATED_FIBER_RULES.keys(),
@@ -625,7 +632,11 @@ def _specialized_match_rule(
         if (
             isinstance(node, dict)
             and node.get("disabled") is not True
-            and node.get("type") == node_type
+            and (
+                node.get("type") == node_type
+                or (node.get("type") == "regenerated_fiber.find_records"
+                    and regenerated_fiber_node_type((node.get("config") or {}).get("method")) == node_type)
+            )
         ):
             value = (node.get("config") or {}).get("match_rule")
             return str(value).strip() if value else None
@@ -1021,18 +1032,29 @@ def catalog_recommendations(
     return items, any_cache_updated
 
 
-def _regenerated_fiber_executor(context) -> dict[str, Any]:
-    node_type = context.node_run.node_type
-    config = context.node.get("config") or {}
+def regenerated_fiber_node_type(method: str, *, result: bool = False) -> str:
+    if method not in {"area", "count"}:
+        raise ExecutionApiError(422, "regenerated_fiber_method_invalid", "方法必须为 area 或 count")
+    return f"{'result' if result else 'file'}.regenerated_fiber_{method}_method"
+
+
+def find_regenerated_fiber_records(
+    db: Session,
+    *,
+    method: str,
+    inspection_number: str,
+    limit: int = 6,
+    root_id: Optional[str] = None,
+    match_rule: Optional[str] = None,
+) -> dict[str, Any]:
+    """Shared indexed discovery for the API and both workflow generations."""
     result = match_regenerated_fiber_workbooks(
-        context.db,
-        node_type=node_type,
-        inspection_number=str(
-            context.input_data.get("inspection_number")
-            or context.run.inspection_number
-        ),
-        result_limit=min(int(config.get("limit", 6)), 6),
-        rule_key=str(config.get("match_rule") or "").strip() or None,
+        db,
+        node_type=regenerated_fiber_node_type(method),
+        inspection_number=inspection_number,
+        result_limit=limit,
+        root_id=root_id,
+        rule_key=match_rule,
     )
     if not result["candidates"]:
         details = {
@@ -1065,6 +1087,18 @@ def _regenerated_fiber_executor(context) -> dict[str, Any]:
         "rule_key": result.get("rule_key"),
         "rule_revision": result.get("rule_revision"),
     }
+
+
+def _regenerated_fiber_executor(context) -> dict[str, Any]:
+    config = context.node.get("config") or {}
+    method = "area" if context.node_run.node_type == "file.regenerated_fiber_area_method" else "count"
+    return find_regenerated_fiber_records(
+        context.db,
+        method=method,
+        inspection_number=str(context.input_data.get("inspection_number") or context.run.inspection_number),
+        limit=min(int(config.get("limit", 6)), 6),
+        match_rule=str(config.get("match_rule") or "").strip() or None,
+    )
 
 
 _EXECUTORS_REGISTERED = False

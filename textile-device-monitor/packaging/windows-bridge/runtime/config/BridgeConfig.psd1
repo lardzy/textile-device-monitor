@@ -7,7 +7,7 @@
     # 两个桥实例的稳定编号（同一时刻各自只允许一个进程运行）
     WriteBridgeId       = 'legacy-write-bridge-01'
     SnapshotBridgeId    = 'task-snapshot-bridge-01'
-    PollSeconds         = 15
+    PollSeconds         = 2
 
     # root_id -> 本机/UNC 路径映射。
     # execution_staging 必须与 docker compose 中 EXECUTION_RUNTIME_HOST_PATH

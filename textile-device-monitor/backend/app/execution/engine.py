@@ -1756,8 +1756,8 @@ def _auto_complete_paper_judgement(
 ) -> Optional[dict[str, Any]]:
     """任务单未要求判定时自动完成纸类判定节点，避免无谓的人工打断。
 
-    返回 None 表示任务单要求判定（give_judgement 为真），仍按原路径
-    创建人工任务收集判定依据与判定结果。
+    唯一样品识别直接采用；需要判定或有多个样品识别时返回 None，
+    创建人工任务收集必要的信息。
     """
 
     if not _paper_judgement_node_config(context):
@@ -1774,16 +1774,21 @@ def _auto_complete_paper_judgement(
         if isinstance(selected_project, dict)
         else None
     )
-    if _truthy_judgement_flag(give_judgement) or identities:
+    if _truthy_judgement_flag(give_judgement) or len(identities) > 1:
         return None
+    check_count = selected_project.get("check_count")
     return {
         "judgement_required": False,
         "judge_basis": None,
         "judgement": None,
         "standard_value": None,
-        "sample_identity": None,
-        "sample_identity_options": [],
-        "identity_count_mismatch": False,
+        "sample_identity": identities[0] if identities else None,
+        "sample_identity_options": identities,
+        "identity_count_mismatch": bool(
+            identities and isinstance(check_count, int)
+            and not isinstance(check_count, bool)
+            and len(identities) != check_count
+        ),
         "auto_submitted": True,
         "auto_submit_reason": "judgement_not_required",
     }
@@ -1926,6 +1931,30 @@ def _paper_judgement_form_schema(
             f"{len(identities)} 项；请核对后继续，本提示不会终止流程。"
         )
     return schema
+
+
+def effective_human_task_renderer_contract(task: ExecutionHumanTask) -> dict[str, Any]:
+    """Read old P2 tasks using the renderer frozen in their own dependency lock.
+
+    Early P2 Workers overwrote the renderer digest with the node digest. Correct
+    only that known representation when the remaining renderer identity agrees;
+    never replace an unknown contract or rewrite the persisted historical task.
+    """
+    persisted = deepcopy(task.renderer_contract or {})
+    node_run = task.node_run
+    run = node_run.run if node_run is not None else None
+    if run is None:
+        return persisted
+    contract = _v2_node_instance_contract(run, node_run) or {}
+    renderer = contract.get("renderer_contract") or {}
+    if (
+        renderer.get("contract_digest")
+        and persisted.get("contract_digest") == contract.get("contract_digest")
+        and all(persisted.get(key) == renderer.get(key) for key in ("capability", "version", "protocol"))
+    ):
+        persisted["node_contract_digest"] = contract["contract_digest"]
+        persisted["contract_digest"] = renderer["contract_digest"]
+    return persisted
 
 
 def effective_human_task_form_schema(
@@ -2269,6 +2298,17 @@ def create_run(
     draft_definition: Optional[dict[str, Any]] = None,
     target_sample_number: Optional[str] = None,
 ) -> tuple[ExecutionRun, bool]:
+    from app.execution.workflow_replacement import assert_not_archived
+
+    db.flush()
+    workflow = (
+        db.query(ExecutionWorkflow)
+        .filter(ExecutionWorkflow.id == workflow.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
+    assert_not_archived(workflow)
     if (
         mode == "test"
         and getattr(workflow, "management_mode", "draft_v1")
@@ -4822,7 +4862,7 @@ def _create_human_task(
             **deepcopy(contract.get("renderer_contract") or {}),
             "node_type": node_run.node_type,
             "type_version": node_run.node_type_version,
-            "contract_digest": contract.get("contract_digest"),
+            "node_contract_digest": contract.get("contract_digest"),
             "suspension": deepcopy(contract.get("suspension")),
             "submission_schema_digest": canonical_sha256(form_schema),
         }
@@ -4830,7 +4870,7 @@ def _create_human_task(
             renderer_contract["payload"] = deepcopy(
                 suspension_payload.get("renderer_payload")
             )
-        if reopened and task.renderer_contract not in ({}, renderer_contract):
+        if reopened and effective_human_task_renderer_contract(task) not in ({}, renderer_contract):
             raise ExecutionApiError(
                 409,
                 "human_renderer_contract_changed",

@@ -71,7 +71,52 @@ describe('ExecutionWorkflowReleaseManager', () => {
     );
   });
 
-  it('completes content preflight, staged apply, binding and publish without using the v1 importer', async () => {
+  it('publishes with the current project rule revision and existing root binding in one action', async () => {
+    const calls = [];
+    const document = { ...releaseDocument, resources: {
+      root_slots: [{ slot_id: 'source', access: 'read', required: true }],
+      rule_slots: [{ slot_id: 'record_match', name: '再生纤面积法', required: true }],
+    } };
+    server.use(
+      http.get('/api/execution/v1/files/roots', () => HttpResponse.json({ items: [
+        { id: 'root-1', root_id: 'records', name: '再生纤目录', binding_revision: 3 },
+      ] })),
+      http.get('/api/execution/v1/project-rules', () => HttpResponse.json({ items: [
+        { rule_key: 'fiber.area', display_name: '再生纤面积法', revision: 2, enabled: true },
+      ] })),
+      http.get('/api/execution/v2/workflow-releases/p3', () => HttpResponse.json({ release: {
+        id: 'p3', status: 'staged', portable_document: document,
+        deployment_binding: { environment: 'default', revision: 2, bindings: {
+          root_slots: { source: { root_id: 'records', revision: 3 } },
+          rule_slots: { record_match: { rule_key: 'fiber.area', revision: 1 } },
+        } },
+      } })),
+      http.put('/api/execution/v2/workflow-releases/p3/deployment-binding', async ({ request }) => {
+        const body = await request.json();
+        calls.push('save');
+        expect(body.expected_revision).toBe(2);
+        expect(body.bindings.root_slots).toEqual({ source: { root_id: 'records', revision: 3 } });
+        expect(body.bindings.rule_slots).toEqual({ record_match: { rule_key: 'fiber.area', revision: 2 } });
+        return HttpResponse.json({ deployment_binding: { revision: 3, bindings: body.bindings } });
+      }),
+      http.post('/api/execution/v2/workflow-releases/p3/preflight', () => {
+        calls.push('preflight');
+        return HttpResponse.json({ report: { publish_ready: true, preflight_token: 'p3-ready' } });
+      }),
+      http.post('/api/execution/v2/workflow-releases/p3/publish', () => {
+        calls.push('publish');
+        return HttpResponse.json({ release: { id: 'p3', status: 'published', local_version: 1 } });
+      }),
+    );
+    renderManager('/execution/admin/releases/p3');
+    await screen.findByRole('combobox', { name: '再生纤面积法' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '再生纤面积法' })
+      .closest('.ant-select').querySelector('.ant-select-selection-item')).toHaveTextContent('再生纤面积法'));
+    await userEvent.click(screen.getByRole('button', { name: /检查并发布/ }));
+    await waitFor(() => expect(calls).toEqual(['save', 'preflight', 'publish']));
+  });
+
+  it('导入自动检查，发布一次完成保存绑定、检查和发布', async () => {
     const calls = [];
     server.use(
       http.post('/api/execution/v2/workflow-releases/preflight', async ({ request }) => {
@@ -122,15 +167,17 @@ describe('ExecutionWorkflowReleaseManager', () => {
           },
         });
       }),
-      http.post('/api/execution/v2/workflow-releases/release-1/preflight', () =>
-        HttpResponse.json({
+      http.post('/api/execution/v2/workflow-releases/release-1/preflight', () => {
+        calls.push(['publish-preflight', null]);
+        return HttpResponse.json({
           report: {
             content_valid: true,
             publish_ready: true,
             issues: [],
             preflight_token: 'publish-token',
           },
-        })),
+        });
+      }),
       http.post('/api/execution/v2/workflow-releases/release-1/publish', async ({ request }) => {
         const body = await request.json();
         calls.push(['publish', body]);
@@ -149,10 +196,8 @@ describe('ExecutionWorkflowReleaseManager', () => {
     renderManager();
     const editor = await screen.findByRole('textbox', { name: 'Workflow Release JSON' });
     fireEvent.change(editor, { target: { value: JSON.stringify(releaseDocument) } });
-    await user.click(screen.getByRole('button', { name: /内容预检$/ }));
+    await user.click(screen.getByRole('button', { name: /导入并检查$/ }));
 
-    expect(await screen.findByText('预检未发现问题')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Apply 为 staged$/ }));
     await waitFor(() => {
       expect(calls).toContainEqual(['get-release', null]);
       expect(screen.getByText('Staged Release')).toBeInTheDocument();
@@ -160,13 +205,11 @@ describe('ExecutionWorkflowReleaseManager', () => {
 
     await user.click(screen.getByRole('combobox', { name: /inspection_files/ }));
     await user.click(await screen.findByText('只读检测目录'));
-    await user.click(screen.getByRole('button', { name: '保存绑定' }));
-    await user.click(screen.getByRole('button', { name: '重新预检' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /发布 Release$/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /检查并发布$/ })).toBeEnabled();
     });
-    await user.click(screen.getByRole('button', { name: /发布 Release$/ }));
+    await user.click(screen.getByRole('button', { name: /检查并发布$/ }));
     expect(await screen.findByText('published')).toBeInTheDocument();
 
     expect(calls).toEqual(expect.arrayContaining([
@@ -183,18 +226,69 @@ describe('ExecutionWorkflowReleaseManager', () => {
       }],
       ['publish', { preflight_token: 'publish-token' }],
     ]));
+    expect(calls.filter(([name]) => name !== 'get-release').map(([name]) => name)).toEqual([
+      'content-preflight', 'apply', 'binding', 'publish-preflight', 'publish',
+    ]);
+  });
+
+  it('发布检查失败只显示问题，不调用发布接口', async () => {
+    const calls = [];
+    server.use(
+      http.get('/api/execution/v2/workflow-releases/invalid', () => HttpResponse.json({ id: 'invalid', status: 'staged' })),
+      http.post('/api/execution/v2/workflow-releases/invalid/preflight', () => {
+        calls.push('check');
+        return HttpResponse.json({ content_valid: true, publish_ready: false, issues: [{ severity: 'error', code: 'worker_unavailable', message: '没有匹配的 Worker' }] });
+      }),
+      http.post('/api/execution/v2/workflow-releases/invalid/publish', () => {
+        calls.push('publish');
+        return HttpResponse.json({});
+      }),
+    );
+    const user = userEvent.setup();
+    renderManager('/execution/admin/releases/invalid');
+    await user.click(await screen.findByRole('button', { name: /检查并发布/ }));
+    expect(await screen.findByText('没有匹配的 Worker')).toBeInTheDocument();
+    expect(calls).toEqual(['check']);
+  });
+
+  it('绑定版本冲突时保留选择，停止后续发布请求', async () => {
+    const calls = [];
+    server.use(
+      http.get('/api/execution/v2/workflow-releases/conflict', () => HttpResponse.json({
+        id: 'conflict', status: 'staged', binding_revision: 2,
+        required_bindings: [{ slot: 'inspection_files', access: 'read' }],
+      })),
+      http.put('/api/execution/v2/workflow-releases/conflict/deployment-binding', async ({ request }) => {
+        calls.push(await request.json());
+        return HttpResponse.json({ detail: { code: 'binding_revision_conflict', message: '绑定已被修改，请刷新' } }, { status: 409 });
+      }),
+      http.post('/api/execution/v2/workflow-releases/conflict/preflight', () => {
+        calls.push('unexpected-check');
+        return HttpResponse.json({});
+      }),
+    );
+    const user = userEvent.setup();
+    renderManager('/execution/admin/releases/conflict');
+    await user.click(await screen.findByRole('combobox', { name: /inspection_files/ }));
+    await user.click(await screen.findByText('只读检测目录'));
+    await user.click(screen.getByRole('button', { name: /检查并发布/ }));
+    expect(await screen.findByText('绑定已被修改，请刷新')).toBeInTheDocument();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].expected_revision).toBe(2);
+    expect(screen.getByRole('combobox', { name: /inspection_files/ }).closest('.ant-select').querySelector('.ant-select-selection-item')).toHaveTextContent('只读检测目录');
   });
 
   it('shows v1 migration output as preview-only data', async () => {
     server.use(
       http.get('/api/execution/v1/workflows', () => HttpResponse.json({
-        items: [{ id: 'workflow-v1', name: '旧流程', management_mode: 'draft_v1' }],
+        items: [{ id: 'workflow-v1', slug: 'old-workflow', name: '旧流程', management_mode: 'draft_v1' }],
       })),
       http.post('/api/execution/v2/migrations/v1/preview', async ({ request }) => {
         expect(await request.json()).toEqual({
           workflow_id: 'workflow-v1',
           source: 'published',
           target_profile: 'compat_v1',
+          target_slug: 'old-workflow-v2',
         });
         return HttpResponse.json({
           candidate: releaseDocument,
@@ -217,7 +311,7 @@ describe('ExecutionWorkflowReleaseManager', () => {
     await user.click(within(dialog).getByRole('button', { name: '生成候选与差异' }));
 
     expect(await within(dialog).findByText(/schema_version/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/不提供本轮激活入口/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/候选不会修改来源流程/)).toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: /发布|激活/ })).not.toBeInTheDocument();
   });
 
@@ -291,5 +385,27 @@ describe('ExecutionWorkflowReleaseManager', () => {
     });
     expect(screen.queryByTestId('workflow-canvas')).not.toBeInTheDocument();
     anchorClick.mockRestore();
+  });
+
+  it('freezes local replacement evidence in publish preflight after a staged page reload', async () => {
+    const replacementSource = { workflow_id: 'workflow-old', version_id: 'version-old', version_number: 2, draft_revision: 3, definition_checksum: 'a'.repeat(64), contract_checksum: 'b'.repeat(64) };
+    const calls = [];
+    server.use(
+      http.get('/api/execution/v2/workflow-releases/replacement-staged', () => HttpResponse.json({
+        id: 'replacement-staged', status: 'staged', migration_source: replacementSource,
+        document: { ...releaseDocument, migration: { source_digest: replacementSource.definition_checksum } },
+      })),
+      http.post('/api/execution/v2/workflow-releases/replacement-staged/preflight', async ({ request }) => {
+        calls.push(await request.json());
+        return HttpResponse.json({ content_valid: true, publish_ready: true, preflight_token: 'replacement-preflight', replacement_source: replacementSource, issues: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderManager('/execution/admin/releases/replacement-staged');
+    expect(await screen.findByText('首次发布保持停用')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '仅检查' }));
+    await waitFor(() => expect(calls).toEqual([{ replacement_source: replacementSource }]));
+    expect(screen.getByRole('button', { name: /检查并发布$/ })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: '归档旧流程并启用新流程' })).not.toBeInTheDocument();
   });
 });

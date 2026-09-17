@@ -37,6 +37,7 @@ from app.execution.errors import ExecutionApiError
 from app.execution.external_operations import (
     LEGACY_REGENERATED_COUNT_NODE,
     _remote_business_key,
+    public_external_operation,
 )
 from app.execution.models import (
     ExecutionAuditLog,
@@ -499,6 +500,9 @@ class ExecutionExternalOperationTests(unittest.TestCase):
             "app.execution.engine.settings."
             "EXECUTION_EXTERNAL_AUTO_APPROVE_ENABLED",
             True,
+        ), patch(
+            "app.execution.external_operations._reverify_operation_sources",
+            side_effect=AssertionError("自动交付不应立即重复复核刚准备的文件"),
         ):
             run = self._prepare_run(
                 candidates=[candidate],
@@ -528,6 +532,20 @@ class ExecutionExternalOperationTests(unittest.TestCase):
         self.assertEqual(approved_event.actor_type, "system")
         self.assertIsNone(approved_event.actor_id)
         self.assertTrue(approved_event.payload["automatic"])
+
+    def test_public_timing_uses_persisted_timestamps_without_another_query(self):
+        _, entry, candidate = self._workbook()
+        self._prepare_run(candidates=[candidate], selected_ids=[entry.id], primary_file_id=entry.id)
+        operation = self.db.query(ExecutionExternalOperation).one()
+        self.assertIsNone(public_external_operation(operation)["timing"]["queue_seconds"])
+        start = utcnow()
+        operation.created_at = start.replace(tzinfo=None)  # SQLite historical timestamp
+        operation.approved_at = start + timedelta(seconds=1)
+        operation.started_at = start + timedelta(seconds=3)
+        operation.completed_at = start + timedelta(seconds=8)
+        self.assertEqual(public_external_operation(operation)["timing"], {
+            "queue_seconds": 2.0, "execution_seconds": 5.0, "total_seconds": 8.0,
+        })
 
     def test_updating_credential_increments_revision(self):
         original_revision = self.credential.revision

@@ -773,6 +773,17 @@ export default function ExecutionExternalOperationPanel({
                       ? dayjs(operation.approval.approved_at).format('YYYY-MM-DD HH:mm:ss')
                       : '等待服务端交付',
                   },
+                  ...(operation.timing?.queue_seconds != null ? [{
+                    key: 'timing',
+                    label: '操作耗时',
+                    children: [
+                      `排队 ${operation.timing.queue_seconds.toFixed(1)} 秒`,
+                      operation.timing.execution_seconds != null
+                        ? `执行 ${operation.timing.execution_seconds.toFixed(1)} 秒` : null,
+                      operation.timing.total_seconds != null
+                        ? `合计 ${operation.timing.total_seconds.toFixed(1)} 秒` : null,
+                    ].filter(Boolean).join(' · '),
+                  }] : []),
                   {
                     key: 'expires',
                     label: operation.approval?.approved_at

@@ -3,12 +3,14 @@ import {
   Checkbox,
   Descriptions,
   Form,
+  Input,
   Select,
   Space,
   Tag,
   Typography,
 } from 'antd';
 import SchemaFields from './SchemaFields';
+import ExecutionResultFiles from './ExecutionResultFiles';
 
 const { Text } = Typography;
 
@@ -20,6 +22,22 @@ const itemLabel = item => (
   || item?.relative_path
   || itemId(item)
 );
+
+function ResultFileSelection({ value = [], onChange, items, form, disabled, maximum }) {
+  const primaryId = Form.useWatch('primary_id', form);
+  return (
+    <ExecutionResultFiles
+      files={items}
+      selectable
+      selectedIds={value}
+      primaryId={primaryId}
+      onSelectedIdsChange={onChange}
+      onPrimaryIdChange={id => form.setFieldValue('primary_id', id)}
+      selectionMode={maximum === 1 ? 'single' : 'multiple'}
+      disabled={disabled}
+    />
+  );
+}
 
 export default function NativeHumanTaskRenderer({
   renderer,
@@ -36,6 +54,7 @@ export default function NativeHumanTaskRenderer({
   if (renderer.capability === 'human.select') {
     const items = Array.isArray(inputData?.items) ? inputData.items : [];
     const selectedSchema = schema?.properties?.selected_ids || {};
+    const showResults = items.length > 0 && items.every(item => item?.metadata?.presentation === 'result_file');
     return (
       <>
         <Form.Item
@@ -52,6 +71,14 @@ export default function NativeHumanTaskRenderer({
             },
           }]}
         >
+          {showResults ? (
+            <ResultFileSelection
+              items={items}
+              form={form}
+              disabled={disabled}
+              maximum={selectedSchema.maxItems}
+            />
+          ) : (
           <Checkbox.Group className="execution-candidate-list" disabled={disabled}>
             {items.map(item => (
               <Checkbox key={itemId(item)} value={itemId(item)}>
@@ -62,17 +89,18 @@ export default function NativeHumanTaskRenderer({
               </Checkbox>
             ))}
           </Checkbox.Group>
+          )}
         </Form.Item>
         {schema?.properties?.primary_id && (
-          <Form.Item name="primary_id" label="主项（如节点要求）">
-            <Select
+          <Form.Item name="primary_id" label="主项（如节点要求）" hidden={showResults}>
+            {showResults ? <Input /> : <Select
               allowClear
               disabled={disabled}
               options={items.map(item => ({
                 value: itemId(item),
                 label: itemLabel(item),
               }))}
-            />
+            />}
           </Form.Item>
         )}
       </>

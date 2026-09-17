@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -908,15 +909,16 @@ def _image_artifact(
     source_file_id: str,
     source_fingerprint: str,
     image: EmbeddedImage,
+    root_id: str = IMAGE_ARTIFACT_ROOT_ID,
 ) -> tuple[ExecutionArtifact, Optional[Path]]:
     digest = hashlib.sha256(image.data).hexdigest()
     relative_path = (
         f"embedded-images/{run_id}/{node_run_id}/{source_file_id}/"
         f"{image.index:03d}-{digest[:16]}{image.extension}"
     )
-    ref = ArtifactRef(IMAGE_ARTIFACT_ROOT_ID, relative_path)
+    ref = ArtifactRef(root_id, relative_path)
     target = gateway.resolve(ref, must_exist=False, for_write=True)
-    root = storage_root_by_key(db, IMAGE_ARTIFACT_ROOT_ID)
+    root = storage_root_by_key(db, root_id)
     artifact, created_record = _artifact_record(
         db,
         root=root,
@@ -1016,6 +1018,8 @@ def _stable_workbook_snapshot(
 def _candidate_entry(
     db: Session,
     candidate: dict[str, Any],
+    *,
+    root_id: str = "regenerated_fiber_records",
 ) -> tuple[ExecutionFileIndexEntry, ExecutionStorageRoot]:
     candidate_id = str(candidate.get("id") or "")
     row = (
@@ -1038,7 +1042,7 @@ def _candidate_entry(
     entry, root = row
     if (
         entry.missing_since is not None
-        or root.root_id != "regenerated_fiber_records"
+        or root.root_id != root_id
         or candidate.get("root_id") != root.root_id
         or candidate.get("relative_path") != entry.relative_path
         or candidate.get("fingerprint") != entry.fingerprint
@@ -1052,93 +1056,137 @@ def _candidate_entry(
     return entry, root
 
 
-def _result_executor(context) -> dict[str, Any]:
-    node_type = context.node_run.node_type
-    if node_type not in RESULT_RULES:
-        raise ExecutionApiError(
-            422,
-            "regenerated_fiber_result_rule_unknown",
-            "未知的再生纤结果读取规则",
-        )
-    files = context.input_data.get("files")
+def _persist_result_images(
+    db: Session, *, gateway: FileGateway, run_id: str, node_run_id: str,
+    entry: ExecutionFileIndexEntry, images: list[EmbeddedImage],
+    preview_root_id: str = IMAGE_ARTIFACT_ROOT_ID,
+) -> list[dict[str, Any]]:
+    image_items: list[dict[str, Any]] = []
+    created_files: list[Path] = []
+    candidate_transaction = db.begin_nested()
+    try:
+        # One failed image must roll back every artifact row created
+        # for this candidate. Keep its savepoint open until filesystem
+        # compensation is complete so another worker cannot reuse a
+        # path while this worker is removing it.
+        for image in images:
+            artifact, created_file = _image_artifact(
+                db,
+                gateway=gateway,
+                run_id=run_id,
+                node_run_id=node_run_id,
+                source_file_id=entry.id,
+                source_fingerprint=entry.fingerprint,
+                image=image,
+                root_id=preview_root_id,
+            )
+            if created_file is not None:
+                created_files.append(created_file)
+            image_items.append(
+                {
+                    "artifact_id": artifact.id,
+                    "name": artifact.filename,
+                    "media_type": artifact.media_type,
+                    "sheet": image.sheet_name,
+                    "anchor": image.anchor,
+                    "width": image.width,
+                    "height": image.height,
+                    "preview_url": (
+                        "/api/execution/v1/artifacts/"
+                        f"{artifact.id}/preview"
+                    ),
+                }
+            )
+        candidate_transaction.commit()
+    except Exception as candidate_error:
+        cleanup_error: Optional[OSError] = None
+        for created_file in reversed(created_files):
+            try:
+                created_file.unlink(missing_ok=True)
+            except OSError as exc:
+                cleanup_error = cleanup_error or exc
+        if candidate_transaction.is_active:
+            candidate_transaction.rollback()
+        if cleanup_error is not None:
+            raise ExecutionApiError(
+                500,
+                "artifact_cleanup_failed",
+                "插图制品写入失败，且未能完整清理临时文件",
+            ) from cleanup_error
+        raise candidate_error
+    return image_items
+
+
+def _image_metadata(image: EmbeddedImage) -> dict[str, Any]:
+    return {
+        "name": f"插图-{image.index}{image.extension}",
+        "index": image.index,
+        "media_type": image.media_type,
+        "sheet": image.sheet_name,
+        "anchor": image.anchor,
+        "width": image.width,
+        "height": image.height,
+        "size_bytes": len(image.data),
+        "sha256": hashlib.sha256(image.data).hexdigest(),
+    }
+
+
+def read_regenerated_fiber_records(
+    db: Session,
+    *,
+    method: str,
+    files: list[dict[str, Any]],
+    root_id: str = "regenerated_fiber_records",
+    run_id: Optional[str] = None,
+    node_run_id: Optional[str] = None,
+    preview_root_id: str = IMAGE_ARTIFACT_ROOT_ID,
+) -> dict[str, Any]:
+    """Read fields and images once per source in this request.
+
+    A workflow owner persists preview artifacts using the existing artifact
+    store. Direct API callers receive image metadata and hashes, without
+    manufacturing a Run or writing files.
+    """
+    from app.execution.regenerated_fiber import regenerated_fiber_node_type
+
+    node_type = regenerated_fiber_node_type(method, result=True)
     if not isinstance(files, list) or not files:
         raise ExecutionApiError(
             422,
             "result_files_required",
             "结果读取节点至少需要一个文件",
         )
-    gateway = build_file_gateway(context.db)
+    gateway = build_file_gateway(db)
     output_files: list[dict[str, Any]] = []
     success_count = 0
+    parsed: dict[tuple[str, str], tuple[dict[str, Any], list[EmbeddedImage]]] = {}
     for raw_candidate in files:
         candidate = dict(raw_candidate) if isinstance(raw_candidate, dict) else {}
         try:
-            entry, root = _candidate_entry(context.db, candidate)
+            entry, root = _candidate_entry(db, candidate, root_id=root_id)
             path = gateway.resolve(
                 ArtifactRef(root.root_id, entry.relative_path),
                 expected_type="file",
             )
-            with _stable_workbook_snapshot(
-                path,
-                expected_fingerprint=entry.fingerprint,
-                candidate_id=entry.id,
-            ) as snapshot:
-                result, images = read_regenerated_fiber_result(
-                    snapshot,
-                    node_type=node_type,
-                )
-            image_items: list[dict[str, Any]] = []
-            created_files: list[Path] = []
-            candidate_transaction = context.db.begin_nested()
-            try:
-                # One failed image must roll back every artifact row created
-                # for this candidate. Keep its savepoint open until filesystem
-                # compensation is complete so another worker cannot reuse a
-                # path while this worker is removing it.
-                for image in images:
-                    artifact, created_file = _image_artifact(
-                        context.db,
-                        gateway=gateway,
-                        run_id=context.run.id,
-                        node_run_id=context.node_run.id,
-                        source_file_id=entry.id,
-                        source_fingerprint=entry.fingerprint,
-                        image=image,
-                    )
-                    if created_file is not None:
-                        created_files.append(created_file)
-                    image_items.append(
-                        {
-                            "artifact_id": artifact.id,
-                            "name": artifact.filename,
-                            "media_type": artifact.media_type,
-                            "sheet": image.sheet_name,
-                            "anchor": image.anchor,
-                            "width": image.width,
-                            "height": image.height,
-                            "preview_url": (
-                                "/api/execution/v1/artifacts/"
-                                f"{artifact.id}/preview"
-                            ),
-                        }
-                    )
-                candidate_transaction.commit()
-            except Exception as candidate_error:
-                cleanup_error: Optional[OSError] = None
-                for created_file in reversed(created_files):
-                    try:
-                        created_file.unlink(missing_ok=True)
-                    except OSError as exc:
-                        cleanup_error = cleanup_error or exc
-                if candidate_transaction.is_active:
-                    candidate_transaction.rollback()
-                if cleanup_error is not None:
-                    raise ExecutionApiError(
-                        500,
-                        "artifact_cleanup_failed",
-                        "插图制品写入失败，且未能完整清理临时文件",
-                    ) from cleanup_error
-                raise candidate_error
+            key = (entry.id, entry.fingerprint)
+            if key not in parsed:
+                with _stable_workbook_snapshot(
+                    path,
+                    expected_fingerprint=entry.fingerprint,
+                    candidate_id=entry.id,
+                ) as snapshot:
+                    parsed[key] = read_regenerated_fiber_result(snapshot, node_type=node_type)
+            else:
+                _assert_source_fingerprint(path, expected=entry.fingerprint, candidate_id=entry.id)
+            result, images = parsed[key]
+            result = deepcopy(result)
+            image_items = (
+                _persist_result_images(db, gateway=gateway, run_id=run_id,
+                    node_run_id=node_run_id, entry=entry, images=images,
+                    preview_root_id=preview_root_id)
+                if run_id is not None and node_run_id is not None
+                else [_image_metadata(image) for image in images]
+            )
             result["images"] = image_items
             result["image_count"] = len(image_items)
             output_files.append(
@@ -1192,6 +1240,18 @@ def _result_executor(context) -> dict[str, Any]:
         "failed_count": len(output_files) - success_count,
         "inspector_summary": summarize_result_inspectors(output_files),
     }
+
+
+
+def _result_executor(context) -> dict[str, Any]:
+    node_type = context.node_run.node_type
+    if node_type not in RESULT_RULES:
+        raise ExecutionApiError(422, "regenerated_fiber_result_rule_unknown", "未知的再生纤结果读取规则")
+    return read_regenerated_fiber_records(
+        context.db, method=RESULT_RULES[node_type].method,
+        files=context.input_data.get("files"),
+        run_id=context.run.id, node_run_id=context.node_run.id,
+    )
 
 
 _EXECUTORS_REGISTERED = False

@@ -170,9 +170,15 @@ const isImageWarning = warning => (
   )
 );
 
+export const normalizeResultFile = file => (
+  file?.metadata?.presentation === 'result_file'
+    ? { ...file.metadata, id: file.id, root_id: file.root_id, relative_path: file.relative_path, fingerprint: file.fingerprint }
+    : file
+);
+
 const normalizeResultFiles = value => (
   Array.isArray(value)
-    ? value.filter(file => file && typeof file === 'object')
+    ? value.filter(file => file && typeof file === 'object').map(normalizeResultFile)
     : []
 );
 
@@ -183,6 +189,7 @@ const looksLikeResultFiles = (value) => (
     && typeof file === 'object'
     && (
       file.result
+      || file.metadata?.presentation === 'result_file'
       || Array.isArray(file.parts)
       || Array.isArray(file.remarks)
       || Array.isArray(file.images)
@@ -210,7 +217,7 @@ export const extractExecutionResultFiles = (value, depth = 0) => {
   if (typeof value !== 'object') {
     return [];
   }
-  for (const key of ['files', 'result_files', 'selected_files', 'results', 'result', 'selection']) {
+  for (const key of ['files', 'result_files', 'selected_files', 'selected_items', 'items', 'results', 'result', 'selection']) {
     if (Object.hasOwn(value, key)) {
       const nested = extractExecutionResultFiles(value[key], depth + 1);
       if (nested.length) {
@@ -226,6 +233,7 @@ export const extractPrimaryFileId = (value, depth = 0) => {
     return null;
   }
   const direct = value.primary_file_id
+    || value.primary_id
     || resultFileId(value.primary_file);
   if (direct) {
     return String(direct);

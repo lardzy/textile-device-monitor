@@ -1,7 +1,7 @@
 import { Form } from 'antd';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import SchemaFields from './SchemaFields';
 
 const schema = {
@@ -21,6 +21,38 @@ const schema = {
 };
 
 describe('SchemaFields copy sources', () => {
+  it('对象和未指定元素类型的数组可编辑为 JSON，并阻止无效类型提交', async () => {
+    const submit = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Form onFinish={submit}>
+        <SchemaFields schema={{
+          properties: {
+            source: { type: 'object', title: '工作簿引用', default: { root_id: 'source', relative_path: 'before.xlsx' } },
+            writes: { type: 'array', title: '写入计划', minItems: 1 },
+          },
+          required: ['source', 'writes'],
+        }} />
+        <button type="submit">提交 JSON</button>
+      </Form>,
+    );
+    const source = screen.getByRole('textbox', { name: '工作簿引用' });
+    const writes = screen.getByRole('textbox', { name: '写入计划' });
+    expect(JSON.parse(source.value)).toEqual({ root_id: 'source', relative_path: 'before.xlsx' });
+    fireEvent.change(source, { target: { value: '{broken' } });
+    fireEvent.change(writes, { target: { value: '{}' } });
+    await user.click(screen.getByRole('button', { name: '提交 JSON' }));
+    expect(await screen.findByText('工作簿引用必须是有效的 JSON 对象')).toBeInTheDocument();
+    expect(await screen.findByText('写入计划必须是数组')).toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
+    const sourceValue = { root_id: 'source', relative_path: 'after.xlsx' };
+    const writesValue = [{ sheet: 'Sheet1', cell: 'B2', value: 'after' }];
+    fireEvent.change(source, { target: { value: JSON.stringify(sourceValue) } });
+    fireEvent.change(writes, { target: { value: JSON.stringify(writesValue) } });
+    await user.click(screen.getByRole('button', { name: '提交 JSON' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ source: sourceValue, writes: writesValue }));
+  });
+
   it('预填 W32，并可从任务单说明列或 M32 一键填入', async () => {
     const user = userEvent.setup();
     render(

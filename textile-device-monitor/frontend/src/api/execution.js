@@ -2,6 +2,10 @@ import executionClient, {
   getExecutionCsrfToken,
   resetExecutionCsrfToken,
 } from './executionClient';
+import {
+  clearExecutionRunRequest,
+  prepareExecutionRunRequest,
+} from '../utils/executionRunRequest';
 
 const listPayload = (payload, keys) => {
   if (Array.isArray(payload)) {
@@ -136,6 +140,15 @@ export const exportWorkflow = workflowId =>
 
 export const createExecutionRun = payload =>
   executionClient.post('/runs', payload);
+
+export const startExecutionRun = async (payload) => {
+  const request = prepareExecutionRunRequest(payload);
+  const result = await createExecutionRun(request.payload);
+  const run = result?.run || result;
+  if (!(run?.id || run?.run_id)) throw new Error('服务器未返回运行编号');
+  clearExecutionRunRequest(request.signature);
+  return run;
+};
 
 export const getExecutionRuns = async (params = {}) =>
   listPayload(await executionClient.get('/runs', { params }), ['items', 'runs']);

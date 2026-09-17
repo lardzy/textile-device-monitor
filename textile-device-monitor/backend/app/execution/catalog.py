@@ -778,8 +778,6 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
                 "registration_decision": (
                     "$.nodes.registration-decision.output"
                 ),
-                "upload": "$.nodes.upload-record.output",
-                "review": "$.nodes.review-record.output",
             },
             "ui": {"x": 1720, "y": 300},
         },
@@ -787,7 +785,7 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
     definition["edges"] = [
         {"id": "e1", "source": "start", "target": "query"},
         {"id": "e2", "source": "query", "target": "select"},
-        {"id": "e3", "source": "select", "target": "upload-record"},
+        {"id": "e3", "source": "select", "target": "registration-decision"},
         {
             "id": "e4",
             "source": "upload-record",
@@ -796,7 +794,7 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
         {
             "id": "e5",
             "source": "review-record",
-            "target": "registration-decision",
+            "target": "register-result",
         },
         {
             "id": "e6",
@@ -825,10 +823,20 @@ def _paper_fiber_gbt4688_qualitative_definition() -> dict[str, Any]:
         {
             "id": "e9",
             "source": "judgement-input",
-            "target": "register-result",
+            "target": "upload-record",
         },
         {"id": "e10", "source": "register-result", "target": "end"},
     ]
+    # Gather the whole user decision before starting the first remote write.
+    order = [
+        "start", "query", "select", "registration-decision",
+        "registration-branch", "judgement-input", "upload-record",
+        "review-record", "register-result", "end", "cancelled-end",
+    ]
+    nodes = {node["id"]: node for node in definition["nodes"]}
+    definition["nodes"] = [nodes[node_id] for node_id in order]
+    for index, node in enumerate(definition["nodes"]):
+        node["ui"] = {"x": index * 240 + 80, "y": 180}
     return definition
 
 
@@ -848,6 +856,8 @@ def _paper_fiber_default_checksums() -> set[str]:
         "cebf82bb4abad019f3f36837a671d7e267042a2768c34beef3a05f0028e39e7c",
         # 完整定义 v4（标准值与允差由人工确认）
         "a13ae3eda6513cd57ed451594e807a34bc3b5924a646ae7df7967be23a7b3d5e",
+        # Before moving all user input ahead of upload/review.
+        "e667f3ad90002498e092837e144b0c43095932f69e91a79ac8fb18c0afdf8c57",
     }
 
 
@@ -894,11 +904,8 @@ def _electron_microscopy_gbt36422_definition(
         or legacy_final_entry_contract
         or legacy_registration_capacity_contract
     )
-    # 打印确认节点属于当前契约；仅两个无打印历史时代不含它——
-    # legacy_image_placement_contract 重建引入图片放置节点之前的定义，
-    # legacy_no_print_contract 重建含图片放置但无打印确认的已发布定义，
-    # 二者保证在途运行与自动升级的校验和识别保持不变。
-    include_print_confirmation = not (
+    # 新运行按需下载打印，不再暂停登记。历史变体仍可重建原有打印节点。
+    include_print_confirmation = legacy_print_flags and not (
         legacy_image_placement_contract or legacy_no_print_contract
     )
     # 报告上传图片放置节点只属于当前契约；所有 legacy_* 变体重建的都是
@@ -1260,7 +1267,7 @@ def _electron_microscopy_gbt36422_definition(
                             {}
                             if (
                                 legacy_registration_capacity_contract
-                                or include_print_confirmation
+                                or not (legacy_image_placement_contract or legacy_no_print_contract)
                             )
                             else {"allow_multi_copy_over_capacity": True}
                         ),
@@ -1768,6 +1775,10 @@ def _required_input_count(definition: dict[str, Any]) -> int:
     return len(required) if isinstance(required, list) else 0
 
 
+def _may_update_default(workflow: ExecutionWorkflow) -> bool:
+    return workflow.archived_at is None and workflow.management_mode == "draft_v1"
+
+
 def ensure_default_catalog(db: Session) -> None:
     categories_by_key = {
         category.key: category
@@ -1839,9 +1850,12 @@ def ensure_default_catalog(db: Session) -> None:
             )
         )
 
+    db.flush()
     workflows_by_slug = {
         workflow.slug: workflow
-        for workflow in db.query(ExecutionWorkflow).all()
+        for workflow in db.query(ExecutionWorkflow).order_by(
+            ExecutionWorkflow.id
+        ).populate_existing().with_for_update().all()
     }
     if PAPER_FIBER_WORKFLOW_SLUG not in workflows_by_slug:
         definition = _paper_fiber_gbt4688_qualitative_definition()
@@ -1886,7 +1900,7 @@ def ensure_default_catalog(db: Session) -> None:
             )
         )
         workflows_by_slug[PAPER_FIBER_WORKFLOW_SLUG] = workflow
-    else:
+    elif _may_update_default(workflows_by_slug[PAPER_FIBER_WORKFLOW_SLUG]):
         existing_paper = workflows_by_slug[PAPER_FIBER_WORKFLOW_SLUG]
         current_definition = _paper_fiber_gbt4688_qualitative_definition()
         current_checksum = definition_checksum(current_definition)
@@ -1987,7 +2001,7 @@ def ensure_default_catalog(db: Session) -> None:
             )
         )
         workflows_by_slug[electron_slug] = workflow
-    else:
+    elif _may_update_default(workflows_by_slug[electron_slug]):
         existing_electron = workflows_by_slug[electron_slug]
         image_selection_checksums = (
             _electron_microscopy_image_selection_default_checksums()
@@ -2158,6 +2172,9 @@ def ensure_default_catalog(db: Session) -> None:
                 )
             }
             compatible_full_checksums |= current_final_entry_variant_checksums
+            compatible_full_checksums.add(
+                "9dad25e4badb749fd26d1cfc29502e314b04fdf19a91e3006ee2071ea3dfece2"
+            )
             legacy_current_contract_checksum = definition_checksum(
                 _electron_microscopy_gbt36422_definition(
                     legacy_final_entry_contract=True
@@ -2276,9 +2293,7 @@ def ensure_default_catalog(db: Session) -> None:
                                 full_definition, current_capabilities
                             ),
                             release_note=(
-                                "生成原始记录后恢复打印确认：可选择暂不打印，"
-                                "或下载/打开工作簿后使用默认打印机打印工作表"
-                                "“微观形貌”的默认打印区域并确认完成；"
+                                "打印改为结果文件的按需操作，不再阻塞录入；"
                                 "图片上传预检绑定人工选择的任务项目；选图提交"
                                 "时重新绑定最新旧系统任务快照；特纤复核完成后"
                                 "生成按选图数量绑定的检验记录工作簿，并进入"
@@ -2333,12 +2348,13 @@ def ensure_default_catalog(db: Session) -> None:
             )
         )
         workflows_by_slug[cross_section_slug] = workflow
-    else:
+    elif _may_update_default(workflows_by_slug[cross_section_slug]):
         existing_cross = workflows_by_slug[cross_section_slug]
         cross_definition = _electron_cross_section_gbt36422_definition()
         cross_checksum = definition_checksum(cross_definition)
         # 2026-08 移除受控测试覆盖运行输入之前发布的首版横截面定义。
         legacy_cross_checksums = {
+            "39ea04dbedd3065fc3f34c05965932d8b4c388aa45921fc64147f2bd09c6b8a3",
             "fbf6ab284ec3ef74986479c15ae58731913c4eadf8c087c551b3cd3717c87914",
             # 已发布横截面定义：尚无报告上传图片放置节点。
             definition_checksum(
@@ -2393,15 +2409,14 @@ def ensure_default_catalog(db: Session) -> None:
                         or {"read": True, "write": True, "external_write": True},
                     ),
                     release_note=(
-                        "生成原始记录后恢复打印确认（默认打印机打印"
-                        "“微观形貌”工作表默认打印区域），流程末尾保留"
+                        "打印改为结果文件的按需操作，不再阻塞录入；流程末尾保留"
                         "“放置报告上传图片”节点"
                     ),
                 )
             )
 
     legacy_electron = workflows_by_slug.get(LEGACY_ELECTRON_WORKFLOW)
-    if legacy_electron is not None:
+    if legacy_electron is not None and _may_update_default(legacy_electron):
         original_electron = _default_definition(
             slug=LEGACY_ELECTRON_WORKFLOW,
             name="电镜原始资料发现与选择",
@@ -2465,6 +2480,8 @@ def ensure_default_catalog(db: Session) -> None:
         capabilities = {"read": True, "write": False}
         existing = workflows_by_slug.get(slug)
         if existing is not None:
+            if not _may_update_default(existing):
+                continue
             legacy_definition = _regenerated_method_definition(
                 slug=slug,
                 name=name,
@@ -2556,7 +2573,7 @@ def ensure_default_catalog(db: Session) -> None:
     # deliberately preserved.
     legacy_slug, _legacy_name = LEGACY_REGENERATED_WORKFLOW
     legacy = workflows_by_slug.get(legacy_slug)
-    if legacy is not None:
+    if legacy is not None and _may_update_default(legacy):
         original = _default_definition(
             slug=legacy_slug,
             name="再生纤原始资料发现与选择",
@@ -2787,6 +2804,9 @@ def get_workflow(db: Session, workflow_id: str) -> ExecutionWorkflow:
 
 
 def assert_workflow_managed_by_v1(workflow: ExecutionWorkflow) -> None:
+    from app.execution.workflow_replacement import assert_not_archived
+
+    assert_not_archived(workflow)
     if getattr(workflow, "management_mode", "draft_v1") == "release_v2":
         raise ExecutionApiError(
             409,
@@ -2864,6 +2884,7 @@ def update_workflow_draft(
     workflow = (
         db.query(ExecutionWorkflow)
         .filter(ExecutionWorkflow.id == workflow_id)
+        .populate_existing()
         .with_for_update()
         .one_or_none()
     )
@@ -2919,6 +2940,7 @@ def publish_workflow(
     workflow = (
         db.query(ExecutionWorkflow)
         .filter(ExecutionWorkflow.id == workflow_id)
+        .populate_existing()
         .with_for_update()
         .one_or_none()
     )

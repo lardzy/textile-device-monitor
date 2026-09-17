@@ -25,7 +25,7 @@ from app.execution.v2.canonical import (
 )
 from jsonschema import Draft202012Validator
 
-ENGINE_VERSION = "2.1.0"
+ENGINE_VERSION = "2.2.0"
 PROTOCOL_VERSION = "2.1"
 
 _TRUSTED_RENDERER_PROTOCOLS = {
@@ -1202,6 +1202,7 @@ def _build_installed_registry() -> InstalledRegistry:
         )
 
     from app.execution.v2.native_handlers import native_handler
+    from app.execution.v2.regenerated_fiber_handlers import NATIVE_HANDLERS as domain_handlers
 
     manifest_resources = {
         (manifest["pack_id"], manifest["pack_version"]): set(
@@ -1252,7 +1253,7 @@ def _build_installed_registry() -> InstalledRegistry:
             raise ValueError(f"implementation digest mismatch: {identity}")
         handler_channel = descriptor["handler_channel"]
         handler = (
-            native_handler(identity[0], identity[1])
+            native_handler(identity[0], identity[1]) or domain_handlers.get(identity)
             if handler_channel in {"worker_callable", "kernel_builtin"}
             else None
         )

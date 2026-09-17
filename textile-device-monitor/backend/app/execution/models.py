@@ -285,6 +285,13 @@ class ExecutionWorkflow(Base):
     is_enabled = Column(Boolean, nullable=False, default=True)
     availability_code = Column(String(100))
     availability_message = Column(Text)
+    archived_at = Column(DateTime(timezone=True))
+    replaces_workflow_id = Column(
+        String(36),
+        ForeignKey("execution_workflows.id"),
+        unique=True,
+        index=True,
+    )
     created_by_id = Column(String(36), ForeignKey("execution_users.id"))
     updated_by_id = Column(String(36), ForeignKey("execution_users.id"))
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
@@ -382,6 +389,7 @@ class ExecutionWorkflowRelease(Base):
     release_digest = Column(String(64), nullable=False, index=True)
     format_version = Column(String(20), nullable=False, default="2.0")
     portable_document = Column(JSON_VARIANT, nullable=False)
+    migration_source = Column(JSON_VARIANT)
     status = Column(String(30), nullable=False, default="staged", index=True)
     created_by_id = Column(
         String(36), ForeignKey("execution_users.id"), nullable=False

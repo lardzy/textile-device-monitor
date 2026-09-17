@@ -1,6 +1,6 @@
 # NodeSpec v2 评审设计
 
-状态：Draft for Review
+状态（2026-09-17）：规范与实现并行。P1 精确能力基座、18 份原生 P2 契约及人工/受控写入已实现；P3 首批增加再生纤查询/读取两份原生契约，累计 20 份。电镜/纸纤维拆分、P4 通用 Connector 和 v2 画布仍待完成。最新状态见 [Workflow Release v2](./workflow-release-v2.md) 与[P3 首批验收](./p3-regenerated-fiber-acceptance.md)。
 
 规范版本：`schema_version = "2.0"`
 
@@ -26,9 +26,9 @@ NodeSpec v2 定位为**已安装执行能力的声明式契约**，而不是工�
 8. Worker 必须精确上报它能执行的节点版本与实现摘要；调度器只把节点交给匹配的 Worker。API 进程“认识节点元数据”不等于 Worker“具备执行器”。
 9. 外部写入继续使用 durable operation、阶段检查点、写入边界、回执与 `reconciliation_required`；通用化不得削弱现有副作用防线。
 
-## 2. 当前实现证据与缺口
+## 2. P0 设计时的实现证据与缺口
 
-当前注册表已经是良好的 v1 起点，但还不足以成为独立分发契约：
+本节保留 P0 时的 v1 事实与设计动机，不作为当前未实现清单。如今 v2 已有 Pack loader、精确 Worker heartbeat/claim、有效输入/输出闸门及通用 Human 分派；兼容 v1 和外部 preparer 特例仍保留。P0 起点如下：
 
 | 当前证据 | 现状 | v2 必须解决的问题 |
 |---|---|---|
@@ -480,7 +480,8 @@ NodeSpec 可以声明 `pack_id`，但不得声明 module、class、function、as
 
 约束：
 
-- `external_write` 的 `unknown_outcome` 必须是 `reconciliation_required`。
+- `external_write` 不代表业务不可更正，也不代表需要人工批准。普通写入默认自动执行；只有实际业务判断、信息缺失或冲突才暂停。
+- `external_write` 的 `unknown_outcome` 必须是 `reconciliation_required`，表示结果需要核对；P4 由已注册查询/恢复能力自动核对，无法辨认时才交给人。当前兼容 Writer 尚无通用自动恢复接口。
 - `durable_write` 也必须声明 receipt 和未知结果处置；不能因为目标是共享盘而按普通文件复制重试。
 - `none/read_only` 不得申请 publish 权限。
 - `human` 默认必须为 `none`。人工提交会产生审计状态，但不应直接执行业务文件或远端写入；需要写入时由后续 automatic/external 节点完成。
@@ -604,7 +605,7 @@ Workflow Release 的 `runtime_policy.timeout_seconds` 必须位于 NodeSpec defa
 - Bridge 只可 claim 自己精确上报支持的 connector operation contract；Literal 列表不再写死在 API schema。
 - OperationSpec 定义有序 stage、首次可能写入的 boundary、完成核验 stage、receipt schema 和 verifier。
 - complete 只有在完成核验 stage 和 receipt 校验均通过后才可 resume 节点。
-- 取消、兄弟失败或 lease 过期时：边界前可证明无写入才能重领/取消；边界后不得释放业务 fence，必须等待回执或人工对账。
+- 取消、兄弟失败或 lease 过期时：边界前可证明无写入才能重领/取消；边界后不得释放业务 fence，必须等待回执或核对结果；兼容操作目前使用人工对账，P4 扩展自动核对。
 
 ## 12. Capability Pack manifest
 

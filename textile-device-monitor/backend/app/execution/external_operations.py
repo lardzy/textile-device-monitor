@@ -3243,13 +3243,11 @@ def _reverify_operation_sources(
                 candidate_id=candidate_id,
             )
         entry, root = row
-        expected_fingerprint = str(expected.get("fingerprint") or "")
         if (
             not candidate_id
             or entry.missing_since is not None
             or root.root_id != expected.get("root_id")
             or entry.relative_path != expected.get("relative_path")
-            or entry.fingerprint != expected_fingerprint
         ):
             raise conflict(
                 "external_source_file_changed",
@@ -3261,13 +3259,16 @@ def _reverify_operation_sources(
                 ArtifactRef(root.root_id, entry.relative_path),
                 expected_type="file",
             )
-            size_bytes, content_sha256, inspector_name = (
-                _stable_snapshot_summary(
-                    path,
-                    expected_fingerprint=expected_fingerprint,
+            before = _source_fingerprint(path)
+            with path.open("rb") as source:
+                content_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+            size_bytes = path.stat().st_size
+            if _source_fingerprint(path) != before:
+                raise conflict(
+                    "external_source_file_changed",
+                    "原始记录读取期间发生变化，请重新选择",
                     candidate_id=candidate_id,
                 )
-            )
         except ExecutionApiError:
             raise
         except (StorageError, OSError, ValueError) as exc:
@@ -3282,8 +3283,8 @@ def _reverify_operation_sources(
             changed_fields.append("size_bytes")
         if content_sha256 != expected.get("content_sha256"):
             changed_fields.append("content_sha256")
-        if inspector_name != expected_inspector:
-            changed_fields.append("inspector")
+        # Inspector and workbook format were read from these exact bytes at
+        # prepare time. A matching digest makes another copy/Excel parse redundant.
         if changed_fields:
             raise conflict(
                 "external_source_file_changed",
@@ -5330,7 +5331,11 @@ def approve_prepared_external_operation(
         operation=operation,
         run=run,
     )
-    _reverify_operation_sources(db, operation=operation)
+    # The Worker hands off immediately after preparing and checking the source.
+    # A manual approval can be much later; claim also checks the actual source
+    # before the Writer receives it. Do not copy/hash/parse it twice in one turn.
+    if not automatic:
+        _reverify_operation_sources(db, operation=operation)
     if operation.status == "approved":
         return operation, True
 
@@ -5577,6 +5582,11 @@ def public_external_operation(
                 else None
             ),
         }
+    def elapsed(start: datetime | None, end: datetime | None) -> float | None:
+        if start is None or end is None:
+            return None
+        return round(max(0, (_aware_utc(end) - _aware_utc(start)).total_seconds()), 3)
+
     return {
         "id": operation.id,
         "operation_key": operation.operation_key,
@@ -5607,6 +5617,11 @@ def public_external_operation(
         ),
         "created_at": operation.created_at.isoformat(),
         "updated_at": operation.updated_at.isoformat(),
+        "timing": {
+            "queue_seconds": elapsed(operation.approved_at, operation.started_at),
+            "execution_seconds": elapsed(operation.started_at, operation.completed_at),
+            "total_seconds": elapsed(operation.created_at, operation.completed_at),
+        },
     }
 
 

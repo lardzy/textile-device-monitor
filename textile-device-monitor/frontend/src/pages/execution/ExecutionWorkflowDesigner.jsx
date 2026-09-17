@@ -1018,7 +1018,7 @@ export default function ExecutionWorkflowDesigner() {
   const hydrate = useCallback((payload) => {
     const nextWorkflow = getWorkflowIdentity(payload);
     setWorkflow(nextWorkflow);
-    if (nextWorkflow?.management_mode === 'release_v2') {
+    if (nextWorkflow?.management_mode === 'release_v2' || nextWorkflow?.archived_at) {
       // Release v2 has a different graph and contract shape. Never feed it to
       // the legacy canvas normalizer, even for a read-only rendering attempt.
       setDefinition(null);
@@ -1556,6 +1556,15 @@ export default function ExecutionWorkflowDesigner() {
   }
 
   if (loadError || !definition) {
+    if (workflow?.archived_at) {
+      return (
+        <div className="execution-page execution-admin-page">
+          <ExecutionChrome title={workflow.name} subtitle="已归档，保留历史版本与运行记录" backTo={{ path: '/execution/admin', label: '流程管理' }} />
+          <Alert showIcon type="info" message="归档流程不可编辑、发布或测试"
+            action={<Button onClick={() => navigate(`/execution/workflows/${workflowId}/start`)}>查看归档流程及接替入口</Button>} />
+        </div>
+      );
+    }
     if (workflow?.management_mode === 'release_v2') {
       return (
         <div className="execution-page execution-admin-page">

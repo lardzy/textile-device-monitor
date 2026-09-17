@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from datetime import timedelta
@@ -752,7 +753,11 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         operation.approval_expires_at = None
         self.db.commit()
 
-        claimed = self._claim()
+        with patch(
+            "app.execution.external_operations._stable_snapshot_summary",
+            side_effect=AssertionError("领取时只核对内容，不再复制或解析工作簿"),
+        ):
+            claimed = self._claim()
 
         self.assertTrue(claimed["claimed"])
         self.assertIsNone(
@@ -799,6 +804,29 @@ class ExecutionExternalBridgeTests(unittest.TestCase):
         self.db.rollback()
         self.db.refresh(operation)
         self.assertEqual(operation.status, "approved")
+
+    def test_claim_accepts_metadata_change_when_content_is_identical(self):
+        _run, _operation = self._approved_run()
+        path = self.source / "260187115-根数法.xlsx"
+        stat = path.stat()
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+        entry = self.db.query(ExecutionFileIndexEntry).one()
+        entry.fingerprint = f"{path.stat().st_size}:{path.stat().st_mtime_ns}"
+        self.db.commit()
+        self.assertTrue(self._claim()["claimed"])
+
+    def test_claim_rejects_changed_bytes_even_with_same_size_and_mtime(self):
+        _run, _operation = self._approved_run()
+        path = self.source / "260187115-根数法.xlsx"
+        stat = path.stat()
+        changed = bytearray(path.read_bytes())
+        changed[-1] ^= 1
+        path.write_bytes(changed)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        with self.assertRaises(ExecutionApiError) as raised:
+            self._claim()
+        self.assertEqual(raised.exception.code, "external_source_file_changed")
+        self.assertEqual(self.db.query(ExecutionExternalAttempt).count(), 0)
 
     def test_heartbeat_extends_lease_and_appends_checkpoint(self):
         _run, operation = self._approved_run()

@@ -117,10 +117,8 @@ class Settings(BaseSettings):
     # warning instead of blocking the operator.
     EXECUTION_TASK_SNAPSHOT_TTL_MINUTES: int = 15
     EXECUTION_TASK_SNAPSHOT_RETRY_SECONDS: int = 60
-    # How long a paper-fibre query node waits for a pending task snapshot
-    # before failing with ``task_snapshot_pending``.  The snapshot bridge
-    # polls every ~15 seconds, so the typical catalog-page race resolves
-    # in a few seconds; the node lease heartbeat keeps the claim alive.
+    # Maximum wait for a pending snapshot. The Bridge polls every 2 seconds
+    # while idle and drains queued requests without pauses between tasks.
     EXECUTION_TASK_SNAPSHOT_WAIT_SECONDS: int = 60
     EXECUTION_WORKER_POLL_SECONDS: float = 1.0
     EXECUTION_WORKER_LEASE_SECONDS: int = 60

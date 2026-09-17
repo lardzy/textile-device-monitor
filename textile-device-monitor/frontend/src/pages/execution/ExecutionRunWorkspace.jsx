@@ -68,6 +68,10 @@ const { Text, Title } = Typography;
 const FILE_RESULT_OUTPUT_KEYS = new Set([
   'selected_files',
   'primary_file',
+  'primary_file_id',
+  'selected_items',
+  'primary_item',
+  'primary_id',
   'qualitative_result',
   'result_files',
   'results',

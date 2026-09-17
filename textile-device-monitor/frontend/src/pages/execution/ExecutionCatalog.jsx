@@ -10,6 +10,7 @@ import {
   Alert,
   Button,
   Card,
+  Drawer,
   Empty,
   Input,
   Select,
@@ -18,6 +19,7 @@ import {
   Tag,
   Tooltip,
   Typography,
+  message,
 } from 'antd';
 import {
   ApartmentOutlined,
@@ -37,9 +39,12 @@ import {
   getExecutionCatalogRecommendations,
   getExecutionCategories,
   getExecutionWorkflows,
+  getExecutionWorkflow,
+  startExecutionRun,
 } from '../../api/execution';
 import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
+import ExecutionRunPreparation from './ExecutionRunPreparation';
 import './execution.css';
 
 const { Paragraph, Text, Title } = Typography;
@@ -74,7 +79,9 @@ const availabilityOf = (workflow) => {
     && workflow.availability?.available !== false
     && workflow.root_status !== 'missing'
     && workflow.data_root_status !== 'missing'
-    && workflow.is_enabled !== false;
+    && workflow.is_enabled !== false
+    && !workflow.archived_at
+    && !workflow.replacement_pending;
   return {
     available,
     message: workflow.unavailable_reason
@@ -158,6 +165,7 @@ const recommendationDisplay = (recommendation, loading) => {
 function WorkflowCard({
   workflow,
   canRun,
+  starting,
   onRun,
   recommendation,
   recommendationLoading,
@@ -209,6 +217,7 @@ function WorkflowCard({
         >
           <Button
             type="link"
+            loading={starting}
             disabled={!actionable}
             onClick={(event) => {
               event.stopPropagation();
@@ -327,6 +336,9 @@ export default function ExecutionCatalog() {
   const [recommendationLoading, setRecommendationLoading] = useState(false);
   const [recommendationFailed, setRecommendationFailed] = useState(false);
   const [pendingScrollWorkflowId, setPendingScrollWorkflowId] = useState(null);
+  const [selectedWorkflow, setSelectedWorkflow] = useState(null);
+  const [startingId, setStartingId] = useState(null);
+  const startingRef = useRef(false);
   const recommendationTimerRef = useRef(null);
   const recommendationAbortRef = useRef(null);
   const recommendationRequestIdRef = useRef(0);
@@ -564,19 +576,39 @@ export default function ExecutionCatalog() {
     setPendingScrollWorkflowId(null);
   }, [groupedWorkflows, pendingScrollWorkflowId]);
 
-  const openRunForm = (workflow) => {
-    if (!availabilityOf(workflow).available || !canRunWorkflow) {
+  const openRunForm = async (workflow) => {
+    if (!availabilityOf(workflow).available || !canRunWorkflow || startingRef.current) {
       return;
     }
-    const params = new URLSearchParams();
-    if (inspectionNumber.trim()) {
-      params.set('number', inspectionNumber.trim());
+    startingRef.current = true;
+    setStartingId(workflowIdOf(workflow));
+    try {
+      const current = await getExecutionWorkflow(workflowIdOf(workflow));
+      if (!availabilityOf(current).available) {
+        throw new Error(current.availability?.message || '流程已停用或归档，请刷新目录');
+      }
+      const inputs = current.input_schema || current.published_definition?.input_schema || {};
+      const globals = current.global_schema || current.published_definition?.global_schema || {};
+      const number = inspectionNumber.trim();
+      const numberOnly = Object.keys(inputs.properties || {}).every(key => key === 'inspection_number')
+        && Object.keys(globals.properties || {}).length === 0;
+      if (number && numberOnly) {
+        const run = await startExecutionRun({
+          workflow_id: current.id,
+          inspection_number: number,
+          input_data: { inspection_number: number },
+          global_data: {},
+        });
+        navigate(`/execution/runs/${run.id || run.run_id}`);
+      } else {
+        setSelectedWorkflow(current);
+      }
+    } catch (requestError) {
+      message.error(requestError.message || '无法开始执行');
+    } finally {
+      startingRef.current = false;
+      setStartingId(null);
     }
-    const query = params.toString();
-    navigate(
-      `/execution/workflows/${encodeURIComponent(workflowIdOf(workflow))}/start`
-      + (query ? `?${query}` : ''),
-    );
   };
 
   return (
@@ -594,7 +626,7 @@ export default function ExecutionCatalog() {
           <Text className="execution-eyebrow">开始一项检测工作</Text>
           <Title level={3}>查找并选择适用流程</Title>
           <Paragraph>
-            检验编号可选；未填写也能先进入流程，在执行前补充。优先类别只影响推荐顺序。
+            填写编号后选择流程即可开始；需要补充的信息会在当前页面填写。
           </Paragraph>
         </div>
         <div className="execution-catalog__filters">
@@ -663,7 +695,8 @@ export default function ExecutionCatalog() {
                   <WorkflowCard
                     key={workflowIdOf(workflow)}
                     workflow={workflow}
-                    canRun={canRunWorkflow}
+                    canRun={canRunWorkflow && !startingId}
+                    starting={startingId === workflowIdOf(workflow)}
                     onRun={openRunForm}
                     recommendation={recommendationByWorkflow.get(
                       String(workflowIdOf(workflow)),
@@ -690,6 +723,20 @@ export default function ExecutionCatalog() {
         </Empty>
       )}
 
+      <Drawer
+        title={selectedWorkflow?.name || '填写任务信息'}
+        open={Boolean(selectedWorkflow)}
+        onClose={() => setSelectedWorkflow(null)}
+        width={560}
+        destroyOnClose
+      >
+        {selectedWorkflow && <ExecutionRunPreparation
+          key={selectedWorkflow.id}
+          initialWorkflow={selectedWorkflow}
+          inspectionNumber={inspectionNumber.trim()}
+          onStarted={(run) => navigate(`/execution/runs/${run.id || run.run_id}`)}
+        />}
+      </Drawer>
     </div>
   );
 }

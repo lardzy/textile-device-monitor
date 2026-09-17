@@ -52,6 +52,7 @@ from app.execution.models import (
 from app.execution.validation import (
     ValidationResult,
     definition_checksum,
+    runtime_definition,
     validate_definition,
     workflow_contract_checksum,
 )
@@ -60,9 +61,9 @@ from app.execution.v2.canonical import (
     canonical_sha256,
     semver_matches,
 )
+from app.execution.v2.registry import ENGINE_VERSION
 
 
-ENGINE_VERSION = "2.1.0"
 CONTRACT_FORMAT = "workflow-release-v2"
 SIDE_EFFECT_ORDER = {
     "none": 0,
@@ -1147,6 +1148,29 @@ def _binding_publish_issues(
     return issues
 
 
+def _project_config_schema(schema: Any) -> Any:
+    if not isinstance(schema, dict):
+        return deepcopy(schema)
+    value = deepcopy(schema)
+    properties = value.get("properties")
+    if not isinstance(properties, dict):
+        return value
+    direct = {"root_slot": "root_id", "rule_slot": "match_rule",
+              "role_slot": "candidate_role", "candidate_role_slot": "candidate_role"}
+
+    def runtime_key(key):
+        if key in direct:
+            return direct[key]
+        for suffix, replacement in SLOT_CONFIG_SUFFIXES.items():
+            if key.endswith(suffix):
+                return key[:-len(suffix)] + replacement
+        return key
+
+    value["properties"] = {runtime_key(key): item for key, item in properties.items()}
+    value["required"] = [runtime_key(key) for key in value.get("required") or []]
+    return value
+
+
 def _content_semantic_issues(
     document: dict[str, Any]
 ) -> list[dict[str, str]]:
@@ -1237,42 +1261,6 @@ def _content_semantic_issues(
     semantic_registry = NodeRegistry()
     compatibility_node_ids: set[str] = set()
 
-    def project_config_schema(schema: Any) -> Any:
-        if not isinstance(schema, dict):
-            return deepcopy(schema)
-        value = deepcopy(schema)
-        properties = value.get("properties")
-        if isinstance(properties, dict):
-            projected: dict[str, Any] = {}
-            for key, item in properties.items():
-                if key == "root_slot":
-                    target = "root_id"
-                elif key.endswith("_root_slot"):
-                    target = key[: -len("_root_slot")] + "_root_id"
-                elif key.endswith("_role_slot"):
-                    target = key[: -len("_role_slot")] + "_role_key"
-                elif key.endswith("_rule_slot"):
-                    target = key[: -len("_rule_slot")] + "_rule_key"
-                else:
-                    target = key
-                projected[target] = item
-            value["properties"] = projected
-            value["required"] = [
-                (
-                    "root_id"
-                    if key == "root_slot"
-                    else key[: -len("_root_slot")] + "_root_id"
-                    if key.endswith("_root_slot")
-                    else key[: -len("_role_slot")] + "_role_key"
-                    if key.endswith("_role_slot")
-                    else key[: -len("_rule_slot")] + "_rule_key"
-                    if key.endswith("_rule_slot")
-                    else key
-                )
-                for key in value.get("required") or []
-            ]
-        return value
-
     registered: set[tuple[str, int]] = set()
     for portable_node, projected_node in zip(
         document["definition"]["nodes"], projection["nodes"], strict=True
@@ -1300,7 +1288,7 @@ def _content_semantic_issues(
                 continue
         else:
             spec = installed.spec
-            config_schema = project_config_schema(spec["config_schema"])
+            config_schema = _project_config_schema(spec["config_schema"])
             node_type = NodeType(
                 type=identity[0],
                 version=identity[1],
@@ -1340,6 +1328,7 @@ def preflight_release(
     actor: ExecutionUser,
     release: Optional[ExecutionWorkflowRelease] = None,
     scope: str = "content",
+    replacement_source: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     issues = _validate_document_shape(document)
     release_digest = _release_digest(document) if not issues else ""
@@ -1360,7 +1349,16 @@ def preflight_release(
     # installed contract resolution is part of import validity.
     del content_base_end
     binding = _current_binding(db, release.id) if release is not None else None
+    frozen_source = None
     if scope == "publish" and content_valid:
+        from app.execution.workflow_replacement import replacement_context
+
+        try:
+            frozen_source = replacement_context(
+                db, document=document, release=release, requested=replacement_source,
+            )
+        except ExecutionApiError as exc:
+            issues.append(_issue(exc.code, "$.replacement_source", exc.message))
         issues.extend(_binding_publish_issues(db, document, binding))
         category_exists = (
             db.query(ExecutionCategory.id)
@@ -1504,6 +1502,7 @@ def preflight_release(
         "binding_revision": binding.revision if binding is not None else None,
         "rollout_profile": profile,
         "rollout_blockers": profile_blockers,
+        "replacement_source": frozen_source,
     }
     token = _new_token()
     ttl = int(settings.EXECUTION_RELEASE_PREFLIGHT_TTL_MINUTES)
@@ -1943,43 +1942,6 @@ def _validate_v2_runtime_projection(
     compatibility_node_ids: set[str] = set()
     registered: set[tuple[str, int]] = set()
 
-    def projected_config_schema(schema: Any) -> Any:
-        if not isinstance(schema, dict):
-            return deepcopy(schema)
-        value = deepcopy(schema)
-        properties = value.get("properties")
-        if not isinstance(properties, dict):
-            return value
-        projected: dict[str, Any] = {}
-        for key, item in properties.items():
-            if key == "root_slot":
-                target = "root_id"
-            elif key.endswith("_root_slot"):
-                target = key[: -len("_root_slot")] + "_root_id"
-            elif key.endswith("_role_slot"):
-                target = key[: -len("_role_slot")] + "_role_key"
-            elif key.endswith("_rule_slot"):
-                target = key[: -len("_rule_slot")] + "_rule_key"
-            else:
-                target = key
-            projected[target] = item
-        value["properties"] = projected
-        value["required"] = [
-            (
-                "root_id"
-                if key == "root_slot"
-                else key[: -len("_root_slot")] + "_root_id"
-                if key.endswith("_root_slot")
-                else key[: -len("_role_slot")] + "_role_key"
-                if key.endswith("_role_slot")
-                else key[: -len("_rule_slot")] + "_rule_key"
-                if key.endswith("_rule_slot")
-                else key
-            )
-            for key in value.get("required") or []
-        ]
-        return value
-
     for portable, projected in zip(
         document["definition"]["nodes"],
         projection["nodes"],
@@ -2002,7 +1964,7 @@ def _validate_v2_runtime_projection(
                 continue
         else:
             spec = installed.spec
-            config_schema = projected_config_schema(spec["config_schema"])
+            config_schema = _project_config_schema(spec["config_schema"])
             node_type = NodeType(
                 type=identity[0],
                 version=identity[1],
@@ -2075,6 +2037,14 @@ def publish_release(
             issues=binding_issues,
         )
     document = release.portable_document
+    from app.execution.workflow_replacement import replacement_context
+
+    frozen_source = replacement_context(
+        db, document=document, release=release,
+        requested=report.get("replacement_source"), lock=True,
+    )
+    if frozen_source != report.get("replacement_source"):
+        raise conflict("replacement_source_changed", "接替来源已变化，请重新预检")
     projection = compile_runtime_projection(document, binding)
     validation = _validate_v2_runtime_projection(document, projection)
     if not validation.valid:
@@ -2108,7 +2078,8 @@ def publish_release(
             management_mode="release_v2",
             capabilities=deepcopy(report["computed_capabilities"]),
             required_input_count=len((projection["input_schema"] or {}).get("required") or []),
-            is_enabled=True,
+            is_enabled=frozen_source is None,
+            replaces_workflow_id=frozen_source["workflow_id"] if frozen_source else None,
             created_by_id=actor.id,
             updated_by_id=actor.id,
         )
@@ -2142,6 +2113,12 @@ def publish_release(
                 ) from exc
     elif workflow.management_mode != "release_v2":
         raise conflict("workflow_slug_conflict", "同 slug 的 v1 草稿流程已存在", workflow_id=workflow.id)
+    from app.execution.workflow_replacement import assert_not_archived
+
+    assert_not_archived(workflow)
+    if workflow.replaces_workflow_id != (frozen_source["workflow_id"] if frozen_source else None):
+        raise conflict("replacement_source_changed", "接替来源已被并发登记，请重新预检")
+    release.migration_source = deepcopy(frozen_source)
     dependency_lock = deepcopy(report["resolved_dependencies"])
     asset_lock = deepcopy(report["asset_lock"])
     deployed_checksum = canonical_sha256(
@@ -2306,6 +2283,8 @@ def publish_release(
 
 
 def release_view(db: Session, release: ExecutionWorkflowRelease) -> dict[str, Any]:
+    from app.execution.workflow_replacement import release_source
+
     binding = _current_binding(db, release.id)
     workflow = (
         db.get(ExecutionWorkflow, release.workflow_id)
@@ -2345,6 +2324,7 @@ def release_view(db: Session, release: ExecutionWorkflowRelease) -> dict[str, An
         "format_version": release.format_version,
         "status": release.status,
         "document": deepcopy(release.portable_document),
+        "migration_source": release_source(db, release),
         "deployment_binding": (
             {
                 "id": binding.id,
@@ -2532,11 +2512,15 @@ def rollback_workflow(
     workflow = (
         db.query(ExecutionWorkflow)
         .filter(ExecutionWorkflow.id == workflow_id)
+        .populate_existing()
         .with_for_update()
         .one_or_none()
     )
     if workflow is None:
         raise not_found("流程", workflow_id)
+    from app.execution.workflow_replacement import assert_not_archived
+
+    assert_not_archived(workflow)
     if workflow.management_mode != "release_v2":
         raise conflict("workflow_not_release_v2", "只有 v2-managed Workflow 可以使用此回滚接口")
     target = (
@@ -2662,6 +2646,8 @@ def _migrate_v1_definition(
     definition: dict[str, Any],
     source_version: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    source_digest = definition_checksum(definition)
+    definition = runtime_definition(definition)
     nodes = []
     dependencies: dict[tuple[str, int], dict[str, Any]] = {}
     packs: dict[str, dict[str, Any]] = {}
@@ -2896,7 +2882,7 @@ def _migrate_v1_definition(
         "migration": {
             "source_format": "textile-execution-workflow",
             "source_format_version": "1.0",
-            "source_digest": definition_checksum(definition),
+            "source_digest": source_digest,
         },
         "integrity": {
             "algorithm": "sha256",
@@ -3002,6 +2988,18 @@ def _native_p2_candidate(
     blockers: list[dict[str, Any]] = []
     nodes = candidate["definition"]["nodes"]
     edges = candidate["definition"]["edges"]
+    required_ids = (
+        {"classify", "extract", "copy", "write", "verify", "confirm", "publish"}
+        if workflow.slug == "system-controlled-xlsx-write-test"
+        else {"query", "select", "result"}
+        if workflow.slug in P2_COMPLETE_WORKFLOW_SLUGS else set()
+    )
+    missing = sorted(required_ids - {node["id"] for node in nodes})
+    if missing:
+        return candidate, [], [{
+            "phase": "P2", "code": "migration_required_node_inactive",
+            "node_id": node_id, "message": "原生迁移需要的节点已停放或不存在，请检查活动流程",
+        } for node_id in missing]
     if workflow.slug in {
         "electron-source-selection",
         "hemp-cotton-source-selection",
@@ -3245,6 +3243,7 @@ def preview_v1_migration(
     source: str,
     actor: ExecutionUser,
     target_profile: str = "compat_v1",
+    target_slug: Optional[str] = None,
 ) -> dict[str, Any]:
     del actor
     workflow = db.get(ExecutionWorkflow, workflow_id)
@@ -3268,10 +3267,29 @@ def preview_v1_migration(
     )
     transformations: list[dict[str, Any]] = []
     blockers: list[dict[str, Any]] = []
-    if target_profile == "native_p2":
+    from app.execution.v2.regenerated_fiber_migration import WORKFLOW_METHODS, migrate_records
+
+    if target_profile == "native_p3" and workflow.slug in WORKFLOW_METHODS:
+        candidate, transformations, blockers = migrate_records(db, workflow, candidate, suggestions)
+        _rebuild_candidate_dependencies(candidate)
+        candidate["dependencies"]["engine"] = {"version_range": ">=2.2.0 <3.0.0"}
+        _lock, candidate["capabilities"] = _resolve_dependencies(candidate, [])
+        candidate["integrity"]["digest"] = _release_digest(candidate)
+    elif target_profile in {"native_p2", "native_p3"}:
         candidate, transformations, blockers = _native_p2_candidate(
             workflow, candidate
         )
+    if target_slug is not None:
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,99}", target_slug):
+            raise ExecutionApiError(422, "target_slug_invalid", "目标 slug 格式不正确")
+        occupied = db.query(ExecutionWorkflow).filter(ExecutionWorkflow.slug == target_slug).one_or_none()
+        if occupied is not None and occupied.replaces_workflow_id != workflow.id:
+            raise conflict("workflow_slug_conflict", "目标 slug 已被使用，请选择新的 slug")
+        candidate["release"]["slug"] = target_slug
+        candidate["integrity"]["digest"] = _release_digest(candidate)
+    from app.execution.workflow_replacement import source_snapshot
+
+    parked_ids = [node.get("id") for node in definition.get("nodes", []) if node.get("disabled") is True]
     issues = _validate_document_shape(candidate)
     if not issues:
         issues.extend(_verify_integrity(candidate, _release_digest(candidate)))
@@ -3295,18 +3313,21 @@ def preview_v1_migration(
     )
     compatibility_count = len(candidate["definition"]["nodes"]) - native_count
     migration_status = (
-        "p2_complete"
-        if target_profile == "native_p2"
+        "p3_complete"
+        if target_profile == "native_p3" and workflow.slug in WORKFLOW_METHODS and not blockers and content_valid
+        else "p2_complete"
+        if target_profile in {"native_p2", "native_p3"}
         and workflow.slug in P2_COMPLETE_WORKFLOW_SLUGS
         and not blockers
         else "p3_p4_deferred"
-        if target_profile == "native_p2"
+        if target_profile in {"native_p2", "native_p3"}
         else "compatibility_preview"
     )
     return {
         "workflow_id": workflow.id,
         "source": source,
         "target_profile": target_profile,
+        "replacement_source": source_snapshot(db, workflow) if source == "published" else None,
         "migration_status": migration_status,
         "candidate": candidate,
         "binding_suggestions": suggestions,
@@ -3320,6 +3341,12 @@ def preview_v1_migration(
             "node_count": len(candidate["definition"]["nodes"]),
             "edge_count": len(candidate["definition"]["edges"]),
             "active_pointer_changed": False,
+            "excluded_node_ids": parked_ids,
+            "excluded_edge_ids": [
+                edge.get("id") for edge in definition.get("edges", [])
+                if edge.get("source") in parked_ids or edge.get("target") in parked_ids
+            ],
+            "source_digest": definition_checksum(definition),
             "transformations": transformations,
             "config_changes": [
                 item

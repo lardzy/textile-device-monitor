@@ -115,41 +115,41 @@
     "node_types": [
       {
         "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "c2a19a7696d1cf77e5e8ac89c69b573c98568204639ed5ff3c17c74e441747c6",
+        "implementation_digest": "0f4f96986805c78615c96cfd1814ef1aede08da7db433290a2724686c9f0bde2",
         "type": "core.start",
         "type_version": 1
       },
       {
         "contract_digest": "b1d4fe1f4f4a2232ab9fc36729303118c5f850fe62ffd9ae38d2c665dcb4acd4",
-        "implementation_digest": "a6e48309a3a3b18c52ec15fdaae26d64e8cbebdda64678ae40d2eb822dfbdd83",
+        "implementation_digest": "f1ca1a1321119ef1dbb7ff66e7a2a516a2519b0330d4a0058e90f26c78b78ff5",
         "type": "file.index_query",
         "type_version": 1
       },
       {
         "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "28edf64262c2f6b1f0cd4458bce1223145a6bc1b3a219359ae1903e43d58d4cb",
+        "implementation_digest": "3c753443fbe162dd5ff2f3765aade7e22426a4f3981d8954c21d5297a88996c6",
         "type": "core.end",
         "type_version": 1
       }
     ],
     "packs": [
       {
-        "distribution_digest": "05f2b9b45de0d4453d93bf8d7ca120e6e89b2ffd7a6738c5723f88db3ffb5735",
+        "distribution_digest": "2b89bd3ed875cb7da30337cbf21ade1a888ed9361beb84848db9b672acf689fd",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.1.0"
+        "version_range": "2.1.2"
       },
       {
-        "distribution_digest": "e24b71773af4911345608092897f4ec0aad48b5cd19dac9793baa0c1ee9cea1f",
+        "distribution_digest": "18bfd9c802b39fb7096897939a162c6388f3851da49cc7403b03173b36779d7f",
         "pack_id": "textile.execution-v1-compat",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.1.0"
+        "version_range": "2.1.1"
       }
     ]
   },
@@ -159,7 +159,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "6acdaecb75647d0e908857f066851c9d5a7aad7d454554eadd07db919d027a04",
+    "digest": "49acd0367cfa07befcc43efdd3ce801f9b1512ee40a8902652efdfb752d4b9de",
     "scope": "document_without_integrity",
     "signatures": []
   },

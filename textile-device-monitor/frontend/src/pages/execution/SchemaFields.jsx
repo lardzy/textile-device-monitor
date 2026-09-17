@@ -10,10 +10,29 @@ import {
   Typography,
 } from 'antd';
 
+const schemaTypes = schema => (Array.isArray(schema.type) ? schema.type : [schema.type]);
+const isJsonField = schema => (
+  schemaTypes(schema).includes('object')
+  || (schemaTypes(schema).includes('array')
+    && !['string', 'number', 'integer', 'boolean'].includes(schema.items?.type))
+);
+const parseJsonField = value => {
+  if (typeof value !== 'string') return value;
+  if (!value.trim()) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+const jsonFieldValue = value => ({
+  value: value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2),
+});
+
 const formItemRules = (name, schema, required = []) => {
   const rules = [];
   if (required.includes(name)) {
-    rules.push({ required: true, message: `请填写${schema.title || name}` });
+    rules.push({ required: true, message: schema.validation_message || `请填写${schema.title || name}` });
   }
   if (schema.pattern) {
     rules.push({
@@ -29,6 +48,16 @@ const formItemRules = (name, schema, required = []) => {
             schema.validation_message
             || `${schema.title || name}必须为${String(schema.const)}`,
           );
+        }
+      },
+    });
+  }
+  if (schemaTypes(schema).includes('object')) {
+    rules.push({
+      validator: async (_, value) => {
+        if (value == null && (!required.includes(name) || schemaTypes(schema).includes('null'))) return;
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+          throw new Error(`${schema.title || name}必须是有效的 JSON 对象`);
         }
       },
     });
@@ -107,9 +136,10 @@ export default function SchemaFields({
       Array.isArray(field['x-copy-sources']) ? field['x-copy-sources'] : []
     ).filter(source => source && source.text);
     const fieldTypes = Array.isArray(field.type) ? field.type : [field.type];
-    const isScalarArray = fieldTypes.includes('array');
+    const structured = isJsonField(field);
+    const isScalarArray = fieldTypes.includes('array') && !structured;
     const arrayItemType = field.items?.type;
-    const normalize = isScalarArray
+    const normalize = structured ? parseJsonField : isScalarArray
       ? (value) => {
         if (!Array.isArray(value)) {
           return value;
@@ -125,7 +155,9 @@ export default function SchemaFields({
       : undefined;
 
     let control;
-    if (isScalarArray) {
+    if (structured) {
+      control = <Input.TextArea {...common} rows={4} placeholder={field.placeholder || `请输入 JSON ${fieldTypes.includes('object') ? '对象' : '数组'}`} />;
+    } else if (isScalarArray) {
       const allowed = Array.isArray(field.items?.enum)
         ? field.items.enum
         : arrayItemType === 'boolean'
@@ -156,6 +188,7 @@ export default function SchemaFields({
           key={name}
           name={fieldName}
           valuePropName="checked"
+          validateFirst
           rules={formItemRules(name, field, required)}
         >
           <Checkbox disabled={common.disabled}>{field.title || name}</Checkbox>
@@ -201,11 +234,13 @@ export default function SchemaFields({
             disabled={common.disabled}
           />
           <Form.Item
-          name={fieldName}
-          noStyle
-          initialValue={initialValue}
-          normalize={normalize}
-          rules={formItemRules(name, field, required)}
+            name={fieldName}
+            noStyle
+            initialValue={initialValue}
+            normalize={normalize}
+            getValueProps={structured ? jsonFieldValue : undefined}
+            validateFirst
+            rules={formItemRules(name, field, required)}
           >
             {control}
           </Form.Item>
@@ -221,6 +256,8 @@ export default function SchemaFields({
         tooltip={field.description}
         initialValue={initialValue}
         normalize={normalize}
+        getValueProps={structured ? jsonFieldValue : undefined}
+        validateFirst
         rules={formItemRules(name, field, required)}
       >
         {control}

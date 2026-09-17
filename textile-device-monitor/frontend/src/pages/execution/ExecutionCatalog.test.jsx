@@ -3,6 +3,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -118,6 +119,11 @@ const installHandlers = (runHandler) => {
       ],
     })),
     http.get('/api/execution/v1/workflows', () => HttpResponse.json({ items: workflows })),
+    http.get('/api/execution/v1/workflows/:id', ({ params }) => HttpResponse.json({
+      input_schema: { type: 'object', properties: { inspection_number: { type: 'string' } } },
+      global_schema: { type: 'object', properties: {} },
+      ...workflows.find(item => item.id === params.id),
+    })),
     http.get('/api/execution/v1/runs', () => HttpResponse.json({ items: [] })),
     http.get('/api/execution/v1/catalog/recommendations', () => HttpResponse.json({
       items: workflows.map((workflow, index) => ({
@@ -170,7 +176,7 @@ describe('ExecutionCatalog', () => {
     });
   });
 
-  it('未输入编号也能先进入执行准备页，且不会创建空白运行', async () => {
+  it('未输入编号时在目录补齐信息，不创建空白运行', async () => {
     const runRequested = vi.fn();
     installHandlers(() => {
       runRequested();
@@ -186,16 +192,16 @@ describe('ExecutionCatalog', () => {
     expect(card.querySelector('.execution-workflow-card__meta')).not.toHaveTextContent('v2');
     await user.hover(card.querySelector('.execution-workflow-card__meta span'));
     expect(await screen.findByText('当前发布版本：v2')).toBeInTheDocument();
-    await user.click(card.querySelector('button'));
+    await user.click(screen.getByText('特种毛原始记录处理').closest('.execution-workflow-card').querySelector('button'));
 
-    expect(await screen.findByText('执行准备页已打开')).toBeInTheDocument();
-    expect(screen.getByTestId('location')).toHaveTextContent(
-      '/execution/workflows/wf-wool/start',
-    );
+    const drawer = await screen.findByRole('dialog');
+    expect(within(drawer).getByText('特种毛原始记录处理')).toBeInTheDocument();
+    expect(await within(drawer).findByRole('textbox', { name: '检验编号' })).toHaveValue('');
+    expect(screen.getByTestId('location')).toHaveTextContent('/execution');
     expect(runRequested).not.toHaveBeenCalled();
   });
 
-  it('把目录中的编号带入执行准备页 URL', async () => {
+  it('把编号带入当前页表单，补齐必要字段后一次启动', async () => {
     installHandlers();
     const user = userEvent.setup();
     renderCatalog('/execution?number=26X910095-1');
@@ -203,10 +209,65 @@ describe('ExecutionCatalog', () => {
     const cardTitle = await screen.findByText('特种毛原始记录处理');
     await user.click(cardTitle.closest('.execution-workflow-card').querySelector('button'));
 
-    expect(await screen.findByText('执行准备页已打开')).toBeInTheDocument();
-    expect(screen.getByTestId('location')).toHaveTextContent(
-      '/execution/workflows/wf-wool/start?number=26X910095-1',
-    );
+    const drawer = await screen.findByRole('dialog', { name: '特种毛原始记录处理' });
+    expect(await within(drawer).findByRole('textbox', { name: '检验编号' })).toHaveValue('26X910095-1');
+    await user.type(within(drawer).getByRole('spinbutton', { name: '样品数量' }), '2');
+    await user.type(within(drawer).getByRole('textbox', { name: '备注' }), '首轮检测');
+    await user.click(within(drawer).getByRole('button', { name: /开始执行/ }));
+    expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
+  });
+
+  it('只有编号的流程直接启动，重复点击不重复提交', async () => {
+    const requests = [];
+    let finish;
+    const pending = new Promise(resolve => { finish = resolve; });
+    installHandlers(async ({ request }) => {
+      requests.push(await request.json());
+      await pending;
+      return HttpResponse.json({ id: 'run-direct' });
+    });
+    const user = userEvent.setup();
+    renderCatalog('/execution?number=26X910095-1');
+    const title = await screen.findByText('麻棉原始记录处理');
+    await user.dblClick(title.closest('.execution-workflow-card').querySelector('button'));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({ workflow_id: 'wf-cotton', inspection_number: '26X910095-1', input_data: { inspection_number: '26X910095-1' } });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    finish();
+    expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
+  });
+
+  it('直接启动网络失败后重试复用原提交标识', async () => {
+    const requests = [];
+    installHandlers(async ({ request }) => {
+      requests.push(await request.json());
+      return requests.length === 1 ? HttpResponse.error() : HttpResponse.json({ id: 'run-retry' });
+    });
+    const user = userEvent.setup();
+    renderCatalog('/execution?number=26X910095-1');
+    const title = await screen.findByText('麻棉原始记录处理');
+    const button = title.closest('.execution-workflow-card').querySelector('button');
+    await user.click(button);
+    await waitFor(() => expect(requests).toHaveLength(1));
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
+    expect(requests).toHaveLength(2);
+    expect(requests[1].idempotency_key).toBe(requests[0].idempotency_key);
+  });
+
+  it('目录显示后流程被归档时不创建新任务', async () => {
+    const posted = vi.fn();
+    installHandlers(posted);
+    server.use(http.get('/api/execution/v1/workflows/wf-cotton', () => HttpResponse.json({
+      ...workflows[1], archived_at: '2026-09-17T00:00:00Z', is_enabled: false,
+    })));
+    const user = userEvent.setup();
+    renderCatalog('/execution?number=26X910095-1');
+    const title = await screen.findByText('麻棉原始记录处理');
+    await user.click(title.closest('.execution-workflow-card').querySelector('button'));
+    expect(await screen.findByText('流程已停用或归档，请刷新目录')).toBeInTheDocument();
+    expect(posted).not.toHaveBeenCalled();
   });
 
   it('renders missing data roots as unavailable instead of inventing a fallback', async () => {

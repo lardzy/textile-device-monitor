@@ -176,10 +176,10 @@ class CrossSectionWorkflowDefinitionTests(unittest.TestCase):
             )
         # 既有微观形貌定义的校验和保持稳定（目录自动升级依赖它）。
         # 2026-08-18：流程末尾新增“放置报告上传图片”节点；
-        # 2026-08-18：恢复生成原始记录后的打印确认节点。
+        # 2026-09-17：新定义不再通过打印确认阻塞登记。
         self.assertEqual(
             definition_checksum(definition),
-            "9dad25e4badb749fd26d1cfc29502e314b04fdf19a91e3006ee2071ea3dfece2",
+            "19a11f7c1c01757a2a8be3f847f96b41a3046dcc24080fe725913f3deb7a7a3d",
         )
         # 含图片放置节点、尚无打印确认节点的已发布定义必须保持原校验和，
         # 否则存量库的自动跟随升级会失效。

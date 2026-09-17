@@ -1817,7 +1817,7 @@ def stage_before_side_effect(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="旧检务系统集中式 Bridge（单任务版）")
+    parser = argparse.ArgumentParser(description="旧检务系统集中式 Bridge")
     parser.add_argument("--api-base", required=True)
     parser.add_argument("--bridge-id", required=True)
     parser.add_argument("--token-env", default="EXECUTION_BRIDGE_TOKEN")
@@ -1840,7 +1840,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--account-env", default="FIBRECHECK_RUNNER_ACCOUNT")
     parser.add_argument("--password-env", default="FIBRECHECK_RUNNER_PASSWORD")
     parser.add_argument("--once", action="store_true", help="只领取并执行一个任务（无任务则立即返回）")
-    parser.add_argument("--poll-seconds", type=float, default=15.0)
+    parser.add_argument("--poll-seconds", type=float, default=2.0)
     args = parser.parse_args(argv)
 
     token = os.environ.get(args.token_env, "")
@@ -1856,9 +1856,12 @@ def main(argv: list[str] | None = None) -> int:
 
     while True:
         outcome = run_one_cycle(args, token, account, password, root_map)
-        if args.once or outcome == "claimed":
+        if args.once:
             return 0 if outcome == "claimed" else 1
-        time.sleep(args.poll_seconds)
+        # Each task still gets its own Writer process. The HTTP coordinator
+        # can immediately claim the next task without restarting Python.
+        if outcome != "claimed":
+            time.sleep(max(args.poll_seconds, 0.1))
 
 
 def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[str, str]) -> str:
