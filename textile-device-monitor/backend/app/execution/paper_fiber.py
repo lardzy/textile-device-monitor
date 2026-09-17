@@ -4,6 +4,7 @@ import math
 import re
 import time
 import unicodedata
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
@@ -606,9 +607,12 @@ def paper_fiber_match(
     rule_key: Optional[str] = None,
     rule: Optional[ResolvedRule] = None,
     records: Optional[dict[str, Any]] = None,
+    root_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Combine local records with the cached task; callers may reuse one scan."""
     rule = rule or resolve_rule(db, rule_key or PAPER_FIBER_RULE_KEY)
+    if root_id is not None:
+        rule = replace(rule, source_root_id=root_id)
     reuse = records is not None and (
         records.get("rule_key"), records.get("rule_revision")
     ) == (rule.key, rule.revision)
@@ -645,7 +649,9 @@ def paper_fiber_match(
     }
 
 
-def _paper_fiber_executor(context) -> dict[str, Any]:
+def _paper_fiber_executor(
+    context, *, root_id: Optional[str] = None, rule: Optional[ResolvedRule] = None,
+) -> dict[str, Any]:
     config = context.node.get("config") or {}
     inspection_number = str(
         context.input_data.get("inspection_number")
@@ -671,6 +677,8 @@ def _paper_fiber_executor(context) -> dict[str, Any]:
             result_limit=result_limit,
             rule_key=rule_key,
             records=match,
+            root_id=root_id,
+            rule=rule,
         )
         missing = [
             item

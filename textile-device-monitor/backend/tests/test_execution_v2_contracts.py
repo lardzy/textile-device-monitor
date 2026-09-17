@@ -109,11 +109,11 @@ def test_installed_registry_freezes_all_current_compatibility_contracts():
     compatibility = [item for item in specs if item.source == "v1_registry_adapter"]
     native = [item for item in specs if item.source == "resource"]
     assert len(compatibility) == 39
-    assert len(native) == 20
+    assert len(native) == 24
     assert sum(item.publishable for item in compatibility) == 37
     assert sum(not item.publishable for item in compatibility) == 2
     assert all(item.publishable for item in native)
-    assert len(registry.list_packs()) == 6
+    assert len(registry.list_packs()) == 7
     assert len(registry.list_assets()) == 11
     assert len(registry.list_connectors()) == 1
     assert len(registry.list_connectors()[0]["operations"]) == 7
@@ -235,8 +235,8 @@ def test_worker_self_check_advertises_compatibility_and_native_bindings():
     ExecutionWorker(worker_id="v2-contract-test")
     reset_installed_registry_cache()
     document = worker_capability_document()
-    assert len(document["nodes"]) == 59
-    assert sum(item["ready"] for item in document["nodes"]) == 57
+    assert len(document["nodes"]) == 63
+    assert sum(item["ready"] for item in document["nodes"]) == 61
     assert {item["type"] for item in document["nodes"] if not item["ready"]} == {
         "external.legacy_inspection",
         "external.new_inspection",

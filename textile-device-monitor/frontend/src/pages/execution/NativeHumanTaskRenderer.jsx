@@ -11,6 +11,7 @@ import {
 } from 'antd';
 import SchemaFields from './SchemaFields';
 import ExecutionResultFiles from './ExecutionResultFiles';
+import ExecutionImageSelector from './ExecutionImageSelector';
 
 const { Text } = Typography;
 
@@ -39,6 +40,19 @@ function ResultFileSelection({ value = [], onChange, items, form, disabled, maxi
   );
 }
 
+function ImageSelection({ value = [], onChange, items, form, disabled, maximum }) {
+  return (
+    <ExecutionImageSelector
+      images={items.map(item => ({ ...item.metadata, id: item.id }))}
+      selectedImageIds={value}
+      onSelectedImageIdsChange={onChange}
+      onPrimaryImageIdChange={id => form.setFieldValue('primary_id', id)}
+      disabled={disabled}
+      maxImages={maximum}
+    />
+  );
+}
+
 export default function NativeHumanTaskRenderer({
   renderer,
   rendererContract,
@@ -55,6 +69,7 @@ export default function NativeHumanTaskRenderer({
     const items = Array.isArray(inputData?.items) ? inputData.items : [];
     const selectedSchema = schema?.properties?.selected_ids || {};
     const showResults = items.length > 0 && items.every(item => item?.metadata?.presentation === 'result_file');
+    const showImages = items.length > 0 && items.every(item => item.kind === 'image');
     return (
       <>
         <Form.Item
@@ -71,7 +86,14 @@ export default function NativeHumanTaskRenderer({
             },
           }]}
         >
-          {showResults ? (
+          {showImages ? (
+            <ImageSelection
+              items={items}
+              form={form}
+              disabled={disabled}
+              maximum={selectedSchema.maxItems}
+            />
+          ) : showResults ? (
             <ResultFileSelection
               items={items}
               form={form}
@@ -92,8 +114,8 @@ export default function NativeHumanTaskRenderer({
           )}
         </Form.Item>
         {schema?.properties?.primary_id && (
-          <Form.Item name="primary_id" label="主项（如节点要求）" hidden={showResults}>
-            {showResults ? <Input /> : <Select
+          <Form.Item name="primary_id" label="主项（如节点要求）" hidden={showResults || showImages}>
+            {showResults || showImages ? <Input /> : <Select
               allowClear
               disabled={disabled}
               options={items.map(item => ({

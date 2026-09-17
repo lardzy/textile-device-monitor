@@ -984,7 +984,7 @@ export default function ExecutionWorkflowReleaseManager() {
               options={[
                 { value: 'compat_v1', label: 'compat_v1（保持 P1 行为）' },
                 { value: 'native_p2', label: 'native_p2（基础节点迁移）' },
-                { value: 'native_p3', label: 'native_p3（基础节点与再生纤）' },
+                { value: 'native_p3', label: 'native_p3（基础节点与领域服务）' },
               ]}
             />
           </Form.Item>

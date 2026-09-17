@@ -1,0 +1,311 @@
+{
+  "assets": [],
+  "capabilities": {
+    "declared": [
+      "file.read",
+      "file.write",
+      "microscopy.records"
+    ],
+    "requires_human_approval": true,
+    "side_effect_level": "local_write"
+  },
+  "definition": {
+    "edges": [
+      {
+        "id": "start-query",
+        "join_policy": "all",
+        "source": "start",
+        "target": "query"
+      },
+      {
+        "id": "query-select",
+        "join_policy": "all",
+        "source": "query",
+        "target": "select"
+      },
+      {
+        "id": "select-original",
+        "join_policy": "all",
+        "source": "select",
+        "target": "original"
+      },
+      {
+        "id": "original-check",
+        "join_policy": "all",
+        "source": "original",
+        "target": "check"
+      },
+      {
+        "id": "check-end",
+        "join_policy": "all",
+        "source": "check",
+        "target": "end"
+      }
+    ],
+    "global_defaults": {},
+    "global_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_number": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "检验编号",
+          "type": "string"
+        },
+        "sample_name": {
+          "minLength": 1,
+          "title": "样品名称",
+          "type": "string"
+        }
+      },
+      "required": [
+        "inspection_number",
+        "sample_name"
+      ],
+      "type": "object"
+    },
+    "nodes": [
+      {
+        "config": {},
+        "id": "start",
+        "input_mapping": {},
+        "name": "开始",
+        "type": "core.start",
+        "type_version": 1,
+        "ui": {
+          "x": 40,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "record_family": "microscopy",
+          "require_full_task_match": false,
+          "root_slot": "source",
+          "rule_slot": "record_match"
+        },
+        "id": "query",
+        "input_mapping": {
+          "inspection_number": "$.inputs.inspection_number"
+        },
+        "name": "查询领域资料",
+        "type": "microscopy.image_candidates",
+        "type_version": 1,
+        "ui": {
+          "x": 300,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "auto_submit_single_candidate": true,
+          "description": "支持 1、2、3、5、6、7、10 张图片。",
+          "item_kind": "image",
+          "max_selected": 10,
+          "min_selected": 1,
+          "require_primary": false,
+          "title": "选择结果图片"
+        },
+        "id": "select",
+        "input_mapping": {
+          "items": "$.nodes.query.output.items"
+        },
+        "name": "选择结果图片",
+        "type": "human.select",
+        "type_version": 1,
+        "ui": {
+          "x": 560,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "record_family": "microscopy",
+          "source_root_slot": "source",
+          "staging_root_slot": "staging"
+        },
+        "id": "original",
+        "input_mapping": {
+          "images": "$.nodes.select.output.selected_items",
+          "inspection_number": "$.inputs.inspection_number",
+          "judgement_required": false,
+          "sample_name": "$.inputs.sample_name"
+        },
+        "name": "生成原始记录",
+        "type": "microscopy.original_record.render",
+        "type_version": 1,
+        "ui": {
+          "x": 840,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "record_family": "microscopy",
+          "staging_root_slot": "staging"
+        },
+        "id": "check",
+        "input_mapping": {
+          "image_count": "$.nodes.original.output.image_count",
+          "inspection_number": "$.inputs.inspection_number",
+          "judgement_required": false,
+          "template_binding": "$.nodes.original.output.template_binding"
+        },
+        "name": "生成登记工作簿",
+        "type": "microscopy.check_record.render",
+        "type_version": 1,
+        "ui": {
+          "x": 1120,
+          "y": 180
+        }
+      },
+      {
+        "config": {},
+        "id": "end",
+        "input_mapping": {
+          "original_record": "$.nodes.original.output.original_record",
+          "registration_workbook": "$.nodes.check.output.check_record"
+        },
+        "name": "结束",
+        "type": "core.end",
+        "type_version": 1,
+        "ui": {
+          "x": 1080,
+          "y": 180
+        }
+      }
+    ],
+    "output_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "original_record": {
+          "type": "object"
+        },
+        "registration_workbook": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "original_record",
+        "registration_workbook"
+      ],
+      "type": "object"
+    },
+    "schema_version": "2.0"
+  },
+  "dependencies": {
+    "connectors": [],
+    "engine": {
+      "version_range": ">=2.3.0 <3.0.0"
+    },
+    "node_types": [
+      {
+        "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
+        "implementation_digest": "0f4f96986805c78615c96cfd1814ef1aede08da7db433290a2724686c9f0bde2",
+        "type": "core.start",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "b351dad36dcc392c202825d39f183278158d9abba7615b45097f935d2aff6803",
+        "implementation_digest": "607ba3dada845e4ee0c9ee44017546a3a3103cb5ea6f6178c0d29acceb6d68bb",
+        "type": "microscopy.image_candidates",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
+        "implementation_digest": "dfcde2bf5fe7e9a4df65dc017557c3eca8c6f6a3887a55e8296173e2b25d6649",
+        "type": "human.select",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "247b53f39b594de21478aa8fc17f4cb19a12a1c8eba045ec6db6836d55b07afe",
+        "implementation_digest": "ec827fbd23a5b13fd673c9653158ec626532d63695516b5f06eda770e675f870",
+        "type": "microscopy.original_record.render",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "5f995507868f1d5b963183f2e179d950d3e1092bf8168779ae1e2e17e0ea4f6b",
+        "implementation_digest": "2ad588001943478b400f577e60caa64e07789055bbae41b9dd25d0328dcf3c07",
+        "type": "microscopy.check_record.render",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
+        "implementation_digest": "3c753443fbe162dd5ff2f3765aade7e22426a4f3981d8954c21d5297a88996c6",
+        "type": "core.end",
+        "type_version": 1
+      }
+    ],
+    "packs": [
+      {
+        "distribution_digest": "96bc49fa5b8bf85b1a25200bb8df86ef4ef06375ab05ec6242c76c8b37f6f38c",
+        "pack_id": "textile.domain-records",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": "1.0.0"
+      },
+      {
+        "distribution_digest": "2b89bd3ed875cb7da30337cbf21ade1a888ed9361beb84848db9b672acf689fd",
+        "pack_id": "textile.execution-kernel",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": "2.1.2"
+      }
+    ]
+  },
+  "fixtures": [],
+  "format": "textile-workflow-release",
+  "format_version": "2.0",
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "RFC8785",
+    "digest": "f7b2f0fc4a50437e022862caef2693e7d5022845f46ed4742cc1a2b8c22b0000",
+    "scope": "document_without_integrity",
+    "signatures": []
+  },
+  "release": {
+    "category_key": "other",
+    "description": "原生查询、选择和本地工作簿生成；本示例不要求判定，不执行检务写入。",
+    "name": "显微记录生成验收",
+    "release_note": "P3 native domain services smoke release",
+    "release_version": 1,
+    "slug": "v2-microscopy-records-smoke"
+  },
+  "resources": {
+    "credential_slots": [],
+    "role_slots": [],
+    "root_slots": [
+      {
+        "access": "read",
+        "description": "绑定到只读索引根。",
+        "name": "文件索引源",
+        "required": true,
+        "slot_id": "source"
+      },
+      {
+        "access": "write",
+        "name": "生成工作簿",
+        "required": true,
+        "slot_id": "staging"
+      }
+    ],
+    "rule_slots": [
+      {
+        "contract_version": 1,
+        "name": "项目匹配规则",
+        "required": true,
+        "rule_type": "project_match",
+        "slot_id": "record_match"
+      }
+    ]
+  }
+}

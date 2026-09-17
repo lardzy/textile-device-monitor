@@ -523,10 +523,11 @@ def find_microscopy_images(
     db: Session,
     *,
     inspection_number: str,
+    root_id: str = ELECTRON_ROOT_ID,
 ) -> dict[str, Any]:
     root = (
         db.query(ExecutionStorageRoot)
-        .filter(ExecutionStorageRoot.root_id == ELECTRON_ROOT_ID)
+        .filter(ExecutionStorageRoot.root_id == root_id)
         .one_or_none()
     )
     if root is None or not root.is_active or not root.is_available:
@@ -635,7 +636,7 @@ def find_microscopy_images(
         images.append(
             {
                 "id": entry.id,
-                "root_id": ELECTRON_ROOT_ID,
+                "root_id": root_id,
                 "relative_path": entry.relative_path,
                 "name": entry.filename,
                 "suffix": entry.extension,
@@ -717,6 +718,7 @@ def electron_microscopy_match(
     family=None,
     rule_key: Optional[str] = None,
     rule=None,
+    root_id: str = ELECTRON_ROOT_ID,
 ) -> dict[str, Any]:
     resolved_family = family or MICROSCOPY_RECORD_FAMILIES[
         MICROSCOPY_FAMILY_KEY
@@ -725,7 +727,7 @@ def electron_microscopy_match(
         db,
         rule_key or microscopy_rule_key(resolved_family.key),
     )
-    images = find_microscopy_images(db, inspection_number=inspection_number)
+    images = find_microscopy_images(db, inspection_number=inspection_number, root_id=root_id)
     if not rule.enabled:
         return {
             **images,

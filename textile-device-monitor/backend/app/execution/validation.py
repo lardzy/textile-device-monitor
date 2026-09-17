@@ -1169,7 +1169,7 @@ def validate_definition(
         if (
             generation_node is None
             or generation_node.get("type")
-            != "workbook.microscopy_original_record"
+            not in {"workbook.microscopy_original_record", "microscopy.original_record.render"}
         ):
             issues.append(
                 ValidationIssue(
@@ -1293,7 +1293,7 @@ def validate_definition(
         if (
             generation_node is None
             or generation_node.get("type")
-            != "workbook.microscopy_check_record"
+            not in {"workbook.microscopy_check_record", "microscopy.check_record.render"}
         ):
             issues.append(
                 ValidationIssue(

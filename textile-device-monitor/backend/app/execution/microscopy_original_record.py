@@ -912,6 +912,7 @@ def _resolve_selected_images(
     *,
     selected_image_ids: object,
     offered_images: object,
+    root_id: str = ELECTRON_ROOT_ID,
 ) -> list[tuple[ExecutionFileIndexEntry, Path]]:
     if not isinstance(selected_image_ids, list):
         raise ExecutionApiError(
@@ -952,7 +953,7 @@ def _resolve_selected_images(
         entry, root = row
         if (
             entry.missing_since is not None
-            or root.root_id != ELECTRON_ROOT_ID
+            or root.root_id != root_id
             or entry.extension.casefold() not in ELECTRON_IMAGE_SUFFIXES
         ):
             raise ExecutionApiError(
@@ -1253,10 +1254,10 @@ def _request_digest(
     ).hexdigest()
 
 
-def _artifact_output(artifact: ExecutionArtifact) -> dict[str, Any]:
+def _artifact_output(artifact: ExecutionArtifact, root_id: str = STAGING_ROOT_ID) -> dict[str, Any]:
     return {
         "artifact_id": artifact.id,
-        "root_id": STAGING_ROOT_ID,
+        "root_id": root_id,
         "relative_path": artifact.relative_path,
         "filename": artifact.filename,
         "media_type": artifact.media_type,
@@ -1274,8 +1275,9 @@ def _existing_artifact_output(
     node_run_id: str,
     relative_path: str,
     request_digest: str,
+    root_id: str = STAGING_ROOT_ID,
 ) -> Optional[ExecutionArtifact]:
-    root = storage_root_by_key(db, STAGING_ROOT_ID)
+    root = storage_root_by_key(db, root_id)
     artifact = (
         db.query(ExecutionArtifact)
         .filter(
@@ -1295,7 +1297,7 @@ def _existing_artifact_output(
     gateway = build_file_gateway(db)
     try:
         path = gateway.resolve(
-            ArtifactRef(STAGING_ROOT_ID, relative_path), expected_type="file"
+            ArtifactRef(root_id, relative_path), expected_type="file"
         )
         current = fingerprint_file(path)
     except (StorageError, OSError):
@@ -1428,6 +1430,19 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         declared_binding=input_data.get("template_binding"),
         family=family,
     )
+    return create_original_record_artifact(
+        context.db, run_id=context.run.id, node_run_id=context.node_run.id,
+        inspection_number=inspection_number, cells=cells, selected=selected,
+        template_binding=template_binding,
+    )
+
+
+def create_original_record_artifact(
+    db: Session, *, run_id: str, node_run_id: str, inspection_number: str,
+    cells: dict[str, str], selected: list[tuple[ExecutionFileIndexEntry, Path]],
+    template_binding: dict[str, Any], staging_root_id: str = STAGING_ROOT_ID,
+) -> dict[str, Any]:
+    """Persist a rendered record for either native or compatibility nodes."""
     request_digest = _request_digest(
         inspection_number=inspection_number,
         cells=cells,
@@ -1436,17 +1451,18 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
     )
     filename = f"{inspection_number}-{MICROSCOPY_ORIGINAL_TEMPLATE_FILENAME}"
     relative_path = (
-        f"original-records/{context.run.id}/{context.node_run.id}/{filename}"
+        f"original-records/{run_id}/{node_run_id}/{filename}"
     )
     existing = _existing_artifact_output(
-        context.db,
-        run_id=context.run.id,
-        node_run_id=context.node_run.id,
+        db,
+        run_id=run_id,
+        node_run_id=node_run_id,
         relative_path=relative_path,
         request_digest=request_digest,
+        root_id=staging_root_id,
     )
     if existing is not None:
-        original_record = _artifact_output(existing)
+        original_record = _artifact_output(existing, staging_root_id)
         return {
             "artifact_id": existing.id,
             "original_record": original_record,
@@ -1464,8 +1480,8 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
             "reused": True,
         }
 
-    gateway = build_file_gateway(context.db)
-    target_ref = ArtifactRef(STAGING_ROOT_ID, relative_path)
+    gateway = build_file_gateway(db)
+    target_ref = ArtifactRef(staging_root_id, relative_path)
     target = gateway.resolve(target_ref, must_exist=False, for_write=True)
     gateway.ensure_parent(target_ref)
     if target.exists():
@@ -1480,10 +1496,10 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
     )
 
     fingerprint = fingerprint_file(target)
-    root = storage_root_by_key(context.db, STAGING_ROOT_ID)
+    root = storage_root_by_key(db, staging_root_id)
     artifact = ExecutionArtifact(
-        run_id=context.run.id,
-        node_run_id=context.node_run.id,
+        run_id=run_id,
+        node_run_id=node_run_id,
         storage_root_id=root.id,
         relative_path=relative_path,
         filename=filename,
@@ -1509,9 +1525,9 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
         },
     )
     try:
-        with context.db.begin_nested():
-            context.db.add(artifact)
-            context.db.flush()
+        with db.begin_nested():
+            db.add(artifact)
+            db.flush()
     except IntegrityError as exc:
         target.unlink(missing_ok=True)
         raise ExecutionApiError(
@@ -1519,7 +1535,7 @@ def _microscopy_original_record_executor(context) -> dict[str, Any]:
             "artifact_registration_conflict",
             "原始记录制品并发登记冲突，请重试",
         ) from exc
-    original_record = _artifact_output(artifact)
+    original_record = _artifact_output(artifact, staging_root_id)
     return {
         "artifact_id": artifact.id,
         "original_record": original_record,

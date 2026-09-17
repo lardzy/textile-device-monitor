@@ -13,12 +13,12 @@ const item = id => ({
   },
 });
 
-function Selection({ onFinish }) {
+function Selection({ onFinish, items = [item('a'), item('b')] }) {
   const [form] = Form.useForm();
   return <Form form={form} onFinish={onFinish}>
     <NativeHumanTaskRenderer renderer={{ capability: 'human.select' }} form={form}
       schema={{ properties: { selected_ids: { minItems: 1, maxItems: 2 }, primary_id: { type: 'string' } } }}
-      inputData={{ items: [item('a'), item('b')] }} />
+      inputData={{ items }} />
     <Button htmlType="submit">提交选择</Button>
   </Form>;
 }
@@ -43,5 +43,33 @@ describe('native result-file selection', () => {
     expect(files[0].result.parts[0].components[0].content).toBe(70);
     expect(files[0].name).toBe('a.xlsx');
     expect(extractPrimaryFileId(selection)).toBe('a');
+  });
+
+  it('reuses the image gallery, previews images and submits only stable IDs', async () => {
+    const submit = vi.fn();
+    const user = userEvent.setup();
+    const images = ['a', 'b'].map(id => ({
+      id, kind: 'image', label: `${id}.png`, root_id: 'pictures', relative_path: `${id}.png`, fingerprint: '1:2',
+      metadata: { name: `${id}.png`, preview_url: `/api/execution/v1/files/index/${id}/preview` },
+    }));
+    render(<Selection onFinish={submit} items={images} />);
+    await user.click(screen.getByRole('button', { name: '查看大图 a.png' }));
+    expect(screen.getByAltText('a.png')).toHaveAttribute('src', images[0].metadata.preview_url);
+    await user.click(screen.getByRole('button', { name: /选为结果图片/ }));
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    await user.click(screen.getByRole('button', { name: '提交选择' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ selected_ids: ['a'], primary_id: 'a' }));
+  });
+
+  it('displays paper-fiber qualitative results in the existing cards', async () => {
+    const submit = vi.fn();
+    const user = userEvent.setup();
+    const paper = item('paper');
+    paper.metadata.result = { worksheet: 'Sheet1', cell: 'W32', w32_value: '木浆 100', m32_value: '标准值', unit: '%' };
+    render(<Selection onFinish={submit} items={[paper]} />);
+    expect(screen.getByText('木浆 100')).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: '需要' }));
+    await user.click(screen.getByRole('button', { name: '提交选择' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ selected_ids: ['paper'], primary_id: 'paper' }));
   });
 });

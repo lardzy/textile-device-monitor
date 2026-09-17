@@ -317,7 +317,7 @@
       },
       {
         "contract_digest": "e2c9297c270b3c2617b8f5921f8be45df413a0f5624bf71e9ec7407dca4cdca1",
-        "implementation_digest": "384c8acd71c318784c75d35816db84da3c10bdbc4009353a069dbbb35529912c",
+        "implementation_digest": "97488093877632f65674422dd89a6e4782222baf9ac8947c44c1152decd0d812",
         "type": "workbook.copy",
         "type_version": 1
       },
@@ -360,13 +360,13 @@
         "version_range": "2.1.2"
       },
       {
-        "distribution_digest": "934a17f12b3405dd09d1a661d52641719f92a6272a19b1b4616fe58520a5f92e",
+        "distribution_digest": "fd8d4c66daaebcaa96988c4e88b7623a97a4f5fb4239645aa76449c11aeb0c86",
         "pack_id": "textile.execution-v1-compat",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.1.2"
+        "version_range": "2.1.3"
       },
       {
         "distribution_digest": "48d611077085d4de69b878d6aad0e15b127a5c32d40db6d0f314978ef1c40029",
@@ -385,7 +385,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "e2225ec27b5053304f999d5ad0ee2143d6fd74ab0641ff53fe9395efbc881ff9",
+    "digest": "a9dd3e4dbb561b18315f842a5eeae214ce8c87147dc1b254ab569d15172cbb85",
     "scope": "document_without_integrity",
     "signatures": []
   },

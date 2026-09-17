@@ -792,10 +792,10 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
             )
 
         auth = AuthContext(session=None, user=self.admin)
-        self.assertEqual(len(packs(_auth=auth)["items"]), 6)
+        self.assertEqual(len(packs(_auth=auth)["items"]), 7)
         self.assertGreaterEqual(len(assets(_auth=auth)["items"]), 1)
         specs = node_specs(node_type=None, _auth=auth)["items"]
-        self.assertEqual(len(specs), 59)
+        self.assertEqual(len(specs), 63)
         selected_spec = specs[0]
         selected_detail = node_spec(
             selected_spec["type"],
@@ -809,7 +809,7 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
         )
         monitor = monitoring(_auth=auth, db=self.db)
         self.assertEqual(len(monitor["registry_revision"]), 64)
-        self.assertEqual(len(monitor["pack_readiness"]), 6)
+        self.assertEqual(len(monitor["pack_readiness"]), 7)
 
         document = build_readonly_file_query_smoke_release()
         content = content_preflight(

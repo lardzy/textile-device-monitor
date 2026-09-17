@@ -514,10 +514,10 @@ def _request_digest(
     ).hexdigest()
 
 
-def _artifact_output(artifact: ExecutionArtifact) -> dict[str, Any]:
+def _artifact_output(artifact: ExecutionArtifact, root_id: str = STAGING_ROOT_ID) -> dict[str, Any]:
     return {
         "artifact_id": artifact.id,
-        "root_id": STAGING_ROOT_ID,
+        "root_id": root_id,
         "relative_path": artifact.relative_path,
         "filename": artifact.filename,
         "media_type": artifact.media_type,
@@ -535,8 +535,9 @@ def _existing_artifact(
     node_run_id: str,
     relative_path: str,
     request_digest: str,
+    root_id: str = STAGING_ROOT_ID,
 ) -> Optional[ExecutionArtifact]:
-    root = storage_root_by_key(db, STAGING_ROOT_ID)
+    root = storage_root_by_key(db, root_id)
     artifact = (
         db.query(ExecutionArtifact)
         .filter(
@@ -555,7 +556,7 @@ def _existing_artifact(
         return None
     try:
         path = build_file_gateway(db).resolve(
-            ArtifactRef(STAGING_ROOT_ID, relative_path),
+            ArtifactRef(root_id, relative_path),
             expected_type="file",
         )
         current = fingerprint_file(path)
@@ -574,8 +575,9 @@ def _result(
     template_binding: dict[str, Any],
     verification: dict[str, Any],
     reused: bool,
+    root_id: str = STAGING_ROOT_ID,
 ) -> dict[str, Any]:
-    check_record = _artifact_output(artifact)
+    check_record = _artifact_output(artifact, root_id)
     metadata = artifact.metadata_json or {}
     expected_key_identities = list(
         metadata.get("expected_key_identities") or []
@@ -651,6 +653,20 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
         family=family,
     )
     cells = _cell_payload(input_data, inspection_number)
+    return create_check_record_artifact(
+        context.db, run_id=context.run.id, node_run_id=context.node_run.id,
+        inspection_number=inspection_number, image_count=image_count, cells=cells,
+        template_binding=template_binding, family=family,
+    )
+
+
+def create_check_record_artifact(
+    db: Session, *, run_id: str, node_run_id: str, inspection_number: str,
+    image_count: int, cells: dict[str, str], template_binding: dict[str, Any],
+    family=None, staging_root_id: str = STAGING_ROOT_ID,
+) -> dict[str, Any]:
+    """Persist a registration workbook without another task-snapshot lookup."""
+    family = family or microscopy_family_from_config(None)
     request_digest = _request_digest(
         inspection_number=inspection_number,
         image_count=image_count,
@@ -666,15 +682,16 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
     # deterministic generation contract its own staging path while retries of
     # the same request still reuse the exact artifact.
     relative_path = (
-        f"check-records/{context.run.id}/{context.node_run.id}/"
+        f"check-records/{run_id}/{node_run_id}/"
         f"{request_digest}/{filename}"
     )
     existing = _existing_artifact(
-        context.db,
-        run_id=context.run.id,
-        node_run_id=context.node_run.id,
+        db,
+        run_id=run_id,
+        node_run_id=node_run_id,
         relative_path=relative_path,
         request_digest=request_digest,
+        root_id=staging_root_id,
     )
     if existing is not None:
         metadata = existing.metadata_json or {}
@@ -685,10 +702,11 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
             template_binding=template_binding,
             verification=metadata.get("verification") or {},
             reused=True,
+            root_id=staging_root_id,
         )
 
-    gateway = build_file_gateway(context.db)
-    target_ref = ArtifactRef(STAGING_ROOT_ID, relative_path)
+    gateway = build_file_gateway(db)
+    target_ref = ArtifactRef(staging_root_id, relative_path)
     target = gateway.resolve(target_ref, must_exist=False, for_write=True)
     gateway.ensure_parent(target_ref)
     if target.exists():
@@ -703,10 +721,10 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
     )
 
     fingerprint = fingerprint_file(target)
-    root = storage_root_by_key(context.db, STAGING_ROOT_ID)
+    root = storage_root_by_key(db, staging_root_id)
     artifact = ExecutionArtifact(
-        run_id=context.run.id,
-        node_run_id=context.node_run.id,
+        run_id=run_id,
+        node_run_id=node_run_id,
         storage_root_id=root.id,
         relative_path=relative_path,
         filename=filename,
@@ -731,9 +749,9 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
         },
     )
     try:
-        with context.db.begin_nested():
-            context.db.add(artifact)
-            context.db.flush()
+        with db.begin_nested():
+            db.add(artifact)
+            db.flush()
     except IntegrityError as exc:
         target.unlink(missing_ok=True)
         raise ExecutionApiError(
@@ -748,4 +766,5 @@ def microscopy_check_record_executor(context) -> dict[str, Any]:
         template_binding=template_binding,
         verification=verification,
         reused=False,
+        root_id=staging_root_id,
     )

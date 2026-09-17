@@ -186,6 +186,7 @@ function WorkflowCard({
   const canWrite = (Array.isArray(capabilities)
     ? capabilities.includes('write')
     : capabilities.write === true)
+    || ['local_write', 'publish', 'external_write'].includes(capabilities.side_effect_level)
     || workflow.write_enabled
     || workflow.access_mode === 'write';
   const candidatePreview = recommendation?.candidate_preview;

@@ -3268,11 +3268,14 @@ def preview_v1_migration(
     transformations: list[dict[str, Any]] = []
     blockers: list[dict[str, Any]] = []
     from app.execution.v2.regenerated_fiber_migration import WORKFLOW_METHODS, migrate_records
+    from app.execution.v2.domain_record_migration import WORKFLOW_SLUGS, migrate_domain_records
 
-    if target_profile == "native_p3" and workflow.slug in WORKFLOW_METHODS:
-        candidate, transformations, blockers = migrate_records(db, workflow, candidate, suggestions)
+    if target_profile == "native_p3" and workflow.slug in (WORKFLOW_METHODS.keys() | WORKFLOW_SLUGS):
+        migrate = migrate_records if workflow.slug in WORKFLOW_METHODS else migrate_domain_records
+        candidate, transformations, blockers = migrate(db, workflow, candidate, suggestions)
         _rebuild_candidate_dependencies(candidate)
-        candidate["dependencies"]["engine"] = {"version_range": ">=2.2.0 <3.0.0"}
+        minimum = "2.2.0" if workflow.slug in WORKFLOW_METHODS else "2.3.0"
+        candidate["dependencies"]["engine"] = {"version_range": f">={minimum} <3.0.0"}
         _lock, candidate["capabilities"] = _resolve_dependencies(candidate, [])
         candidate["integrity"]["digest"] = _release_digest(candidate)
     elif target_profile in {"native_p2", "native_p3"}:
@@ -3315,6 +3318,8 @@ def preview_v1_migration(
     migration_status = (
         "p3_complete"
         if target_profile == "native_p3" and workflow.slug in WORKFLOW_METHODS and not blockers and content_valid
+        else "p3_partial"
+        if target_profile == "native_p3" and workflow.slug in WORKFLOW_SLUGS and transformations and content_valid
         else "p2_complete"
         if target_profile in {"native_p2", "native_p3"}
         and workflow.slug in P2_COMPLETE_WORKFLOW_SLUGS
