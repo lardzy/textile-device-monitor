@@ -1,6 +1,6 @@
 # NodeSpec v2 评审设计
 
-状态（2026-09-17）：规范与实现并行。P1 精确能力基座、18 份原生 P2 契约及人工/受控写入已实现；P3 增加再生纤查询/读取，以及显微图片查询、纸纤维查询、两种显微工作簿渲染四个原生节点，累计 24 份。电镜/纸纤维直接 API、原生资源绑定及本地步骤迁移已实现；业务表单、P4 通用 Connector 和 v2 画布仍待完成。最新状态见 [Workflow Release v2](./workflow-release-v2.md)、[P3 首批验收](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口](./p3-domain-services-acceptance.md)和[原生领域节点验收](./p3-native-domain-acceptance.md)。
+状态（2026-09-17）：规范与实现并行。P1 精确能力基座、18 份原生 P2 契约及人工/受控写入已实现；P3 增加再生纤查询/读取，以及显微图片查询、纸纤维查询、两种显微工作簿渲染四个原生节点，累计 24 份。电镜/纸纤维直接 API、原生资源绑定及本地步骤迁移已实现；P4 首批再增加 `connector.query@1`，累计 25 份原生契约；任务快照查询 API、QuerySpec 锁定及精确调度已实现。业务表单、通用外部操作、更正/自动核对和 v2 画布仍待完成。最新状态见 [Workflow Release v2](./workflow-release-v2.md)、[P3 首批验收](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口](./p3-domain-services-acceptance.md)和[原生领域节点验收](./p3-native-domain-acceptance.md)。
 
 规范版本：`schema_version = "2.0"`
 
@@ -1055,6 +1055,8 @@ Workflow Release 的依赖字段约定：
 - 新类型从 `type_version=1` 起步；只有保留原 type 且发生 breaking change 才递增到 2。
 
 ### P4：Connector 化
+
+首批已交付通用查询、能力发现及 `legacy_fibrecheck.task_snapshot.get@1`。NodeSpec 的 `query_spec` 动态 schema 来自已锁定的 QuerySpec；执行绑定摘要同时覆盖节点壳、查询契约、查询实现和 Connector 分发摘要。API 和 Worker 共用只读缓存服务；缓存刷新仍使用现有 Bridge 队列，节点立即返回缓存/刷新状态，不新增异步挂起语义。详见[P4 查询验收](./p4-connector-query-acceptance.md)。
 
 - 在 P1 的 manifest/lock/exact claim 基座已验收后，再启用 `external.operation@1 + OperationSpec`，取代 preparer 字典并保留 fence/stage/receipt/reconciliation 全部语义。
 - 只读外部查询限定为同步/缓存 `connector.query@1`；异步 Bridge 查询需单独内核设计。

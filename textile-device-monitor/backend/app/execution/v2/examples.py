@@ -223,6 +223,48 @@ def build_readonly_file_query_smoke_release() -> dict[str, Any]:
     return deepcopy(document)
 
 
+def build_connector_query_smoke_release() -> dict[str, Any]:
+    """One portable read-only query, without credentials, roots or human tasks."""
+    registry = get_installed_registry()
+    query = registry.connectors.resolve_query("legacy_fibrecheck", "*", "task_snapshot.get", 1)
+    _specs, dependencies = _dependencies_for([
+        ("core.start", 1), ("connector.query", 1), ("core.end", 1),
+    ])
+    dependencies["engine"]["version_range"] = ">=2.4.0 <3.0.0"
+    dependencies["packs"].append({
+        "pack_id": query.pack_id, "version_range": query.pack_version,
+        "distribution_digest": query.distribution_digest, "required_on": ["api", "worker"],
+    })
+    dependencies["connectors"] = [{
+        "connector_id": query.connector_id, "version_range": query.connector_version,
+        "distribution_digest": query.distribution_digest, "operations": [],
+        "queries": [{"query": query.query, "contract_version": query.contract_version,
+                     "contract_digest": query.contract_digest}],
+    }]
+    document = build_readonly_file_query_smoke_release()
+    document["release"].update({
+        "slug": "v2-connector-query-smoke", "name": "检务任务快照查询",
+        "description": "与直接 API 共用已注册的任务快照读取服务，缓存缺失时返回刷新状态。",
+        "release_note": "P4 cached Connector QuerySpec acceptance",
+    })
+    document["dependencies"] = dependencies
+    document["capabilities"]["declared"] = []
+    document["resources"] = {key: [] for key in document["resources"]}
+    definition = document["definition"]
+    definition["input_schema"] = deepcopy(query.spec["input_schema"])
+    definition["input_schema"]["properties"].pop("refresh")
+    definition["output_schema"] = deepcopy(query.spec["output_schema"])
+    start, node, end = definition["nodes"]
+    start["input_mapping"] = {"inspection_number": "$.inputs.inspection_number"}
+    node.update({"type": "connector.query", "name": "查询任务快照",
+                 "config": {"query_ref": query.query_ref},
+                 "input_mapping": {"inspection_number": "$.inputs.inspection_number"}})
+    end["input_mapping"] = {
+        key: f"$.nodes.query.output.{key}" for key in query.spec["output_schema"]["properties"]
+    }
+    return _seal(document)
+
+
 def build_native_human_file_selection_smoke_release() -> dict[str, Any]:
     """Portable P2 Human smoke release; it is never installed or activated."""
 

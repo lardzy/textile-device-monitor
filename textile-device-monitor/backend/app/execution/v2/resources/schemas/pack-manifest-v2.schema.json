@@ -75,7 +75,7 @@
               "connector_id": {"$ref": "#/$defs/identifier"},
               "version": {"$ref": "#/$defs/semver"},
               "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}, "uniqueItems": true},
-              "queries": {"type": "array", "items": {"type": "object"}, "uniqueItems": true}
+              "queries": {"type": "array", "items": {"$ref": "#/$defs/query"}, "uniqueItems": true}
             },
             "additionalProperties": false
           }
@@ -118,10 +118,56 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "resourcePath": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]{1,240}$"},
     "identifier": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,127}$"},
     "nodeType": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"},
     "semver": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "query": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "$ref": "#/$defs/identifier"
+        },
+        "contract_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_kind": {
+          "const": "automatic"
+        },
+        "side_effect_class": {
+          "const": "read_only"
+        },
+        "consistency": {
+          "enum": [
+            "cached",
+            "synchronous"
+          ]
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "output_schema": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "query",
+        "contract_version",
+        "name",
+        "execution_kind",
+        "side_effect_class",
+        "consistency",
+        "input_schema",
+        "output_schema"
+      ],
+      "additionalProperties": false
+    },
     "operation": {
       "type": "object",
       "required": ["operation", "contract_version", "execution_kind", "side_effect_class", "stages", "write_boundary", "completion_stage"],

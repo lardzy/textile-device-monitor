@@ -1,20 +1,25 @@
 {
   "assets": [],
-  "distribution_digest": "9baa1bdf13c1aa45dab67bdd65a831312cffc452412941c404dbc33a7523ada9",
-  "engine_version_range": ">=2.0.0 <3.0.0",
+  "distribution_digest": "92af6eab3d639eb663aff360f2aa7bc9eb9dab617786bd88b00cba9dfd31a509",
+  "engine_version_range": ">=2.4.0 <3.0.0",
   "extensions": {
     "textile": {
-      "candidate_compilation_only": true,
+      "candidate_compilation_only": false,
+      "generic_connector_query_enabled": true,
       "generic_external_operation_enabled": false
     }
   },
   "manifest_schema_version": "1.0",
   "pack_id": "legacy_fibrecheck.v1-compat",
-  "pack_version": "1.0.1",
+  "pack_version": "1.1.0",
   "provides": {
     "capabilities": [
       {
         "capability_id": "legacy_fibrecheck.operation-metadata",
+        "version": "1.0.0"
+      },
+      {
+        "capability_id": "legacy_fibrecheck.task-snapshot-query",
         "version": "1.0.0"
       }
     ],
@@ -175,13 +180,194 @@
             "write_boundary": "generic_save_started"
           }
         ],
-        "queries": [],
-        "version": "1.0.0"
+        "queries": [
+          {
+            "consistency": "cached",
+            "contract_version": 1,
+            "execution_kind": "automatic",
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "inspection_number": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "refresh": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "inspection_number"
+              ],
+              "type": "object"
+            },
+            "name": "读取检务任务快照",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "cache_state": {
+                  "enum": [
+                    "empty",
+                    "incomplete_number",
+                    "ready",
+                    "stale",
+                    "stale_error",
+                    "pending",
+                    "failed"
+                  ]
+                },
+                "error_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fetched_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "inspection_number": {
+                  "type": "string"
+                },
+                "refresh_status": {
+                  "enum": [
+                    "idle",
+                    "queued",
+                    "running",
+                    "ready",
+                    "failed"
+                  ]
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "snapshot": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "check_basis": {},
+                    "inspection_number": {
+                      "type": "string"
+                    },
+                    "projects": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "check_count": {},
+                          "check_item_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "check_item_name": {
+                            "type": "string"
+                          },
+                          "check_item_no": {},
+                          "check_method": {
+                            "type": "string"
+                          },
+                          "give_judgement": {},
+                          "project_key": {
+                            "type": "string"
+                          },
+                          "register_count": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "remark": {},
+                          "sample_identify": {},
+                          "seq_num": {},
+                          "task_check_item_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "project_key",
+                          "check_item_name",
+                          "check_method",
+                          "register_count"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "sample_name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sample_names": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "schema_version": {
+                      "const": 5
+                    },
+                    "special_wool_occupied_numbers": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "inspection_number",
+                    "projects",
+                    "special_wool_occupied_numbers"
+                  ],
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "inspection_number",
+                "cache_state",
+                "refresh_status",
+                "snapshot",
+                "revision",
+                "fetched_at",
+                "expires_at",
+                "error_code"
+              ],
+              "type": "object"
+            },
+            "query": "task_snapshot.get",
+            "side_effect_class": "read_only"
+          }
+        ],
+        "version": "1.1.0"
       }
     ],
     "nodes": []
   },
   "resource_paths": [
-    "external_operations.py"
+    "external_operations.py",
+    "connector_queries.py",
+    "electron_microscopy.py",
+    "index_metadata.py",
+    "microscopy_families.py"
   ]
 }

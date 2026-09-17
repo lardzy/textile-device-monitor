@@ -1,0 +1,118 @@
+{
+  "schema_version": "2.0",
+  "type": "connector.query",
+  "type_version": 1,
+  "name": "连接器查询",
+  "category": "连接器",
+  "description": "调用已注册的只读查询并立即返回缓存及刷新状态。",
+  "execution": {
+    "kind": "automatic",
+    "owner": {
+      "kind": "kernel",
+      "pack_id": "textile.execution-kernel"
+    },
+    "result_mode": "object"
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "query_ref": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.-]*\\.[a-z][a-z0-9_.-]*@[1-9][0-9]*$"
+      }
+    },
+    "required": [
+      "query_ref"
+    ],
+    "additionalProperties": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "schema_bindings": {
+    "input": {
+      "source": "query_spec",
+      "pointer": "/input_schema"
+    },
+    "output": {
+      "source": "query_spec",
+      "pointer": "/output_schema"
+    }
+  },
+  "ui_schema": {
+    "palette": {
+      "group": "连接器",
+      "icon": "search"
+    }
+  },
+  "ports": {
+    "inputs": [
+      {
+        "id": "in",
+        "min_edges": 1,
+        "max_edges": null,
+        "default": true
+      }
+    ],
+    "outputs": [
+      {
+        "id": "out",
+        "min_edges": 0,
+        "max_edges": null,
+        "default": true
+      }
+    ],
+    "condition_mode": "none",
+    "graph_role": "ordinary"
+  },
+  "requirements": {
+    "resources": {
+      "root_slots": [],
+      "credential_slots": [],
+      "role_slots": [],
+      "rule_slots": []
+    },
+    "capabilities": [],
+    "connectors": [],
+    "assets": []
+  },
+  "side_effect": {
+    "class": "read_only",
+    "idempotency": "none",
+    "cancellation": "immediate",
+    "receipt": "none",
+    "unknown_outcome": "fail"
+  },
+  "policies": {
+    "retry": {
+      "mode": "fixed_engine"
+    },
+    "timeout": {
+      "mode": "fixed_engine"
+    },
+    "error": {
+      "default_action": "fail_run"
+    }
+  },
+  "suspension": null,
+  "lifecycle": {
+    "state": "active",
+    "publish_mode": "allowed",
+    "replacement": null,
+    "migration_ids": []
+  },
+  "extensions": {
+    "textile": {
+      "native": true
+    }
+  }
+}

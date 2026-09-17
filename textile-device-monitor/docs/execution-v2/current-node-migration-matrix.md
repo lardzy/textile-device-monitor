@@ -1,8 +1,8 @@
 # 当前 39 个节点迁移矩阵
 
-> 状态：2026-09-17 P3 原生领域节点进度同步；39 项是旧节点迁移规划，不是当前全部安装能力清单。
+> 状态：2026-09-17 P4 查询首批进度同步；39 项是旧节点迁移规划，不是当前全部安装能力清单。
 >
-> 代码基线：`feature/execution-system` 提交 `7f5ff71`，加本批原生领域节点；SpecialWool 的 `picture_records=[]`、`picture_count=0` 与 `main_record_verified` 继续保留在 P0 快照。
+> 代码基线：`feature/execution-system` 提交 `164abec`，加本批 Connector 查询；SpecialWool 的 `picture_records=[]`、`picture_count=0` 与 `main_record_verified` 继续保留在 P0 快照。
 >
 > 枚举来源：`backend/app/execution/registry.py::_register_builtins()`
 >
@@ -56,6 +56,8 @@ P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切�
 
 表中目标 ID 是分阶段目标，P2 基础类型、P3 再生纤类型和本批四个领域类型已实现，其余领域类型与 P4 外部类型仍待实现。具体可运行性以已安装 NodeSpec、Worker 精确能力和 rollout profile 为准。改名或合并的新 type 从 1 起步；破坏性契约变化递增 `type_version`，Pack 单独使用 SemVer。
 
+P4 已新增 `connector.query@1`，首个注册查询为 `legacy_fibrecheck.task_snapshot.get@1`，与直接查询 API 共用持久缓存。查询输入/输出和实现摘要冻结到 Release/Run，Worker 只领取自身具备的具体查询能力；不创建人工任务、不新增队列或表。写入、更正与自动核对仍待交付，见[P4 查询验收](./p4-connector-query-acceptance.md)。
+
 再生纤查询/结果读取已统一为带 `method=area|count` 的两个领域节点，复用 `human.select`；唯一有效候选自动完成，多候选一次选择。旧四个节点成为同一服务的适配入口，直接 API 不创建 Run。电镜/纸纤维也已完成共享服务、直接 API、原生契约和本地步骤迁移；只补薄适配，不新增通用渲染底座。下一步推进 Connector 通用执行、必要业务输入收敛、设计器与旧实现退场。
 
 <!-- node-matrix:start -->
@@ -79,9 +81,9 @@ P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切�
 | 16 | `external.legacy_special_wool_qualitative_upload@1` | 连接器 / `external_side_effect` | Connector 化＋合并节点壳 | `external.operation@1` + `legacy_fibrecheck.paper_fiber.qualitative_upload@1` | 纸纤维原始记录上传与图片型上传共享基础协议，但输入和“不生成图片子记录”后置条件必须独立 | P4 | v1 alias 保持单文件上限、主文件、项目身份和零图片验证；回归 `.xls` 内容摘要、重复上传与部分远端成功 |
 | 17 | `external.legacy_special_wool_review@1` | 连接器 / `external_side_effect` | Connector 化＋合并节点壳 | `external.operation@1` + `legacy_fibrecheck.special_wool.image_review@1` | 图片类特纤复核要求主记录身份与零图片子记录证明，适合独立 operation spec，而不是 engine 类型分支 | P4 | 上传 receipt 作为 provenance 输入；回归主记录匹配、复核顺序、`picture_count=0` 前后不变、已复核幂等和 after-remote-write 失败 |
 | 18 | `external.new_inspection@1` | 连接器 / `automatic`，不可发布 | Connector 化并移出图 | Connector dependency slot，例如 `inspection_system`；无可执行 NodeSpec | 尚无实现的系统占位不应占用图节点类型；真正接入时新增 Connector pack 和 operation specs | P4 | 老草稿保留只读占位和明确缺依赖提示；继续禁止发布，不能误认为配置 credential 后即可执行 |
-| 19 | `file.electron_microscopy_gbt36422@1` | 文件 / `automatic` | 拆分 | `microscopy.image_candidates@1`；P4 再提供通用 `connector.query@1` | 索引图片查询、快照组合和领域校验已分离；旧节点与直接查询 API 共用服务 | P3 原生已实现 / P4 待完成 | v1 composite adapter 保持旧图；原生查询绑定 root/rule slot，输出可直接进入 `human.select` 的 items。P4 只允许同步/持久化缓存 QuerySpec，异步 Bridge 查询需另升内核语义。回归目录、1–10 张、truncated、pending/empty/stale 和项目身份 |
+| 19 | `file.electron_microscopy_gbt36422@1` | 文件 / `automatic` | 拆分 | `microscopy.image_candidates@1`；P4 已提供通用 `connector.query@1` | 索引图片查询、快照组合和领域校验已分离；旧节点与直接查询 API 共用服务 | P3 原生与 P4 查询已实现 / 外部写入待完成 | v1 composite adapter 保持旧图；原生查询绑定 root/rule slot，输出可直接进入 `human.select` 的 items。P4 只允许同步/持久化缓存 QuerySpec，异步 Bridge 查询需另升内核语义。回归目录、1–10 张、truncated、pending/empty/stale 和项目身份 |
 | 20 | `file.index_query@1` | 文件 / `automatic` | 保留并泛化 | `file.query@1` | 持久化索引查询是基础能力；filters、sort、limit 和 projection 应完整声明，物理 root 仍由 slot 绑定 | P2 | v1 alias 固定旧“最近天数＋编号”行为；回归路径不可逃逸、稳定排序、索引陈旧、limit 和空结果 |
-| 21 | `file.paper_fiber_gbt4688_qualitative@1` | 文件 / `automatic` | 拆分 | `paper_fiber.find_records@1`；P4 再提供通用 `connector.query@1` | 本地查询/字段读取、快照组合和领域校验已分离；等待快照时复用本次文件查询 | P3 原生已实现 / P4 待完成 | v1 adapter、直接 API 与原生查询共用服务；v1 规则修订重新查询，原生执行使用绑定的规则版本；前端复用定性结果卡片。P4 QuerySpec 限同步/缓存读。golden 回归 W32/M32、损坏/缺 sheet、100% 独立词匹配、任务状态和项目快照 |
+| 21 | `file.paper_fiber_gbt4688_qualitative@1` | 文件 / `automatic` | 拆分 | `paper_fiber.find_records@1`；P4 已提供通用 `connector.query@1` | 本地查询/字段读取、快照组合和领域校验已分离；等待快照时复用本次文件查询 | P3 原生与 P4 查询已实现 / 外部写入待完成 | v1 adapter、直接 API 与原生查询共用服务；v1 规则修订重新查询，原生执行使用绑定的规则版本；前端复用定性结果卡片。P4 QuerySpec 限同步/缓存读。golden 回归 W32/M32、损坏/缺 sheet、100% 独立词匹配、任务状态和项目快照 |
 | 22 | `file.regenerated_fiber_area_method@1` | 文件 / `automatic` | 合并 | `regenerated_fiber.find_records@1`，`method=area` | 与根数法共用匹配、profile/index 缓存和候选契约，差异应进入受限 method rule，不复制节点类型 | P3 已实现 | alias 固定 `method=area`；回归工作表识别、编号边界、已保存单元格、缓存 fingerprint、候选排序和诊断 |
 | 23 | `file.regenerated_fiber_count_method@1` | 文件 / `automatic` | 合并 | `regenerated_fiber.find_records@1`，`method=count` | 与面积法只有强类型方法规则差异，适合共享领域节点；不降级为任意单元格查询 | P3 已实现 | alias 固定 `method=count`；与 v1 对同一语料逐候选/digest 比较，覆盖历史 `.xls/.xlsx` 与异常文件 |
 | 24 | `human.confirm@1` | 人工 / `human` | 保留并收紧 | `human.approval@1` | 批准/驳回是通用人工原语，应产出带 subject digest、actor、decision 和时间的 durable receipt | P2 | v1 alias 接受旧 `{approved,...}` 结果；回归候选角色、拒绝路径、过期 subject、防篡改和 artifact.publish 只接受匹配 receipt |

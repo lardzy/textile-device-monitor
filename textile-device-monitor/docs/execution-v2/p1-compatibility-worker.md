@@ -46,6 +46,13 @@ The 2026-09-17 native domain batch uses Engine 2.3.0, Kernel Pack 2.1.2,
 textile.execution-v1-compat 2.1.3, legacy_fibrecheck.v1-compat 1.0.1,
 textile.regenerated-fiber 1.0.0 and textile.domain-records 1.0.0
 (protocol 2.1; 7 Packs, 63 bindings, 61 ready).
+
+The P4 query batch uses Engine 2.4.0, Kernel Pack 2.2.0 and Legacy Connector
+Pack 1.1.0 (protocol 2.1; 7 Packs, 64 bindings, 62 ready). A `connector.query`
+binding includes the exact QuerySpec and connector implementation; advertising
+the generic shell alone does not make a Worker eligible. The database head
+and frozen P1 capability document are unchanged.
+
 The shared regenerated-fiber, microscopy and paper-fiber services change the compatibility Pack's implementation
 identity without rewriting existing frozen identities. If an environment
 has deployed/unfinished older P2 bindings, retain its frozen Worker as well,

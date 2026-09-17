@@ -94,14 +94,14 @@ flowchart LR
 
 ### 4.1 接口按业务能力表达
 
-以下是待实现的接口草案，采用现有 `/api/execution` 权限边界；名称可在 P4 冻结时统一。
+采用现有 `/api/execution/v1` 权限边界。P4 首批已实现以下查询与能力发现接口，操作接口仍是后续设计。见[P4 查询验收及调用示例](./p4-connector-query-acceptance.md)。
 
 | 接口 | 职责 |
 | --- | --- |
-| `POST /api/execution/connector-queries` | 指定连接器与已注册 `query_ref`，查询任务、已有记录、可用模板等 |
-| `POST /api/execution/connector-operations` | 指定已注册 `operation_ref` 和类型化业务输入，一次提交新增、更新、复核等操作 |
-| `GET /api/execution/connector-operations/{id}` | 返回状态、结果、业务回执、可执行的后续动作 |
-| `GET /api/execution/connectors/{id}/capabilities` | 供客户端获取支持的查询、操作、输入结构和更正能力；不是让使用者手动配置一堆策略 |
+| `POST /api/execution/v1/connector-queries` | 已实现；指定完整 `query_ref`，当前支持检务任务快照。精确记录与模板查询待增加 |
+| `POST /api/execution/v1/connector-operations` | 待实现；指定已注册 `operation_ref` 和类型化业务输入，一次提交新增、更新、复核等操作 |
+| `GET /api/execution/v1/connector-operations/{id}` | 待实现；返回状态、结果、业务回执、可执行的后续动作 |
+| `GET /api/execution/v1/connectors/{id}/capabilities` | 已实现；返回查询契约、输入/输出结构及可用性。旧写入元数据标记 `legacy_workflow_only`，不宣称通用更正可用 |
 
 更正、撤销和补做也是同一操作接口的命令，不再各建一条特殊工作流。查询若需要等待 Windows，只返回查询任务引用供自动续取；工作流中的 `connector.query` 仍遵循原 P4 的同步/缓存读取范围，不顺带扩大内核的异步查询语义。
 

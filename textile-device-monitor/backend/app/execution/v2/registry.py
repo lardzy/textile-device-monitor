@@ -11,7 +11,7 @@ import json
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from functools import cache, lru_cache
+from functools import cache, lru_cache, partial
 from importlib import resources
 from typing import Any
 
@@ -25,7 +25,7 @@ from app.execution.v2.canonical import (
 )
 from jsonschema import Draft202012Validator
 
-ENGINE_VERSION = "2.3.0"
+ENGINE_VERSION = "2.4.0"
 PROTOCOL_VERSION = "2.1"
 
 _TRUSTED_RENDERER_PROTOCOLS = {
@@ -159,6 +159,40 @@ class InstalledOperation:
 
 
 @dataclass(frozen=True)
+class InstalledQuery:
+    connector_id: str
+    connector_version: str
+    query: str
+    contract_version: int
+    contract_digest: str
+    implementation_digest: str
+    pack_id: str
+    pack_version: str
+    distribution_digest: str
+    spec: dict[str, Any]
+    handler: Callable[..., Any] | None
+    ready: bool
+
+    @property
+    def query_ref(self) -> str:
+        return f"{self.connector_id}.{self.query}@{self.contract_version}"
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            **deepcopy(self.spec),
+            "connector_id": self.connector_id,
+            "connector_version": self.connector_version,
+            "query_ref": self.query_ref,
+            "contract_digest": self.contract_digest,
+            "implementation_digest": self.implementation_digest,
+            "pack_id": self.pack_id,
+            "pack_version": self.pack_version,
+            "distribution_digest": self.distribution_digest,
+            "ready": self.ready,
+        }
+
+
+@dataclass(frozen=True)
 class InstalledConnector:
     connector_id: str
     version: str
@@ -166,7 +200,7 @@ class InstalledConnector:
     pack_id: str
     pack_version: str
     operations: tuple[InstalledOperation, ...]
-    queries: tuple[dict[str, Any], ...]
+    queries: tuple[InstalledQuery, ...]
     ready: bool = True
 
     def public_dict(self) -> dict[str, Any]:
@@ -178,7 +212,7 @@ class InstalledConnector:
             "pack_version": self.pack_version,
             "ready": self.ready,
             "operations": [item.public_dict() for item in self.operations],
-            "queries": [deepcopy(item) for item in self.queries],
+            "queries": [item.public_dict() for item in self.queries],
         }
 
 
@@ -416,6 +450,9 @@ class ExecutableRegistry:
         self, spec: InstalledNodeSpec, executable: InstalledExecutable
     ) -> None:
         digest = spec.execution_binding()["execution_binding_digest"]
+        self.index_digest(digest, executable)
+
+    def index_digest(self, digest: str, executable: InstalledExecutable) -> None:
         existing = self._by_binding_digest.get(digest)
         if existing is not None and existing != executable:
             raise ValueError(f"duplicate execution binding digest: {digest}")
@@ -455,6 +492,7 @@ class ConnectorRegistry:
     def __init__(self, connectors: Iterable[InstalledConnector]) -> None:
         self._by_id: dict[str, list[InstalledConnector]] = {}
         self._operations: dict[tuple[str, str, str, int], InstalledOperation] = {}
+        self._queries: dict[tuple[str, str, str, int], InstalledQuery] = {}
         for connector in connectors:
             versions = self._by_id.setdefault(connector.connector_id, [])
             if any(item.version == connector.version for item in versions):
@@ -472,6 +510,11 @@ class ConnectorRegistry:
                 if key in self._operations:
                     raise ValueError(f"duplicate Connector OperationSpec: {key}")
                 self._operations[key] = operation
+            for query in connector.queries:
+                key = (connector.connector_id, connector.version, query.query, query.contract_version)
+                if key in self._queries:
+                    raise ValueError(f"duplicate Connector QuerySpec: {key}")
+                self._queries[key] = query
 
     def all(self) -> list[InstalledConnector]:
         return sorted(
@@ -523,6 +566,33 @@ class ConnectorRegistry:
             )
         return value
 
+    def resolve_query(
+        self, connector_id: str, version_range: str, query: str,
+        contract_version: int, contract_digest: str | None = None,
+    ) -> InstalledQuery:
+        connector = self.resolve(connector_id, version_range)
+        try:
+            value = self._queries[(connector_id, connector.version, query, contract_version)]
+        except KeyError as exc:
+            raise LookupError(f"Connector QuerySpec not installed: {connector_id}.{query}@{contract_version}") from exc
+        if contract_digest is not None and value.contract_digest != contract_digest:
+            raise LookupError(f"Connector QuerySpec digest mismatch: {value.query_ref}")
+        return value
+
+
+def resolve_connector_reference(reference: str, connector_ids: Iterable[str]) -> tuple[str, str, int]:
+    """Resolve against declared identities, never guess a dotted connector prefix."""
+    name, separator, version = reference.rpartition("@")
+    matching = [value for value in set(connector_ids) if name.startswith(value + ".")]
+    if (not separator or not version.isascii() or not version.isdecimal()
+            or version.startswith("0") or len(matching) != 1):
+        raise LookupError(f"Connector reference is invalid or ambiguous: {reference}")
+    connector_id = matching[0]
+    member = name[len(connector_id) + 1:]
+    if not member:
+        raise LookupError(f"Connector reference has no member: {reference}")
+    return connector_id, member, int(version)
+
 
 class InstalledRegistry:
     def __init__(
@@ -541,6 +611,21 @@ class InstalledRegistry:
         self.connectors = connectors
         for spec in node_specs.all():
             executables.index_binding(spec, executables.resolve(spec))
+        self.query_bindings: list[dict[str, Any]] = []
+        query_specs = [spec for spec in node_specs.all() if spec.type == "connector.query"]
+        from app.execution.connector_queries import execute_query_node
+
+        for spec in query_specs:
+            executable = executables.resolve(spec)
+            for connector in connectors.all():
+                for query in connector.queries:
+                    binding = self.query_node_binding(spec.execution_binding(), query)
+                    self.query_bindings.append(binding)
+                    executables.index_digest(
+                        binding["execution_binding_digest"],
+                        replace(executable, runtime_ready=binding["ready"],
+                                handler=partial(execute_query_node, query=query)),
+                    )
         self.revision = canonical_sha256(
             {
                 "engine_version": ENGINE_VERSION,
@@ -642,9 +727,25 @@ class InstalledRegistry:
             )
         return executable.handler
 
+    @staticmethod
+    def query_node_binding(binding: dict[str, Any], query: InstalledQuery) -> dict[str, Any]:
+        value = deepcopy(binding)
+        value["connector_query"] = query.public_dict()
+        value["ready"] = binding["ready"] and query.ready
+        value["execution_binding_digest"] = canonical_sha256({
+            "node_binding_digest": binding["execution_binding_digest"],
+            "query_contract_digest": query.contract_digest,
+            "query_implementation_digest": query.implementation_digest,
+            "connector_distribution_digest": query.distribution_digest,
+        })
+        return value
+
     def worker_capability_document(self) -> dict[str, Any]:
         nodes: list[dict[str, Any]] = []
         for spec in self.node_specs.all():
+            if spec.type == "connector.query":
+                # A generic shell alone cannot execute any connector capability.
+                continue
             executable = self.executables.resolve(spec)
             runtime_ready = executable.runtime_ready
             if (
@@ -672,6 +773,11 @@ class InstalledRegistry:
                     )
                 }
             )
+        for binding in self.query_bindings:
+            nodes.append({key: binding[key] for key in (
+                "execution_binding_digest", "type", "type_version", "contract_digest",
+                "implementation_digest", "pack_id", "pack_version", "execution_kind", "ready",
+            )})
         capability_digest = canonical_sha256(nodes)
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -1204,6 +1310,7 @@ def _build_installed_registry() -> InstalledRegistry:
     from app.execution.v2.native_handlers import native_handler
     from app.execution.v2.regenerated_fiber_handlers import NATIVE_HANDLERS as domain_handlers
     from app.execution.v2.domain_record_handlers import NATIVE_HANDLERS as record_handlers
+    from app.execution.connector_queries import execute_query_node, query_handler
 
     manifest_resources = {
         (manifest["pack_id"], manifest["pack_version"]): set(
@@ -1256,6 +1363,7 @@ def _build_installed_registry() -> InstalledRegistry:
         handler = (
             native_handler(identity[0], identity[1])
             or domain_handlers.get(identity) or record_handlers.get(identity)
+            or (execute_query_node if identity == ("connector.query", 1) else None)
             if handler_channel in {"worker_callable", "kernel_builtin"}
             else None
         )
@@ -1354,6 +1462,29 @@ def _build_installed_registry() -> InstalledRegistry:
                         spec=deepcopy(operation_document),
                     )
                 )
+            queries: list[InstalledQuery] = []
+            for query_document in connector_document["queries"]:
+                for direction in ("input", "output"):
+                    schema = query_document[f"{direction}_schema"]
+                    Draft202012Validator.check_schema(schema)
+                    if not _native_schema_is_closed(schema):
+                        raise ValueError("QuerySpec schemas must be closed objects")
+                contract_digest = canonical_sha256({
+                    "connector_id": connector_document["connector_id"],
+                    "connector_version": connector_document["version"],
+                    "query_spec": query_document,
+                })
+                handler = query_handler(connector_document["connector_id"], query_document["query"], query_document["contract_version"])
+                queries.append(InstalledQuery(
+                    connector_id=connector_document["connector_id"],
+                    connector_version=connector_document["version"],
+                    query=query_document["query"], contract_version=query_document["contract_version"],
+                    contract_digest=contract_digest,
+                    implementation_digest=canonical_sha256({"contract_digest": contract_digest, "distribution_digest": pack.distribution_digest}),
+                    pack_id=pack.pack_id, pack_version=pack.pack_version,
+                    distribution_digest=pack.distribution_digest, spec=deepcopy(query_document),
+                    handler=handler, ready=pack.ready and handler is not None,
+                ))
             connectors.append(
                 InstalledConnector(
                     connector_id=connector_document["connector_id"],
@@ -1362,7 +1493,7 @@ def _build_installed_registry() -> InstalledRegistry:
                     pack_id=pack.pack_id,
                     pack_version=pack.pack_version,
                     operations=tuple(operations),
-                    queries=tuple(deepcopy(connector_document["queries"])),
+                    queries=tuple(queries),
                     ready=pack.ready,
                 )
             )

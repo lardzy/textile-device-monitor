@@ -165,6 +165,7 @@ from app.execution.electron_microscopy import (
     task_snapshot_status as read_task_snapshot_status,
 )
 from app.execution.schemas import (
+    ConnectorQueryRequest,
     RegeneratedFiberQueryRequest,
     RegeneratedFiberReadRequest,
     MicroscopyQueryRequest,
@@ -2860,6 +2861,42 @@ def _require_readonly_bridge_key(provided_key: Optional[str]) -> None:
             "execution_bridge_unauthorized",
             "Bridge 接入令牌无效",
         )
+
+
+@router.get("/connectors/{connector_id}/capabilities")
+def get_connector_capabilities(
+    connector_id: str,
+    _auth: AuthContext = Depends(permission("workflow.read")),
+):
+    from app.execution.connector_queries import connector_capabilities
+
+    return connector_capabilities(connector_id)
+
+
+@router.post("/connector-queries")
+def run_connector_query(
+    payload: ConnectorQueryRequest,
+    response: Response,
+    _auth: AuthContext = Depends(permission("workflow.read", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    from app.execution.connector_queries import execute_query, resolve_query
+
+    query = resolve_query(payload.query_ref, connector_version=payload.connector_version,
+                          contract_digest=payload.contract_digest)
+    result = execute_query(db, query=query, input_data=payload.input)
+    pending = result.refresh_request is not None
+    if pending:
+        response.status_code = 202
+    db.commit()
+    return {
+        "query_ref": query.query_ref,
+        "connector_version": query.connector_version,
+        "contract_digest": query.contract_digest,
+        "result": result.data,
+        "refresh_request": result.refresh_request,
+        "remote_write_performed": False,
+    }
 
 
 @router.post("/task-snapshots/{inspection_number}/refresh", status_code=202)

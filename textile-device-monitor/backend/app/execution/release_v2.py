@@ -482,6 +482,8 @@ def _effective_schemas(
             return deepcopy(definition["output_schema"])
         if source == "node_config":
             return deepcopy(pointer(config, schema_binding.get("pointer")))
+        if source == "query_spec":
+            return deepcopy(pointer(binding.get("connector_query") or {}, schema_binding.get("pointer")))
         raise LookupError(source)
 
     try:
@@ -554,6 +556,7 @@ def _resolve_dependencies(
 
     resolved_connectors: list[dict[str, Any]] = []
     resolved_operation_keys: set[tuple[str, str, int]] = set()
+    resolved_queries: dict[tuple[str, str, int], Any] = {}
     connector_dependencies: dict[str, dict[str, Any]] = {}
     registry = registry_api.get_installed_registry()
     for index, required in enumerate(dependency.get("connectors") or []):
@@ -589,7 +592,7 @@ def _resolve_dependencies(
             try:
                 resolved = registry.resolve_operation(
                     connector_id,
-                    required["version_range"],
+                    connector.version,
                     operation["operation"],
                     operation["contract_version"],
                     operation["contract_digest"],
@@ -614,14 +617,25 @@ def _resolve_dependencies(
                         str(exc),
                     )
                 )
-        if required["queries"]:
-            issues.append(
-                _issue(
-                    "connector_query_not_supported_p1",
-                    f"$.dependencies.connectors[{index}].queries",
-                    "Connector QuerySpec execution is not enabled in P1",
+        locked_queries: list[dict[str, Any]] = []
+        for query_index, query in enumerate(required["queries"]):
+            try:
+                resolved = registry.connectors.resolve_query(
+                    connector_id, connector.version, query["query"],
+                    query["contract_version"], query["contract_digest"],
                 )
-            )
+                if not resolved.ready:
+                    raise LookupError(f"Query handler is unavailable: {resolved.query_ref}")
+                key = (connector_id, query["query"], query["contract_version"])
+                if key in resolved_queries:
+                    raise LookupError(f"Query dependency is duplicated: {resolved.query_ref}")
+                resolved_queries[key] = resolved
+                locked_queries.append(resolved.public_dict())
+            except (LookupError, RuntimeError, ValueError, TypeError) as exc:
+                issues.append(_issue(
+                    "connector_query_unavailable",
+                    f"$.dependencies.connectors[{index}].queries[{query_index}]", str(exc),
+                ))
         resolved_connectors.append(
             {
                 "connector_id": connector_value["connector_id"],
@@ -638,7 +652,7 @@ def _resolve_dependencies(
                         item["contract_version"],
                     ),
                 ),
-                "queries": [],
+                "queries": sorted(locked_queries, key=lambda item: (item["query"], item["contract_version"])),
             }
         )
 
@@ -661,6 +675,7 @@ def _resolve_dependencies(
     execution_kinds: set[str] = set()
     declared_capabilities: set[str] = set()
     used_operation_keys: set[tuple[str, str, int]] = set()
+    used_query_keys: set[tuple[str, str, int]] = set()
     pack_by_id = {pack.get("pack_id"): pack for pack in resolved_packs}
     resource_slots = {
         group: {
@@ -750,6 +765,18 @@ def _resolve_dependencies(
                     "P2 uses the fixed engine lease, retry and fail_run policy",
                 )
             )
+        if identity == ("connector.query", 1):
+            reference = str((node.get("config") or {}).get("query_ref") or "")
+            try:
+                key = registry_api.resolve_connector_reference(reference, connector_dependencies)
+                query = resolved_queries[key]
+                binding = registry.query_node_binding(binding, query)
+                used_query_keys.add(key)
+            except (LookupError, ValueError):
+                issues.append(_issue(
+                    "connector_query_dependency_missing", f"$.definition.nodes[{index}].config.query_ref",
+                    f"Exact Connector QuerySpec is not locked: {reference}",
+                ))
         try:
             input_schema, output_schema = _effective_schemas(
                 node, binding, document
@@ -875,6 +902,7 @@ def _resolve_dependencies(
                 "lifecycle": deepcopy(binding.get("lifecycle") or {}),
                 "publishable": bool(binding.get("publishable")),
                 "installed_ready": bool(binding.get("ready")),
+                **({"connector_query": deepcopy(binding["connector_query"])} if "connector_query" in binding else {}),
                 "effective_input_schema": input_schema,
                 "effective_input_schema_digest": canonical_sha256(input_schema),
                 "effective_output_schema": output_schema,
@@ -902,6 +930,11 @@ def _resolve_dependencies(
                 level="warning",
             )
         )
+    for query_key in sorted(set(resolved_queries) - used_query_keys):
+        issues.append(_issue(
+            "connector_query_dependency_unused", "$.dependencies.connectors",
+            f"Declared query {query_key[0]}.{query_key[1]}@{query_key[2]} is not used", level="warning",
+        ))
     for connector in resolved_connectors:
         pack = pack_by_id.get(connector["pack_id"])
         if pack is None or pack.get("pack_version") != connector["pack_version"]:
