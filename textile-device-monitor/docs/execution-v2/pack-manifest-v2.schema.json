@@ -179,6 +179,7 @@
         "stages": {"type": "array", "items": {"type": "string"}, "minItems": 2, "uniqueItems": true},
         "write_boundary": {"type": "string"},
         "completion_stage": {"type": "string"},
+        "input_schema": {"type": "object"},
         "extensions": {"type": "object"}
       },
       "additionalProperties": false

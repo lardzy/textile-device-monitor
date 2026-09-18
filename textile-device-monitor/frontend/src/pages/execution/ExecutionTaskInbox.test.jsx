@@ -469,6 +469,43 @@ describe('ExecutionTaskInbox', () => {
     });
   });
 
+  it('选图时显示可用模板张数，调整数量后直接提交', async () => {
+    const submitted = vi.fn();
+    const imageTask = { ...openTask, title: '选择模板图片', status: 'claimed', claimed_by_id: 'reviewer-1', draft_data: { selected_folder_ids: ['folder'] } };
+    server.use(
+      http.get('/api/execution/v1/human-tasks', () => HttpResponse.json({ items: [imageTask] })),
+      http.get('/api/execution/v1/human-tasks/task-1', () => HttpResponse.json({
+        ...detailPayload(imageTask),
+        node_run: {
+          node_id: 'select-images', supported_image_counts: [1, 3],
+          input_data: {
+            folders: [{ id: 'folder', folder_name: '结果', relative_path: '结果' }],
+            images: [1, 2, 3].map(index => ({
+              id: `image-${index}`, folder_id: 'folder', folder_name: '结果',
+              name: `${index}.png`, relative_path: `结果/${index}.png`, preview_url: `/preview/${index}`,
+            })),
+          },
+        },
+      })),
+      http.post('/api/execution/v1/human-tasks/task-1/submit', async ({ request }) => {
+        submitted(await request.json());
+        return HttpResponse.json({ ...imageTask, status: 'completed', revision: 3 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInbox();
+    await user.click(await screen.findByText('选择模板图片'));
+    expect(await screen.findByText('当前记录模板支持 1、3 张图片')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '选择 1.png' }));
+    await user.click(screen.getByRole('button', { name: '选择 2.png' }));
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+    expect((await screen.findAllByText('当前记录模板支持 1、3 张图片，请调整选图数量', { exact: true })).length).toBeGreaterThan(0);
+    expect(submitted).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '选择 3.png' }));
+    await user.click(screen.getByRole('button', { name: '确认提交' }));
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1));
+  });
+
   it('按顶层文件夹汇总电镜图片，支持大图切换并只提交稳定图片 ID', async () => {
     const submitted = vi.fn();
     const imageTask = {

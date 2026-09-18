@@ -1979,3 +1979,87 @@ def test_parallel_queue_refresh_keeps_one_active_job(index_root_case):
         assert len(active_jobs) == 1
     finally:
         verification.close()
+
+
+@pytest.mark.parametrize("mode", ["same_request", "changed_request", "same_sample_other_owner", "bridge_claim"])
+def test_standalone_connector_submission_concurrency(mode, monkeypatch):
+    import hashlib
+    from app.execution.connector_operations import submit_operation
+    from app.execution.external_operations import claim_approved_external_operation, LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION
+    from app.execution.models import ExecutionCredential, ExecutionTaskSnapshotCache
+    from app.execution.schemas import ConnectorOperationRequest
+
+    monkeypatch.setattr(settings, "EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED", True)
+    suffix = uuid4().hex
+    number = "26" + str(int(suffix[:8], 16) % 10000000).zfill(7)
+    project = {
+        "task_check_item_id": "sha256:" + "1" * 16, "check_item_id": "sha256:" + "2" * 16,
+        "check_item_no": "51.113K", "check_item_name": "纸、纸板和纸浆纤维鉴别分析",
+        "check_method": "GB/T 4688-2020", "seq_num": 1, "check_count": 1,
+        "register_count": 0, "give_judgement": 0,
+    }
+    project["project_key"] = "task-project:" + hashlib.sha256("\0".join(str(project[k]) for k in (
+        "task_check_item_id", "check_item_id", "check_item_no", "check_item_name", "check_method", "seq_num",
+    )).encode()).hexdigest()[:24]
+    with SessionLocal() as db:
+        users = [ExecutionUser(username=f"p4-{suffix}-{i}", display_name="并发验收", role="user", password_hash="unused") for i in range(2)]
+        db.add_all(users)
+        db.flush()
+        credentials = [ExecutionCredential(user_id=u.id, system_key="legacy_inspection", account_name=f"p4-{suffix}", encrypted_secret="unused") for u in users]
+        db.add_all(credentials)
+        db.add(ExecutionTaskSnapshotCache(inspection_number=number, status="ready", snapshot={"projects": [project]}))
+        db.commit()
+        identities = [(u.id, c.id) for u, c in zip(users, credentials)]
+    start = threading.Barrier(2)
+
+    def submit(index, wait=True):
+        with SessionLocal() as db:
+            owner, credential = identities[index if mode == "same_sample_other_owner" else 0]
+            actor = db.get(ExecutionUser, owner)
+            payload = ConnectorOperationRequest(
+                operation_ref="legacy_fibrecheck.check_record.generic_entry@1", credential_id=credential,
+                idempotency_key=suffix, input={"inspection_number": number, "project_key": project["project_key"],
+                    "expected_existing_register_count": 0,
+                    "result_value": "竹浆" if mode == "changed_request" and index else "木浆"},
+            )
+            if wait:
+                start.wait(timeout=10)
+            try:
+                operation, duplicate = submit_operation(db, actor=actor, request=payload)
+                db.commit()
+                return operation.id, duplicate
+            except ExecutionApiError as exc:
+                db.rollback()
+                return exc.code, None
+
+    def claim(index):
+        with SessionLocal() as db:
+            start.wait(timeout=10)
+            result = claim_approved_external_operation(db, bridge_id=f"p4-bridge-{index}", account_name=f"p4-{suffix}",
+                supported_operation_types={LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION})
+            db.commit()
+            return result[0].id if result else None
+
+    try:
+        if mode == "bridge_claim":
+            operation_id, _ = submit(0, wait=False)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(claim, range(2)))
+            assert results.count(operation_id) == results.count(None) == 1
+        else:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(submit, range(2)))
+            if mode == "same_request":
+                assert len({r[0] for r in results}) == 1
+                assert sorted(r[1] for r in results) == [False, True]
+            else:
+                code = "external_operation_idempotency_conflict" if mode == "changed_request" else "external_remote_business_conflict"
+                assert sum(r[0] == code for r in results) == 1
+    finally:
+        with SessionLocal() as db:
+            ids = [r[0] for r in db.query(ExecutionExternalOperation.id).filter(ExecutionExternalOperation.created_by_id.in_([i[0] for i in identities]))]
+            db.query(ExecutionAuditLog).filter(ExecutionAuditLog.resource_id.in_(ids)).delete(synchronize_session=False)
+            db.query(ExecutionExternalOperation).filter(ExecutionExternalOperation.id.in_(ids)).delete(synchronize_session=False)
+            db.query(ExecutionTaskSnapshotCache).filter_by(inspection_number=number).delete()
+            db.query(ExecutionUser).filter(ExecutionUser.id.in_([i[0] for i in identities])).delete(synchronize_session=False)
+            db.commit()

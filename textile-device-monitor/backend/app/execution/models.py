@@ -1294,9 +1294,9 @@ class ExecutionFileMutation(Base):
 class ExecutionExternalOperation(Base):
     """Durable fence for an external-system side effect.
 
-    Creating or approving this row never performs the remote operation.  A
-    future, separately authenticated connector must claim the fence and record
-    a receipt before the waiting node can be completed.
+    Submissions queue work for the authenticated Bridge and retain its receipt.
+    Workflow nodes may wait on the operation; direct API submissions have an
+    owner without a Run or node.
     """
 
     __tablename__ = "execution_external_operations"
@@ -1346,14 +1346,17 @@ class ExecutionExternalOperation(Base):
     run_id = Column(
         String(36),
         ForeignKey("execution_runs.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     node_run_id = Column(
         String(36),
         ForeignKey("execution_node_runs.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
+    )
+    created_by_id = Column(
+        String(36), ForeignKey("execution_users.id", ondelete="SET NULL"), index=True,
     )
     connector_key = Column(String(100), nullable=False, index=True)
     credential_id = Column(

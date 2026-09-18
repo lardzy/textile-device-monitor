@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "92af6eab3d639eb663aff360f2aa7bc9eb9dab617786bd88b00cba9dfd31a509",
+  "distribution_digest": "a8853d1af49155415ce21ce342d8983df1cc59f270cf28b7d923c9ea5fb5aac9",
   "engine_version_range": ">=2.4.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -11,7 +11,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "legacy_fibrecheck.v1-compat",
-  "pack_version": "1.1.0",
+  "pack_version": "1.2.0",
   "provides": {
     "capabilities": [
       {
@@ -165,6 +165,60 @@
             "completion_stage": "generic_projection_verified",
             "contract_version": 1,
             "execution_kind": "external_side_effect",
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_existing_register_count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "inspection_number": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9-]+$",
+                  "type": "string"
+                },
+                "judge_basis": {
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "judgement": {
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "project_key": {
+                  "pattern": "^task-project:[a-f0-9]{24}$",
+                  "type": "string"
+                },
+                "result_value": {
+                  "maxLength": 4000,
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "sample_identity": {
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "standard_value": {
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "unit": {
+                  "enum": [
+                    "",
+                    "%"
+                  ]
+                }
+              },
+              "required": [
+                "inspection_number",
+                "project_key",
+                "expected_existing_register_count",
+                "result_value"
+              ],
+              "type": "object"
+            },
             "operation": "check_record.generic_entry",
             "side_effect_class": "external_write",
             "stages": [
@@ -358,7 +412,7 @@
             "side_effect_class": "read_only"
           }
         ],
-        "version": "1.1.0"
+        "version": "1.2.0"
       }
     ],
     "nodes": []
@@ -368,6 +422,7 @@
     "connector_queries.py",
     "electron_microscopy.py",
     "index_metadata.py",
-    "microscopy_families.py"
+    "microscopy_families.py",
+    "connector_operations.py"
   ]
 }

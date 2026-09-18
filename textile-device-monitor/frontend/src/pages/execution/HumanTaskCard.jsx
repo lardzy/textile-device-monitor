@@ -177,6 +177,9 @@ export default function HumanTaskCard({
   const maxSelectedImages = Number(candidatePayload.max_selected_images) > 0
     ? Number(candidatePayload.max_selected_images)
     : 10;
+  const supportedImageCounts = Array.isArray(nodeRun?.supported_image_counts)
+    ? nodeRun.supported_image_counts
+    : [];
   const taskSnapshotStatus = taskSnapshotStatusProp || polledTaskSnapshotStatus;
   const taskRefreshStatus = taskSnapshotStatus?.refresh_status;
   const taskSnapshotAvailable = taskSnapshotStatus?.snapshot_available === true;
@@ -714,6 +717,9 @@ export default function HumanTaskCard({
                     if (value.length > maxSelectedImages) {
                       return Promise.reject(new Error(`最多选择 ${maxSelectedImages} 张结果图片`));
                     }
+                    if (supportedImageCounts.length && !supportedImageCounts.includes(value.length)) {
+                      return Promise.reject(new Error(`当前记录模板支持 ${supportedImageCounts.join('、')} 张图片，请调整选图数量`));
+                    }
                     return Promise.resolve();
                   },
                 }]}
@@ -723,6 +729,11 @@ export default function HumanTaskCard({
               <Form.Item name="primary_image_id" noStyle>
                 <SilentFormField />
               </Form.Item>
+              {supportedImageCounts.length > 0 && (
+                <Typography.Paragraph type="secondary">
+                  当前记录模板支持 {supportedImageCounts.join('、')} 张图片
+                </Typography.Paragraph>
+              )}
               <ExecutionImageSelector
                 folders={imageFolders}
                 images={imageCandidates}

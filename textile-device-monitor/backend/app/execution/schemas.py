@@ -24,6 +24,17 @@ class ConnectorQueryRequest(BaseModel):
     input: dict[str, Any]
 
 
+class ConnectorOperationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_ref: str = Field(min_length=1, max_length=330)
+    connector_version: str = Field(default="*", min_length=1, max_length=200)
+    contract_digest: Optional[str] = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    credential_id: str = Field(min_length=1, max_length=36)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    input: dict[str, Any]
+
+
 class RegeneratedFiberQueryRequest(BaseModel):
     method: Literal["area", "count"]
     inspection_number: str = Field(min_length=1, max_length=200)

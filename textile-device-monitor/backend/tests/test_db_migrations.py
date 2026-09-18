@@ -118,12 +118,12 @@ def test_existing_baseline_is_preflighted_stamped_and_upgraded(tmp_path):
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0010_workflow_replacement"
+        assert revision == "0011_connector_operations"
     finally:
         engine.dispose()
 
 
-@pytest.mark.parametrize("target_revision", ["0009_execution_v2_primitives", "0010_workflow_replacement"])
+@pytest.mark.parametrize("target_revision", ["0009_execution_v2_primitives", "0010_workflow_replacement", "0011_connector_operations"])
 def test_0008_upgrade_preserves_existing_version_run_and_lock_bytes(tmp_path, target_revision):
     database_path = tmp_path / "execution_v2_history_test.db"
     database_url = f"sqlite:///{database_path}"

@@ -1,6 +1,6 @@
 # NodeSpec v2 评审设计
 
-状态（2026-09-17）：规范与实现并行。P1 精确能力基座、18 份原生 P2 契约及人工/受控写入已实现；P3 增加再生纤查询/读取，以及显微图片查询、纸纤维查询、两种显微工作簿渲染四个原生节点，累计 24 份。电镜/纸纤维直接 API、原生资源绑定及本地步骤迁移已实现；P4 首批再增加 `connector.query@1`，累计 25 份原生契约；任务快照查询 API、QuerySpec 锁定及精确调度已实现。业务表单、通用外部操作、更正/自动核对和 v2 画布仍待完成。最新状态见 [Workflow Release v2](./workflow-release-v2.md)、[P3 首批验收](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口](./p3-domain-services-acceptance.md)和[原生领域节点验收](./p3-native-domain-acceptance.md)。
+状态（2026-09-18）：规范与实现并行。P1 精确能力基座、18 份原生 P2 契约及人工/受控写入已实现；P3 增加再生纤查询/读取，以及显微图片查询、纸纤维查询、两种显微工作簿渲染四个原生节点，累计 24 份。电镜/纸纤维直接 API、原生资源绑定及本地步骤迁移已实现；P4 首批再增加 `connector.query@1`，累计 25 份原生契约；任务快照查询 API、QuerySpec 锁定及精确调度已实现。P4 第二批已增加首个独立登记 API（复用原 Bridge，无需 Run），未新增通用操作节点。业务表单、通用外部操作节点、更正/自动核对和 v2 画布仍待完成。最新状态见 [Workflow Release v2](./workflow-release-v2.md)、[P3 首批验收](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口](./p3-domain-services-acceptance.md)和[原生领域节点验收](./p3-native-domain-acceptance.md)。
 
 规范版本：`schema_version = "2.0"`
 

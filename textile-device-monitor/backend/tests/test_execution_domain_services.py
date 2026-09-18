@@ -287,3 +287,30 @@ def test_download_failure_cleans_partial_file_and_keeps_domain_errors(domain_env
     assert bad.status_code == 422
     assert bad.json()["code"] == "microscopy_template_image_count_unsupported"
     no_execution_records(env)
+
+
+def test_image_selection_reports_template_counts_before_completing_task(domain_env):
+    from uuid import uuid4
+    from app.execution.models import ExecutionWorkflow
+    from tests.test_execution_workflow_replacement import drain
+
+    env = domain_env
+    image_files(env, 4)
+    task_snapshot(env, "microscopy")
+    workflow = env.db.query(ExecutionWorkflow).filter_by(slug="electron-microscopy-gbt36422").one()
+    run = request(env, "POST", "v1/runs", {
+        "workflow_id": workflow.id, "inspection_number": NUMBER,
+        "input_data": {"inspection_number": NUMBER}, "idempotency_key": str(uuid4()),
+    }, status=201)["run"]
+    drain(env)
+    detail = request(env, "GET", f"v1/runs/{run['id']}")
+    task = next(t for t in detail["human_tasks"] if t["node_id"] == "select-images")
+    task_detail = request(env, "GET", f"v1/human-tasks/{task['id']}")
+    assert task_detail["node_run"]["supported_image_counts"] == [1, 2, 3, 5, 6, 7, 10]
+    task = request(env, "POST", f"v1/human-tasks/{task['id']}/claim", {"revision": task["revision"]})
+    images = task_detail["node_run"]["input_data"]["images"]
+    invalid = request(env, "POST", f"v1/human-tasks/{task['id']}/submit", {
+        "revision": task["revision"], "data": {"selected_image_ids": [i["id"] for i in images]},
+    }, status=422)
+    assert invalid["code"] == "microscopy_template_image_count_unsupported"
+    assert request(env, "GET", f"v1/human-tasks/{task['id']}")["task"]["status"] == "claimed"

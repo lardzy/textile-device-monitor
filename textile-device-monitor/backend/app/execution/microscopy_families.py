@@ -229,6 +229,18 @@ def microscopy_family_from_config(config: object) -> MicroscopyRecordFamily:
     return family
 
 
+def image_selection_counts(definition: dict[str, Any], selection_node_id: str) -> list[int]:
+    """Use the consuming record node's templates; selection-only flows stay free."""
+    reference = f"$.nodes.{selection_node_id}.output.selected_image_ids"
+    supported = None
+    for node in definition.get("nodes", []):
+        if (node.get("type") == "data.microscopy_record_context"
+                and node.get("input_mapping", {}).get("selected_image_ids") == reference):
+            counts = set(microscopy_family_from_config(node.get("config")).template_bindings)
+            supported = counts if supported is None else supported & counts
+    return sorted(supported) if supported is not None else []
+
+
 def _normalized_lookup_text(value: object) -> str:
     return " ".join(
         unicodedata.normalize("NFKC", str(value or "")).strip().split()

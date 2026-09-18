@@ -57,6 +57,26 @@ from app.execution.workbook_format import (
 )
 
 
+def _append_operation_run_event(db: Session, *, run_id: str | None, **event) -> None:
+    if run_id is not None:
+        append_run_event(db, run_id=run_id, **event)
+
+
+def lock_operation_context(db: Session, *, run_id: str | None, node_run_id: str | None,
+                           skip_locked: bool = False):
+    """Retain Run → node → operation lock order; direct requests have neither."""
+    if run_id is None:
+        return None, None
+    run = (db.query(ExecutionRun).filter(ExecutionRun.id == run_id)
+           .populate_existing().with_for_update(skip_locked=skip_locked).one_or_none())
+    if run is None:
+        return None, None
+    node_run = (db.query(ExecutionNodeRun).filter(
+        ExecutionNodeRun.id == node_run_id, ExecutionNodeRun.run_id == run_id,
+    ).populate_existing().with_for_update().one_or_none())
+    return run, node_run
+
+
 LEGACY_REGENERATED_COUNT_NODE = (
     "external.legacy_regenerated_fiber_count_upload"
 )
@@ -3114,7 +3134,7 @@ def _bound_credential_for_approval(
     db: Session,
     *,
     operation: ExecutionExternalOperation,
-    run: ExecutionRun,
+    run: ExecutionRun | None,
 ) -> ExecutionCredential:
     credential = (
         db.query(ExecutionCredential)
@@ -3125,7 +3145,7 @@ def _bound_credential_for_approval(
     if (
         credential is None
         or not credential.is_active
-        or credential.user_id != run.created_by_id
+        or credential.user_id != (run.created_by_id if run is not None else operation.created_by_id)
         or credential.system_key != LEGACY_CREDENTIAL_SYSTEM
         or credential.revision != operation.credential_revision
     ):
@@ -3183,6 +3203,14 @@ def _reverify_operation_sources(
     operation: ExecutionExternalOperation,
 ) -> None:
     operation_type = _operation_type(operation)
+    if operation.run_id is None:
+        # A direct request freezes caller-supplied values. It has no mutable
+        # workbook or upstream Run to re-read. The Writer still verifies the
+        # exact task project, current registration count and read-back.
+        if (operation_type == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION
+                and (operation.request_summary or {}).get("connector_submission")):
+            return
+        raise conflict("connector_operation_source_invalid", "外部操作缺少提交来源")
     if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
         _reverify_generated_artifact_source(db, operation=operation)
         return
@@ -3537,7 +3565,7 @@ def _rearm_expired_external_operation(
     operation.error_message = None
     operation.started_at = None
     operation.completed_at = None
-    append_run_event(
+    _append_operation_run_event(
         db,
         run_id=run.id,
         event_type="external_operation.rearmed",
@@ -3705,7 +3733,7 @@ def _rearm_reconciled_no_side_effect_operation(
         ),
         "remote_write_performed": False,
     }
-    append_run_event(
+    _append_operation_run_event(
         db,
         run_id=run.id,
         event_type="external_operation.rearmed_after_no_side_effect",
@@ -3835,6 +3863,7 @@ def _create_prepared_external_operation(
         operation_key=operation_key,
         run_id=run.id,
         node_run_id=node_run.id,
+        created_by_id=run.created_by_id,
         connector_key=LEGACY_CONNECTOR_KEY,
         credential_id=credential.id,
         credential_revision=credential_revision,
@@ -4975,6 +5004,33 @@ def prepare_legacy_generic_check_record_entry_operation(
             "paper_fiber_result_contract_changed",
             "纸纤维复核来源缺少已绑定的 W32 结果",
         )
+    request_summary = build_generic_entry_summary(
+        source_number=source_number, project=project, input_data=input_data,
+        result_contract=result_contract,
+        source_review_ref={
+            "operation_id": source_review.id,
+            "payload_checksum": source_review.payload_checksum,
+            "receipt_checksum": _canonical_checksum(source_review.receipt),
+            "special_wool_target_sample_number": str(source_review_summary.get("target_sample_number") or ""),
+        },
+    )
+    return _create_prepared_external_operation(
+        db,
+        run=run,
+        node_run=node_run,
+        credential=credential,
+        account_scope_key=account_scope_key,
+        remote_business_key=remote_business_key,
+        request_summary=request_summary,
+        operation_key_prefix=GENERIC_CHECK_RECORD_ENTRY_OPERATION_KEY_PREFIX,
+    )
+
+
+def build_generic_entry_summary(
+    *, source_number: str, project: dict[str, Any], input_data: dict[str, Any],
+    result_contract: dict[str, Any], source_review_ref: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the same Writer contract for workflow results and direct submissions."""
     result_value = str(result_contract.get("value") or "").strip()
     unit = str(result_contract.get("unit") or "")
     if not result_value or unit not in {"", "%"}:
@@ -5139,14 +5195,7 @@ def prepare_legacy_generic_check_record_entry_operation(
         "source_inspection_number": source_number,
         "target_sample_number": source_number,
         "task_project": project,
-        "source_review_operation": {
-            "operation_id": source_review.id,
-            "payload_checksum": source_review.payload_checksum,
-            "receipt_checksum": _canonical_checksum(source_review.receipt),
-            "special_wool_target_sample_number": str(
-                source_review_summary.get("target_sample_number") or ""
-            ),
-        },
+        "source_review_operation": source_review_ref,
         "result_contract": dict(result_contract),
         # Public, checksum-bound contract used by both the approval UI and the
         # Windows Bridge to verify the exact human-confirmed judgement fields.
@@ -5209,16 +5258,7 @@ def prepare_legacy_generic_check_record_entry_operation(
             "proof_required": False,
         },
     }
-    return _create_prepared_external_operation(
-        db,
-        run=run,
-        node_run=node_run,
-        credential=credential,
-        account_scope_key=account_scope_key,
-        remote_business_key=remote_business_key,
-        request_summary=request_summary,
-        operation_key_prefix=GENERIC_CHECK_RECORD_ENTRY_OPERATION_KEY_PREFIX,
-    )
+    return request_summary
 
 
 def _reverify_special_wool_review_source(
@@ -5360,7 +5400,7 @@ def approve_prepared_external_operation(
             operation.approval_expires_at
         )
         node_run.output_data = output
-    append_run_event(
+    _append_operation_run_event(
         db,
         run_id=operation.run_id,
         event_type="external_operation.approved",
@@ -6357,31 +6397,15 @@ def reconcile_external_operation(
     if locator is None:
         raise not_found("外部操作预检单", operation_id)
 
-    run = (
-        db.query(ExecutionRun)
-        .filter(ExecutionRun.id == locator.run_id)
-        .populate_existing()
-        .with_for_update()
-        .one_or_none()
+    run, node_run = lock_operation_context(
+        db, run_id=locator.run_id, node_run_id=locator.node_run_id,
     )
-    if run is None:
-        raise not_found("外部操作预检单", operation_id)
-    node_run = (
-        db.query(ExecutionNodeRun)
-        .filter(
-            ExecutionNodeRun.id == locator.node_run_id,
-            ExecutionNodeRun.run_id == run.id,
-        )
-        .populate_existing()
-        .with_for_update()
-        .one_or_none()
-    )
-    if node_run is None:
+    if locator.run_id is not None and (run is None or node_run is None):
         raise not_found("外部操作预检单", operation_id)
 
     target_sample_number = str(
         (locator.request_summary or {}).get("target_sample_number") or ""
-    ).strip() or resolve_legacy_target_sample_number(run)
+    ).strip() or (resolve_legacy_target_sample_number(run) if run is not None else "")
     remote_business_key = lock_legacy_remote_business_scope(
         db,
         sample_number=target_sample_number,
@@ -6390,8 +6414,8 @@ def reconcile_external_operation(
         db.query(ExecutionExternalOperation)
         .filter(
             ExecutionExternalOperation.id == operation_id,
-            ExecutionExternalOperation.run_id == run.id,
-            ExecutionExternalOperation.node_run_id == node_run.id,
+            ExecutionExternalOperation.run_id == locator.run_id,
+            ExecutionExternalOperation.node_run_id == locator.node_run_id,
         )
         .populate_existing()
         .with_for_update()
@@ -6493,7 +6517,7 @@ def reconcile_external_operation(
             operation_id=operation.id,
             status=operation.status,
         )
-    if node_run.status != "waiting_external":
+    if node_run is not None and node_run.status != "waiting_external":
         raise conflict(
             "external_operation_node_not_waiting",
             "外部操作对应节点已不再等待人工对账",
@@ -6570,25 +6594,26 @@ def reconcile_external_operation(
         operation.receipt = receipt
         operation.error_code = None
         operation.error_message = None
-        node_output = dict(node_run.output_data or {})
-        node_output.update(
-            {
-                "operation_id": operation.id,
-                "status": "completed",
-                "receipt": receipt,
-                "attempt_id": latest_attempt.id,
-                "attempt_no": latest_attempt.attempt_no,
-                "reconciliation": {
-                    "action": action,
-                    "evidence_checksum": evidence_checksum,
-                },
-            }
-        )
-        complete_external_node(
-            db,
-            node_run_id=node_run.id,
-            output_data=node_output,
-        )
+        if node_run is not None:
+            node_output = dict(node_run.output_data or {})
+            node_output.update(
+                {
+                    "operation_id": operation.id,
+                    "status": "completed",
+                    "receipt": receipt,
+                    "attempt_id": latest_attempt.id,
+                    "attempt_no": latest_attempt.attempt_no,
+                    "reconciliation": {
+                        "action": action,
+                        "evidence_checksum": evidence_checksum,
+                    },
+                }
+            )
+            complete_external_node(
+                db,
+                node_run_id=node_run.id,
+                output_data=node_output,
+            )
     else:
         operation.remote_record_id = None
         operation.receipt = {}
@@ -6596,7 +6621,9 @@ def reconcile_external_operation(
         operation.error_message = (
             "人工只读对账确认旧系统未产生记录或文件，本次运行已停止"
         )
-        if run.status == "cancel_pending":
+        if run is None:
+            operation.status = "failed"
+        elif run.status == "cancel_pending":
             from app.execution.engine import cancel_external_waiting_node
 
             operation.status = "cancelled"
@@ -6618,7 +6645,7 @@ def reconcile_external_operation(
                 actor_user_id=actor.id,
             )
 
-    append_run_event(
+    _append_operation_run_event(
         db,
         run_id=operation.run_id,
         event_type="external_operation.reconciled",
@@ -6951,30 +6978,16 @@ def claim_approved_external_operation(
         )
         if locator is None:
             continue
-        run = (
-            db.query(ExecutionRun)
-            .filter(ExecutionRun.id == locator.run_id)
-            .populate_existing()
-            .with_for_update()
-            .one_or_none()
+        run, node_run = lock_operation_context(
+            db, run_id=locator.run_id, node_run_id=locator.node_run_id,
         )
-        if run is None:
+        if locator.run_id is not None and (run is None or node_run is None):
             continue
-        node_run = (
-            db.query(ExecutionNodeRun)
-            .filter(
-                ExecutionNodeRun.id == locator.node_run_id,
-                ExecutionNodeRun.run_id == run.id,
-            )
-            .populate_existing()
-            .with_for_update()
-            .one_or_none()
-        )
         operation = (
             db.query(ExecutionExternalOperation)
             .filter(
                 ExecutionExternalOperation.id == operation_id,
-                ExecutionExternalOperation.run_id == run.id,
+                ExecutionExternalOperation.run_id == locator.run_id,
             )
             .populate_existing()
             .with_for_update()
@@ -6988,7 +7001,7 @@ def claim_approved_external_operation(
             is False
         ):
             continue
-        if node_run is None or node_run.status != "waiting_external":
+        if node_run is not None and node_run.status != "waiting_external":
             raise conflict(
                 "external_operation_node_not_waiting",
                 "外部操作对应节点已不再等待连接器处理",
@@ -7026,12 +7039,13 @@ def claim_approved_external_operation(
         )
         db.add(attempt)
         db.flush()
-        output = dict(node_run.output_data or {})
-        output["status"] = "in_progress"
-        output["attempt_id"] = attempt.id
-        output["attempt_no"] = attempt_no
-        node_run.output_data = output
-        append_run_event(
+        if node_run is not None:
+            output = dict(node_run.output_data or {})
+            output["status"] = "in_progress"
+            output["attempt_id"] = attempt.id
+            output["attempt_no"] = attempt_no
+            node_run.output_data = output
+        _append_operation_run_event(
             db,
             run_id=operation.run_id,
             event_type="external_operation.claimed",
@@ -7039,7 +7053,7 @@ def claim_approved_external_operation(
             actor_id=bridge_id,
             payload={
                 "operation_id": operation.id,
-                "node_id": node_run.node_id,
+                "node_id": node_run.node_id if node_run is not None else None,
                 "attempt_id": attempt.id,
                 "attempt_no": attempt_no,
                 "bridge_id": bridge_id,
@@ -7077,8 +7091,8 @@ def _attempt_for_bridge(
     attempt_id: str,
     bridge_id: str,
 ) -> tuple[
-    ExecutionRun,
-    ExecutionNodeRun,
+    ExecutionRun | None,
+    ExecutionNodeRun | None,
     ExecutionExternalOperation,
     ExecutionExternalAttempt,
 ]:
@@ -7100,30 +7114,16 @@ def _attempt_for_bridge(
     )
     if locator is None:
         raise not_found("外部操作执行尝试", attempt_id)
-    run = (
-        db.query(ExecutionRun)
-        .filter(ExecutionRun.id == locator.run_id)
-        .populate_existing()
-        .with_for_update()
-        .one_or_none()
+    run, node_run = lock_operation_context(
+        db, run_id=locator.run_id, node_run_id=locator.node_run_id,
     )
-    if run is None:
+    if locator.run_id is not None and (run is None or node_run is None):
         raise not_found("外部操作执行尝试", attempt_id)
-    node_run = (
-        db.query(ExecutionNodeRun)
-        .filter(
-            ExecutionNodeRun.id == locator.node_run_id,
-            ExecutionNodeRun.run_id == run.id,
-        )
-        .populate_existing()
-        .with_for_update()
-        .one_or_none()
-    )
     operation = (
         db.query(ExecutionExternalOperation)
         .filter(
             ExecutionExternalOperation.id == locator.id,
-            ExecutionExternalOperation.run_id == run.id,
+            ExecutionExternalOperation.run_id == locator.run_id,
         )
         .populate_existing()
         .with_for_update()
@@ -7139,7 +7139,7 @@ def _attempt_for_bridge(
         .with_for_update()
         .one_or_none()
     )
-    if node_run is None or operation is None or attempt is None:
+    if operation is None or attempt is None:
         raise not_found("外部操作执行尝试", attempt_id)
     if attempt.bridge_id != bridge_id:
         # 不透露其它 Bridge 的尝试是否存在。
@@ -7323,18 +7323,19 @@ def complete_external_attempt(
     operation.lease_expires_at = None
     operation.completed_at = current_time
 
-    output = dict(node_run.output_data or {})
-    output["operation_id"] = operation.id
-    output["status"] = "completed"
-    output["receipt"] = receipt
-    output["attempt_id"] = attempt.id
-    output["attempt_no"] = attempt.attempt_no
-    complete_external_node(
-        db,
-        node_run_id=node_run.id,
-        output_data=output,
-    )
-    append_run_event(
+    if node_run is not None:
+        output = dict(node_run.output_data or {})
+        output["operation_id"] = operation.id
+        output["status"] = "completed"
+        output["receipt"] = receipt
+        output["attempt_id"] = attempt.id
+        output["attempt_no"] = attempt.attempt_no
+        complete_external_node(
+            db,
+            node_run_id=node_run.id,
+            output_data=output,
+        )
+    _append_operation_run_event(
         db,
         run_id=operation.run_id,
         event_type="external_operation.completed",
@@ -7342,7 +7343,7 @@ def complete_external_attempt(
         actor_id=bridge_id,
         payload={
             "operation_id": operation.id,
-            "node_id": node_run.node_id,
+            "node_id": node_run.node_id if node_run is not None else None,
             "attempt_id": attempt.id,
             "attempt_no": attempt.attempt_no,
             "status": operation.status,
@@ -7457,7 +7458,7 @@ def settle_external_attempt_failure(
         operation.error_message = (
             error_message or "外部操作执行失败，可能已写入旧系统，需要人工对账"
         )
-    append_run_event(
+    _append_operation_run_event(
         db,
         run_id=operation.run_id,
         event_type="external_operation.attempt_failed",
@@ -7539,7 +7540,7 @@ def fail_external_attempt(
         node_run=node_run,
         operation=operation,
         attempt=attempt,
-        settling_run_status=run.status,
+        settling_run_status=run.status if run is not None else "running",
         stage=effective_stage,
         error_code=error_code,
         error_message=message,

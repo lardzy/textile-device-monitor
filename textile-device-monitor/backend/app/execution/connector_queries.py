@@ -95,6 +95,7 @@ def execute_query_node(context, *, query: "InstalledQuery") -> dict[str, Any]:
 
 
 def connector_capabilities(connector_id: str) -> dict[str, Any]:
+    from app.execution.connector_operations import operation_api_available
     from app.execution.v2.registry import get_installed_registry
 
     try:
@@ -105,9 +106,7 @@ def connector_capabilities(connector_id: str) -> dict[str, Any]:
         **connector.public_dict(),
         "queries": [{**query.public_dict(), "direct_api_available": query.ready}
                     for query in connector.queries],
-        # Existing operations still belong to legacy workflow preparers. Do not
-        # advertise their metadata as a general write or correction endpoint.
-        "operations": [{**operation.public_dict(), "direct_api_available": False,
-                        "availability": "legacy_workflow_only"}
+        "operations": [{**operation.public_dict(), "direct_api_available": operation_api_available(operation),
+                        "availability": "direct_api" if operation_api_available(operation) else "legacy_workflow_only"}
                        for operation in connector.operations],
     }

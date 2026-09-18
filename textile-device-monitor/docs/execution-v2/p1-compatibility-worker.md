@@ -4,7 +4,8 @@ P2 does not reinterpret an existing P1 execution binding with current code.
 The compatibility pool must be built from commit
 `d1fb01bbd12e3b020f1e27a2ecbeab20bf039ac4`; the only additions to
 that source tree are the self-contained Alembic revisions
-`0009_execution_v2_primitives.py` and `0010_workflow_replacement.py`, so its schema-head guard can share the P2
+`0009_execution_v2_primitives.py`, `0010_workflow_replacement.py`, and
+`0011_connector_operations.py`, so its schema-head guard can share the current
 database.
 
 Before the image is admitted, run the Worker bootstrap self-check and compare
@@ -33,7 +34,7 @@ python tools/execution_v2_p1_compat_image.py \
 ```
 
 The tool creates a temporary detached worktree from the exact baseline, copies
-only the two migration files above into it, builds `backend/Dockerfile`, and
+only the three migration files above into it, builds `backend/Dockerfile`, and
 boots the built Worker far enough to compare its capability identity with the
 frozen snapshot, and then removes the temporary worktree. A mismatch fails the
 build gate before the image can join the compatibility pool.
@@ -56,6 +57,12 @@ and frozen P1 capability document are unchanged.
 The shared regenerated-fiber, microscopy and paper-fiber services change the compatibility Pack's implementation
 identity without rewriting existing frozen identities. If an environment
 has deployed/unfinished older P2 bindings, retain its frozen Worker as well,
-with the 0010 schema overlay;
+with migration overlays through 0011;
 never relabel the new Worker with an old capability digest. Validate each
 retained image against the shared migrated database before switching entry points.
+
+The 2026-09-18 standalone operation batch uses Kernel Pack 2.3.0 and Legacy
+Connector Pack 1.2.0. Migration 0011 adds optional Run/node links and operation
+ownership. Only the current main Worker maintains standalone operation leases;
+the P1 pool continues to serve its frozen workflow bindings. API and main
+Worker must be updated together. No P1 application or capability bytes change.

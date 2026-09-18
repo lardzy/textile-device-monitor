@@ -19,10 +19,11 @@ from app.execution.electron_microscopy import (
     cached_task_snapshot,
     request_task_snapshot_refresh,
 )
-from app.execution.microscopy_families import microscopy_family_from_config
+from app.execution.microscopy_families import image_selection_counts, microscopy_family_from_config
 from app.execution.project_rules import microscopy_rule_key, resolve_rule
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.external_operations import (
+    lock_operation_context,
     LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE,
     LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE,
     LEGACY_REGENERATED_COUNT_NODE,
@@ -795,6 +796,13 @@ def _normalize_human_submission(
                 422,
                 "image_selection_count_invalid",
                 "请选择 1 至 10 张图片",
+            )
+        supported_counts = image_selection_counts(run.definition_snapshot, node_run.node_id)
+        if supported_counts and len({str(value) for value in selected_ids}) not in supported_counts:
+            raise ExecutionApiError(
+                422, "microscopy_template_image_count_unsupported",
+                "当前记录模板支持 " + "、".join(map(str, supported_counts)) + " 张图片，请调整选图数量",
+                details={"supported_image_counts": supported_counts},
             )
         offered_images = node_run.input_data.get("images") or []
         images_by_id = {
@@ -2665,30 +2673,17 @@ def expire_stale_external_operations(
     )
     expired_count = 0
     for candidate in candidates:
-        run = (
-            db.query(ExecutionRun)
-            .filter(ExecutionRun.id == candidate.run_id)
-            .populate_existing()
-            .with_for_update(skip_locked=True)
-            .one_or_none()
+        run, node_run = lock_operation_context(
+            db, run_id=candidate.run_id, node_run_id=candidate.node_run_id,
+            skip_locked=True,
         )
-        if run is None:
+        if candidate.run_id is not None and (run is None or node_run is None):
             continue
-        node_run = (
-            db.query(ExecutionNodeRun)
-            .filter(
-                ExecutionNodeRun.id == candidate.node_run_id,
-                ExecutionNodeRun.run_id == run.id,
-            )
-            .populate_existing()
-            .with_for_update()
-            .one_or_none()
-        )
         operation = (
             db.query(ExecutionExternalOperation)
             .filter(
                 ExecutionExternalOperation.id == candidate.id,
-                ExecutionExternalOperation.run_id == run.id,
+                ExecutionExternalOperation.run_id == candidate.run_id,
             )
             .populate_existing()
             .with_for_update()
@@ -2788,25 +2783,26 @@ def expire_stale_external_operations(
                     },
                 )
 
-        append_run_event(
-            db,
-            run_id=run.id,
-            event_type="external_operation.expired",
-            payload={
-                "operation_id": operation.id,
-                "node_id": node_run.node_id if node_run is not None else None,
-                "status": operation.status,
-                "code": error_code,
-                "remote_write_performed": False,
-            },
-        )
+        if run is not None:
+            append_run_event(
+                db,
+                run_id=run.id,
+                event_type="external_operation.expired",
+                payload={
+                    "operation_id": operation.id,
+                    "node_id": node_run.node_id if node_run is not None else None,
+                    "status": operation.status,
+                    "code": error_code,
+                    "remote_write_performed": False,
+                },
+            )
         append_audit_log(
             db,
             action="external_operation.expire",
             resource_type="execution_external_operation",
             resource_id=operation.id,
             details={
-                "run_id": run.id,
+                "run_id": operation.run_id,
                 "code": error_code,
                 "remote_write_performed": False,
             },
@@ -2863,30 +2859,17 @@ def expire_stale_external_attempts(
         )
         if locator is None:
             continue
-        run = (
-            db.query(ExecutionRun)
-            .filter(ExecutionRun.id == locator.run_id)
-            .populate_existing()
-            .with_for_update(skip_locked=True)
-            .one_or_none()
+        run, node_run = lock_operation_context(
+            db, run_id=locator.run_id, node_run_id=locator.node_run_id,
+            skip_locked=True,
         )
-        if run is None:
+        if locator.run_id is not None and (run is None or node_run is None):
             continue
-        node_run = (
-            db.query(ExecutionNodeRun)
-            .filter(
-                ExecutionNodeRun.id == locator.node_run_id,
-                ExecutionNodeRun.run_id == run.id,
-            )
-            .populate_existing()
-            .with_for_update()
-            .one_or_none()
-        )
         operation = (
             db.query(ExecutionExternalOperation)
             .filter(
                 ExecutionExternalOperation.id == candidate.operation_id,
-                ExecutionExternalOperation.run_id == run.id,
+                ExecutionExternalOperation.run_id == locator.run_id,
             )
             .populate_existing()
             .with_for_update()
@@ -2923,7 +2906,7 @@ def expire_stale_external_attempts(
             node_run=node_run,
             operation=operation,
             attempt=attempt,
-            settling_run_status=run.status,
+            settling_run_status=run.status if run is not None else "running",
             stage=attempt.current_stage,
             error_code="lease_expired",
             error_message="Bridge 租约已过期，执行进度中断",

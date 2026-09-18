@@ -1442,6 +1442,10 @@ def _build_installed_registry() -> InstalledRegistry:
         for connector_document in manifest["provides"]["connectors"]:
             operations: list[InstalledOperation] = []
             for operation_document in connector_document["operations"]:
+                if "input_schema" in operation_document:
+                    Draft202012Validator.check_schema(operation_document["input_schema"])
+                    if not _native_schema_is_closed(operation_document["input_schema"]):
+                        raise ValueError("OperationSpec input schema must be a closed object")
                 contract_digest = canonical_sha256(
                     {
                         "connector_id": connector_document["connector_id"],

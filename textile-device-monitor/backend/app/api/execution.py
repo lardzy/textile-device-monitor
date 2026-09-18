@@ -166,6 +166,7 @@ from app.execution.electron_microscopy import (
 )
 from app.execution.schemas import (
     ConnectorQueryRequest,
+    ConnectorOperationRequest,
     RegeneratedFiberQueryRequest,
     RegeneratedFiberReadRequest,
     MicroscopyQueryRequest,
@@ -329,13 +330,16 @@ def _external_operation_for_auth(
     *,
     operation_id: str,
     auth: AuthContext,
-) -> tuple[ExecutionExternalOperation, ExecutionRun]:
+) -> tuple[ExecutionExternalOperation, ExecutionRun | None]:
     statement = db.query(ExecutionExternalOperation).filter(
         ExecutionExternalOperation.id == operation_id
     )
     operation = statement.one_or_none()
     if operation is None:
         raise not_found("外部操作预检单", operation_id)
+    if operation.run_id is None:
+        from app.execution.connector_operations import operation_for_actor
+        return operation_for_actor(db, operation_id=operation_id, actor=auth.user), None
     run = _run_for_auth(db, run_id=operation.run_id, auth=auth)
     return operation, run
 
@@ -2899,6 +2903,46 @@ def run_connector_query(
     }
 
 
+@router.post("/connector-operations")
+def submit_connector_operation(
+    payload: ConnectorOperationRequest,
+    response: Response,
+    auth: AuthContext = Depends(permission("workflow.run", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    from app.execution.connector_operations import operation_view, submit_operation
+
+    operation, duplicate = submit_operation(db, actor=auth.user, request=payload)
+    db.commit()
+    response.status_code = 200 if duplicate else 202
+    return {"duplicate": duplicate, "operation": operation_view(operation)}
+
+
+@router.get("/connector-operations/{operation_id}")
+def connector_operation_status(
+    operation_id: str,
+    auth: AuthContext = Depends(permission("workflow.run")),
+    db: Session = Depends(get_db),
+):
+    from app.execution.connector_operations import operation_for_actor, operation_view
+
+    return operation_view(operation_for_actor(db, operation_id=operation_id, actor=auth.user))
+
+
+@router.post("/connector-operations/{operation_id}/cancel")
+def cancel_connector_operation(
+    operation_id: str,
+    auth: AuthContext = Depends(permission("workflow.run", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    from app.execution.connector_operations import cancel_operation, operation_for_actor, operation_view
+
+    operation = operation_for_actor(db, operation_id=operation_id, actor=auth.user, lock=True)
+    cancel_operation(db, operation=operation, actor=auth.user)
+    db.commit()
+    return operation_view(operation)
+
+
 @router.post("/task-snapshots/{inspection_number}/refresh", status_code=202)
 def refresh_task_snapshot(
     inspection_number: str,
@@ -4078,6 +4122,8 @@ def human_task_detail(
     task = _human_task_for_auth(db, task_id=task_id, auth=auth)
     node_run = task.node_run
     run = node_run.run
+    from app.execution.microscopy_families import image_selection_counts
+
     return {
         "task": _human_task_dict(task),
         "node_run": {
@@ -4089,6 +4135,10 @@ def human_task_detail(
             # This is the server-persisted candidate/form context. The submit
             # endpoint still canonicalizes candidate IDs against this snapshot.
             "input_data": node_run.input_data or {},
+            "supported_image_counts": (
+                image_selection_counts(run.definition_snapshot, node_run.node_id)
+                if node_run.node_type == "human.image_selection" else []
+            ),
         },
         "run": {
             "id": run.id,
