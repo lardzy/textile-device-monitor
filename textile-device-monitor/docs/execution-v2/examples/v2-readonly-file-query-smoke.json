@@ -121,7 +121,7 @@
       },
       {
         "contract_digest": "b1d4fe1f4f4a2232ab9fc36729303118c5f850fe62ffd9ae38d2c665dcb4acd4",
-        "implementation_digest": "6a2650b78a5f19a602f56e3e10fc8852c883f9e14c30fa9bc234e3e855cc7227",
+        "implementation_digest": "7771d6bacd52cf9472e2345622d88b5aeb9b0b8c1c3bc09c8bec420e5fe1e687",
         "type": "file.index_query",
         "type_version": 1
       },
@@ -143,13 +143,13 @@
         "version_range": "2.8.1"
       },
       {
-        "distribution_digest": "c02ff0fcecbc97cb074683d024f79447e8264ae94e52b11eb625f2808ca58aa1",
+        "distribution_digest": "a79ce395e00414bcdb657df6aefff00a274caff807e705cf8f711520ac853303",
         "pack_id": "textile.execution-v1-compat",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.1.4"
+        "version_range": "2.1.5"
       }
     ]
   },
@@ -159,7 +159,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "f289d45b8ed35ad3708303f8af29a5c2d531c545aa8e91906c4c75b3c7a487a0",
+    "digest": "5269fd3c39571df7ecaeb9d6cb4aaa0a466c86d7a2b80d03d15fd66e58b66a72",
     "scope": "document_without_integrity",
     "signatures": []
   },

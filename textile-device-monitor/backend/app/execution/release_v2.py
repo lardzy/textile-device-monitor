@@ -234,6 +234,10 @@ def _validate_document_shape(document: dict[str, Any]) -> list[dict[str, str]]:
                 error.message,
             )
         )
+    if not issues:
+        from app.execution.v2.portable_rules import definition_issues
+
+        issues.extend(definition_issues(document))
     return issues
 
 
@@ -1176,6 +1180,8 @@ def _live_binding_issues(
                 )
             )
     for slot_id, value in (binding_values.get("rule_slots") or {}).items():
+        if "definition" in value:
+            continue
         rule = db.get(ExecutionProjectRule, value.get("rule_id"))
         if (
             rule is None
@@ -1841,6 +1847,8 @@ def _validate_binding_payload(
             raise ExecutionApiError(422, "role_permissions_missing", "角色缺少 slot 要求的权限")
         normalized["role_slots"][slot_id] = {"role_id": role.id, "role_key": role.key, "permissions": permissions}
     for slot_id, value in (payload.get("rule_slots") or {}).items():
+        if "definition" in declared["rule_slots"][slot_id]:
+            continue
         if not isinstance(value, dict) or set(value) != {"rule_key", "revision"}:
             raise ExecutionApiError(422, "deployment_binding_invalid", "rule binding 必须包含 rule_key/revision")
         rule = db.query(ExecutionProjectRule).filter(ExecutionProjectRule.rule_key == value["rule_key"]).one_or_none()
@@ -1849,6 +1857,11 @@ def _validate_binding_payload(
         if rule.revision != value["revision"]:
             raise conflict("rule_revision_conflict", "规则 revision 已变化", current_revision=rule.revision)
         normalized["rule_slots"][slot_id] = {"rule_id": rule.id, "rule_key": rule.rule_key, "revision": rule.revision}
+    from app.execution.v2.portable_rules import bind_rule
+
+    for slot_id, slot in declared["rule_slots"].items():
+        if "definition" in slot:
+            normalized["rule_slots"][slot_id] = bind_rule(slot["definition"], normalized["root_slots"])
     for group in SLOT_GROUPS:
         for slot_id, slot in declared[group].items():
             if slot["required"] and slot_id not in normalized[group]:
@@ -2844,6 +2857,12 @@ def _migrate_v1_definition(
                             else {}
                         ),
                     }
+                    if rule is not None:
+                        from app.execution.v2.portable_rules import export_rule
+
+                        source_root = (rule.config.get("source") or {}).get("root_id")
+                        if source_root in root_slot_by_id:
+                            rule_slots[-1]["definition"] = export_rule(rule, root_slot_by_id[source_root])
                 converted["rule_slot"] = slot_id
             else:
                 converted[key] = value
@@ -3372,6 +3391,18 @@ def preview_v1_migration(
         candidate, transformations, blockers = _native_p2_candidate(
             workflow, candidate
         )
+    if target_profile in {"native_p3", "native_p4"}:
+        from app.execution.v2.portable_rules import export_rule
+
+        roots = {item["root_id"]: slot for slot, item in suggestions["root_slots"].items()}
+        for slot in candidate["resources"].get("rule_slots", []):
+            suggestion = suggestions["rule_slots"].get(slot["slot_id"], {})
+            row = db.query(ExecutionProjectRule).filter_by(rule_key=suggestion.get("rule_key")).one_or_none()
+            if row is not None:
+                root_id = (row.config.get("source") or {}).get("root_id")
+                if root_id in roots:
+                    slot["definition"] = export_rule(row, roots[root_id])
+        candidate["integrity"]["digest"] = _release_digest(candidate)
     if target_profile == "native_p4" and not blockers:
         from app.execution.v2.designer import compile_document
 

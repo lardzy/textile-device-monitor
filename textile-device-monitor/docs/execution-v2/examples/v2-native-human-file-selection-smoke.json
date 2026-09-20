@@ -189,7 +189,7 @@
       },
       {
         "contract_digest": "6ddaa432eedf18f96f1aeb839be0ed6a2b72c811e97587601fa00aeac16dc5b5",
-        "implementation_digest": "2ca705f6a9d99c1f05a106085db5772713d898a6bab63ea56c36e70c5051987f",
+        "implementation_digest": "28e9a4d922142dd5cc358f9bed1bb8507a99df352daad628bb87ed48160d1a85",
         "type": "file.query",
         "type_version": 1
       },
@@ -214,13 +214,13 @@
     ],
     "packs": [
       {
-        "distribution_digest": "1ef9868ab5d846418a6dd2143d65209f3cbd7c51328086befae52a0ce8872e20",
+        "distribution_digest": "76c8de2747c6530ab6918bccdc87c6231a8756c88adbaf0b97dc68e038441d25",
         "pack_id": "textile.execution-files",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.1.1"
+        "version_range": "1.1.2"
       },
       {
         "distribution_digest": "7efc96c093a78a8c27cc46e7f132408912fc187996c9ba97a39eee4e3a8f8d3e",
@@ -239,7 +239,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "6c44bb7f8bc496f723b6841b1d5f272c911a01555ef1a3bbca324e938e5b4447",
+    "digest": "766d54b4375a9e6e886a9f453a1f20665042f674ff137bd03d2c74181ee4ab4d",
     "scope": "document_without_integrity",
     "signatures": []
   },

@@ -309,7 +309,7 @@ export default function ExecutionWorkflowReleaseManager() {
 
   const ruleSlots = useMemo(() => {
     try {
-      return JSON.parse(documentText).resources?.rule_slots || [];
+      return (JSON.parse(documentText).resources?.rule_slots || []).filter(slot => !slot.definition);
     } catch {
       return [];
     }

@@ -87,6 +87,18 @@ def node_specs(
     return {"items": items}
 
 
+@router.get("/templates")
+def templates(
+    root_id: str = "execution_templates",
+    directory: str = "",
+    db: Session = Depends(get_db),
+    _auth: AuthContext = Depends(permission("workflow.design")),
+):
+    from app.execution.v2.templates import list_templates
+
+    return {"items": list_templates(db, root_id, directory)}
+
+
 @router.get("/designer/catalog")
 def designer_catalog(
     db: Session = Depends(get_db),

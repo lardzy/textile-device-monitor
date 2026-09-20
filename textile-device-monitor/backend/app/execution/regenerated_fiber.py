@@ -18,6 +18,7 @@ from app.execution.models import (
     utcnow,
 )
 from app.execution.project_rules import (
+    ResolvedRule,
     REGENERATED_RULE_KEYS,
     resolve_rule,
 )
@@ -1046,6 +1047,7 @@ def find_regenerated_fiber_records(
     limit: int = 6,
     root_id: Optional[str] = None,
     match_rule: Optional[str] = None,
+    project_rule: Optional[ResolvedRule] = None,
 ) -> dict[str, Any]:
     """Shared indexed discovery for the API and both workflow generations."""
     result = match_regenerated_fiber_workbooks(
@@ -1055,6 +1057,7 @@ def find_regenerated_fiber_records(
         result_limit=limit,
         root_id=root_id,
         rule_key=match_rule,
+        project_rule=project_rule,
     )
     if not result["candidates"]:
         details = {

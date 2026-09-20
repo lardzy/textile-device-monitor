@@ -545,6 +545,39 @@
         },
         "required": {
           "type": "boolean"
+        },
+        "definition": {
+          "type": "object",
+          "required": [
+            "rule_key",
+            "display_name",
+            "category_key",
+            "revision",
+            "config"
+          ],
+          "properties": {
+            "rule_key": {
+              "$ref": "#/$defs/identifier"
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "category_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "config": {
+              "$ref": "#/$defs/portableJsonValue"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -604,7 +637,7 @@
                 },
                 "registry_key": {
                   "type": "string",
-              "pattern": "^[a-z][a-z0-9_.:/@-]{0,199}$"
+                  "pattern": "^[a-z][a-z0-9_.:/@-]{0,199}$"
                 }
               },
               "additionalProperties": false

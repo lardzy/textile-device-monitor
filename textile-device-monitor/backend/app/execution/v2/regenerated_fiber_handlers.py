@@ -2,6 +2,7 @@
 
 from app.execution.regenerated_fiber import find_regenerated_fiber_records
 from app.execution.regenerated_fiber_results import read_regenerated_fiber_records
+from app.execution.v2.portable_rules import bound_rule
 
 
 def find_records(context):
@@ -13,6 +14,7 @@ def find_records(context):
         limit=config.get("limit", 6),
         root_id=config["root_id"],
         match_rule=config.get("match_rule"),
+        project_rule=bound_rule(context) if config.get("match_rule") else None,
     )
 
 

@@ -89,6 +89,9 @@ def _storage_path_available(path: Path, access_mode: str) -> bool:
 
 
 def ensure_storage_roots(db: Session) -> None:
+    from app.execution.v2.templates import install_templates
+
+    template_root = install_templates()
     source_root = Path(
         str(getattr(settings, "EXECUTION_SOURCE_ROOT", "/data/execution/source"))
     )
@@ -119,6 +122,7 @@ def ensure_storage_roots(db: Session) -> None:
             for root_id, name, folder, category, access_mode in ROOT_LAYOUT
         ],
         ("execution_staging", "执行暂存区", runtime_root, None, "write"),
+        ("execution_templates", "工作流模板", template_root, None, "read"),
         ("execution_publish", "执行发布区", publish_root, None, "publish"),
         ("report_upload_images", "报告上传图片", report_image_root, None, "write"),
     ]

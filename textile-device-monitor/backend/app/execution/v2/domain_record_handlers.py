@@ -18,22 +18,7 @@ from app.execution.microscopy_original_record import (
     resolve_microscopy_legacy_template_binding,
 )
 from app.execution.paper_fiber import _paper_fiber_executor
-from app.execution.project_rules import resolve_rule
-
-
-def _bound_rule(context):
-    rule = resolve_rule(context.db, context.node["config"]["match_rule"])
-    bindings = (context.run.deployment_binding_snapshot or {}).get("bindings") or {}
-    revisions = {
-        item["revision"] for item in (bindings.get("rule_slots") or {}).values()
-        if item["rule_key"] == rule.key
-    }
-    if revisions != {rule.revision} or not rule.enabled:
-        raise ExecutionApiError(
-            409, "deployment_binding_stale", "项目规则已更新，请重新绑定并发布流程",
-            details={"rule_key": rule.key, "rule_revision": rule.revision},
-        )
-    return rule
+from app.execution.v2.portable_rules import bound_rule as _bound_rule
 
 
 def _selection_items(records, *, kind):

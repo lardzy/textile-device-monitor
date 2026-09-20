@@ -77,6 +77,7 @@ services:
       EXECUTION_BOOTSTRAP_ADMIN_PASSWORD: ${EXECUTION_BOOTSTRAP_ADMIN_PASSWORD:-}
       EXECUTION_SOURCE_ROOT: "${EXECUTION_SOURCE_ROOT:-/data/execution-source/10特纤/02-检验}"
       EXECUTION_RUNTIME_ROOT: /data/execution-runtime
+      EXECUTION_TEMPLATE_ROOT: ${EXECUTION_TEMPLATE_ROOT:-/data/execution-runtime/templates}
       EXECUTION_PUBLISH_ROOT: /data/execution-publish
       EXECUTION_REPORT_IMAGE_ROOT: "${EXECUTION_REPORT_IMAGE_ROOT:-/data/report-upload-images}"
       EXECUTION_REPORT_IMAGE_DISPLAY_UNC: "${EXECUTION_REPORT_IMAGE_DISPLAY_UNC:-\\\\192.168.105.82\\公共交换文件}"
@@ -172,6 +173,7 @@ services:
       EXECUTION_COOKIE_SECURE: "${EXECUTION_COOKIE_SECURE:-false}"
       EXECUTION_SOURCE_ROOT: "${EXECUTION_SOURCE_ROOT:-/data/execution-source/10特纤/02-检验}"
       EXECUTION_RUNTIME_ROOT: /data/execution-runtime
+      EXECUTION_TEMPLATE_ROOT: ${EXECUTION_TEMPLATE_ROOT:-/data/execution-runtime/templates}
       EXECUTION_PUBLISH_ROOT: /data/execution-publish
       EXECUTION_REPORT_IMAGE_ROOT: "${EXECUTION_REPORT_IMAGE_ROOT:-/data/report-upload-images}"
       EXECUTION_REPORT_IMAGE_DISPLAY_UNC: "${EXECUTION_REPORT_IMAGE_DISPLAY_UNC:-\\\\192.168.105.82\\公共交换文件}"

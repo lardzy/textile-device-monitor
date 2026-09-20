@@ -212,7 +212,7 @@
       },
       {
         "contract_digest": "b351dad36dcc392c202825d39f183278158d9abba7615b45097f935d2aff6803",
-        "implementation_digest": "d56c8beaa0b785da0504b1e79f55c7ac5de60235441e0a2d6a46fe28fdee47b1",
+        "implementation_digest": "4a20939be0bd2c4e97c99624f22975021c579c060a06fe7f97d41a88a488d3c7",
         "type": "microscopy.image_candidates",
         "type_version": 1
       },
@@ -224,13 +224,13 @@
       },
       {
         "contract_digest": "247b53f39b594de21478aa8fc17f4cb19a12a1c8eba045ec6db6836d55b07afe",
-        "implementation_digest": "1850fce0e41856eb816ad00993271a35a49800f8ce5c4667f165e1b3467891f7",
+        "implementation_digest": "848a89f64f5b27688c3833d8d9bb6d26597c9e8c5a8c6a94c707b76735be2f81",
         "type": "microscopy.original_record.render",
         "type_version": 1
       },
       {
         "contract_digest": "5f995507868f1d5b963183f2e179d950d3e1092bf8168779ae1e2e17e0ea4f6b",
-        "implementation_digest": "95e56b8c50b49f661a9d51fd04e71da1aec121c3e1a136054970ed9365f8bb31",
+        "implementation_digest": "71d39158637bbe0716690967900b5d7d20909861738912841bda34076feaaf7b",
         "type": "microscopy.check_record.render",
         "type_version": 1
       },
@@ -243,13 +243,13 @@
     ],
     "packs": [
       {
-        "distribution_digest": "bb8163f4c70bb3fe29477b2f418fc5f4f83f78e0cd14d4bb65a9f43ce2c29510",
+        "distribution_digest": "eb956bb459c382d67bac68658b7d2c16819c22f3080d85e3bfd7603e62c4ae87",
         "pack_id": "textile.domain-records",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.1.0"
+        "version_range": "1.2.0"
       },
       {
         "distribution_digest": "7efc96c093a78a8c27cc46e7f132408912fc187996c9ba97a39eee4e3a8f8d3e",
@@ -268,7 +268,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "5ce6daaa1f814f294ecd3a53cb3869b9407a1ef41b920992612a605f48c554f4",
+    "digest": "afb9016b7aa1116b1715723fa7f947a43913643273289a9f3025dad1cdd39f8f",
     "scope": "document_without_integrity",
     "signatures": []
   },

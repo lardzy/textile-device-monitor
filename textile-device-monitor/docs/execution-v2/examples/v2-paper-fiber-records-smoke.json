@@ -152,7 +152,7 @@
       },
       {
         "contract_digest": "3bc6396287630db54830e359ad115276b7d3510831a726a718eca8f52b29f241",
-        "implementation_digest": "8c0fd648d2448d19fefce9c3cb0dede8c7bb843064cf5b6d3d05b9dd43486ff1",
+        "implementation_digest": "6dd7dea05d132798c57c5285b3698e15dc4e5ff9c6e00528b69544951af273e7",
         "type": "paper_fiber.find_records",
         "type_version": 1
       },
@@ -171,13 +171,13 @@
     ],
     "packs": [
       {
-        "distribution_digest": "bb8163f4c70bb3fe29477b2f418fc5f4f83f78e0cd14d4bb65a9f43ce2c29510",
+        "distribution_digest": "eb956bb459c382d67bac68658b7d2c16819c22f3080d85e3bfd7603e62c4ae87",
         "pack_id": "textile.domain-records",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.1.0"
+        "version_range": "1.2.0"
       },
       {
         "distribution_digest": "7efc96c093a78a8c27cc46e7f132408912fc187996c9ba97a39eee4e3a8f8d3e",
@@ -196,7 +196,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "75c40fdffe43181902835f7f3d45da38e40525629af9f2965a329db18a5d184a",
+    "digest": "7a3cf1857902b8eb9d80bb48d6fa984cd0807885bfcc933625a292b6be81e817",
     "scope": "document_without_integrity",
     "signatures": []
   },
