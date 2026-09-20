@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "textile-example-adapter"
+version = "1.0.0"
+requires-python = ">=3.11"
+description = "Offline reference adapter for Textile Execution SDK v1"
+
+[project.entry-points."textile.execution.adapters"]
+example = "textile_example_adapter:register"
+
+[tool.setuptools.package-data]
+textile_example_adapter = ["manifest.json"]

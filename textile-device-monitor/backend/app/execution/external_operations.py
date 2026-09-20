@@ -17,6 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.execution.connector_updates import UPDATE_OPERATION, UPDATE_STAGES, validate_update_receipt
+from app.execution.connector_context import (
+    DirectOperationContext, artifact_in_context, declared_roots as context_roots, operation_context,
+    preparation_identity, source_scope,
+)
+from app.execution.adapter_packages import bound_adapter, credential_system
 from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.electron_microscopy import (
@@ -1089,6 +1094,12 @@ def validate_external_receipt(
 ) -> dict[str, Any]:
     """Validate operation-specific machine receipts before state completion."""
 
+    adapter = bound_adapter(operation)
+    if adapter:
+        package, contract = adapter
+        if receipt.get("operation_id") != operation.id or receipt.get("payload_checksum") != operation.payload_checksum:
+            raise conflict("adapter_receipt_mismatch", "回执与提交操作不一致")
+        return package.receipt_validators[contract.operation_ref](operation, receipt)
     operation_type = _operation_type(operation)
     if operation_type == UPDATE_OPERATION:
         return validate_update_receipt(operation, receipt)
@@ -1735,6 +1746,10 @@ def _operation_type(operation: ExecutionExternalOperation) -> str:
 def _operation_stage_profile(
     operation: ExecutionExternalOperation,
 ) -> tuple[tuple[str, ...], str, str]:
+    adapter = bound_adapter(operation)
+    if adapter:
+        spec = adapter[1].spec
+        return tuple(spec["stages"]), spec["write_boundary"], spec["completion_stage"]
     return EXTERNAL_OPERATION_STAGE_PROFILES.get(
         _operation_type(operation),
         EXTERNAL_OPERATION_STAGE_PROFILES[
@@ -2156,7 +2171,7 @@ def _generated_microscopy_artifact_rows(
     )
     artifact_metadata = artifact.metadata_json or {}
     if (
-        artifact.run_id != run.id
+        not artifact_in_context(db, artifact, run)
         or artifact.role != "working"
         or artifact.media_type != expected_media_type
         or not _artifact_root_declared(run, root.root_id)
@@ -2294,7 +2309,7 @@ def _generated_microscopy_check_record_artifact(
     )
     source_number = run.inspection_number.strip().upper()
     if (
-        artifact.run_id != run.id
+        not artifact_in_context(db, artifact, run)
         or not _artifact_root_declared(run, root.root_id)
         or root.access_mode != "write"
         or artifact.role != "working"
@@ -2400,7 +2415,7 @@ def _completed_special_wool_review_source(
         db.query(ExecutionExternalOperation)
         .filter(
             ExecutionExternalOperation.id == operation_id,
-            ExecutionExternalOperation.run_id == run.id,
+            source_scope(run),
         )
         .with_for_update()
         .one_or_none()
@@ -2461,7 +2476,7 @@ def _reverify_generated_artifact_source(
     )
     artifact_metadata = artifact.metadata_json or {}
     if (
-        artifact.run_id != operation.run_id
+        not artifact_in_context(db, artifact, operation_context(db, operation))
         or root.root_id != expected.get("root_id")
         or artifact.relative_path != expected.get("relative_path")
         or artifact.filename != expected.get("filename")
@@ -2502,7 +2517,7 @@ def _reverify_microscopy_final_entry_sources(
     operation: ExecutionExternalOperation,
 ) -> None:
     summary = operation.request_summary or {}
-    run = db.get(ExecutionRun, operation.run_id)
+    run = operation_context(db, operation)
     files = summary.get("files")
     if (
         run is None
@@ -2539,7 +2554,7 @@ def _reverify_microscopy_final_entry_sources(
         .filter(
             ExecutionExternalOperation.id
             == str(source_ref.get("operation_id") or ""),
-            ExecutionExternalOperation.run_id == operation.run_id,
+            source_scope(operation),
         )
         .with_for_update()
         .one_or_none()
@@ -2642,7 +2657,7 @@ def _reverify_paper_file_source(
             "paper_fiber_source_file_changed",
             "批准前纸纤维原始记录内容已变化",
         )
-    run = db.get(ExecutionRun, operation.run_id)
+    run = operation_context(db, operation)
     operator = db.get(ExecutionUser, run.created_by_id) if run else None
     if (
         operator is None
@@ -2671,7 +2686,7 @@ def _reverify_paper_upload_source(
         .filter(
             ExecutionExternalOperation.id
             == str(source_ref.get("operation_id") or ""),
-            ExecutionExternalOperation.run_id == operation.run_id,
+            source_scope(operation),
         )
         .with_for_update()
         .one_or_none()
@@ -2713,7 +2728,7 @@ def _reverify_generic_entry_sources(
         .filter(
             ExecutionExternalOperation.id
             == str(source_ref.get("operation_id") or ""),
-            ExecutionExternalOperation.run_id == operation.run_id,
+            source_scope(operation),
         )
         .with_for_update()
         .one_or_none()
@@ -2747,13 +2762,17 @@ def _reverify_generic_entry_sources(
 
 
 def _artifact_root_declared(run: ExecutionRun, root_id: str) -> bool:
+    if isinstance(run, DirectOperationContext):
+        return any(slot["root_id"] == root_id and slot["access"] == "write" for slot in run.root_slots)
     if run.release_id is None:
         return root_id == "execution_staging"
     return any(slot.get("root_id") == root_id and slot.get("access") == "write"
-               for slot in (run.definition_snapshot or {}).get("root_slots", []))
+               for slot in context_roots(run))
 
 
 def _run_can_write_external(run: ExecutionRun) -> bool:
+    if isinstance(run, DirectOperationContext):
+        return True
     capabilities = run.capabilities_snapshot or {}
     if run.release_id is not None:
         return capabilities.get("side_effect_level") == "external_write"
@@ -2765,7 +2784,10 @@ def _credential_for_node(
     *,
     run: ExecutionRun,
     node: dict[str, Any],
+    system_key: str = LEGACY_CREDENTIAL_SYSTEM,
 ) -> ExecutionCredential:
+    if isinstance(run, DirectOperationContext):
+        return run.credential
     slot_name = str((node.get("config") or {}).get("credential_slot") or "")
     slot = next(
         (
@@ -2780,7 +2802,7 @@ def _credential_for_node(
     )
     if (
         slot is None
-        or slot.get("system_key") != LEGACY_CREDENTIAL_SYSTEM
+        or slot.get("system_key") != system_key
     ):
         raise ExecutionApiError(
             422,
@@ -2791,7 +2813,7 @@ def _credential_for_node(
         db.query(ExecutionCredential)
         .filter(
             ExecutionCredential.user_id == run.created_by_id,
-            ExecutionCredential.system_key == LEGACY_CREDENTIAL_SYSTEM,
+            ExecutionCredential.system_key == system_key,
             ExecutionCredential.is_active.is_(True),
         )
         .one_or_none()
@@ -2835,7 +2857,7 @@ def _selected_file_rows(
 
     declared_roots = {
         str(item.get("root_id"))
-        for item in (run.definition_snapshot or {}).get("root_slots", [])
+        for item in context_roots(run)
         if isinstance(item, dict) and item.get("access", "read") == "read"
     }
     gateway = build_file_gateway(db)
@@ -3057,7 +3079,7 @@ def _selected_paper_file_row(
     entry, root = row
     declared_roots = {
         str(item.get("root_id"))
-        for item in (run.definition_snapshot or {}).get("root_slots", [])
+        for item in context_roots(run)
         if isinstance(item, dict) and item.get("access", "read") == "read"
     }
     if (
@@ -3164,7 +3186,7 @@ def _bound_credential_for_approval(
         credential is None
         or not credential.is_active
         or credential.user_id != (run.created_by_id if run is not None else operation.created_by_id)
-        or credential.system_key != LEGACY_CREDENTIAL_SYSTEM
+        or credential.system_key != credential_system(operation.connector_key)
         or credential.revision != operation.credential_revision
     ):
         raise conflict(
@@ -3220,14 +3242,18 @@ def _reverify_operation_sources(
     *,
     operation: ExecutionExternalOperation,
 ) -> None:
+    adapter = bound_adapter(operation)
+    if adapter:
+        package, contract = adapter
+        package.source_validators[contract.operation_ref](db, operation)
+        return
     operation_type = _operation_type(operation)
-    if operation.run_id is None or (operation.request_summary or {}).get("connector_submission"):
-        # A direct request freezes caller-supplied values. It has no mutable
-        # workbook or upstream Run to re-read. The Writer still verifies the
-        # exact task project, current registration count and read-back.
-        if (operation_type in {LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION, UPDATE_OPERATION}
-                and (operation.request_summary or {}).get("connector_submission")):
-            return
+    submission = (operation.request_summary or {}).get("connector_submission") or {}
+    if submission.get("operation_ref") in {
+        "legacy_fibrecheck.check_record.generic_entry@1", "legacy_fibrecheck.check_record.generic_update@1",
+    }:
+        return
+    if operation.run_id is None and not submission:
         raise conflict("connector_operation_source_invalid", "外部操作缺少提交来源")
     if operation_type == LEGACY_SPECIAL_WOOL_IMAGE_OPERATION:
         _reverify_generated_artifact_source(db, operation=operation)
@@ -3786,6 +3812,10 @@ def _create_prepared_external_operation(
     request_summary: dict[str, Any],
     operation_key_prefix: str,
 ) -> tuple[ExecutionExternalOperation, bool]:
+    direct = isinstance(run, DirectOperationContext)
+    if direct:
+        request_summary = {**request_summary, "connector_submission": run.submission}
+    connector_key = (request_summary.get("connector_submission") or {}).get("connector_id", LEGACY_CONNECTOR_KEY)
     credential_revision = int(credential.revision)
     payload_checksum = _canonical_checksum(
         {
@@ -3800,16 +3830,18 @@ def _create_prepared_external_operation(
     )
     operation_key = hashlib.sha256(
         (
-            f"{operation_key_prefix}:{run.id}:{node_run.node_id}"
+            f"{operation_key_prefix}:{run.id}:{node_run.node_id if node_run else 'api'}"
         ).encode("utf-8")
     ).hexdigest()
+    if direct:
+        operation_key = run.operation_key
     prepared_at = utcnow()
     preflight_expires_at = prepared_at + timedelta(
         minutes=settings.EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES
     )
     existing = (
         db.query(ExecutionExternalOperation)
-        .filter(ExecutionExternalOperation.node_run_id == node_run.id)
+        .filter(preparation_identity(run, node_run))
         .populate_existing()
         .with_for_update()
         .one_or_none()
@@ -3825,8 +3857,8 @@ def _create_prepared_external_operation(
     if existing is not None:
         if (
             existing.run_id != run.id
-            or existing.node_run_id != node_run.id
-            or existing.connector_key != LEGACY_CONNECTOR_KEY
+            or existing.node_run_id != (node_run.id if node_run else None)
+            or existing.connector_key != connector_key
             or existing.credential_id != credential.id
             or existing.credential_revision != credential_revision
             or existing.account_scope_key != account_scope_key
@@ -3838,6 +3870,8 @@ def _create_prepared_external_operation(
                 "该外部操作幂等键已绑定另一份预检内容",
                 operation_id=existing.id,
             )
+        if direct:
+            return existing, True
         rearmed = _rearm_expired_external_operation(
             db,
             operation=existing,
@@ -3880,14 +3914,16 @@ def _create_prepared_external_operation(
     operation = ExecutionExternalOperation(
         operation_key=operation_key,
         run_id=run.id,
-        node_run_id=node_run.id,
+        node_run_id=node_run.id if node_run else None,
         created_by_id=run.created_by_id,
-        connector_key=LEGACY_CONNECTOR_KEY,
+        connector_key=connector_key,
         credential_id=credential.id,
         credential_revision=credential_revision,
         account_scope_key=account_scope_key,
         remote_business_key=remote_business_key,
-        status="prepared",
+        status="approved" if direct else "prepared",
+        approved_by_id=run.created_by_id if direct else None,
+        approved_at=prepared_at if direct else None,
         payload_checksum=payload_checksum,
         request_summary=request_summary,
         preflight_expires_at=preflight_expires_at,
@@ -4013,7 +4049,7 @@ def prepare_legacy_special_wool_image_operation(
     lock_legacy_remote_business_scope(db, sample_number=requested_base)
     existing = (
         db.query(ExecutionExternalOperation)
-        .filter(ExecutionExternalOperation.node_run_id == node_run.id)
+        .filter(preparation_identity(run, node_run))
         .populate_existing()
         .with_for_update()
         .one_or_none()
@@ -4143,7 +4179,7 @@ def _special_wool_upload_source_operation(
         db.query(ExecutionExternalOperation)
         .filter(
             ExecutionExternalOperation.id == operation_id,
-            ExecutionExternalOperation.run_id == run.id,
+            source_scope(run),
         )
         .with_for_update()
         .one_or_none()
@@ -4693,7 +4729,7 @@ def prepare_legacy_special_wool_qualitative_upload_operation(
     lock_legacy_remote_business_scope(db, sample_number=requested_base)
     existing = (
         db.query(ExecutionExternalOperation)
-        .filter(ExecutionExternalOperation.node_run_id == node_run.id)
+        .filter(preparation_identity(run, node_run))
         .populate_existing()
         .with_for_update()
         .one_or_none()
@@ -4821,7 +4857,7 @@ def _paper_upload_source_operation(
         db.query(ExecutionExternalOperation)
         .filter(
             ExecutionExternalOperation.id == operation_id,
-            ExecutionExternalOperation.run_id == run.id,
+            source_scope(run),
         )
         .with_for_update()
         .one_or_none()
@@ -4946,7 +4982,7 @@ def _completed_paper_review_source(
         db.query(ExecutionExternalOperation)
         .filter(
             ExecutionExternalOperation.id == operation_id,
-            ExecutionExternalOperation.run_id == run.id,
+            source_scope(run),
         )
         .with_for_update()
         .one_or_none()
@@ -5282,7 +5318,7 @@ def _reverify_special_wool_review_source(
         .filter(
             ExecutionExternalOperation.id
             == str(source_ref.get("operation_id") or ""),
-            ExecutionExternalOperation.run_id == operation.run_id,
+            source_scope(operation),
         )
         .with_for_update()
         .one_or_none()
@@ -6241,6 +6277,11 @@ def _validate_manual_reconciliation_evidence(
     now: datetime,
 ) -> dict[str, Any] | None:
     """Validate an admin attestation's shape; no remote probe runs here."""
+    adapter = bound_adapter(operation)
+    if adapter:
+        package, contract = adapter
+        result = package.reconciliation_validators[contract.operation_ref](operation, attempt, action, evidence)
+        return validate_external_receipt(operation, result) if action == "confirm_completed" else result
     if _operation_type(operation) == UPDATE_OPERATION:
         raise conflict("connector_update_uses_record_readback", "更正操作通过原记录自动核对，请刷新当前记录后查看结果")
     checked_at = _reconciliation_checked_at(evidence)
@@ -6448,7 +6489,7 @@ def reconcile_external_operation(
             operation_id=operation.id,
         )
 
-    if operation.connector_key != LEGACY_CONNECTOR_KEY:
+    if operation.connector_key != LEGACY_CONNECTOR_KEY and bound_adapter(operation) is None:
         raise conflict(
             "external_reconciliation_connector_mismatch",
             "当前连接器不支持该人工对账契约",
@@ -6849,6 +6890,11 @@ def bridge_external_operation(
             credential.account_name if credential is not None else None
         ),
     }
+    adapter = bound_adapter(operation)
+    if adapter:
+        package, contract = adapter
+        view["machine_payload"] = package.bridge_payloads[contract.operation_ref](operation)
+        return view
     operation_type = _operation_type(operation)
     if operation_type in {
         LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
@@ -6945,13 +6991,17 @@ def claim_approved_external_operation(
     supported_types = supported_operation_types or {
         LEGACY_REGENERATED_COUNT_OPERATION
     }
+    from app.execution.v2.registry import get_installed_registry
+
+    connector_keys = {LEGACY_CONNECTOR_KEY}
+    connector_keys.update(connector.connector_id for connector in get_installed_registry().connectors.all()
+                          if any(item.operation_ref in supported_types and item.ready for item in connector.operations))
     account_scope_key = _account_scope_key(account_name)
     lock_external_bridge_claim_capacity(db)
     active_write_count = (
         db.query(ExecutionExternalOperation.id)
         .filter(
-            ExecutionExternalOperation.connector_key
-            == LEGACY_CONNECTOR_KEY,
+            ExecutionExternalOperation.connector_key.in_(connector_keys),
             ExecutionExternalOperation.status.in_(
                 BRIDGE_ACTIVE_WRITE_STATUSES
             )
@@ -6963,8 +7013,7 @@ def claim_approved_external_operation(
     candidates = (
         db.query(ExecutionExternalOperation.id)
         .filter(
-            ExecutionExternalOperation.connector_key
-            == LEGACY_CONNECTOR_KEY,
+            ExecutionExternalOperation.connector_key.in_(connector_keys),
             ExecutionExternalOperation.status == "approved",
             ExecutionExternalOperation.account_scope_key
             == account_scope_key,

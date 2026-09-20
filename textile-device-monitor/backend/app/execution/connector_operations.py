@@ -25,9 +25,10 @@ from app.execution.external_operations import (
 )
 from app.execution.models import (
     ExecutionCredential, ExecutionExternalOperation, ExecutionTaskSnapshotCache,
-    ExecutionUser, utcnow,
+    ExecutionStorageRoot, ExecutionUser, utcnow,
 )
 from app.execution.project_rules import PAPER_FIBER_RULE_KEY, resolve_rule
+from app.execution.adapter_packages import binding_fields, credential_system
 
 
 GENERIC_ENTRY = "legacy_fibrecheck.check_record.generic_entry@1"
@@ -67,10 +68,11 @@ def prepare_operation_node(context, *, operation):
     data = context.input_data
     summary = operation.handler(context.db, data)
     remote_key = lock_legacy_remote_business_scope(context.db, sample_number=summary["target_sample_number"])
-    credential = _credential_for_node(context.db, run=context.run, node=context.node)
+    credential = _credential_for_node(context.db, run=context.run, node=context.node, system_key=credential_system(operation.connector_id))
     summary["connector_submission"] = {
         "operation_ref": operation.operation_ref, "connector_version": operation.connector_version,
         "contract_digest": operation.contract_digest, "input": deepcopy(data),
+        **binding_fields(operation),
     }
     return _create_prepared_external_operation(
         context.db, run=context.run, node_run=context.node_run, credential=credential,
@@ -82,7 +84,7 @@ def prepare_operation_node(context, *, operation):
 def operation_api_available(operation) -> bool:
     from app.execution.v2.registry import get_installed_registry
 
-    return (operation_handler(operation.connector_id, operation.operation, operation.contract_version) is not None
+    return ((operation.handler is not None or operation.workflow_handler is not None)
             and isinstance(operation.spec.get("input_schema"), dict)
             and get_installed_registry().resolve_pack(operation.pack_id, operation.pack_version).ready)
 
@@ -139,7 +141,9 @@ def submit_operation(db: Session, *, actor: ExecutionUser, request) -> tuple[Exe
     # Ten LAN users do not need a separate queue or a distributed lock service.
     db.query(ExecutionUser).filter(ExecutionUser.id == actor.id).with_for_update().one()
     key = _canonical_checksum({"owner": actor.id, "key": request.idempotency_key})
-    request_checksum = _canonical_checksum(request.model_dump(mode="json", exclude={"idempotency_key"}))
+    request_checksum = _canonical_checksum(request.model_dump(mode="json", exclude={
+        "idempotency_key", *({"inspection_number"} if request.inspection_number is None else set()),
+    }))
     existing = db.query(ExecutionExternalOperation).filter_by(operation_key=key).one_or_none()
     if existing is not None:
         if (existing.request_summary or {}).get("connector_submission", {}).get("request_checksum") != request_checksum:
@@ -153,17 +157,44 @@ def submit_operation(db: Session, *, actor: ExecutionUser, request) -> tuple[Exe
     if error:
         raise ExecutionApiError(422, "connector_operation_input_invalid", "操作参数不符合契约",
                                 details={"path": list(error.absolute_path), "message": error.message})
+    if contract.workflow_handler is not None:
+        from app.execution.connector_context import DirectOperationContext
+
+        number = str(request.inspection_number or request.input.get("inspection_number") or "").strip().upper()
+        if not number:
+            raise ExecutionApiError(422, "connector_inspection_number_required", "请指定 inspection_number")
+        credential = db.query(ExecutionCredential).filter_by(
+            id=request.credential_id, user_id=actor.id, is_active=True, system_key=credential_system(contract.connector_id),
+        ).one_or_none()
+        if credential is None:
+            raise not_found("检务凭据", request.credential_id)
+        roots = [{"root_id": root.root_id, "access": root.access_mode} for root in db.query(ExecutionStorageRoot)
+                 .filter_by(is_active=True, is_available=True).all()]
+        submission = {"operation_ref": request.operation_ref, "connector_version": contract.connector_version,
+            **binding_fields(contract),
+            "contract_digest": contract.contract_digest, "request_checksum": request_checksum,
+            "input": deepcopy(request.input), "root_slots": roots}
+        context = DirectOperationContext(inspection_number=number, created_by_id=actor.id,
+            input_data=request.input, operation_key=key, submission=submission, root_slots=roots, credential=credential)
+        operation, reused = contract.workflow_handler(db, run=context, node_run=None, node={}, input_data=request.input)
+        _ensure_operation_execution_available(operation)
+        append_audit_log(db, action="connector_operation.submit", resource_type="execution_external_operation",
+                         resource_id=operation.id, actor_user_id=actor.id,
+                         details={"operation_ref": request.operation_ref, "payload_checksum": operation.payload_checksum,
+                                  "status": operation.status, "remote_write_performed": False})
+        return operation, reused
     summary = contract.handler(db, request.input)
     # Match workflow preparation's sample → credential ordering.
     remote_key = lock_legacy_remote_business_scope(db, sample_number=summary["target_sample_number"])
     credential = (db.query(ExecutionCredential).filter_by(
-        id=request.credential_id, user_id=actor.id, is_active=True, system_key=LEGACY_CREDENTIAL_SYSTEM,
+        id=request.credential_id, user_id=actor.id, is_active=True, system_key=credential_system(contract.connector_id),
     ).with_for_update().one_or_none())
     if credential is None:
         raise not_found("检务凭据", request.credential_id)
     summary["connector_submission"] = {
         "operation_ref": request.operation_ref, "connector_version": contract.connector_version,
         "contract_digest": contract.contract_digest, "request_checksum": request_checksum,
+        **binding_fields(contract),
         "input": deepcopy(request.input),
     }
     blocker = db.query(ExecutionExternalOperation).filter(
@@ -175,7 +206,7 @@ def submit_operation(db: Session, *, actor: ExecutionUser, request) -> tuple[Exe
     now = utcnow()
     operation = ExecutionExternalOperation(
         operation_key=key, created_by_id=actor.id,
-        connector_key=LEGACY_CONNECTOR_KEY, credential_id=credential.id,
+        connector_key=contract.connector_id, credential_id=credential.id,
         credential_revision=credential.revision, account_scope_key=_account_scope_key(credential.account_name),
         remote_business_key=remote_key, status="approved", request_summary=summary,
         payload_checksum=_canonical_checksum({"request_summary": summary, "credential_binding": {

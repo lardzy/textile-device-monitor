@@ -25,7 +25,7 @@ from app.execution.v2.canonical import (
 )
 from jsonschema import Draft202012Validator
 
-ENGINE_VERSION = "2.4.0"
+ENGINE_VERSION = "2.5.0"
 PROTOCOL_VERSION = "2.1"
 
 _TRUSTED_RENDERER_PROTOCOLS = {
@@ -852,7 +852,10 @@ def load_schema(name: str) -> dict[str, Any]:
 
 
 def _manifest_resources(manifest: dict[str, Any]) -> list[tuple[str, bytes]]:
-    package_root = resources.files("app.execution")
+    from app.execution.adapter_packages import package_for
+
+    adapter = package_for(manifest)
+    package_root = adapter.resource_root if adapter else resources.files("app.execution")
     values: list[tuple[str, bytes]] = []
     for path in manifest["resource_paths"]:
         normalized = path.replace("\\", "/")
@@ -1161,6 +1164,11 @@ def _load_manifests() -> list[dict[str, Any]]:
             manifest = json.loads(entry.read_text(encoding="utf-8"))
             validator.validate(manifest)
             manifests.append(manifest)
+    from app.execution.adapter_packages import installed_adapters
+
+    for package in installed_adapters().values():
+        validator.validate(package.manifest)
+        manifests.append(deepcopy(package.manifest))
     return manifests
 
 
@@ -1355,6 +1363,7 @@ def _build_installed_registry() -> InstalledRegistry:
     from app.execution.v2.record_input_handlers import NATIVE_HANDLERS as record_input_handlers
     from app.execution.connector_queries import execute_query_node, query_handler
     from app.execution.connector_operations import operation_handler, workflow_operation_handler
+    from app.execution.adapter_packages import handler_for
 
     manifest_resources = {
         (manifest["pack_id"], manifest["pack_version"]): set(
@@ -1512,11 +1521,11 @@ def _build_installed_registry() -> InstalledRegistry:
                         distribution_digest=pack.distribution_digest,
                         spec=deepcopy(operation_document),
                         implementation_digest=canonical_sha256({"contract_digest": contract_digest, "distribution_digest": pack.distribution_digest}),
-                        handler=operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"]),
-                        workflow_handler=workflow_operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"]),
+                        handler=handler_for(manifest, "operations", connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"], operation_handler),
+                        workflow_handler=handler_for(manifest, "workflow_operations", connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"], workflow_operation_handler),
                         ready=bool(pack.ready and (
-                            operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"])
-                            or workflow_operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"])
+                            handler_for(manifest, "operations", connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"], operation_handler)
+                            or handler_for(manifest, "workflow_operations", connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"], workflow_operation_handler)
                         )),
                     )
                 )
@@ -1532,7 +1541,7 @@ def _build_installed_registry() -> InstalledRegistry:
                     "connector_version": connector_document["version"],
                     "query_spec": query_document,
                 })
-                handler = query_handler(connector_document["connector_id"], query_document["query"], query_document["contract_version"])
+                handler = handler_for(manifest, "queries", connector_document["connector_id"], query_document["query"], query_document["contract_version"], query_handler)
                 queries.append(InstalledQuery(
                     connector_id=connector_document["connector_id"],
                     connector_version=connector_document["version"],

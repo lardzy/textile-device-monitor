@@ -151,7 +151,7 @@ def test_native_contracts_are_closed_and_workbook_copy_preferred_is_native():
 
 
 def test_pack_digest_is_bound_to_declared_implementation_source_bytes():
-    pack = get_installed_registry().resolve_pack("textile.execution-kernel", "2.8.1")
+    pack = get_installed_registry().resolve_pack("textile.execution-kernel", "2.9.0")
     manifest = deepcopy(pack.manifest)
     manifest.pop("distribution_digest", None)
     package_root = resources.files("app.execution")

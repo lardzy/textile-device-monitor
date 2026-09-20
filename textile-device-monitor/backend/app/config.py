@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     EXECUTION_SOURCE_ROOT: str = "/data/execution-input"
     EXECUTION_RUNTIME_ROOT: str = "/data/execution-runtime"
     EXECUTION_TEMPLATE_ROOT: str = ""
+    EXECUTION_ADAPTER_PATH: str = ""
     EXECUTION_PUBLISH_ROOT: str = "/data/execution-publish"
     # 报告上传图片共享目录（容器内挂载点，可写）。对应局域网共享
     # //192.168.105.82/公共交换文件，由 compose CIFS 卷挂载。

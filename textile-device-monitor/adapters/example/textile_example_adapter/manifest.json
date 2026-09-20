@@ -1,0 +1,110 @@
+{
+  "manifest_schema_version": "1.0",
+  "pack_id": "lab.example.adapter",
+  "pack_version": "1.0.0",
+  "engine_version_range": ">=2.5.0 <3.0.0",
+  "resource_paths": [
+    "__init__.py"
+  ],
+  "assets": [],
+  "provides": {
+    "nodes": [],
+    "capabilities": [],
+    "connectors": [
+      {
+        "connector_id": "lab.example",
+        "version": "1.0.0",
+        "queries": [
+          {
+            "query": "echo",
+            "contract_version": 1,
+            "name": "回显",
+            "execution_kind": "automatic",
+            "consistency": "synchronous",
+            "side_effect_class": "read_only",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "operations": [
+          {
+            "operation": "record.save",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "side_effect_class": "external_write",
+            "stages": [
+              "ready",
+              "write_started",
+              "verified"
+            ],
+            "write_boundary": "write_started",
+            "completion_stage": "verified",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "inspection_number": {
+                  "type": "string"
+                },
+                "values": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "inspection_number",
+                "values"
+              ],
+              "additionalProperties": false
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "completed"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "additionalProperties": false
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "distribution_digest": "db63eba301ff614aaf72c14dbbae2ec5b35f0e806baaab6cdd54dafb6f3f9b7d"
+}

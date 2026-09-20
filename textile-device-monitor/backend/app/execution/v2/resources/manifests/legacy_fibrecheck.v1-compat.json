@@ -1,7 +1,7 @@
 {
   "assets": [],
-  "distribution_digest": "9e718c0ca1d33751a52ed18bb7730bbb665b6e09ae8f0ccdcfccc1e8f0d4767a",
-  "engine_version_range": ">=2.4.0 <3.0.0",
+  "distribution_digest": "afadcf612ba854517c10da238ea9fdb8d85898e3949b910efff9453237ce31d2",
+  "engine_version_range": ">=2.5.0 <3.0.0",
   "extensions": {
     "textile": {
       "candidate_compilation_only": false,
@@ -11,7 +11,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "legacy_fibrecheck.v1-compat",
-  "pack_version": "1.6.1",
+  "pack_version": "1.7.0",
   "provides": {
     "capabilities": [
       {
@@ -1395,7 +1395,7 @@
             "side_effect_class": "read_only"
           }
         ],
-        "version": "1.6.1"
+        "version": "1.7.0"
       }
     ],
     "nodes": []
@@ -1410,6 +1410,8 @@
     "connector_records.py",
     "connector_updates.py",
     "connector_recovery.py",
-    "v2/resources/node_specs/external-operation-node.json"
+    "v2/resources/node_specs/external-operation-node.json",
+    "adapter_packages.py",
+    "connector_context.py"
   ]
 }

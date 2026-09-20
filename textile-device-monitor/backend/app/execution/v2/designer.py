@@ -8,7 +8,7 @@ from app.execution.release_v2 import (
     _validate_document_shape,
 )
 from app.execution.v2.canonical import canonical_sha256
-from app.execution.v2.registry import get_installed_registry
+from app.execution.v2.registry import get_installed_registry, resolve_connector_reference
 
 
 def seal(document):
@@ -45,20 +45,19 @@ def compile_document(document):
             if not ref_key:
                 continue
             reference = node.get("config", {}).get(ref_key, "")
-            name, version = reference.rsplit("@", 1)
-            connector_id, name = name.split(".", 1)
+            connector_id, name, version = resolve_connector_reference(reference, [c.connector_id for c in registry.connectors.all()])
             connector = registry.resolve_connector(connector_id, "*")
             item = connectors.setdefault(connector_id, {"connector_id": connector_id, "version_range": connector.version,
                 "distribution_digest": connector.distribution_digest, "operations": [], "queries": []})
             kind = "query" if ref_key == "query_ref" else "operation"
-            contract = getattr(registry, f"resolve_{kind}")(connector_id, connector.version, name, int(version))
+            contract = getattr(registry.connectors, f"resolve_{kind}")(connector_id, connector.version, name, int(version))
             dependency = {kind: name, "contract_version": int(version), "contract_digest": contract.contract_digest}
             group = "queries" if kind == "query" else "operations"
             if dependency not in item[group]:
                 item[group].append(dependency)
         candidate["dependencies"]["packs"] = []
         _rebuild_candidate_dependencies(candidate)
-        candidate["dependencies"]["engine"] = {"version_range": ">=2.4.0 <3.0.0"}
+        candidate["dependencies"]["engine"] = {"version_range": ">=2.5.0 <3.0.0"}
         candidate["dependencies"]["connectors"] = sorted(connectors.values(), key=lambda value: value["connector_id"])
         for connector_id in sorted(connectors):
             connector = registry.resolve_connector(connector_id, "*")

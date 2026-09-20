@@ -25,6 +25,7 @@ class ConnectorQueryRequest(BaseModel):
 
 
 class ConnectorOperationRequest(BaseModel):
+    inspection_number: Optional[str] = Field(default=None, min_length=1, max_length=100)
     model_config = ConfigDict(extra="forbid")
 
     operation_ref: str = Field(min_length=1, max_length=330)
@@ -553,18 +554,7 @@ class ExternalBridgeClaimRequest(BaseModel):
         max_length=100,
     )
     account_name: str = Field(min_length=1, max_length=200)
-    supported_operation_types: list[
-        Literal[
-            "legacy_regenerated_fiber_count_upload",
-            "legacy_special_wool_image_upload",
-            "legacy_special_wool_review",
-            "legacy_microscopy_check_record_entry",
-            "legacy_special_wool_qualitative_upload",
-            "legacy_special_wool_qualitative_review",
-            "legacy_generic_check_record_entry",
-            "legacy_generic_check_record_update",
-        ]
-    ] = Field(
+    supported_operation_types: list[str] = Field(
         default_factory=lambda: [
             "legacy_regenerated_fiber_count_upload"
         ],
