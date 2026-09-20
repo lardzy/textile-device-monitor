@@ -42,6 +42,10 @@ namespace LegacyFibreCheckFinalEntryWriter
             string staffFingerprint = StaffFingerprint(staff);
 
             string connectionString = SystemDataConnection.Read(options.FibreCheckDir, "DbConnString");
+            if (package.OperationType == FinalEntryPackage.UpdateOperation)
+            {
+                return GenericRecordUpdate.Run(options, package, connectionString, staff, emit, awaitPermit);
+            }
             PreflightSnapshot snapshot = ReadOnlyResolver.Resolve(connectionString, package);
             string safetyFingerprint = LegacySafetyGuards.Verify(
                 connectionString, package, snapshot, staff);

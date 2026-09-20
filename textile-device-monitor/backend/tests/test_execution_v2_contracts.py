@@ -116,7 +116,7 @@ def test_installed_registry_freezes_all_current_compatibility_contracts():
     assert len(registry.list_packs()) == 7
     assert len(registry.list_assets()) == 11
     assert len(registry.list_connectors()) == 1
-    assert len(registry.list_connectors()[0]["operations"]) == 7
+    assert len(registry.list_connectors()[0]["operations"]) == 8
     assert len(registry.revision) == 64
     assert len({(item.type, item.type_version) for item in compatibility}) == 39
     for pack in registry.packs.all():
@@ -151,7 +151,7 @@ def test_native_contracts_are_closed_and_workbook_copy_preferred_is_native():
 
 
 def test_pack_digest_is_bound_to_declared_implementation_source_bytes():
-    pack = get_installed_registry().resolve_pack("textile.execution-kernel", "2.4.0")
+    pack = get_installed_registry().resolve_pack("textile.execution-kernel", "2.5.0")
     manifest = deepcopy(pack.manifest)
     manifest.pop("distribution_digest", None)
     package_root = resources.files("app.execution")

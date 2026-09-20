@@ -562,6 +562,7 @@ class ExternalBridgeClaimRequest(BaseModel):
             "legacy_special_wool_qualitative_upload",
             "legacy_special_wool_qualitative_review",
             "legacy_generic_check_record_entry",
+            "legacy_generic_check_record_update",
         ]
     ] = Field(
         default_factory=lambda: [

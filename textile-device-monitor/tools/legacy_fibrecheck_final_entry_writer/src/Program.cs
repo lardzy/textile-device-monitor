@@ -103,6 +103,7 @@ namespace LegacyFibreCheckFinalEntryWriter
             };
             if (package != null)
             {
+                if (package.UpdatedRecord != null) receipt["record"] = package.UpdatedRecord;
                 receipt["package_schema_version"] = package.SchemaVersion;
                 receipt["sample_number"] = package.SampleNumber;
                 receipt["check_item_no"] = package.CheckItemNo;

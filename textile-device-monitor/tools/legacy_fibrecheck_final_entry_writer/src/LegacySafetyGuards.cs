@@ -23,7 +23,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 {
                     string[] outerControls = package.OperationType == FinalEntryPackage.ExcelOperation
                         ? new[] { "btnAddOriginalData", "btnSave", "btnReview" }
-                        : new[] { "btnAddOriginalData" };
+                        : new[] { package.OperationType == FinalEntryPackage.UpdateOperation
+                            ? "btnEditOriginalData" : "btnAddOriginalData" };
                     VerifyFunction(db, OuterFunctionType, outerControls, staff, true);
                     // The generic registration UI opens only as a child window of
                     // CheckRecordRegisterUI ("增加原始记录").  The desktop client
@@ -36,7 +37,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                     string projectDepartment = VerifyBusinessAuthorization(
                         db, package, snapshot, staff);
                     string branchFingerprint;
-                    if (package.OperationType == FinalEntryPackage.GenericOperation)
+                    if (package.OperationType == FinalEntryPackage.GenericOperation
+                        || package.OperationType == FinalEntryPackage.UpdateOperation)
                     {
                         if (!string.Equals(
                             snapshot.TaskCheckMethod,
@@ -53,7 +55,9 @@ namespace LegacyFibreCheckFinalEntryWriter
                         bool taskRequiresJudgement = snapshot.GiveJudgement == 1;
                         bool packageHasJudgement = !string.IsNullOrWhiteSpace(
                             package.GenericRecord.Header.TotalJudge);
-                        if (taskRequiresJudgement != packageHasJudgement)
+                        if (taskRequiresJudgement != packageHasJudgement
+                            && (package.OperationType != FinalEntryPackage.UpdateOperation
+                                || package.UpdateChanges.ContainsKey("judgement")))
                         {
                             throw new PackageValidationException(
                                 "judgement_requires_interactive_confirmation");

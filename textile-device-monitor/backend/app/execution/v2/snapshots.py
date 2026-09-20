@@ -126,6 +126,10 @@ def _external_operation_contracts() -> list[dict[str, Any]]:
             f"{operation.connector_id}.{operation.operation}"
             f"@{operation.contract_version}"
         )
+        # This snapshot freezes the seven v1 adapters. New direct/native
+        # operations are versioned in their Connector manifest, not added to v1.
+        if operation_ref not in operation_type_by_ref:
+            continue
         operation_type = operation_type_by_ref[operation_ref]
         stages = tuple(operation.spec["stages"])
         write_boundary = operation.spec["write_boundary"]

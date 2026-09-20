@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.execution.connector_updates import UPDATE_OPERATION, UPDATE_STAGES, validate_update_receipt
 from app.execution.errors import ExecutionApiError, conflict, not_found
 from app.execution.events import append_audit_log, append_run_event
 from app.execution.electron_microscopy import (
@@ -276,6 +277,8 @@ EXTERNAL_OPERATION_STAGE_PROFILES = {
         "generic_projection_verified",
     ),
 }
+
+EXTERNAL_OPERATION_STAGE_PROFILES[UPDATE_OPERATION] = (UPDATE_STAGES, "update_started", "update_verified")
 SPECIAL_WOOL_EXECUTION_CAPABILITY = {
     LEGACY_SPECIAL_WOOL_IMAGE_OPERATION: {
         "available": False,
@@ -1087,6 +1090,8 @@ def validate_external_receipt(
     """Validate operation-specific machine receipts before state completion."""
 
     operation_type = _operation_type(operation)
+    if operation_type == UPDATE_OPERATION:
+        return validate_update_receipt(operation, receipt)
     if operation_type not in {
         LEGACY_SPECIAL_WOOL_IMAGE_OPERATION,
         LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
@@ -1751,6 +1756,7 @@ def _operation_execution_capability(
         _operation_type(operation) in {
             LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_OPERATION,
             LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION,
+            UPDATE_OPERATION,
         }
         and not settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED
     ):
@@ -3207,7 +3213,7 @@ def _reverify_operation_sources(
         # A direct request freezes caller-supplied values. It has no mutable
         # workbook or upstream Run to re-read. The Writer still verifies the
         # exact task project, current registration count and read-back.
-        if (operation_type == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION
+        if (operation_type in {LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION, UPDATE_OPERATION}
                 and (operation.request_summary or {}).get("connector_submission")):
             return
         raise conflict("connector_operation_source_invalid", "外部操作缺少提交来源")
@@ -5451,6 +5457,8 @@ def _public_remote_write_performed(
         if reconciliation.get("action") == "confirm_no_side_effect":
             return False
     if operation.status == "completed":
+        if _operation_type(operation) == UPDATE_OPERATION:
+            return (operation.receipt or {}).get("changed", True)
         return True
     if operation.status == "reconciliation_required":
         return None
@@ -5505,6 +5513,8 @@ def public_external_operation(
             or summary.get("target_sample_number")
         ),
         "target_sample_number": summary.get("target_sample_number"),
+        **{key: summary[key] for key in ("record_ref", "before_values", "after_values", "expected_content_fingerprint")
+           if key in summary},
         "target_filename": summary.get("target_filename"),
         "business_fields": {
             key: business_fields.get(key)
@@ -6233,6 +6243,8 @@ def _validate_manual_reconciliation_evidence(
     now: datetime,
 ) -> dict[str, Any] | None:
     """Validate an admin attestation's shape; no remote probe runs here."""
+    if _operation_type(operation) == UPDATE_OPERATION:
+        raise conflict("connector_update_uses_record_readback", "更正操作通过原记录自动核对，请刷新当前记录后查看结果")
     checked_at = _reconciliation_checked_at(evidence)
     oldest_allowed = _aware_utc(now) - timedelta(
         minutes=settings.EXECUTION_EXTERNAL_PREFLIGHT_TTL_MINUTES
@@ -6871,7 +6883,7 @@ def bridge_external_operation(
         view["machine_payload"] = dict(
             summary.get("final_entry_package") or {}
         )
-    if operation_type == LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION:
+    if operation_type in {LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION, UPDATE_OPERATION}:
         summary = operation.request_summary or {}
         bridge_summary = view.get("request_summary")
         if isinstance(bridge_summary, dict):
@@ -6884,6 +6896,10 @@ def bridge_external_operation(
         view["machine_payload"] = dict(
             summary.get("final_entry_package") or {}
         )
+        if operation_type == UPDATE_OPERATION:
+            recovery = (operation.verification or {}).get("automatic_recovery", {})
+            if recovery.get("decision") == "resume_projection":
+                view["machine_payload"]["resume_from"] = recovery["observation"]
     return view
 
 

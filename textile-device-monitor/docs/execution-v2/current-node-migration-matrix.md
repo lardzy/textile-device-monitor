@@ -8,7 +8,7 @@
 >
 > 适用设计：Workflow Release v2、NodeSpec v2
 
-精确登记读取与字段指纹已实现，见[第三批验收](./p4-record-read-acceptance.md)。独立登记接口与实际样品验证见[P4 第二批验收](./p4-connector-operation-acceptance.md)；`external.operation`、精确更正与自动核对仍待实现，完整候选覆盖率不变。
+精确登记读取与字段指纹已实现，见[第三批验收](./p4-record-read-acceptance.md)。独立登记接口与实际样品验证见[P4 第二批验收](./p4-connector-operation-acceptance.md)；首个精确更正与自动恢复已实现，见[第四批验收](./p4-record-update-acceptance.md)；`external.operation` 和其余操作适配继续推进，完整候选覆盖率不变。
 
 ## 1. 结论与统计
 
@@ -58,7 +58,7 @@ P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切�
 
 表中目标 ID 是分阶段目标，P2 基础类型、P3 再生纤类型和本批四个领域类型已实现，其余领域类型与 P4 外部类型仍待实现。具体可运行性以已安装 NodeSpec、Worker 精确能力和 rollout profile 为准。改名或合并的新 type 从 1 起步；破坏性契约变化递增 `type_version`，Pack 单独使用 SemVer。
 
-P4 已新增 `connector.query@1`，首个注册查询为 `legacy_fibrecheck.task_snapshot.get@1`，与直接查询 API 共用持久缓存。查询输入/输出和实现摘要冻结到 Release/Run，Worker 只领取自身具备的具体查询能力；不创建人工任务、不新增队列或表。首个独立登记操作、精确记录列表/单条查询已交付；通用操作节点、更正与自动核对仍待完成，见[P4 查询验收](./p4-connector-query-acceptance.md)和[记录读取验收](./p4-record-read-acceptance.md)。
+P4 已新增 `connector.query@1`，首个注册查询为 `legacy_fibrecheck.task_snapshot.get@1`，与直接查询 API 共用持久缓存。查询输入/输出和实现摘要冻结到 Release/Run，Worker 只领取自身具备的具体查询能力；不创建人工任务、不新增队列或表。首个独立登记操作、精确记录列表/单条查询已交付；首个更正与自动核对已交付，通用操作节点和其余适配继续推进，见[P4 查询验收](./p4-connector-query-acceptance.md)和[记录读取验收](./p4-record-read-acceptance.md)。
 
 再生纤查询/结果读取已统一为带 `method=area|count` 的两个领域节点，复用 `human.select`；唯一有效候选自动完成，多候选一次选择。旧四个节点成为同一服务的适配入口，直接 API 不创建 Run。电镜/纸纤维也已完成共享服务、直接 API、原生契约和本地步骤迁移；只补薄适配，不新增通用渲染底座。下一步推进 Connector 通用执行、必要业务输入收敛、设计器与旧实现退场。
 

@@ -123,6 +123,20 @@ try {
     }
     $passed++
 
+    $observationSelfTest = Join-Path $outDir 'CheckRecordObservationSelfTest.exe'
+    & $csc -nologo -target:exe -platform:x86 -codepage:65001 -utf8output -debug- -optimize+ `
+        -out:"$observationSelfTest" -reference:System.Data.dll -reference:System.Core.dll -reference:System.Web.Extensions.dll `
+        -reference:"$(Join-Path $FibreCheckDir 'Oracle.ManagedDataAccess.dll')" `
+        (Join-Path $PSScriptRoot 'src\CheckRecordObservation.cs') `
+        (Join-Path $PSScriptRoot '..\legacy_fibrecheck_runner\src\Db.cs') `
+        (Join-Path $PSScriptRoot '..\legacy_fibrecheck_runner\src\Redact.cs') `
+        (Join-Path $PSScriptRoot '..\legacy_fibrecheck_runner\src\SystemDataConnection.cs') `
+        (Join-Path $PSScriptRoot 'tests\CheckRecordObservationSelfTest.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Record observation SelfTest compilation failed' }
+    & $observationSelfTest
+    if ($LASTEXITCODE -ne 0) { throw 'Record observation SelfTest failed' }
+    $passed++
+
     $generic = @'
 {
   "schema_version": 1,

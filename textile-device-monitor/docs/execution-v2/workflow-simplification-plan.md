@@ -1,6 +1,6 @@
 # 工作流简化与检务接口化方案
 
-日期：2026-09-14；更新：2026-09-17。状态：第一批简化、P3 再生纤首批及电镜/纸纤维共享服务、原生节点和部分迁移已实现，P3/P4/P5 路线不变。交付范围和验证见[第一批实施记录](./simplification-batch-1.md)、[P3 首批验收](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口说明](./p3-domain-services-acceptance.md)和[原生领域节点验收](./p3-native-domain-acceptance.md)。再生纤查询/读取、电镜与纸纤维查询、显微工作簿生成可直接通过 API 调用，完整迁移候选仍为 **6/9**；通用检务写入/更正 API 仍属 P4。
+日期：2026-09-14；更新：2026-09-17。状态：第一批简化、P3 再生纤首批及电镜/纸纤维共享服务、原生节点和部分迁移已实现，P3/P4/P5 路线不变。交付范围和验证见[第一批实施记录](./simplification-batch-1.md)、[P3 首批验收](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口说明](./p3-domain-services-acceptance.md)和[原生领域节点验收](./p3-native-domain-acceptance.md)。再生纤查询/读取、电镜与纸纤维查询、显微工作簿生成可直接通过 API 调用，完整迁移候选仍为 **6/9**；P4 已提供独立通用新增及首个原记录更正 API，见[更正与恢复验收](./p4-record-update-acceptance.md)。
 
 方案核查基线：`feature/execution-system`，HEAD `3b5bf1b`，包含当时工作区中尚未提交的 P2 接替改动。以下现状分析记录方案提出时的依据；已实施项以实施记录为准。核查覆盖工作流定义、人工任务、发布管理、外部操作、Windows Bridge/Writer、配置和相关设计文档，没有访问生产数据库、执行检务写入或测量现场耗时。
 
@@ -94,12 +94,12 @@ flowchart LR
 
 ### 4.1 接口按业务能力表达
 
-采用现有 `/api/execution/v1` 权限边界。P4 已实现任务/精确记录查询、能力发现及首种独立新增登记操作，更正仍按后续批次实现。见[P4 查询验收及调用示例](./p4-connector-query-acceptance.md)。
+采用现有 `/api/execution/v1` 权限边界。P4 已实现任务/精确记录查询、能力发现及首种独立新增登记操作，首个原记录更正及自动恢复已实现，见[第四批验收](./p4-record-update-acceptance.md)。见[P4 查询验收及调用示例](./p4-connector-query-acceptance.md)。
 
 | 接口 | 职责 |
 | --- | --- |
 | `POST /api/execution/v1/connector-queries` | 已实现；指定完整 `query_ref`，支持任务快照、精确记录列表/单条及字段指纹；模板查询待增加 |
-| `POST /api/execution/v1/connector-operations` | 首种纸纤维通用新增登记已实现，一次提交直接排队；更新、其它操作待接入 |
+| `POST /api/execution/v1/connector-operations` | 首种纸纤维通用新增、原记录更正已实现，一次提交直接排队；其它操作待接入 |
 | `GET /api/execution/v1/connector-operations/{id}` | 已实现；返回状态、结果、业务回执和尝试记录，另有取消接口 |
 | `GET /api/execution/v1/connectors/{id}/capabilities` | 已实现；返回查询契约、输入/输出结构及可用性。尚未接入独立提交的写入元数据标记 `legacy_workflow_only`，不宣称通用更正可用 |
 
@@ -138,7 +138,7 @@ Content-Type: application/json
 
 ### 4.2 从现有实现渐进抽取
 
-当前 `ExecutionExternalOperation.run_id/node_run_id` 均非空，事件、取消、失败和完成也依赖 Run。**当前已有 HTTP 端点并不等于已经具备独立通用服务；只包装一个 URL 或把外键改可空都不够。**
+方案提出时 `ExecutionExternalOperation.run_id/node_run_id` 均非空，生命周期依赖 Run。现已通过 0011 将来源改为可选，独立操作拥有发起人、幂等、取消和回执；新增/更正 API 复用持久队列。下列步骤保留原抽取顺序，通用节点及其余操作继续沿此结构接入。
 
 1. 先抽出可复用的查询、输入准备、结果读取与写入服务入口，旧节点调用它们。
 2. 初版独立 API 可由服务端创建专用内部执行记录承载现有 Run/NodeRun 依赖，调用方不接触流程管理。内部任务从普通业务目录/历史入口区分展示，但其权限、归属、审计和运行记录仍可查询。

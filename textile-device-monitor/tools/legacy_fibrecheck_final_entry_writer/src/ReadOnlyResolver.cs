@@ -179,7 +179,7 @@ namespace LegacyFibreCheckFinalEntryWriter
 
         public static PreflightSnapshot Resolve(string connectionString, FinalEntryPackage package)
         {
-            if (package.SchemaVersion == 2)
+            if (package.SchemaVersion >= 2)
             {
                 package.MeasuredTaskProject = null;
             }
@@ -214,7 +214,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                         snapshot.SampleReceiveTime = Date(row, "SampleReceiveTime");
                         snapshot.ExpectedResultCount = NonNegativeInt(row, "CheckCount");
                         snapshot.GiveJudgement = NonNegativeInt(row, "GiveJudgement");
-                        if (package.SchemaVersion == 2)
+                        if (package.SchemaVersion >= 2)
                         {
                             snapshot.TaskProject = ResolveTaskProject(row);
                             VerifyTaskProject(package.TaskProject, snapshot.TaskProject);
@@ -235,6 +235,14 @@ namespace LegacyFibreCheckFinalEntryWriter
                         snapshot.SampleCategory = Text(context.Rows[0], "SampleCategory");
                     }
 
+                    if (package.OperationType == FinalEntryPackage.UpdateOperation)
+                    {
+                        if (snapshot.OriginalDataInputUiClassName != CurrencyUiClass)
+                            throw new PackageValidationException("check_item_not_currency_ui_input");
+                        if (package.UpdateChanges.ContainsKey("sample_identity"))
+                            VerifyGenericSampleIdentity(package, snapshot);
+                        return snapshot;
+                    }
                     if (snapshot.ExpectedResultCount < 1)
                     {
                         throw new PackageValidationException("task_check_count_would_be_exceeded");

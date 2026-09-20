@@ -47,6 +47,7 @@ LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION = (
     "legacy_special_wool_qualitative_review"
 )
 LEGACY_GENERIC_FINAL_ENTRY_OPERATION = "legacy_generic_check_record_entry"
+LEGACY_GENERIC_UPDATE_OPERATION = "legacy_generic_check_record_update"
 # 电镜 Excel 登记路线已证明的任务项目（编号, 名称, 测试方法）三元组：
 # 5103.5 / 纤维微观形貌（26A045793）与 5103.426 / 纤维横截面（260191285）。
 SUPPORTED_EXCEL_PROJECTS = frozenset(
@@ -352,6 +353,48 @@ def normalized_identity(value: str | None) -> str:
     return unicodedata.normalize("NFKC", value or "").strip().casefold()
 
 
+UPDATE_PROGRESS_STAGES = ("authenticated", "permission_verified", "update_ready", "update_started",
+                          "remote_state_verified", "update_verified", "completed")
+OPERATION_STAGE_PROFILES[LEGACY_GENERIC_UPDATE_OPERATION] = (UPDATE_PROGRESS_STAGES, "update_ready", "update_started")
+
+
+def record_content_fingerprint(record):
+    content = {key: value for key, value in record.items() if key != "content_fingerprint"}
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True,
+                                    separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def validate_generic_update_package(operation, summary):
+    payload = operation.get("machine_payload") or {}
+    before = payload.get("before") or {}
+    if (payload.get("schema_version") != 3 or payload.get("operation_type") != "generic_item_record_update"
+            or payload.get("sample_number") != summary.get("target_sample_number")
+            or payload.get("task_project") != summary.get("task_project")
+            or before.get("record_ref") != summary.get("record_ref")
+            or record_content_fingerprint(before) != summary.get("expected_content_fingerprint")
+            or not isinstance(payload.get("changes"), dict) or not payload["changes"]):
+        raise BridgeError("更正任务包与提交目标不一致")
+    return payload
+
+
+def convert_generic_update_receipt(operation, payload, raw):
+    record = (raw or {}).get("record")
+    stages = [(entry or {}).get("stage") for entry in (raw or {}).get("stages", [])]
+    if (not isinstance(record, dict) or raw.get("exit_code") != 0
+            or raw.get("reconciliation_required") is not False or raw.get("package_schema_version") != 3
+            or raw.get("mode") != "generic_item_record_update" or raw.get("sample_number") != payload["sample_number"]
+            or record.get("record_ref") != payload["before"]["record_ref"]
+            or raw.get("task_project") != payload["task_project"]
+            or any(stage not in stages for stage in ("remote_state_verified", "update_started", "update_verified", "completed"))):
+        raise BridgeError("更正回执缺少原记录身份或写后读取结果")
+    record = {**record, "content_fingerprint": record_content_fingerprint(record)}
+    return {"schema_version": 1, "receipt_type": LEGACY_GENERIC_UPDATE_OPERATION,
+            "operation_id": operation["id"], "payload_checksum": operation["payload_checksum"],
+            "target_sample_number": payload["sample_number"], "stages": list(UPDATE_PROGRESS_STAGES),
+            "reconciliation_required": False, "record": record,
+            "changed": record["content_fingerprint"] != payload["before"]["content_fingerprint"]}
+
+
 def configured_operation_types(args) -> tuple[str, ...]:
     configured = list(SUPPORTED_OPERATION_TYPES)
     if getattr(args, "final_entry_writer", None) and getattr(
@@ -359,6 +402,7 @@ def configured_operation_types(args) -> tuple[str, ...]:
     ):
         configured.append(LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION)
         configured.append(LEGACY_GENERIC_FINAL_ENTRY_OPERATION)
+        configured.append(LEGACY_GENERIC_UPDATE_OPERATION)
     return tuple(configured)
 
 
@@ -1991,6 +2035,14 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             )
             print(f"FinalEntry 任务包已安全拒绝: {exc}", file=sys.stderr)
             return "claimed"
+    elif operation_type == LEGACY_GENERIC_UPDATE_OPERATION:
+        try:
+            final_entry_payload = validate_generic_update_package(operation, summary)
+        except BridgeError as exc:
+            api_request(args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
+                        {"bridge_id": args.bridge_id, "stage": "authenticated",
+                         "error_code": "update_package_invalid", "message": str(exc)})
+            return "claimed"
     elif operation_type == LEGACY_GENERIC_FINAL_ENTRY_OPERATION:
         try:
             final_entry_payload = validate_generic_final_entry_machine_payload(
@@ -2050,6 +2102,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         if operation_type in {
             LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION,
             LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+            LEGACY_GENERIC_UPDATE_OPERATION,
         }
         else claim,
         package_file,
@@ -2064,6 +2117,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     if operation_type in {
         LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION,
         LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+        LEGACY_GENERIC_UPDATE_OPERATION,
     }:
         writer_command = [
             args.final_entry_writer,
@@ -2296,7 +2350,14 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         for event in events:
             if "stage" in event:
                 raw_stage = event["stage"]
-                if operation_type in {
+                if operation_type == LEGACY_GENERIC_UPDATE_OPERATION:
+                    if raw_stage in {"package_validated", "reconciliation_required"}:
+                        continue
+                    if raw_stage == "completed":
+                        generic_final_entry_completed_seen = True
+                        continue
+                    report_writer_stage("permission_verified" if raw_stage == "function_permission_verified" else raw_stage)
+                elif operation_type in {
                     LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION,
                     LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
                 }:
@@ -2451,11 +2512,21 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             receipt_validation_error = exc
             print(f"SpecialWool 复核成功回执已拒绝: {exc}", file=sys.stderr)
 
+    if operation_type == LEGACY_GENERIC_UPDATE_OPERATION and exit_code == 0 and stage_report_error is None:
+        try:
+            if not generic_final_entry_completed_seen:
+                raise BridgeError("更正 Writer 未输出完成阶段")
+            converted_receipt = convert_generic_update_receipt(operation, final_entry_payload, receipt)
+            report_writer_stage("completed")
+        except BridgeError as exc:
+            receipt_validation_error = exc
+
     completion_receipt = (
         converted_receipt
         if operation_type in {
             LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION,
             LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+            LEGACY_GENERIC_UPDATE_OPERATION,
         }
         else receipt
     )

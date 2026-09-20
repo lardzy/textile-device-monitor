@@ -634,8 +634,52 @@ class BridgeProtocolTests(unittest.TestCase):
                 bridge.LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
                 bridge.LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION,
                 bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+                bridge.LEGACY_GENERIC_UPDATE_OPERATION,
             ],
         )
+
+    def test_exact_update_uses_final_writer_and_delivers_readback_after_permit(self):
+        before = {"record_ref": "check-record:sha256:" + "a" * 16, "record_kind": "generic"}
+        before["content_fingerprint"] = bridge.record_content_fingerprint(before)
+        package = {"schema_version": 3, "operation_type": "generic_item_record_update",
+                   "sample_number": "26W006687", "task_project": paper_task_project(),
+                   "before": before, "changes": {"result_value": "木浆、竹浆"}}
+        operation = {"id": "operation-update", "payload_checksum": "a" * 64,
+                     "credential": {"account_name": ACCOUNT}, "machine_payload": package,
+                     "request_summary": {"operation_type": bridge.LEGACY_GENERIC_UPDATE_OPERATION,
+                                         "target_sample_number": package["sample_number"],
+                                         "task_project": package["task_project"], "record_ref": before["record_ref"],
+                                         "expected_content_fingerprint": before["content_fingerprint"]}}
+        stages = [{"stage": name} for name in (
+            "package_validated", "authenticated", "function_permission_verified", "update_ready", "update_started",
+            "remote_state_verified", "update_verified", "completed",
+        )]
+        raw = {"schema_version": 1, "mode": package["operation_type"], "exit_code": 0,
+               "package_schema_version": 3, "sample_number": package["sample_number"],
+               "task_project": package["task_project"], "record": before,
+               "stages": stages, "reconciliation_required": False}
+        process = FakeProcess(stages + [{"receipt": raw}])
+        api = ApiStub(claim={"claimed": True, "operation": operation, "attempt": {"id": "update-attempt"}})
+        with patch.object(bridge, "api_request", side_effect=api), patch.object(
+            bridge.subprocess, "Popen", return_value=process,
+        ) as popen:
+            bridge.run_one_cycle(self.args, "token", ACCOUNT, "secret", self.root_map)
+        self.assertEqual(popen.call_args.args[0][0], self.args.final_entry_writer)
+        self.assertEqual(process.stdin.getvalue(), bridge.SIDE_EFFECT_PERMIT + "\n")
+        complete = next(value for path, value in api.calls if path.endswith("/complete"))
+        self.assertEqual(complete["receipt"]["record"]["record_ref"], before["record_ref"])
+        self.assertEqual(complete["receipt"]["stages"], list(bridge.UPDATE_PROGRESS_STAGES))
+
+    def test_update_receipt_cannot_succeed_with_another_record(self):
+        package = {"before": {"record_ref": "check-record:sha256:" + "a" * 16},
+                   "sample_number": "26W006687", "task_project": paper_task_project()}
+        with self.assertRaises(bridge.BridgeError):
+            bridge.convert_generic_update_receipt({}, package, {
+                "record": {"record_ref": "check-record:sha256:" + "b" * 16},
+                "exit_code": 0, "reconciliation_required": False, "package_schema_version": 3,
+                "mode": "generic_item_record_update", "sample_number": "26W006687",
+                "task_project": paper_task_project(), "stages": [],
+            })
 
     def test_final_entry_is_not_advertised_without_both_runtime_paths(self):
         self.args.final_entry_work_root = None

@@ -24,6 +24,7 @@ namespace LegacyFibreCheckFinalEntryWriter
     internal sealed class FinalEntryPackage
     {
         internal const string GenericOperation = "generic_item_record";
+        internal const string UpdateOperation = "generic_item_record_update";
         internal const string ExcelOperation = "excel_check_record";
         internal const string ControlledTestOverrideEnvironment =
             "FIBRECHECK_CONTROLLED_TEST_SAMPLE_NO";
@@ -122,6 +123,10 @@ namespace LegacyFibreCheckFinalEntryWriter
         public bool ControlledTestOverrideApplied;
         public ExistingRecordDecisionPayload ExistingRecordDecision;
         public bool ExistingRecordDecisionApplied;
+        public Dictionary<string, object> UpdateBefore;
+        public Dictionary<string, object> UpdateChanges;
+        public Dictionary<string, object> UpdateResumeFrom;
+        public object UpdatedRecord;
 
         public static FinalEntryPackage Load(string path)
         {
@@ -150,6 +155,10 @@ namespace LegacyFibreCheckFinalEntryWriter
             }
 
             int schemaVersion = RequireInt(root, "schema_version");
+            if (schemaVersion == 3)
+            {
+                return GenericRecordUpdate.Load(root);
+            }
             if (schemaVersion != 1 && schemaVersion != 2)
             {
                 throw new PackageValidationException("schema_version_unsupported");
@@ -255,7 +264,7 @@ namespace LegacyFibreCheckFinalEntryWriter
             return package;
         }
 
-        private static TaskProjectPayload ParseTaskProject(
+        internal static TaskProjectPayload ParseTaskProject(
             Dictionary<string, object> map, FinalEntryPackage package)
         {
             RequireOnly(map, "project_key", "task_check_item_id", "check_item_id",

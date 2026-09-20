@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "31709f7f7c178fb6b6bf086ab6f23d672acc833de4d7b759f7aea56e45a1c3ba",
+  "distribution_digest": "29d58fb5745789a894c5a82c173b4e212c63de08ccdd7d3737c2f1f7b031c3a8",
   "engine_version_range": ">=2.4.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -11,7 +11,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "legacy_fibrecheck.v1-compat",
-  "pack_version": "1.3.0",
+  "pack_version": "1.4.0",
   "provides": {
     "capabilities": [
       {
@@ -232,6 +232,93 @@
               "completed"
             ],
             "write_boundary": "generic_save_started"
+          },
+          {
+            "completion_stage": "update_verified",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "changes": {
+                  "additionalProperties": false,
+                  "minProperties": 1,
+                  "properties": {
+                    "judge_basis": {
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "judgement": {
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "remark": {
+                      "maxLength": 4000,
+                      "type": "string"
+                    },
+                    "result_value": {
+                      "maxLength": 4000,
+                      "minLength": 1,
+                      "pattern": "\\S",
+                      "type": "string"
+                    },
+                    "sample_identity": {
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "standard_value": {
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "unit": {
+                      "enum": [
+                        "",
+                        "%"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "expected_content_fingerprint": {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "inspection_number": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9-]+$",
+                  "type": "string"
+                },
+                "project_key": {
+                  "pattern": "^task-project:[a-f0-9]{24}$",
+                  "type": "string"
+                },
+                "record_ref": {
+                  "pattern": "^check-record:sha256:[0-9a-f]{16}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "inspection_number",
+                "project_key",
+                "record_ref",
+                "expected_content_fingerprint",
+                "changes"
+              ],
+              "type": "object"
+            },
+            "operation": "check_record.generic_update",
+            "side_effect_class": "external_write",
+            "stages": [
+              "authenticated",
+              "permission_verified",
+              "update_ready",
+              "update_started",
+              "remote_state_verified",
+              "update_verified",
+              "completed"
+            ],
+            "write_boundary": "update_started"
           }
         ],
         "queries": [
@@ -805,7 +892,7 @@
             "side_effect_class": "read_only"
           }
         ],
-        "version": "1.3.0"
+        "version": "1.4.0"
       }
     ],
     "nodes": []
@@ -817,6 +904,8 @@
     "index_metadata.py",
     "microscopy_families.py",
     "connector_operations.py",
-    "connector_records.py"
+    "connector_records.py",
+    "connector_updates.py",
+    "connector_recovery.py"
   ]
 }

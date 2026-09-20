@@ -2030,13 +2030,18 @@ def test_parallel_queue_refresh_keeps_one_active_job(index_root_case):
         verification.close()
 
 
-@pytest.mark.parametrize("mode", ["same_request", "changed_request", "same_sample_other_owner", "bridge_claim"])
-def test_standalone_connector_submission_concurrency(mode, monkeypatch):
+@pytest.mark.parametrize("kind,mode", [(kind, mode) for kind in ("entry", "update")
+    for mode in ("same_request", "changed_request", "same_sample_other_owner", "bridge_claim")] + [("update", "recovery")])
+def test_standalone_connector_submission_concurrency(kind, mode, monkeypatch):
     import hashlib
     from app.execution.connector_operations import submit_operation
     from app.execution.external_operations import claim_approved_external_operation, LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION
     from app.execution.models import ExecutionCredential, ExecutionTaskSnapshotCache
     from app.execution.schemas import ConnectorOperationRequest
+    from tests.test_execution_connector_updates import example_record
+    from app.execution.connector_updates import UPDATE_OPERATION
+    from app.execution.connector_recovery import recover_connector_updates
+    from app.execution.external_operations import fail_external_attempt
 
     monkeypatch.setattr(settings, "EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED", True)
     suffix = uuid4().hex
@@ -2056,7 +2061,9 @@ def test_standalone_connector_submission_concurrency(mode, monkeypatch):
         db.flush()
         credentials = [ExecutionCredential(user_id=u.id, system_key="legacy_inspection", account_name=f"p4-{suffix}", encrypted_secret="unused") for u in users]
         db.add_all(credentials)
-        db.add(ExecutionTaskSnapshotCache(inspection_number=number, status="ready", snapshot={"projects": [project]}))
+        before = example_record(project, number)
+        db.add(ExecutionTaskSnapshotCache(inspection_number=number, status="ready", snapshot={"projects": [project]},
+                                         check_records={"schema_version": 1, "records": [before]}))
         db.commit()
         identities = [(u.id, c.id) for u, c in zip(users, credentials)]
     start = threading.Barrier(2)
@@ -2066,11 +2073,15 @@ def test_standalone_connector_submission_concurrency(mode, monkeypatch):
             owner, credential = identities[index if mode == "same_sample_other_owner" else 0]
             actor = db.get(ExecutionUser, owner)
             payload = ConnectorOperationRequest(
-                operation_ref="legacy_fibrecheck.check_record.generic_entry@1", credential_id=credential,
+                operation_ref=f"legacy_fibrecheck.check_record.generic_{kind}@1", credential_id=credential,
                 idempotency_key=suffix, input={"inspection_number": number, "project_key": project["project_key"],
                     "expected_existing_register_count": 0,
                     "result_value": "竹浆" if mode == "changed_request" and index else "木浆"},
             )
+            if kind == "update":
+                payload.input = {"inspection_number": number, "project_key": project["project_key"],
+                                 "record_ref": before["record_ref"], "expected_content_fingerprint": before["content_fingerprint"],
+                                 "changes": {"result_value": "竹浆" if mode == "changed_request" and index else "木浆"}}
             if wait:
                 start.wait(timeout=10)
             try:
@@ -2085,12 +2096,38 @@ def test_standalone_connector_submission_concurrency(mode, monkeypatch):
         with SessionLocal() as db:
             start.wait(timeout=10)
             result = claim_approved_external_operation(db, bridge_id=f"p4-bridge-{index}", account_name=f"p4-{suffix}",
-                supported_operation_types={LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION})
+                supported_operation_types={UPDATE_OPERATION if kind == "update" else LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION})
             db.commit()
             return result[0].id if result else None
 
+    def recover(index):
+        with SessionLocal() as db:
+            start.wait(timeout=10)
+            changed = recover_connector_updates(db)
+            db.commit()
+            return changed
+
     try:
-        if mode == "bridge_claim":
+        if mode == "recovery":
+            operation_id, _ = submit(0, wait=False)
+            with SessionLocal() as db:
+                operation, attempt, _ = claim_approved_external_operation(db, bridge_id="interrupted", account_name=f"p4-{suffix}", supported_operation_types={UPDATE_OPERATION})
+                db.commit()
+                fail_external_attempt(db, attempt_id=attempt.id, bridge_id="interrupted", stage="update_started", error_code="connection_lost")
+                db.commit()
+                assert recover_connector_updates(db) == 1
+                db.commit()
+                cache = db.get(ExecutionTaskSnapshotCache, number)
+                cache.status, cache.fetched_at = "ready", utcnow()
+                cache.revision += 1
+                db.commit()
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(recover, range(2)))
+            assert sorted(results) == [0, 1]
+            with SessionLocal() as db:
+                operation = db.get(ExecutionExternalOperation, operation_id)
+                assert operation.status == "completed" and operation.attempt_count == 1
+        elif mode == "bridge_claim":
             operation_id, _ = submit(0, wait=False)
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(claim, range(2)))

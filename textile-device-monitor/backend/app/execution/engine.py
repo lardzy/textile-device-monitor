@@ -2930,6 +2930,9 @@ def claim_next_node(
     if expire_stale_external_attempts(db, now=now):
         # Bridge lease maintenance follows the same commit-first pattern.
         return None
+    from app.execution.connector_recovery import recover_connector_updates
+    if recover_connector_updates(db):
+        return None
     # API 驱动的物理发布没有 Worker 心跳线程，租约至少保留五分钟，
     # 避免较大的工作簿复制期间被过期回收并产生第二个发布者。
     lease_duration = max(

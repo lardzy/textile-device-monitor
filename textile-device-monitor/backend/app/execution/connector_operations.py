@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.execution.errors import ExecutionApiError, conflict, not_found
+from app.execution.connector_updates import GENERIC_UPDATE, UPDATE_OPERATION, update_summary
 from app.execution.events import append_audit_log
 from app.execution.external_operations import (
     ACTIVE_REMOTE_OPERATION_STATUSES, LEGACY_CONNECTOR_KEY, LEGACY_CREDENTIAL_SYSTEM,
@@ -34,7 +35,7 @@ GENERIC_ENTRY = "legacy_fibrecheck.check_record.generic_entry@1"
 def operation_api_available(operation) -> bool:
     from app.execution.v2.registry import get_installed_registry
 
-    return (f"{operation.connector_id}.{operation.operation}@{operation.contract_version}" == GENERIC_ENTRY
+    return (f"{operation.connector_id}.{operation.operation}@{operation.contract_version}" in {GENERIC_ENTRY, GENERIC_UPDATE}
             and isinstance(operation.spec.get("input_schema"), dict)
             and get_installed_registry().resolve_pack(operation.pack_id, operation.pack_version).ready)
 
@@ -105,7 +106,8 @@ def submit_operation(db: Session, *, actor: ExecutionUser, request) -> tuple[Exe
     if error:
         raise ExecutionApiError(422, "connector_operation_input_invalid", "操作参数不符合契约",
                                 details={"path": list(error.absolute_path), "message": error.message})
-    summary = _generic_summary(db, request.input)
+    prepare = update_summary if request.operation_ref == GENERIC_UPDATE else _generic_summary
+    summary = prepare(db, request.input)
     # Match workflow preparation's sample → credential ordering.
     remote_key = lock_legacy_remote_business_scope(db, sample_number=summary["target_sample_number"])
     credential = (db.query(ExecutionCredential).filter_by(
@@ -164,6 +166,8 @@ def operation_view(operation: ExecutionExternalOperation) -> dict[str, Any]:
     return {**public_external_operation(operation), "created_by_id": operation.created_by_id,
             **{key: submission.get(key) for key in ("operation_ref", "connector_version", "contract_digest")},
             "source_kind": "submitted_values", "result": deepcopy(operation.receipt) or None,
+            "recovery": deepcopy((operation.verification or {}).get("automatic_recovery")),
+            "cancel_requested": bool((operation.verification or {}).get("cancel_requested")),
             "attempts": [public_external_attempt(attempt) for attempt in operation.attempts],
             "status_url": f"/api/execution/v1/connector-operations/{operation.id}"}
 
@@ -173,6 +177,11 @@ def cancel_operation(db: Session, *, operation: ExecutionExternalOperation, acto
         operation.status, operation.completed_at = "cancelled", utcnow()
     elif operation.status == "in_progress":
         operation.status = "cancel_pending"
+        operation.verification = {**(operation.verification or {}), "cancel_requested": True}
+    elif (operation.status == "reconciliation_required"
+          and operation.request_summary.get("operation_type") == UPDATE_OPERATION):
+        # Keep the target fence until readback settles it, but stop automatic writes.
+        operation.verification = {**(operation.verification or {}), "cancel_requested": True}
     elif operation.status in {"cancelled", "cancel_pending"}:
         return
     else:
