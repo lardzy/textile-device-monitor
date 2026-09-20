@@ -133,6 +133,15 @@ class ApiStub:
 
 
 class SnapshotMappingTests(unittest.TestCase):
+    def test_record_extension_is_optional_but_complete_even_when_task_is_missing(self):
+        for document in (probe_document(), probe_document(tasks=[], samples=[], items=[], register_counts=[])):
+            self.assertNotIn("check_records", bridge.build_snapshot(document, INSPECTION_NUMBER))
+            document["query_scope"] = "check_records"
+            with self.assertRaises(bridge.SnapshotBridgeError):
+                bridge.build_snapshot(document, INSPECTION_NUMBER)
+            document["check_records"] = {"schema_version": 1, "records": []}
+            self.assertEqual(bridge.build_snapshot(document, INSPECTION_NUMBER)["check_records"]["records"], [])
+
     def test_maps_only_backend_contract_fields_and_matching_task(self):
         document = probe_document(
             items=probe_document()["results"]["task_check_items"]["rows"]
@@ -315,6 +324,25 @@ class SnapshotMappingTests(unittest.TestCase):
 
 
 class CycleTests(unittest.TestCase):
+    def test_record_capability_and_scope_reach_probe_without_changing_shared_arguments(self):
+        args = args_fixture()
+        api = ApiStub({"claimed": True, "inspection_number": INSPECTION_NUMBER,
+                       "claim_token": "claim-token", "include_check_records": True})
+
+        def probe(probe_args, number):
+            self.assertTrue(probe_args.include_check_records)
+            self.assertEqual(number, INSPECTION_NUMBER)
+            return {**probe_document(), "query_scope": "check_records",
+                    "check_records": {"schema_version": 1, "records": []}}
+
+        self.assertEqual(bridge.run_one_cycle(args, "token", request=api, probe=probe), "completed")
+        self.assertTrue(api.calls[0][1]["supports_check_records"])
+        self.assertEqual(api.calls[-1][1]["snapshot"]["check_records"]["records"], [])
+        self.assertFalse(hasattr(args, "include_check_records"))
+        self.assertEqual(bridge.run_one_cycle(args, "token", request=api,
+                         probe=lambda *_: probe_document()), "failed")
+        self.assertEqual(api.calls[-1][1]["error_code"], "probe_records_unavailable")
+
     def test_idle_claim_does_not_run_probe(self):
         api = ApiStub({"claimed": False})
         with patch.object(bridge, "run_probe") as probe:

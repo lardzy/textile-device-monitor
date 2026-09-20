@@ -128,6 +128,7 @@ def request_task_snapshot_refresh(
     *,
     inspection_number: str,
     force: bool = False,
+    include_check_records: bool = False,
 ) -> tuple[ExecutionTaskSnapshotCache, bool]:
     """Queue one read-only legacy lookup without duplicating active requests."""
 
@@ -139,12 +140,14 @@ def request_task_snapshot_refresh(
             "请先输入完整检验编号后再读取旧系统任务信息",
         )
     now = utcnow()
-    row = db.get(ExecutionTaskSnapshotCache, number)
+    row = (db.query(ExecutionTaskSnapshotCache).filter_by(inspection_number=number)
+           .populate_existing().with_for_update().one_or_none())
     if row is None:
         row = ExecutionTaskSnapshotCache(
             inspection_number=number,
             status="queued",
             snapshot={},
+            include_check_records=include_check_records,
             refresh_requested_at=now,
         )
         try:
@@ -153,9 +156,14 @@ def request_task_snapshot_refresh(
                 db.flush()
             return row, True
         except IntegrityError:
-            row = db.get(ExecutionTaskSnapshotCache, number)
+            row = (db.query(ExecutionTaskSnapshotCache).filter_by(inspection_number=number)
+                   .populate_existing().with_for_update().one_or_none())
             if row is None:
                 raise
+
+    if include_check_records and not row.include_check_records:
+        row.include_check_records = True
+        force = True
 
     claim_active = (
         row.status == "running"
@@ -184,6 +192,7 @@ def cached_task_snapshot(
     db: Session,
     *,
     inspection_number: str,
+    include_check_records: bool = False,
 ) -> dict[str, Any]:
     """Return cached facts and stale-while-refresh state for recommendations."""
 
@@ -204,15 +213,16 @@ def cached_task_snapshot(
         }
     row = db.get(ExecutionTaskSnapshotCache, number)
     queued = False
-    if row is None:
+    if row is None or include_check_records:
         row, queued = request_task_snapshot_refresh(
-            db, inspection_number=number
+            db, inspection_number=number, include_check_records=include_check_records,
         )
     now = utcnow()
     stored_snapshot = dict(row.snapshot or {}) or None
     snapshot = (
         stored_snapshot
         if _snapshot_contract_is_current(stored_snapshot)
+        and (not include_check_records or row.check_records is not None)
         else None
     )
     expires_at = _aware(row.expires_at)
@@ -257,6 +267,8 @@ def cached_task_snapshot(
         "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "error_code": row.error_code,
+        **({"check_records": row.check_records if snapshot is not None else None}
+           if include_check_records else {}),
     }
 
 
@@ -265,11 +277,13 @@ def claim_task_snapshot_refresh(
     *,
     bridge_id: str,
     lease_seconds: int = 180,
+    supports_check_records: bool = False,
 ) -> Optional[ExecutionTaskSnapshotCache]:
     now = utcnow()
     row = (
         db.query(ExecutionTaskSnapshotCache)
         .filter(
+            or_(ExecutionTaskSnapshotCache.include_check_records.is_(False), supports_check_records),
             or_(
                 ExecutionTaskSnapshotCache.status == "queued",
                 (
@@ -455,7 +469,15 @@ def complete_task_snapshot_refresh(
         )
     now = utcnow()
     row.snapshot = _normalize_snapshot(inspection_number, snapshot)
+    from app.execution.connector_records import validate_record_snapshot
+
+    row.check_records = validate_record_snapshot(snapshot.get("check_records"), inspection_number)
     row.status = "ready"
+    if row.include_check_records and row.check_records is None:
+        # A record request can join an already running task-only read. Preserve
+        # that result, then let a capable Bridge read the missing details.
+        row.status = "queued"
+        row.refresh_requested_at = now
     row.fetched_at = now
     row.expires_at = now + timedelta(
         minutes=max(1, int(settings.EXECUTION_TASK_SNAPSHOT_TTL_MINUTES))

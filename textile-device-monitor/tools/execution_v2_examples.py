@@ -25,6 +25,7 @@ from app.execution.v2.examples import (  # noqa: E402
 
 BUILDERS = {
     "v2-connector-query-smoke.json": build_connector_query_smoke_release,
+    "v2-connector-record-query-smoke.json": lambda: build_connector_query_smoke_release("check_record.list"),
     "v2-controlled-xlsx-write-canary.json": (
         build_controlled_xlsx_write_canary_release
     ),

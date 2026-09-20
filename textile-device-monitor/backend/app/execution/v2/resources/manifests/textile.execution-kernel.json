@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "0753d4a3429097b9cf089925ce5e74cb8300c571151c162512624ddd75875cb2",
+  "distribution_digest": "366b2569424eff41f72a82daacb51e6c8fb6b8999eba55d03b70c61cec8e04ba",
   "engine_version_range": ">=2.4.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -9,7 +9,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "textile.execution-kernel",
-  "pack_version": "2.3.0",
+  "pack_version": "2.4.0",
   "provides": {
     "capabilities": [
       {
@@ -22,7 +22,7 @@
       {
         "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "2dc74f527c6657af76dc6fe32301c84bb866f623a8a43d3996cda128ffebb1c6",
+        "implementation_digest": "705d0eed61b076abb4ba7d6dbe64544e38bf8dbf6161291cf29cab7fabc84920",
         "source": "v1_registry_adapter",
         "type": "core.start",
         "type_version": 1
@@ -30,7 +30,7 @@
       {
         "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "fc3802a80747f43ceb02dae83af9924fca34ba35afd310f66c227e5897883164",
+        "implementation_digest": "e10764b1ac64253767414b8af68a434035ab5dbd4092206a09814e267a5a0105",
         "source": "v1_registry_adapter",
         "type": "core.end",
         "type_version": 1
@@ -38,7 +38,7 @@
       {
         "contract_digest": "c96d48247a80dd9afcea38183a45d9ef19223cc3292e3eceecf507154c7a2b22",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "c64db866c57cdae28644d6f44d446dcb51b63868ac379142c6e001e8dca87776",
+        "implementation_digest": "c7a8ba3d7eccd3f8fc15c11e9baa9dec0d55601c6d8046f11e2dab44557d7624",
         "source": "v1_registry_adapter",
         "type": "variables.set",
         "type_version": 1
@@ -46,7 +46,7 @@
       {
         "contract_digest": "7573cc8f12a42642bf0783cee4891db04b27f3b3af90947484152d746d8ef50d",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "f9d218713f4dcafce1a9a24d16380b9d17a203d8770676bed959a0eeec672f39",
+        "implementation_digest": "8c2f396cfb5e4ca0fc77757c2fb63f86b6f0c52fff6c5679a5c5896296716f42",
         "source": "v1_registry_adapter",
         "type": "branch.condition",
         "type_version": 1
@@ -54,7 +54,7 @@
       {
         "contract_digest": "2573495e88eb51e55cb32283f5f943b64e428820b174cfd60768a8d2720bc57f",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "0f348a8178c6ee6810aa6e22db2f3b3c2229b47fddb43a5d9bcfcdb8a014daad",
+        "implementation_digest": "5a3d1d063648c9feb93112d26ea5e46c2cae270b2b6ca2c555d6859473c39833",
         "source": "v1_registry_adapter",
         "type": "parallel.split",
         "type_version": 1
@@ -62,7 +62,7 @@
       {
         "contract_digest": "e017ef465f00d2dd1882b0ad3fb624786dde33ca818ca6f4d816ba5452b921d5",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "2b197b69121a7991905563604e6c098236b3ff3289b756b8f47df18b32ae5300",
+        "implementation_digest": "2cc54e5324f5bcd0ea84059d798ad394b56882758cce89ba8d2183228edf3764",
         "source": "v1_registry_adapter",
         "type": "parallel.join",
         "type_version": 1
@@ -70,7 +70,7 @@
       {
         "contract_digest": "f59416d444c53cea3ae5813da265a18b495d5f5cdd02e56c428282ec59bf2b3d",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "820b217c8311bd16af43b331dcc364dee1be8f5d4949ff6533c88965e89c4545",
+        "implementation_digest": "5fdefa18815aa0c495faa3192310c33894a94cf539b209f5fa031a349137ab93",
         "source": "v1_registry_adapter",
         "type": "result.aggregate",
         "type_version": 1
@@ -78,7 +78,7 @@
       {
         "contract_digest": "1f19fb726aff264af5eee81400094d5336a67d3258913889cf1207f92fa4ae07",
         "handler_channel": "human",
-        "implementation_digest": "d88c6f48580a492d5c400cc01c47ff9502a16db909c90426e211e7decb583b77",
+        "implementation_digest": "4028d17aa0519865b4920f6468f396b7d9feb5220101c4c6c57569b3bceed5f4",
         "source": "v1_registry_adapter",
         "type": "input.form",
         "type_version": 1
@@ -86,7 +86,7 @@
       {
         "contract_digest": "352e55ed588da6904e8d04b6ab2349965075cc80546b9927c90b302aa950cd1f",
         "handler_channel": "human",
-        "implementation_digest": "bb635e3a62a7f2fe793f41c10231f3b08beb4ff2f6ed51d5cf2ac330d37de6dc",
+        "implementation_digest": "60b0c553afd95da4b1bc53146800cc212e798eac8016e829b93e64b96b62e468",
         "source": "v1_registry_adapter",
         "type": "human.file_selection",
         "type_version": 1
@@ -94,7 +94,7 @@
       {
         "contract_digest": "5a746790be7d9680edfd610c988c0543892081b84614cd4c5350e7768188031e",
         "handler_channel": "human",
-        "implementation_digest": "89b3e4136ef562d604094af4bde5d3d67b95833e68e0088da06c50b517fca0e0",
+        "implementation_digest": "e697c6acccaf7828d7fbea26bbc329a79cdc1da59b4a8483e01176fba4f9ee16",
         "source": "v1_registry_adapter",
         "type": "human.image_selection",
         "type_version": 1
@@ -102,7 +102,7 @@
       {
         "contract_digest": "1206ba58a155b0196133f266f03ebc89f8fe0eb9ef7b570502ddfdaadb2d065d",
         "handler_channel": "human",
-        "implementation_digest": "d6d35c3057a684beebd92386bf06e5d6d7a5730c592594a735aeff7352e68843",
+        "implementation_digest": "8531268cdf6f80f3a0b2b29f4375f31f3df38629e7c621c5a8c71560493bb34e",
         "source": "v1_registry_adapter",
         "type": "human.input",
         "type_version": 1
@@ -110,7 +110,7 @@
       {
         "contract_digest": "699ce3b667070136f9adf65401108c2e206503cf0abe8c3b2899ce8f6f5c5512",
         "handler_channel": "human",
-        "implementation_digest": "88b6d1b786996152cad4642de5ab15db64ae9a3e768b18b44825b8f3097335eb",
+        "implementation_digest": "5b4cdcb497a55b6f084104055a8514d8c98cbe029002dfb6696c216f46f3de17",
         "source": "v1_registry_adapter",
         "type": "human.confirm",
         "type_version": 1
@@ -118,7 +118,7 @@
       {
         "contract_digest": "bf9b7739456ed1bd3c0c382d3e53924fedb20562e84134d4acdbd6e6b55e542b",
         "handler_channel": "external_operation",
-        "implementation_digest": "22a911dd1d66432c608461f69cb196f460597de2f9095f69d6802a5388c5fe0b",
+        "implementation_digest": "64a917243df2d23dd62c29c401ac6fab8d66a1c0a86eb240d7cc68c4b44fa0a8",
         "source": "v1_registry_adapter",
         "type": "external.legacy_regenerated_fiber_count_upload",
         "type_version": 1
@@ -126,7 +126,7 @@
       {
         "contract_digest": "e9001a50118b65f31840a56dd6fc2e234a7677d3e13d5250a96d0687e3cf70f9",
         "handler_channel": "external_operation",
-        "implementation_digest": "6940309a8997c942626d884636bd9a6a89a6998269b34098c9e56df47853a3ad",
+        "implementation_digest": "ea1d52db9b341bdfcee5b4437780bf6cb1a33029b4d5987c838c337fc619e99a",
         "source": "v1_registry_adapter",
         "type": "external.legacy_special_wool_image_upload",
         "type_version": 1
@@ -134,7 +134,7 @@
       {
         "contract_digest": "05c7b18f9ecc3615e4d0f15e9661b7c4c9304c7287173f8e5ff3362ce1386846",
         "handler_channel": "external_operation",
-        "implementation_digest": "ebc63d041b982fbcb0bf4bd454db837bb104358072e43931876665f1236b748d",
+        "implementation_digest": "c7b0c5072933f30b07d7b26e1074656fa9a4a1f9d46958ae9770e1ebf8d9a3a3",
         "source": "v1_registry_adapter",
         "type": "external.legacy_special_wool_review",
         "type_version": 1
@@ -142,7 +142,7 @@
       {
         "contract_digest": "54b2583df92826e3bf3b0f6bab2e4cdaa8a758a95524888411ab04314b35db71",
         "handler_channel": "external_operation",
-        "implementation_digest": "2dfc588245d00cd0468c04773f2386f51a15034d67d13945ba2bc2622481f60f",
+        "implementation_digest": "d2edc6bf9f6db25cdadb106d5ab05a8b098a14398124144c9c0a4caed406f97f",
         "source": "v1_registry_adapter",
         "type": "external.legacy_microscopy_check_record_entry",
         "type_version": 1
@@ -150,7 +150,7 @@
       {
         "contract_digest": "5fa4ab3eec4332c1b2255d34251f0207417a01ffcf4bac4fd8f769b0b742df2a",
         "handler_channel": "external_operation",
-        "implementation_digest": "d906b39ddbe2f147ae5c9ad33c22f161da02d243e91e03daca6401ed5f94d234",
+        "implementation_digest": "bf92ec2f5956ee612c1e7906a032890d2489c15f95a822b0a5d2e8240dc250e2",
         "source": "v1_registry_adapter",
         "type": "external.legacy_special_wool_qualitative_upload",
         "type_version": 1
@@ -158,7 +158,7 @@
       {
         "contract_digest": "d1711ed8605de362a586f53c1e9ae4c32994513a5df28027a75faf53b8d34c18",
         "handler_channel": "external_operation",
-        "implementation_digest": "37ca10e97a9eaa0d1187201d85253cbe0cf68aef293628a2a92f3ad87c24571b",
+        "implementation_digest": "7efa66b5142311b334ca1ce63985c329b766655f9aec30338cc81e07f8267f92",
         "source": "v1_registry_adapter",
         "type": "external.legacy_special_wool_qualitative_review",
         "type_version": 1
@@ -166,7 +166,7 @@
       {
         "contract_digest": "ece7ebe6a80ad8053175941b6d8421b459417725650b74054f8c05ea3e1f6dc8",
         "handler_channel": "external_operation",
-        "implementation_digest": "705780db316e11152dd3a3f97ef3c7eb7c5fd2c30e356087e471bf6e5f2b04cd",
+        "implementation_digest": "bc328d828d80f5c939c00e3027790a21610f3cbbc087b112e54371148f850195",
         "source": "v1_registry_adapter",
         "type": "external.legacy_generic_check_record_entry",
         "type_version": 1
@@ -174,7 +174,7 @@
       {
         "contract_digest": "9a6d760d3588576d916f5719b698780a0bbbfe278cf0c74da1b8da5d7c304ec6",
         "handler_channel": "placeholder",
-        "implementation_digest": "9700f8105085234ff36354ffefdb6e0cdc055c6d302d3cee4115973d3e712ef5",
+        "implementation_digest": "8e1a7b7bbd769e593e082a2e414205d38117bf54c47ea7bae43ccf2c014de6a9",
         "source": "v1_registry_adapter",
         "type": "external.legacy_inspection",
         "type_version": 1
@@ -182,7 +182,7 @@
       {
         "contract_digest": "6a0b931648ad154b64a103a8f59cb52c7f1e5352d5fd949f81f2eaf856162194",
         "handler_channel": "placeholder",
-        "implementation_digest": "d31834426b070ce314554620b286cfafa039ee05ea9d542b038f4005919c44b1",
+        "implementation_digest": "245ceb6801a74e9a6b351e3794fbb8c5b7160909faea1c745f13ede802e43715",
         "source": "v1_registry_adapter",
         "type": "external.new_inspection",
         "type_version": 1
@@ -190,7 +190,7 @@
       {
         "contract_digest": "e4cfc616a04986e159fcbdafdd5ac96c568b1cb96e7819823e0e220023c959d7",
         "handler_channel": "worker_callable",
-        "implementation_digest": "cb05ba99bc761df5a20934aadd7221caa5255b875811e8d46f0ecb22b7ab844a",
+        "implementation_digest": "e39c76f2cb35806a1781bdf503eb15d3303fb62a73f62bbe2fcaafc12fc4cf64",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -200,7 +200,7 @@
       {
         "contract_digest": "7d599cc4f356bf2815bc932db965792ca41294dfb39c527e014294455a7f3c3e",
         "handler_channel": "worker_callable",
-        "implementation_digest": "b6b2fc9b7739db6f7a052a4aadae2de5ac7326e81cf4e51ad0575a711aefca9d",
+        "implementation_digest": "ce680df7615dfa0fb1fcd91dead6314cbeb78959310ab82556f7a4ec0041329b",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -210,7 +210,7 @@
       {
         "contract_digest": "98c5bf40cba26e1d819c6cf23a130046dcd797fe6bec8c73b8ac735247a0782a",
         "handler_channel": "worker_callable",
-        "implementation_digest": "e0d570bff6782449aab7c91c0e2e46a2fdeab88129e1f5fe2e1d939af320ed58",
+        "implementation_digest": "8bdd9bd81750f9f7ce0ef8915087ce2907217dcb397819fe60753fd2fbbd807b",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -220,7 +220,7 @@
       {
         "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
         "handler_channel": "worker_callable",
-        "implementation_digest": "617a0c690f1694c75cc1845f9026b84bf8a7324832eb4ba2a416a71cad3d601e",
+        "implementation_digest": "695b0bd744c4b4feb8984c674d47e19086540f73bb2dadcb777067db27ba4fbf",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -230,7 +230,7 @@
       {
         "contract_digest": "f8cc39428e59cbfd4b599297e2f2c6e988f83a62d40ea9c18b8b5e4ee203091c",
         "handler_channel": "worker_callable",
-        "implementation_digest": "f0ab0d20c48a173d731b1f4afb168d62057aefc001611d6ce5bf45e2f8ffbea5",
+        "implementation_digest": "05a08848f751cfb9bee7486438e9e99b908037edf6c030db6b92f167ad9fae8f",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -240,7 +240,7 @@
       {
         "contract_digest": "5f8d9306ea1e517e37a2112fce1b9b4bfde8d0000c23b559539f726f4e08c8a9",
         "handler_channel": "human",
-        "implementation_digest": "cb43cb06811102d52ee4ac5b5ceeee4be150078a870465d202d2565caa80bf11",
+        "implementation_digest": "6180fbb6ecc8bd5a239d4908a0e7f31b77d95248a5ce58e31ffa99a9fa7f855d",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -250,7 +250,7 @@
       {
         "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
         "handler_channel": "human",
-        "implementation_digest": "e8c7202a53ee78ad4404e4dc36893d2304cc83797859ab9dc35a7fd7320a0a7e",
+        "implementation_digest": "32f3680ade1fd45c54d2444de500d7b5240c7c04e2b33305841fb93f4f53890c",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -260,7 +260,7 @@
       {
         "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
         "handler_channel": "human",
-        "implementation_digest": "429745387472532b162e87f7d7854fa2bca1aaa37ec8e169edcf71237c6b5fc1",
+        "implementation_digest": "204fbeb500da2af7e3dc5c965f980edd233305b0afef04a65b63ed53eaa915ca",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -270,7 +270,7 @@
       {
         "contract_digest": "2606c9696cda7673e737920d81f9d500521adad6a872209932721ceb5ee3be6e",
         "handler_channel": "human",
-        "implementation_digest": "ec3f729da3cb80eb9533ea3186d4ebdc63abdcaf066c808391bab124b57b4b35",
+        "implementation_digest": "4b6f5bf1f1da81f1d7aeca74eb134244840be6edc630b5ae3bc8181bfeaf526c",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -280,7 +280,7 @@
       {
         "contract_digest": "a6bbc7df93553aa4206567ec3734629d97644ea6fd8d1df099305b492f6e1c48",
         "handler_channel": "worker_callable",
-        "implementation_digest": "92353c766b03399a30423c7e94fb9978fbb0b21fa11f11726c6a3b7ac27fc23c",
+        "implementation_digest": "06d871afd3892c50e468ed569456648563d07d943c96c4218cac858a0e48ed04",
         "implementation_resources": [
           "connector_queries.py",
           "v2/resources/node_specs/connector-query-node.json"
@@ -322,6 +322,7 @@
     "v2/native_handlers.py",
     "v2/resources/node_specs/kernel-p2-nodes.json",
     "connector_queries.py",
-    "v2/resources/node_specs/connector-query-node.json"
+    "v2/resources/node_specs/connector-query-node.json",
+    "connector_records.py"
   ]
 }

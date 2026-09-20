@@ -205,3 +205,11 @@ Bridge 会显式使用下面的轻量模式；默认探针行为和完整查询�
 ```powershell
 py -3 -m unittest discover -s tests -v
 ```
+
+## 按需读取精确检验登记
+
+`--check-records` 读取任务快照及登记、通用记录明细和关联结果，输出稳定的
+`record_ref` 与字段 `content_fingerprint`。与 `--task-snapshot-only`、
+`--special-wool-image-dry-run` 互斥。它只执行 SELECT，不读取工作簿文件内容。
+普通任务推荐继续使用原 5 项查询；更新只读 Bridge 后，由 API 的读取范围自动选择。
+调用契约及验证见 [P4 记录读取验收](../../docs/execution-v2/p4-record-read-acceptance.md)。

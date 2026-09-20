@@ -49,9 +49,12 @@ def _task_snapshot(db: Session, data: dict[str, Any]) -> QueryResult:
 
 
 def query_handler(connector_id: str, query: str, contract_version: int):
+    from app.execution.connector_records import get_record, list_records
     # Only trusted installed code supplies handlers, never a Release/HTTP URL.
     return {
         ("legacy_fibrecheck", "task_snapshot.get", 1): _task_snapshot,
+        ("legacy_fibrecheck", "check_record.list", 1): list_records,
+        ("legacy_fibrecheck", "check_record.get", 1): get_record,
     }.get((connector_id, query, contract_version))
 
 

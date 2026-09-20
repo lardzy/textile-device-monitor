@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "a8853d1af49155415ce21ce342d8983df1cc59f270cf28b7d923c9ea5fb5aac9",
+  "distribution_digest": "31709f7f7c178fb6b6bf086ab6f23d672acc833de4d7b759f7aea56e45a1c3ba",
   "engine_version_range": ">=2.4.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -11,7 +11,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "legacy_fibrecheck.v1-compat",
-  "pack_version": "1.2.0",
+  "pack_version": "1.3.0",
   "provides": {
     "capabilities": [
       {
@@ -410,9 +410,402 @@
             },
             "query": "task_snapshot.get",
             "side_effect_class": "read_only"
+          },
+          {
+            "consistency": "cached",
+            "contract_version": 1,
+            "execution_kind": "automatic",
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "inspection_number": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "project_key": {
+                  "pattern": "^task-project:[0-9a-f]{24}$",
+                  "type": "string"
+                },
+                "refresh": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "inspection_number",
+                "project_key"
+              ],
+              "type": "object"
+            },
+            "name": "读取项目检验登记",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "cache_state": {
+                  "enum": [
+                    "empty",
+                    "incomplete_number",
+                    "ready",
+                    "stale",
+                    "stale_error",
+                    "pending",
+                    "failed"
+                  ]
+                },
+                "error_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fetched_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "inspection_number": {
+                  "type": "string"
+                },
+                "lookup_state": {
+                  "enum": [
+                    "pending",
+                    "unavailable",
+                    "found",
+                    "not_found"
+                  ]
+                },
+                "project_key": {
+                  "pattern": "^task-project:[0-9a-f]{24}$",
+                  "type": "string"
+                },
+                "records": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "association_issues": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "content_fingerprint": {
+                        "pattern": "^[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      "details": {
+                        "items": {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "generic_record": {
+                        "additionalProperties": true,
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "key_results": {
+                        "items": {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "list_data": {
+                        "items": {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "other_data": {
+                        "items": {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "record_kind": {
+                        "enum": [
+                          "generic",
+                          "excel",
+                          "other"
+                        ]
+                      },
+                      "record_ref": {
+                        "pattern": "^check-record:sha256:[0-9a-f]{16}$",
+                        "type": "string"
+                      },
+                      "register": {
+                        "additionalProperties": true,
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "record_ref",
+                      "record_kind",
+                      "content_fingerprint",
+                      "register",
+                      "generic_record",
+                      "association_issues",
+                      "details",
+                      "key_results",
+                      "list_data",
+                      "other_data"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "refresh_status": {
+                  "enum": [
+                    "idle",
+                    "queued",
+                    "running",
+                    "ready",
+                    "failed"
+                  ]
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "inspection_number",
+                "cache_state",
+                "refresh_status",
+                "revision",
+                "fetched_at",
+                "expires_at",
+                "error_code",
+                "project_key",
+                "lookup_state",
+                "records"
+              ],
+              "type": "object"
+            },
+            "query": "check_record.list",
+            "side_effect_class": "read_only"
+          },
+          {
+            "consistency": "cached",
+            "contract_version": 1,
+            "execution_kind": "automatic",
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "inspection_number": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "project_key": {
+                  "pattern": "^task-project:[0-9a-f]{24}$",
+                  "type": "string"
+                },
+                "record_ref": {
+                  "pattern": "^check-record:sha256:[0-9a-f]{16}$",
+                  "type": "string"
+                },
+                "refresh": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "inspection_number",
+                "project_key",
+                "record_ref"
+              ],
+              "type": "object"
+            },
+            "name": "读取指定检验登记",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "cache_state": {
+                  "enum": [
+                    "empty",
+                    "incomplete_number",
+                    "ready",
+                    "stale",
+                    "stale_error",
+                    "pending",
+                    "failed"
+                  ]
+                },
+                "error_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fetched_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "inspection_number": {
+                  "type": "string"
+                },
+                "lookup_state": {
+                  "enum": [
+                    "pending",
+                    "unavailable",
+                    "found",
+                    "not_found"
+                  ]
+                },
+                "project_key": {
+                  "pattern": "^task-project:[0-9a-f]{24}$",
+                  "type": "string"
+                },
+                "record": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "association_issues": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "content_fingerprint": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "type": "string"
+                    },
+                    "details": {
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "generic_record": {
+                      "additionalProperties": true,
+                      "type": [
+                        "object",
+                        "null"
+                      ]
+                    },
+                    "key_results": {
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "list_data": {
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "other_data": {
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "record_kind": {
+                      "enum": [
+                        "generic",
+                        "excel",
+                        "other"
+                      ]
+                    },
+                    "record_ref": {
+                      "pattern": "^check-record:sha256:[0-9a-f]{16}$",
+                      "type": "string"
+                    },
+                    "register": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "record_ref",
+                    "record_kind",
+                    "content_fingerprint",
+                    "register",
+                    "generic_record",
+                    "association_issues",
+                    "details",
+                    "key_results",
+                    "list_data",
+                    "other_data"
+                  ],
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "record_ref": {
+                  "pattern": "^check-record:sha256:[0-9a-f]{16}$",
+                  "type": "string"
+                },
+                "refresh_status": {
+                  "enum": [
+                    "idle",
+                    "queued",
+                    "running",
+                    "ready",
+                    "failed"
+                  ]
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "inspection_number",
+                "cache_state",
+                "refresh_status",
+                "revision",
+                "fetched_at",
+                "expires_at",
+                "error_code",
+                "project_key",
+                "lookup_state",
+                "record_ref",
+                "record"
+              ],
+              "type": "object"
+            },
+            "query": "check_record.get",
+            "side_effect_class": "read_only"
           }
         ],
-        "version": "1.2.0"
+        "version": "1.3.0"
       }
     ],
     "nodes": []
@@ -423,6 +816,7 @@
     "electron_microscopy.py",
     "index_metadata.py",
     "microscopy_families.py",
-    "connector_operations.py"
+    "connector_operations.py",
+    "connector_records.py"
   ]
 }

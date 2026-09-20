@@ -1087,6 +1087,8 @@ class ExecutionTaskSnapshotCache(Base):
     inspection_number = Column(String(200), primary_key=True)
     status = Column(String(30), nullable=False, default="queued", index=True)
     snapshot = Column(JSON_VARIANT, nullable=False, default=dict)
+    include_check_records = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    check_records = Column(JSON_VARIANT)
     revision = Column(Integer, nullable=False, default=1)
     refresh_requested_at = Column(
         DateTime(timezone=True), nullable=False, default=utcnow, index=True

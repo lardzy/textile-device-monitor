@@ -73,3 +73,10 @@ Oracle 配置、令牌或探针输出。临时探针 JSON 无论成功、失败�
 ```powershell
 .\.venv-task-snapshot\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+## P4 精确记录读取
+
+Bridge 领取时声明 `supports_check_records=true`，根据返回的
+`include_check_records` 选择 probe 的 `--check-records` 或原任务快照模式。
+先更新 API/Worker 并应用迁移 0012，再一起更新本 Bridge 和 probe。旧 Bridge
+仍可领取普通任务查询，无法领取需要记录明细的查询。无需新增账号或写入权限。

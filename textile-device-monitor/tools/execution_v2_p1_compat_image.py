@@ -2,7 +2,7 @@
 """Verify or build the frozen P1 compatibility Worker image.
 
 The build context is always materialized from the exact P1 commit.  The only
-overlays are Alembic 0009–0011, which let the old Worker pass the schema-head guard
+overlays are Alembic 0009–0012, which let the old Worker pass the schema-head guard
 without changing application or Pack bytes.  Docker is invoked only with the
 explicit ``--build`` flag.
 """
@@ -22,6 +22,7 @@ MIGRATION_OVERLAYS = (
     "0009_execution_v2_primitives.py",
     "0010_workflow_replacement.py",
     "0011_connector_operations.py",
+    "0012_connector_record_reads.py",
 )
 EXPECTED_CAPABILITY = {
     "baseline_commit": BASELINE,

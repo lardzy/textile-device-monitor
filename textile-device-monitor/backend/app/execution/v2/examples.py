@@ -223,10 +223,10 @@ def build_readonly_file_query_smoke_release() -> dict[str, Any]:
     return deepcopy(document)
 
 
-def build_connector_query_smoke_release() -> dict[str, Any]:
+def build_connector_query_smoke_release(query_name="task_snapshot.get") -> dict[str, Any]:
     """One portable read-only query, without credentials, roots or human tasks."""
     registry = get_installed_registry()
-    query = registry.connectors.resolve_query("legacy_fibrecheck", "*", "task_snapshot.get", 1)
+    query = registry.connectors.resolve_query("legacy_fibrecheck", "*", query_name, 1)
     _specs, dependencies = _dependencies_for([
         ("core.start", 1), ("connector.query", 1), ("core.end", 1),
     ])
@@ -254,11 +254,16 @@ def build_connector_query_smoke_release() -> dict[str, Any]:
     definition["input_schema"] = deepcopy(query.spec["input_schema"])
     definition["input_schema"]["properties"].pop("refresh")
     definition["output_schema"] = deepcopy(query.spec["output_schema"])
+    if query_name != "task_snapshot.get":
+        document["release"].update(slug="v2-connector-record-query-smoke", name="读取项目检验登记",
+                                   description="按任务项目读取登记身份、字段及内容指纹，明细缺失时返回刷新状态。")
     start, node, end = definition["nodes"]
     start["input_mapping"] = {"inspection_number": "$.inputs.inspection_number"}
     node.update({"type": "connector.query", "name": "查询任务快照",
                  "config": {"query_ref": query.query_ref},
                  "input_mapping": {"inspection_number": "$.inputs.inspection_number"}})
+    for key in query.spec["input_schema"]["required"]:
+        node["input_mapping"][key] = f"$.inputs.{key}"
     end["input_mapping"] = {
         key: f"$.nodes.query.output.{key}" for key in query.spec["output_schema"]["properties"]
     }

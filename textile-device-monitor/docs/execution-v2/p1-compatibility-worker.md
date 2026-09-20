@@ -5,7 +5,7 @@ The compatibility pool must be built from commit
 `d1fb01bbd12e3b020f1e27a2ecbeab20bf039ac4`; the only additions to
 that source tree are the self-contained Alembic revisions
 `0009_execution_v2_primitives.py`, `0010_workflow_replacement.py`, and
-`0011_connector_operations.py`, so its schema-head guard can share the current
+`0011_connector_operations.py`, and `0012_connector_record_reads.py`, so its schema-head guard can share the current
 database.
 
 Before the image is admitted, run the Worker bootstrap self-check and compare
@@ -66,3 +66,7 @@ Connector Pack 1.2.0. Migration 0011 adds optional Run/node links and operation
 ownership. Only the current main Worker maintains standalone operation leases;
 the P1 pool continues to serve its frozen workflow bindings. API and main
 Worker must be updated together. No P1 application or capability bytes change.
+
+The record-read batch adds migration 0012 for two disposable cache fields. The
+frozen P1 application and capability bytes are unchanged. Current Kernel Pack
+2.4.0 and Legacy Connector Pack 1.3.0 expose 66 bindings, 64 ready.

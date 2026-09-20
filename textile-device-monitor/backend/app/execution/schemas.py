@@ -333,6 +333,7 @@ class HumanTaskRejectRequest(BaseModel):
 
 class TaskSnapshotBridgeClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    supports_check_records: bool = False
 
     bridge_id: str = Field(
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$",

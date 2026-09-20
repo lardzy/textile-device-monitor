@@ -33,10 +33,15 @@
           "maxLength": 200,
           "minLength": 1,
           "type": "string"
+        },
+        "project_key": {
+          "pattern": "^task-project:[0-9a-f]{24}$",
+          "type": "string"
         }
       },
       "required": [
-        "inspection_number"
+        "inspection_number",
+        "project_key"
       ],
       "type": "object"
     },
@@ -57,11 +62,12 @@
       },
       {
         "config": {
-          "query_ref": "legacy_fibrecheck.task_snapshot.get@1"
+          "query_ref": "legacy_fibrecheck.check_record.list@1"
         },
         "id": "query",
         "input_mapping": {
-          "inspection_number": "$.inputs.inspection_number"
+          "inspection_number": "$.inputs.inspection_number",
+          "project_key": "$.inputs.project_key"
         },
         "name": "查询任务快照",
         "type": "connector.query",
@@ -80,9 +86,11 @@
           "expires_at": "$.nodes.query.output.expires_at",
           "fetched_at": "$.nodes.query.output.fetched_at",
           "inspection_number": "$.nodes.query.output.inspection_number",
+          "lookup_state": "$.nodes.query.output.lookup_state",
+          "project_key": "$.nodes.query.output.project_key",
+          "records": "$.nodes.query.output.records",
           "refresh_status": "$.nodes.query.output.refresh_status",
-          "revision": "$.nodes.query.output.revision",
-          "snapshot": "$.nodes.query.output.snapshot"
+          "revision": "$.nodes.query.output.revision"
         },
         "name": "结束",
         "type": "core.end",
@@ -128,6 +136,102 @@
         "inspection_number": {
           "type": "string"
         },
+        "lookup_state": {
+          "enum": [
+            "pending",
+            "unavailable",
+            "found",
+            "not_found"
+          ]
+        },
+        "project_key": {
+          "pattern": "^task-project:[0-9a-f]{24}$",
+          "type": "string"
+        },
+        "records": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "association_issues": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "content_fingerprint": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "details": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "generic_record": {
+                "additionalProperties": true,
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "key_results": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "list_data": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "other_data": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "record_kind": {
+                "enum": [
+                  "generic",
+                  "excel",
+                  "other"
+                ]
+              },
+              "record_ref": {
+                "pattern": "^check-record:sha256:[0-9a-f]{16}$",
+                "type": "string"
+              },
+              "register": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            },
+            "required": [
+              "record_ref",
+              "record_kind",
+              "content_fingerprint",
+              "register",
+              "generic_record",
+              "association_issues",
+              "details",
+              "key_results",
+              "list_data",
+              "other_data"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "refresh_status": {
           "enum": [
             "idle",
@@ -143,103 +247,19 @@
             "integer",
             "null"
           ]
-        },
-        "snapshot": {
-          "additionalProperties": false,
-          "properties": {
-            "check_basis": {},
-            "inspection_number": {
-              "type": "string"
-            },
-            "projects": {
-              "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "check_count": {},
-                  "check_item_id": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "check_item_name": {
-                    "type": "string"
-                  },
-                  "check_item_no": {},
-                  "check_method": {
-                    "type": "string"
-                  },
-                  "give_judgement": {},
-                  "project_key": {
-                    "type": "string"
-                  },
-                  "register_count": {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "remark": {},
-                  "sample_identify": {},
-                  "seq_num": {},
-                  "task_check_item_id": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "project_key",
-                  "check_item_name",
-                  "check_method",
-                  "register_count"
-                ],
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "sample_name": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "sample_names": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "schema_version": {
-              "const": 5
-            },
-            "special_wool_occupied_numbers": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "schema_version",
-            "inspection_number",
-            "projects",
-            "special_wool_occupied_numbers"
-          ],
-          "type": [
-            "object",
-            "null"
-          ]
         }
       },
       "required": [
         "inspection_number",
         "cache_state",
         "refresh_status",
-        "snapshot",
         "revision",
         "fetched_at",
         "expires_at",
-        "error_code"
+        "error_code",
+        "project_key",
+        "lookup_state",
+        "records"
       ],
       "type": "object"
     },
@@ -253,9 +273,9 @@
         "operations": [],
         "queries": [
           {
-            "contract_digest": "e6bed69830ffb545e554a2ec0cd627fa8c548fbd27c5b433db12491d3b93f4f9",
+            "contract_digest": "cb54e531669be6dad6565fc269aebdba684a4bee5927c746b178aeb19e66c9bd",
             "contract_version": 1,
-            "query": "task_snapshot.get"
+            "query": "check_record.list"
           }
         ],
         "version_range": "1.3.0"
@@ -311,17 +331,17 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "15b4c583513a3b6a6eaea326cfaed04a401d343242b4eb5bc97a183e7d7ce53d",
+    "digest": "203f1235a14f1981fffe8c8267acb684478e79bbdbefd4eecfc468eaac912230",
     "scope": "document_without_integrity",
     "signatures": []
   },
   "release": {
     "category_key": "other",
-    "description": "与直接 API 共用已注册的任务快照读取服务，缓存缺失时返回刷新状态。",
-    "name": "检务任务快照查询",
+    "description": "按任务项目读取登记身份、字段及内容指纹，明细缺失时返回刷新状态。",
+    "name": "读取项目检验登记",
     "release_note": "P4 cached Connector QuerySpec acceptance",
     "release_version": 1,
-    "slug": "v2-connector-query-smoke"
+    "slug": "v2-connector-record-query-smoke"
   },
   "resources": {
     "credential_slots": [],

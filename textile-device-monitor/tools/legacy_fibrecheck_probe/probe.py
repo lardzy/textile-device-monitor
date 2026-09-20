@@ -495,6 +495,14 @@ TASK_SNAPSHOT_QUERIES: tuple[QueryDefinition, ...] = tuple(
 if tuple(query.key for query in TASK_SNAPSHOT_QUERIES) != TASK_SNAPSHOT_QUERY_KEYS:
     raise RuntimeError("任务快照查询定义缺失或顺序错误")
 
+# Record reads are opt-in; ordinary recommendations retain the small task scan.
+CHECK_RECORD_QUERY_KEYS = (
+    "currency_item_records", "currency_item_record_details", "original_key_data_list",
+    "original_key_data_other", "check_record_register", "original_key_data",
+)
+CHECK_RECORD_QUERIES = tuple(query for query in QUERIES
+                            if query.key in TASK_SNAPSHOT_QUERY_KEYS + CHECK_RECORD_QUERY_KEYS)
+
 # 图片类特种毛上传/复核的独立只读事实集。它不会加入默认探针范围，只有
 # 显式 --special-wool-dry-run 才执行，且仍受 SELECT-only 检查、只读事务和
 # 最终 rollback 约束。
@@ -1380,6 +1388,73 @@ def _normalize_common_detail_table(
         "columns": list(COMMON_DETAIL_TABLE_COLUMNS),
         "rows": normalized_rows,
     }
+
+
+def build_check_record_snapshot(sample_no: str, results: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep exact register links and values, never identify a record by its text.
+
+    All rows have already passed the probe's public-ID/path sanitization. This
+    fingerprint covers observed fields and linked rows, not Excel file bytes.
+    """
+    rows = {}
+    for key in CHECK_RECORD_QUERY_KEYS:
+        values, issue = _final_entry_query_rows(results, key)
+        state = results.get(key) or {}
+        if issue or state.get("row_count") != len(values) or state.get("truncated"):
+            raise ProbeError("检验记录查询不完整: " + key)
+        rows[key] = values
+    registers = rows["check_record_register"]
+    ids = [row.get("ID") for row in registers]
+    if len(set(ids)) != len(ids) or any(not re.fullmatch(r"sha256:[0-9a-f]{16}", str(value)) for value in ids):
+        raise ProbeError("检验登记身份不唯一或无效")
+    if any(row.get("SampleNo") != sample_no for row in registers):
+        raise ProbeError("检验登记与样品不一致")
+    generic_rows = rows["currency_item_records"]
+    if any(row.get("CheckRecordRegisterID") not in ids for row in generic_rows):
+        raise ProbeError("通用记录缺少对应登记")
+
+    def ordered(values):
+        return sorted(values, key=lambda row: (
+            _sequence_sort_key(row.get("SeqNum")),
+            json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
+        ))
+
+    records = []
+    for register in sorted(registers, key=lambda row: row["ID"]):
+        register_id = register["ID"]
+        common = [row for row in generic_rows if row.get("CheckRecordRegisterID") == register_id]
+        if len(common) > 1:
+            raise ProbeError("一条登记关联了多条通用记录")
+        generic = common[0] if common else None
+        issues = []
+        if generic is not None:
+            if (generic.get("ID") != register.get("OriginalRecordID")
+                    or generic.get("CheckItemID") != register.get("CheckItemID")
+                    or generic.get("SampleNo") != sample_no):
+                issues.append("generic_register_link_mismatch")
+            original_id = generic.get("ID")
+            kind = "generic"
+        else:
+            original_id = register_id
+            kind = "excel" if _normalized_path_reference(register.get("TemplateFilename"))["count"] else "other"
+        linked = {}
+        for name in ("original_key_data", "original_key_data_list", "original_key_data_other"):
+            linked[name] = ordered(row for row in rows[name] if row.get("OriginalRecordID") == original_id)
+            if any(row.get("SampleNo") != sample_no or (
+                name != "original_key_data_other" and row.get("CheckItemID") != register.get("CheckItemID")
+            ) for row in linked[name]):
+                issues.append(name + "_scope_mismatch")
+        record = {
+            "record_ref": "check-record:" + register_id, "record_kind": kind,
+            "register": register, "generic_record": generic,
+            "details": ordered(row for row in rows["currency_item_record_details"]
+                               if generic is not None and row.get("CurrencyItemRecordNewID") == original_id),
+            "key_results": linked["original_key_data"], "list_data": linked["original_key_data_list"],
+            "other_data": linked["original_key_data_other"], "association_issues": issues,
+        }
+        record["content_fingerprint"] = _canonical_sha256(record)
+        records.append(record)
+    return {"schema_version": 1, "records": records}
 
 
 def _normalize_common_record(
@@ -2504,6 +2579,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="仅查询 Task、Task_Sample 和 Task_CheckItem，供任务推荐缓存刷新使用",
     )
+    parser.add_argument("--check-records", action="store_true",
+                        help="按需读取任务及精确检验登记、字段和关联结果，不读取文件内容")
     parser.add_argument(
         "--special-wool-image-dry-run",
         action="store_true",
@@ -2536,7 +2613,7 @@ def run_cli(
     args = build_parser().parse_args(argv)
     try:
         sample_no = validate_sample_no(args.sample_no)
-        if args.task_snapshot_only and args.special_wool_image_dry_run:
+        if sum((args.task_snapshot_only, args.check_records, args.special_wool_image_dry_run)) > 1:
             raise ProbeError("任务快照模式和特种毛图片 dry-run 不能同时启用。")
         target_sample_no = None
         if args.special_wool_image_dry_run:
@@ -2569,6 +2646,9 @@ def run_cli(
             )
             data_source_overridden = True
         selected_queries = (
+            CHECK_RECORD_QUERIES
+            if args.check_records
+            else
             TASK_SNAPSHOT_QUERIES
             if args.task_snapshot_only
             else SPECIAL_WOOL_DRY_RUN_QUERIES
@@ -2582,7 +2662,9 @@ def run_cli(
             queries=selected_queries,
             target_sample_no=target_sample_no,
         )
-        if args.task_snapshot_only:
+        if args.check_records:
+            document["query_scope"] = "check_records"
+        elif args.task_snapshot_only:
             document["query_scope"] = "task_snapshot"
         elif args.special_wool_image_dry_run:
             document["query_scope"] = "special_wool_image_dry_run"
@@ -2603,11 +2685,14 @@ def run_cli(
                     queries=selected_queries,
                     include_final_entry_view=(
                         not args.task_snapshot_only
+                        and not args.check_records
                         and not args.special_wool_image_dry_run
                     ),
                     target_sample_no=target_sample_no,
                 )
                 document.update(run_result)
+                if args.check_records:
+                    document["check_records"] = build_check_record_snapshot(sample_no, run_result["results"])
                 if args.special_wool_image_dry_run:
                     document["observation"] = (
                         build_special_wool_image_observation(

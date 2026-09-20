@@ -151,7 +151,7 @@ def test_native_contracts_are_closed_and_workbook_copy_preferred_is_native():
 
 
 def test_pack_digest_is_bound_to_declared_implementation_source_bytes():
-    pack = get_installed_registry().resolve_pack("textile.execution-kernel", "2.3.0")
+    pack = get_installed_registry().resolve_pack("textile.execution-kernel", "2.4.0")
     manifest = deepcopy(pack.manifest)
     manifest.pop("distribution_digest", None)
     package_root = resources.files("app.execution")
@@ -235,8 +235,8 @@ def test_worker_self_check_advertises_compatibility_and_native_bindings():
     ExecutionWorker(worker_id="v2-contract-test")
     reset_installed_registry_cache()
     document = worker_capability_document()
-    assert len(document["nodes"]) == 64
-    assert sum(item["ready"] for item in document["nodes"]) == 62
+    assert len(document["nodes"]) == 66
+    assert sum(item["ready"] for item in document["nodes"]) == 64
     assert {item["type"] for item in document["nodes"] if not item["ready"]} == {
         "external.legacy_inspection",
         "external.new_inspection",

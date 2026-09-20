@@ -146,32 +146,32 @@
     "node_types": [
       {
         "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "2dc74f527c6657af76dc6fe32301c84bb866f623a8a43d3996cda128ffebb1c6",
+        "implementation_digest": "705d0eed61b076abb4ba7d6dbe64544e38bf8dbf6161291cf29cab7fabc84920",
         "type": "core.start",
         "type_version": 1
       },
       {
         "contract_digest": "3bc6396287630db54830e359ad115276b7d3510831a726a718eca8f52b29f241",
-        "implementation_digest": "a95bba7e3fcba04610c3080a05d8d0619ef5602803de14f73aef8fdd3c712684",
+        "implementation_digest": "959d96e675bf91e2437e0aef6379d243ae928e0373f5a7038d931b3965a23daf",
         "type": "paper_fiber.find_records",
         "type_version": 1
       },
       {
         "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
-        "implementation_digest": "e8c7202a53ee78ad4404e4dc36893d2304cc83797859ab9dc35a7fd7320a0a7e",
+        "implementation_digest": "32f3680ade1fd45c54d2444de500d7b5240c7c04e2b33305841fb93f4f53890c",
         "type": "human.select",
         "type_version": 1
       },
       {
         "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "fc3802a80747f43ceb02dae83af9924fca34ba35afd310f66c227e5897883164",
+        "implementation_digest": "e10764b1ac64253767414b8af68a434035ab5dbd4092206a09814e267a5a0105",
         "type": "core.end",
         "type_version": 1
       }
     ],
     "packs": [
       {
-        "distribution_digest": "adfcf26626e67e6ed0ce1836b3b876826d03c879755e3c6a6f811788e87961b4",
+        "distribution_digest": "f5f8d68e256c983028b7693945b5aa7221aeaf656b0117d90a9d55d2ec926ce8",
         "pack_id": "textile.domain-records",
         "required_on": [
           "api",
@@ -180,13 +180,13 @@
         "version_range": "1.0.0"
       },
       {
-        "distribution_digest": "0753d4a3429097b9cf089925ce5e74cb8300c571151c162512624ddd75875cb2",
+        "distribution_digest": "366b2569424eff41f72a82daacb51e6c8fb6b8999eba55d03b70c61cec8e04ba",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.3.0"
+        "version_range": "2.4.0"
       }
     ]
   },
@@ -196,7 +196,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "a0dae558886b8819b80dbab895e366e7afb083e12c5ef738d69cb1ff8e559a56",
+    "digest": "3a49e19fef5d034a9b8d955657b3372824962d39c3bce11af5424aad1a1189db",
     "scope": "document_without_integrity",
     "signatures": []
   },

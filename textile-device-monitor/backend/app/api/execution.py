@@ -2988,7 +2988,8 @@ def claim_task_snapshot_bridge(
     ),
 ):
     _require_readonly_bridge_key(x_execution_bridge_key)
-    row = claim_task_snapshot_refresh(db, bridge_id=payload.bridge_id)
+    row = claim_task_snapshot_refresh(db, bridge_id=payload.bridge_id,
+                                      supports_check_records=payload.supports_check_records)
     if row is None:
         return {"claimed": False, "remote_write_performed": False}
     response = {
@@ -2996,6 +2997,7 @@ def claim_task_snapshot_bridge(
         "inspection_number": row.inspection_number,
         "claim_token": row.claim_token,
         "claim_expires_at": row.claim_expires_at.isoformat(),
+        "include_check_records": row.include_check_records,
         "remote_write_performed": False,
     }
     db.commit()

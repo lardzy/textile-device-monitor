@@ -114,6 +114,55 @@ def _unique(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
 
 
+@pytest.mark.parametrize("mode", ["coalesce", "upgrade_during_completion"])
+def test_record_read_scope_concurrency(mode):
+    from app.execution.electron_microscopy import (
+        claim_task_snapshot_refresh, complete_task_snapshot_refresh, request_task_snapshot_refresh,
+    )
+    from app.execution.models import ExecutionTaskSnapshotCache
+
+    number = "26" + str(uuid4().int % 10000000).zfill(7)
+    setup = SessionLocal()
+    barrier = threading.Barrier(2)
+    try:
+        row, _ = request_task_snapshot_refresh(setup, inspection_number=number)
+        setup.commit()
+        if mode == "upgrade_during_completion":
+            row = claim_task_snapshot_refresh(setup, bridge_id="older-reader")
+            token = row.claim_token
+            setup.commit()
+
+        def work(index):
+            with SessionLocal() as db:
+                barrier.wait(timeout=10)
+                if mode == "upgrade_during_completion" and index == 1:
+                    complete_task_snapshot_refresh(db, inspection_number=number, bridge_id="older-reader",
+                        claim_token=token, snapshot={"projects": [], "special_wool_occupied_numbers": []})
+                else:
+                    request_task_snapshot_refresh(db, inspection_number=number, include_check_records=True, force=True)
+                db.commit()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(work, index) for index in (0, 1)]
+            for future in futures:
+                future.result(timeout=15)
+        setup.expire_all()
+        row = setup.get(ExecutionTaskSnapshotCache, number)
+        assert row.include_check_records and row.check_records is None and row.status == "queued"
+        assert claim_task_snapshot_refresh(setup, bridge_id="old-reader") is None
+        setup.commit()
+        first = claim_task_snapshot_refresh(setup, bridge_id="new-reader", supports_check_records=True)
+        assert first.inspection_number == number
+        setup.commit()
+        with SessionLocal() as other:
+            assert claim_task_snapshot_refresh(other, bridge_id="second-reader", supports_check_records=True) is None
+    finally:
+        setup.rollback()
+        setup.query(ExecutionTaskSnapshotCache).filter_by(inspection_number=number).delete()
+        setup.commit()
+        setup.close()
+
+
 def test_external_business_scope_uses_one_transaction_lock_per_sample():
     """A second preflight/approval must wait before taking file/op locks."""
 

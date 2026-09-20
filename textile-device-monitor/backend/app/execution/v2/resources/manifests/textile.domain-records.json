@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "adfcf26626e67e6ed0ce1836b3b876826d03c879755e3c6a6f811788e87961b4",
+  "distribution_digest": "f5f8d68e256c983028b7693945b5aa7221aeaf656b0117d90a9d55d2ec926ce8",
   "engine_version_range": ">=2.3.0 <3.0.0",
   "manifest_schema_version": "1.0",
   "pack_id": "textile.domain-records",
@@ -21,7 +21,7 @@
       {
         "contract_digest": "b351dad36dcc392c202825d39f183278158d9abba7615b45097f935d2aff6803",
         "handler_channel": "worker_callable",
-        "implementation_digest": "c6043c3f56a94ef853b80c052519c835ae35ffca6ced08777ad90bc011988601",
+        "implementation_digest": "a63f72b78475bcece4254e7507811ce2b220ac6a8c2b2069c3cef3590d843f35",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
@@ -31,7 +31,7 @@
       {
         "contract_digest": "247b53f39b594de21478aa8fc17f4cb19a12a1c8eba045ec6db6836d55b07afe",
         "handler_channel": "worker_callable",
-        "implementation_digest": "c620769a3e5a690dac7cff069e57c9de59b61d92d19f780e7ee00057de230165",
+        "implementation_digest": "5d161e9efe5158f74dfbe153be855f26ecbfdee009f2dfce7c2dadde75692a27",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
@@ -41,7 +41,7 @@
       {
         "contract_digest": "5f995507868f1d5b963183f2e179d950d3e1092bf8168779ae1e2e17e0ea4f6b",
         "handler_channel": "worker_callable",
-        "implementation_digest": "25fc4369a02f6e2424d50d1b09dfa0ec544cec5835888592e40976c2ae84d574",
+        "implementation_digest": "96f7167a6d5d2d37456cbaff4c63d3f32138f4426f00f98a3c865dc0c2a4982a",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
@@ -51,7 +51,7 @@
       {
         "contract_digest": "3bc6396287630db54830e359ad115276b7d3510831a726a718eca8f52b29f241",
         "handler_channel": "worker_callable",
-        "implementation_digest": "a95bba7e3fcba04610c3080a05d8d0619ef5602803de14f73aef8fdd3c712684",
+        "implementation_digest": "959d96e675bf91e2437e0aef6379d243ae928e0373f5a7038d931b3965a23daf",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",

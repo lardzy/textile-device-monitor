@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import copy
 import hashlib
 import json
 import os
@@ -236,6 +237,12 @@ def build_snapshot(
         _query_rows(results, "task_special_wool_family"),
         inspection_number,
     )
+    record_extension = {}
+    if document.get("query_scope") == "check_records":
+        records = document.get("check_records")
+        if not isinstance(records, dict) or records.get("schema_version") != 1 or not isinstance(records.get("records"), list):
+            raise SnapshotBridgeError("probe_records_invalid", "探针缺少检验记录结果")
+        record_extension["check_records"] = records
 
     # 旧系统中不存在对应 Task 是可缓存的正常事实，避免后端不断重复查询。
     if not tasks:
@@ -251,6 +258,7 @@ def build_snapshot(
             "check_basis": None,
             "projects": [],
             "special_wool_occupied_numbers": occupied_numbers,
+            **record_extension,
         }
     if len(tasks) != 1:
         raise SnapshotBridgeError(
@@ -358,7 +366,7 @@ def build_snapshot(
             "任务项目登记数量查询返回了无法绑定的项目",
         )
 
-    return {
+    snapshot = {
         "schema_version": TASK_SNAPSHOT_SCHEMA_VERSION,
         # 只有唯一非空名称时给出无歧义快捷值；全量选项保留在
         # sample_names，供后续人工确认节点处理一任务多样品情况。
@@ -367,7 +375,9 @@ def build_snapshot(
         "check_basis": task.get("CheckBasis"),
         "projects": projects,
         "special_wool_occupied_numbers": occupied_numbers,
+        **record_extension,
     }
+    return snapshot
 
 
 def run_probe(args: argparse.Namespace, inspection_number: str) -> dict[str, Any]:
@@ -389,7 +399,7 @@ def run_probe(args: argparse.Namespace, inspection_number: str) -> dict[str, Any
             inspection_number,
             "--output",
             str(output_path),
-            "--task-snapshot-only",
+            "--check-records" if getattr(args, "include_check_records", False) else "--task-snapshot-only",
         ]
         if args.oracle_client_dir:
             command.extend(["--oracle-client-dir", str(args.oracle_client_dir)])
@@ -487,7 +497,7 @@ def run_one_cycle(
         token,
         "POST",
         "/task-snapshot-bridge/claim",
-        {"bridge_id": args.bridge_id},
+        {"bridge_id": args.bridge_id, "supports_check_records": True},
     )
     if claim.get("claimed") is not True:
         print("没有待刷新的旧系统任务快照")
@@ -502,7 +512,11 @@ def run_one_cycle(
 
     print("已领取一个旧系统任务快照刷新请求")
     try:
-        document = probe(args, inspection_number)
+        probe_args = copy(args)
+        probe_args.include_check_records = claim.get("include_check_records") is True
+        document = probe(probe_args, inspection_number)
+        if probe_args.include_check_records and document.get("query_scope") != "check_records":
+            raise SnapshotBridgeError("probe_records_unavailable", "请更新只读探针以读取检验记录")
         snapshot = build_snapshot(document, inspection_number)
         request(
             args.api_base,
