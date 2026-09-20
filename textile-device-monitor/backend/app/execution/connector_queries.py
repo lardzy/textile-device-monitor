@@ -110,6 +110,6 @@ def connector_capabilities(connector_id: str) -> dict[str, Any]:
         "queries": [{**query.public_dict(), "direct_api_available": query.ready}
                     for query in connector.queries],
         "operations": [{**operation.public_dict(), "direct_api_available": operation_api_available(operation),
-                        "availability": "direct_api" if operation_api_available(operation) else "legacy_workflow_only"}
+                        "availability": "direct_api" if operation_api_available(operation) else "native_workflow" if operation.ready else "unavailable"}
                        for operation in connector.operations],
     }

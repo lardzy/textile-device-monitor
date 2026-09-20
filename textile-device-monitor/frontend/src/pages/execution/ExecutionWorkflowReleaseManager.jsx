@@ -945,7 +945,7 @@ export default function ExecutionWorkflowReleaseManager() {
         <Form
           form={migrationForm}
           layout="vertical"
-          initialValues={{ source: 'published', target_profile: 'compat_v1' }}
+          initialValues={{ source: 'published', target_profile: 'native_p4' }}
           onValuesChange={changed => {
             setMigrationPreview(null);
             if (changed.workflow_id) {
@@ -984,6 +984,7 @@ export default function ExecutionWorkflowReleaseManager() {
               options={[
                 { value: 'compat_v1', label: 'compat_v1（保持 P1 行为）' },
                 { value: 'native_p2', label: 'native_p2（基础节点迁移）' },
+                { value: 'native_p4', label: '完整原生流程（含检务提交）' },
                 { value: 'native_p3', label: 'native_p3（基础节点与领域服务）' },
               ]}
             />
@@ -999,7 +1000,7 @@ export default function ExecutionWorkflowReleaseManager() {
               <Tag color={migrationPreview.content_valid ? 'success' : 'error'}>
                 {migrationPreview.content_valid ? 'candidate 有效' : 'candidate 无效'}
               </Tag>
-              <Tag color={['p2_complete', 'p3_complete'].includes(migrationPreview.migration_status) ? 'success' : 'warning'}>
+              <Tag color={['p2_complete', 'p3_complete', 'p4_complete'].includes(migrationPreview.migration_status) ? 'success' : 'warning'}>
                 {migrationPreview.migration_status}
               </Tag>
               <Tag color="purple">native {migrationPreview.native_node_count ?? 0}</Tag>

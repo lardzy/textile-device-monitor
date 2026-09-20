@@ -1,10 +1,10 @@
 {
   "assets": [],
-  "distribution_digest": "f5f8d68e256c983028b7693945b5aa7221aeaf656b0117d90a9d55d2ec926ce8",
+  "distribution_digest": "bb8163f4c70bb3fe29477b2f418fc5f4f83f78e0cd14d4bb65a9f43ce2c29510",
   "engine_version_range": ">=2.3.0 <3.0.0",
   "manifest_schema_version": "1.0",
   "pack_id": "textile.domain-records",
-  "pack_version": "1.0.0",
+  "pack_version": "1.1.0",
   "provides": {
     "capabilities": [
       {
@@ -21,7 +21,7 @@
       {
         "contract_digest": "b351dad36dcc392c202825d39f183278158d9abba7615b45097f935d2aff6803",
         "handler_channel": "worker_callable",
-        "implementation_digest": "a63f72b78475bcece4254e7507811ce2b220ac6a8c2b2069c3cef3590d843f35",
+        "implementation_digest": "d56c8beaa0b785da0504b1e79f55c7ac5de60235441e0a2d6a46fe28fdee47b1",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
@@ -31,7 +31,7 @@
       {
         "contract_digest": "247b53f39b594de21478aa8fc17f4cb19a12a1c8eba045ec6db6836d55b07afe",
         "handler_channel": "worker_callable",
-        "implementation_digest": "5d161e9efe5158f74dfbe153be855f26ecbfdee009f2dfce7c2dadde75692a27",
+        "implementation_digest": "1850fce0e41856eb816ad00993271a35a49800f8ce5c4667f165e1b3467891f7",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
@@ -41,7 +41,7 @@
       {
         "contract_digest": "5f995507868f1d5b963183f2e179d950d3e1092bf8168779ae1e2e17e0ea4f6b",
         "handler_channel": "worker_callable",
-        "implementation_digest": "96f7167a6d5d2d37456cbaff4c63d3f32138f4426f00f98a3c865dc0c2a4982a",
+        "implementation_digest": "95e56b8c50b49f661a9d51fd04e71da1aec121c3e1a136054970ed9365f8bb31",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
@@ -51,11 +51,31 @@
       {
         "contract_digest": "3bc6396287630db54830e359ad115276b7d3510831a726a718eca8f52b29f241",
         "handler_channel": "worker_callable",
-        "implementation_digest": "959d96e675bf91e2437e0aef6379d243ae928e0373f5a7038d931b3965a23daf",
+        "implementation_digest": "8c0fd648d2448d19fefce9c3cb0dede8c7bb843064cf5b6d3d05b9dd43486ff1",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
         "type": "paper_fiber.find_records",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "ed25ed2134f707c516e2974447fbefffa2a94dd25e152bc7e17da3d370d6ac2b",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "8de23bc63dac64aabe6f30a7a3022edfdadb723438878d1f6ff10cab245db430",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
+        "type": "inspection.record.prepare",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "c98d633a68d075c085fd29b915e924931eaa9da631ab37722b18c1feac8bcb93",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "160ab8ee37482e0feaf7addfb60b5b76b5c6f3985902ce65d99ffa076144b8d7",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/domain-record-nodes.json",
+        "type": "inspection.record.validate",
         "type_version": 1
       }
     ]
@@ -85,6 +105,8 @@
     "templates/gbt36422-2018-microscopy-5-images-v1.xls",
     "templates/gbt36422-2018-microscopy-6-images-v1.xls",
     "templates/gbt36422-2018-microscopy-7-images-v1.xls",
-    "templates/gbt36422-2018-microscopy-original-record-v1.xls"
+    "templates/gbt36422-2018-microscopy-original-record-v1.xls",
+    "v2/record_input_handlers.py",
+    "record_input.py"
   ]
 }

@@ -1200,6 +1200,376 @@
           "native": true
         }
       }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "inspection.record.prepare",
+      "type_version": 1,
+      "name": "准备登记输入",
+      "category": "检务",
+      "description": "集中必要字段，沿用任务项目与领域约束。",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "capability_pack",
+          "pack_id": "textile.domain-records"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "record_family": {
+            "enum": [
+              "microscopy",
+              "cross_section",
+              "paper_fiber"
+            ]
+          }
+        },
+        "required": [
+          "record_family"
+        ],
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "inspection_number": {
+            "type": "string"
+          },
+          "task": {
+            "type": "object"
+          },
+          "selected_image_ids": {
+            "type": "array"
+          },
+          "selected_images": {
+            "type": "array"
+          },
+          "selected_project": {
+            "type": "object"
+          },
+          "result": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "inspection_number",
+          "task"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "form_schema": {
+            "type": "object"
+          },
+          "defaults": {
+            "type": "object"
+          },
+          "context": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "form_schema",
+          "defaults",
+          "context"
+        ],
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "检务",
+          "icon": "form"
+        }
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 1,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none",
+        "graph_role": "ordinary"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "none",
+        "idempotency": "none",
+        "cancellation": "immediate",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": [
+          "microscopy-image_candidates-v1"
+        ]
+      },
+      "extensions": {
+        "textile": {
+          "native": true
+        }
+      }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "inspection.record.validate",
+      "type_version": 1,
+      "name": "整理登记字段",
+      "category": "检务",
+      "description": "集中必要字段，沿用任务项目与领域约束。",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "capability_pack",
+          "pack_id": "textile.domain-records"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "record_family": {
+            "enum": [
+              "microscopy",
+              "cross_section",
+              "paper_fiber"
+            ]
+          }
+        },
+        "required": [
+          "record_family"
+        ],
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "type": "object"
+          },
+          "form": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "context",
+          "form"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "selected_project_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sample_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sample_identity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "judge_basis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "indicator_requirement": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "test_result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "judgement": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "standard_value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "selected_project": {
+            "type": "object"
+          },
+          "task": {
+            "type": "object"
+          },
+          "registration_decision": {
+            "type": "object"
+          },
+          "sample_identity_options": {
+            "type": "array"
+          },
+          "identity_count_mismatch": {
+            "type": "boolean"
+          },
+          "judgement_required": {
+            "type": "boolean"
+          },
+          "placement_items": {
+            "type": "array"
+          }
+        },
+        "required": [
+          "selected_project_key",
+          "selected_project",
+          "judgement_required",
+          "registration_decision",
+          "task"
+        ],
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "检务",
+          "icon": "form"
+        }
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 1,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none",
+        "graph_role": "ordinary"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "none",
+        "idempotency": "none",
+        "cancellation": "immediate",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": [
+          "microscopy-image_candidates-v1"
+        ]
+      },
+      "extensions": {
+        "textile": {
+          "native": true
+        }
+      }
     }
   ]
 }

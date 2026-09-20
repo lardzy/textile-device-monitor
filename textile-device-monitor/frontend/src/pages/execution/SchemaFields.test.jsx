@@ -21,6 +21,26 @@ const schema = {
 };
 
 describe('SchemaFields copy sources', () => {
+  it('按所选项目显示必填字段并预填唯一选项', async () => {
+    const user = userEvent.setup();
+    const conditional = {
+      properties: {
+        project: { type: 'string', title: '检测项目', enum: ['a', 'b'], default: 'a' },
+        result: { type: 'string', 'x-hidden': true },
+      },
+      allOf: [{
+        if: { properties: { project: { const: 'b' } }, required: ['project'] },
+        then: { properties: { result: { type: 'string', title: '判定结果', enum: ['符合'], default: '符合' } }, required: ['result'] },
+      }],
+    };
+    render(<Form><SchemaFields schema={conditional} /></Form>);
+    expect(screen.queryByRole('combobox', { name: '判定结果' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: '检测项目' }));
+    await user.click(await screen.findByText('b', { selector: '.ant-select-item-option-content' }));
+    expect(await screen.findByRole('combobox', { name: '判定结果' })).toBeInTheDocument();
+    expect(screen.getByText('符合', { selector: '.ant-select-selection-item' })).toBeInTheDocument();
+  });
+
   it('对象和未指定元素类型的数组可编辑为 JSON，并阻止无效类型提交', async () => {
     const submit = vi.fn();
     const user = userEvent.setup();

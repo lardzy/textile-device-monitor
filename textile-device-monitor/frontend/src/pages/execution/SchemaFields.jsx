@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from 'react';
 import {
   Alert,
   AutoComplete,
@@ -28,6 +29,25 @@ const parseJsonField = value => {
 const jsonFieldValue = value => ({
   value: value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2),
 });
+
+export const resolveConditionalFormSchema = (schema, values = {}) => {
+  const properties = { ...(schema?.properties || {}) };
+  const current = Object.fromEntries(Object.entries(properties).map(([name, field]) => [name, values[name] ?? field.default]));
+  const required = new Set(schema?.required || []);
+  (schema?.allOf || []).forEach((condition) => {
+    const test = condition.if || {};
+    const matches = (test.required || []).every(name => current[name] !== undefined)
+      && Object.entries(test.properties || {}).every(([name, field]) => (
+        Object.hasOwn(field, 'const') ? current[name] === field.const : field.enum?.includes(current[name])
+      ));
+    if (!matches) return;
+    Object.entries(condition.then?.properties || {}).forEach(([name, field]) => {
+      properties[name] = { ...field, 'x-hidden': false };
+    });
+    (condition.then?.required || []).forEach(name => required.add(name));
+  });
+  return { ...schema, properties, required: [...required] };
+};
 
 const formItemRules = (name, schema, required = []) => {
   const rules = [];
@@ -122,10 +142,25 @@ export default function SchemaFields({
   disabled = false,
   namePrefix,
 }) {
-  const properties = schema?.properties || {};
-  const required = schema?.required || [];
+  const form = Form.useFormInstance();
+  const values = Form.useWatch([], form);
+  const resolved = useMemo(() => resolveConditionalFormSchema(schema, (namePrefix ? values?.[namePrefix] : values) || {}), [schema, values, namePrefix]);
+  const properties = resolved.properties;
+  const required = resolved.required;
+  useEffect(() => {
+    if (!schema?.allOf || !form) return;
+    Object.entries(properties).forEach(([name, field]) => {
+      const key = namePrefix ? [namePrefix, name] : name;
+      const current = form.getFieldValue(key);
+      if (!field['x-hidden'] && field.default !== undefined
+        && (current === undefined || (field.enum && !field.enum.includes(current)))) {
+        form.setFieldValue(key, field.default);
+      }
+    });
+  }, [schema, properties, form, namePrefix]);
 
   const fields = Object.entries(properties).map(([name, field]) => {
+    if (field['x-hidden']) return null;
     const fieldName = namePrefix ? [namePrefix, name] : name;
     const common = {
       disabled: disabled || field.readOnly,

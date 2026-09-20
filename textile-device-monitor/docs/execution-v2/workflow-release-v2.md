@@ -1,6 +1,6 @@
 # Workflow Release v2 可评审设计
 
-状态（2026-09-20）：P0/P1 发布基座、P2 基础能力和归档接替已实现。首批简化包括目录直接启动、同页补齐输入、自动准备发布、打印解耦和 Bridge 连续处理，见[实施记录](./simplification-batch-1.md)。P3 再生纤首批已有共享服务、直接 API、原生节点和迁移候选，完整候选覆盖 **6/9**，见[P3 首批验收](./p3-regenerated-fiber-acceptance.md)。[第二批](./p3-domain-services-acceptance.md)已抽出电镜/纸纤维查询、领域校验及模板渲染服务，新增四个直接 API；本批补齐四个原生节点、资源绑定和本地步骤的迁移适配，并复用图片选择器与纸纤维结果卡片，见[P3 原生节点验收](./p3-native-domain-acceptance.md)。P4 首批已实现通用查询 API、能力发现、`connector.query@1` 及精确 QuerySpec 调度，见[P4 查询验收](./p4-connector-query-acceptance.md)。P4 第二批已交付首个独立登记 API 与共享操作生命周期，并使用指定编号验证兼容流程，见[P4 独立提交验收](./p4-connector-operation-acceptance.md)。P4 第三批已增加精确记录列表/单条读取与字段指纹，见[记录读取验收](./p4-record-read-acceptance.md)。首个精确更正接口与自动读取、有限重试、投影续办已实现，见[更正与恢复验收](./p4-record-update-acceptance.md)。通用操作节点已对接新增、更正及流程自动恢复，见[通用节点验收](./p4-native-operation-acceptance.md)。涉及检务写入的完整业务迁移仍随 P4 后续完成。生产接管尚未执行。本文同时保留后续目标设计，以下按阶段标明当前交付边界。
+状态（2026-09-20）：P0/P1 发布基座、P2 基础能力和归档接替已实现。首批简化包括目录直接启动、同页补齐输入、自动准备发布、打印解耦和 Bridge 连续处理，见[实施记录](./simplification-batch-1.md)。P3 再生纤首批已有共享服务、直接 API、原生节点和迁移候选，完整候选覆盖 **6/9**，见[P3 首批验收](./p3-regenerated-fiber-acceptance.md)。[第二批](./p3-domain-services-acceptance.md)已抽出电镜/纸纤维查询、领域校验及模板渲染服务，新增四个直接 API；本批补齐四个原生节点、资源绑定和本地步骤的迁移适配，并复用图片选择器与纸纤维结果卡片，见[P3 原生节点验收](./p3-native-domain-acceptance.md)。P4 首批已实现通用查询 API、能力发现、`connector.query@1` 及精确 QuerySpec 调度，见[P4 查询验收](./p4-connector-query-acceptance.md)。P4 第二批已交付首个独立登记 API 与共享操作生命周期，并使用指定编号验证兼容流程，见[P4 独立提交验收](./p4-connector-operation-acceptance.md)。P4 第三批已增加精确记录列表/单条读取与字段指纹，见[记录读取验收](./p4-record-read-acceptance.md)。首个精确更正接口与自动读取、有限重试、投影续办已实现，见[更正与恢复验收](./p4-record-update-acceptance.md)。通用操作节点已对接新增、更正及流程自动恢复，见[通用节点验收](./p4-native-operation-acceptance.md)。P4 已补齐三条完整业务迁移，累计完整原生候选 **9/9**，一次补齐业务字段并连续处理上传、复核、登记，见[完整业务迁移验收](./p4-business-migration-acceptance.md)。生产接管尚未执行。本文同时保留后续目标设计，以下按阶段标明当前交付边界。
 
 | 阶段 | 当前实现与验证边界 |
 |---|---|
@@ -8,7 +8,7 @@
 | P1 | 预检、导入、绑定、不可变发布/运行快照、导出、版本回滚及精确 Worker 能力匹配 |
 | P2 | 18 份原生基础契约、四条完整迁移候选，以及新 Workflow ID/slug 的归档接替、回切、目录和管理入口 |
 | P3 | 再生纤查询/读取两个原生节点共用 `method=area\|count`，复用 `human.select`；P3 阶段累计 24 份原生契约、六条完整候选。电镜/纸纤维共享服务、直接 API 和四个原生节点已实现；另有三条完整业务流程的本地步骤部分迁移，外部链与业务表单待完成 |
-| P4 | 首批任务快照 QuerySpec、通用查询 API、能力发现、`connector.query@1` 与精确 Worker 调度已实现；合计 26 份原生契约、68 个绑定/66 ready。首个独立登记 API、结果读取/取消、无 Run 生命周期，以及精确记录查询/字段指纹已实现；首个原记录更正及自动核对/投影续办已实现；`external.operation` 已接新增/更正，其余操作适配待完成 |
+| P4 | 首批任务快照 QuerySpec、通用查询 API、能力发现、`connector.query@1` 与精确 Worker 调度已实现；合计 29 份原生契约、78 个绑定/76 ready。首个独立登记 API、结果读取/取消、无 Run 生命周期，以及精确记录查询/字段指纹已实现；首个原记录更正及自动核对/投影续办已实现；`external.operation` 已支持全部 9 个 OperationSpec；9/9 内置流程具备完整原生候选 |
 | P5 | 已有 Release 管理页；v2 可视化画布、全库引用清理及 v1 执行器退场未完成 |
 
 P2 四条指电镜、麻棉、特种毛原始资料选择，以及受控 Excel 内部验收候选；P3 新增再生纤面积法/根数法。迁移预览选择 `target_profile=native_p3` 可生成以上六条候选，并可为电镜微观形貌、横截面和纸纤维生成 `p3_partial` 候选；后者保留业务表单及外部节点，不计入完整候选。原 `native_p2` 行为保留。候选生成始终返回 `publish_ready=false`，发布页统一完成绑定保存、检查和发布；接替仍是明确的管理动作。覆盖率不表示已经替换生产流程。

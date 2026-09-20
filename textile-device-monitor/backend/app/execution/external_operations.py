@@ -2159,7 +2159,7 @@ def _generated_microscopy_artifact_rows(
         artifact.run_id != run.id
         or artifact.role != "working"
         or artifact.media_type != expected_media_type
-        or root.root_id != "execution_staging"
+        or not _artifact_root_declared(run, root.root_id)
         or root.access_mode != "write"
         or str(declared.get("root_id") or "") != root.root_id
         or str(declared.get("relative_path") or "")
@@ -2295,7 +2295,7 @@ def _generated_microscopy_check_record_artifact(
     source_number = run.inspection_number.strip().upper()
     if (
         artifact.run_id != run.id
-        or root.root_id != "execution_staging"
+        or not _artifact_root_declared(run, root.root_id)
         or root.access_mode != "write"
         or artifact.role != "working"
         or artifact.immutable is not True
@@ -2615,7 +2615,6 @@ def _reverify_paper_file_source(
     entry, root = row
     if (
         entry.missing_since is not None
-        or root.root_id != PAPER_FIBER_ROOT_ID
         or root.root_id != expected.get("root_id")
         or entry.relative_path != expected.get("relative_path")
         or entry.filename != expected.get("filename")
@@ -2745,6 +2744,20 @@ def _reverify_generic_entry_sources(
             "paper_fiber_final_entry_binding_changed",
             "通用检验记录登记的任务项目或样品编号绑定已变化",
         )
+
+
+def _artifact_root_declared(run: ExecutionRun, root_id: str) -> bool:
+    if run.release_id is None:
+        return root_id == "execution_staging"
+    return any(slot.get("root_id") == root_id and slot.get("access") == "write"
+               for slot in (run.definition_snapshot or {}).get("root_slots", []))
+
+
+def _run_can_write_external(run: ExecutionRun) -> bool:
+    capabilities = run.capabilities_snapshot or {}
+    if run.release_id is not None:
+        return capabilities.get("side_effect_level") == "external_write"
+    return capabilities.get("external_write") is True
 
 
 def _credential_for_node(
@@ -3049,7 +3062,6 @@ def _selected_paper_file_row(
     }
     if (
         entry.missing_since is not None
-        or root.root_id != PAPER_FIBER_ROOT_ID
         or root.root_id not in declared_roots
         or raw.get("root_id") != root.root_id
         or raw.get("relative_path") != entry.relative_path
@@ -3920,9 +3932,7 @@ def prepare_legacy_regenerated_count_operation(
 ) -> tuple[ExecutionExternalOperation, bool]:
     """Create a durable preflight record without contacting FibreCheck."""
 
-    if node_run.node_type != LEGACY_REGENERATED_COUNT_NODE:
-        raise ValueError("unsupported_external_node")
-    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+    if not _run_can_write_external(run):
         raise ExecutionApiError(
             403,
             "workflow_external_write_capability_required",
@@ -3989,9 +3999,7 @@ def prepare_legacy_special_wool_image_operation(
     the official image-child save/readback behavior has been proved.
     """
 
-    if node_run.node_type != LEGACY_SPECIAL_WOOL_IMAGE_UPLOAD_NODE:
-        raise ValueError("unsupported_external_node")
-    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+    if not _run_can_write_external(run):
         raise ExecutionApiError(
             403,
             "workflow_external_write_capability_required",
@@ -4198,9 +4206,7 @@ def prepare_legacy_special_wool_review_operation(
 ) -> tuple[ExecutionExternalOperation, bool]:
     """Prepare an independent SpecialWool review fence."""
 
-    if node_run.node_type != LEGACY_SPECIAL_WOOL_REVIEW_NODE:
-        raise ValueError("unsupported_external_node")
-    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+    if not _run_can_write_external(run):
         raise ExecutionApiError(
             403,
             "workflow_external_write_capability_required",
@@ -4299,9 +4305,7 @@ def prepare_legacy_microscopy_check_record_entry_operation(
     ``base-N`` number is retained only as source-review audit evidence.
     """
 
-    if node_run.node_type != LEGACY_MICROSCOPY_CHECK_RECORD_ENTRY_NODE:
-        raise ValueError("unsupported_external_node")
-    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+    if not _run_can_write_external(run):
         raise ExecutionApiError(
             403,
             "workflow_external_write_capability_required",
@@ -4676,9 +4680,7 @@ def prepare_legacy_special_wool_qualitative_upload_operation(
 ) -> tuple[ExecutionExternalOperation, bool]:
     """Prepare one document-only SpecialWool qualitative upload."""
 
-    if node_run.node_type != LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_NODE:
-        raise ValueError("unsupported_external_node")
-    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+    if not _run_can_write_external(run):
         raise ExecutionApiError(
             403,
             "workflow_external_write_capability_required",
@@ -4849,9 +4851,7 @@ def prepare_legacy_special_wool_qualitative_review_operation(
     node: dict[str, Any],
     input_data: dict[str, Any],
 ) -> tuple[ExecutionExternalOperation, bool]:
-    if node_run.node_type != LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_NODE:
-        raise ValueError("unsupported_external_node")
-    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+    if not _run_can_write_external(run):
         raise ExecutionApiError(
             403,
             "workflow_external_write_capability_required",
@@ -4976,9 +4976,7 @@ def prepare_legacy_generic_check_record_entry_operation(
     node: dict[str, Any],
     input_data: dict[str, Any],
 ) -> tuple[ExecutionExternalOperation, bool]:
-    if node_run.node_type != LEGACY_GENERIC_CHECK_RECORD_ENTRY_NODE:
-        raise ValueError("unsupported_external_node")
-    if (run.capabilities_snapshot or {}).get("external_write") is not True:
+    if not _run_can_write_external(run):
         raise ExecutionApiError(
             403,
             "workflow_external_write_capability_required",

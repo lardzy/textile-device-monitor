@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "e17fbb90b5bd56bd380f626e151feae401dc0f35e39bf13b1919ff4a289623ba",
+  "distribution_digest": "727a8f83f94965f47a4def1c48eca356640e76473641dbe76cfdd7be6ecec579",
   "engine_version_range": ">=2.4.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -11,7 +11,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "legacy_fibrecheck.v1-compat",
-  "pack_version": "1.5.0",
+  "pack_version": "1.6.0",
   "provides": {
     "capabilities": [
       {
@@ -31,7 +31,55 @@
             "completion_stage": "main_record_verified",
             "contract_version": 1,
             "execution_kind": "external_side_effect",
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "primary_file": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "primary_file_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "selected_files": {
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "selected_files",
+                "primary_file_id"
+              ],
+              "type": "object"
+            },
             "operation": "regenerated_fiber.count_upload",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
             "side_effect_class": "external_write",
             "stages": [
               "authenticated",
@@ -56,7 +104,122 @@
                 "picture_records": []
               }
             },
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "original_record": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "artifact_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "content_sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "type": "string"
+                    },
+                    "filename": {
+                      "pattern": "\\.xls$",
+                      "type": "string"
+                    },
+                    "relative_path": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "root_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "artifact_id",
+                    "root_id",
+                    "relative_path",
+                    "filename",
+                    "content_sha256"
+                  ],
+                  "type": "object"
+                },
+                "selected_project": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "check_item_id": {
+                      "pattern": "^sha256:[0-9a-f]{16}$",
+                      "type": "string"
+                    },
+                    "check_item_name": {
+                      "type": "string"
+                    },
+                    "check_item_no": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "check_method": {
+                      "type": "string"
+                    },
+                    "project_key": {
+                      "pattern": "^task-project:[0-9a-f]{24}$",
+                      "type": "string"
+                    },
+                    "seq_num": {
+                      "type": [
+                        "integer",
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "task_check_item_id": {
+                      "pattern": "^sha256:[0-9a-f]{16}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "project_key",
+                    "task_check_item_id",
+                    "check_item_id",
+                    "check_item_name",
+                    "check_method"
+                  ],
+                  "type": "object"
+                },
+                "selected_project_key": {
+                  "pattern": "^task-project:[0-9a-f]{24}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "original_record",
+                "selected_project_key",
+                "selected_project"
+              ],
+              "type": "object"
+            },
             "operation": "special_wool.image_upload",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
             "side_effect_class": "external_write",
             "stages": [
               "authenticated",
@@ -81,7 +244,43 @@
                 "picture_count": 0
               }
             },
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "upload_result": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "upload_result"
+              ],
+              "type": "object"
+            },
             "operation": "special_wool.image_review",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
             "side_effect_class": "external_write",
             "stages": [
               "authenticated",
@@ -99,7 +298,100 @@
             "completion_stage": "excel_proof_verified",
             "contract_version": 1,
             "execution_kind": "external_side_effect",
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "record_input": {
+                  "type": "object"
+                },
+                "registration_decision": {
+                  "type": "object"
+                },
+                "registration_workbook": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "artifact_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "content_sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "type": "string"
+                    },
+                    "filename": {
+                      "pattern": "\\.xls$",
+                      "type": "string"
+                    },
+                    "relative_path": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "root_id": {
+                      "type": "string"
+                    },
+                    "size_bytes": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "artifact_id",
+                    "root_id",
+                    "relative_path",
+                    "filename",
+                    "size_bytes",
+                    "content_sha256"
+                  ],
+                  "type": "object"
+                },
+                "review_result": {
+                  "type": "object"
+                },
+                "selected_project": {
+                  "type": "object"
+                },
+                "selected_project_key": {
+                  "pattern": "^task-project:[0-9a-f]{24}$",
+                  "type": "string"
+                },
+                "template_binding": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "registration_workbook",
+                "template_binding",
+                "selected_project_key",
+                "selected_project",
+                "review_result"
+              ],
+              "type": "object"
+            },
             "operation": "microscopy.check_record_entry",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
             "side_effect_class": "external_write",
             "stages": [
               "authenticated",
@@ -123,7 +415,65 @@
                 "picture_count": 0
               }
             },
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "primary_file": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "primary_file_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "selected_files": {
+                  "maxItems": 1,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "selected_project": {
+                  "type": "object"
+                },
+                "selected_project_key": {
+                  "pattern": "^task-project:[0-9a-f]{24}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "selected_files",
+                "primary_file_id",
+                "selected_project_key",
+                "selected_project"
+              ],
+              "type": "object"
+            },
             "operation": "paper_fiber.qualitative_upload",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
             "side_effect_class": "external_write",
             "stages": [
               "authenticated",
@@ -148,7 +498,43 @@
                 "picture_count": 0
               }
             },
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "upload_result": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "upload_result"
+              ],
+              "type": "object"
+            },
             "operation": "paper_fiber.qualitative_review",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
             "side_effect_class": "external_write",
             "stages": [
               "authenticated",
@@ -367,6 +753,75 @@
               "completed"
             ],
             "write_boundary": "update_started"
+          },
+          {
+            "completion_stage": "generic_projection_verified",
+            "contract_version": 1,
+            "execution_kind": "external_side_effect",
+            "input_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "judgement_input": {
+                  "type": "object"
+                },
+                "registration_decision": {
+                  "type": "object"
+                },
+                "review_result": {
+                  "type": "object"
+                },
+                "selected_project": {
+                  "type": "object"
+                },
+                "selected_project_key": {
+                  "pattern": "^task-project:[0-9a-f]{24}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "selected_project_key",
+                "selected_project",
+                "review_result"
+              ],
+              "type": "object"
+            },
+            "operation": "paper_fiber.check_record_entry",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
+            "side_effect_class": "external_write",
+            "stages": [
+              "authenticated",
+              "permission_verified",
+              "remote_state_verified",
+              "generic_write_ready",
+              "generic_save_started",
+              "generic_rows_verified",
+              "generic_projection_verified",
+              "completed"
+            ],
+            "write_boundary": "generic_save_started"
           }
         ],
         "queries": [
@@ -940,7 +1395,7 @@
             "side_effect_class": "read_only"
           }
         ],
-        "version": "1.5.0"
+        "version": "1.6.0"
       }
     ],
     "nodes": []

@@ -447,6 +447,35 @@ def _portable_human_form_schema_issues(
     return issues
 
 
+def runtime_form_schema_issues(schema: Any) -> list[dict[str, str]]:
+    """The form renderer supports flat const/enum conditions and ordinary fields."""
+    if not isinstance(schema, dict):
+        return [_issue("human_form_schema_invalid", "$.form_schema", "Expected object schema")]
+    try:
+        Draft202012Validator.check_schema(schema)
+    except Exception as exc:
+        return [_issue("human_form_schema_invalid", "$.form_schema", str(exc))]
+    base = deepcopy(schema)
+    conditions = base.pop("allOf", [])
+    issues = _portable_human_form_schema_issues(base, "$.form_schema")
+    if not isinstance(conditions, list):
+        return issues + [_issue("human_form_schema_invalid", "$.form_schema.allOf", "Expected conditions")]
+    for condition in conditions:
+        if not isinstance(condition, dict) or set(condition) != {"if", "then"}:
+            return issues + [_issue("human_form_schema_invalid", "$.form_schema.allOf", "Expected if/then fields")]
+        test, result = condition["if"], condition["then"]
+        if (not isinstance(test, dict) or not isinstance(result, dict)
+                or set(test) - {"properties", "required"} or set(result) - {"properties", "required"}
+                or not isinstance(test.get("properties"), dict)
+                or any(not isinstance(field, dict) or set(field) not in ({"const"}, {"enum"})
+                       for field in test["properties"].values())):
+            return issues + [_issue("human_form_schema_invalid", "$.form_schema.allOf", "Only flat field choices are supported")]
+        derived = {**base, "properties": {**base.get("properties", {}), **result.get("properties", {})},
+                   "required": sorted(set(base.get("required", []) + result.get("required", [])))}
+        issues.extend(_portable_human_form_schema_issues(derived, "$.form_schema.allOf"))
+    return issues
+
+
 def _effective_schemas(
     node: dict[str, Any],
     binding: dict[str, Any],
@@ -758,11 +787,12 @@ def _resolve_dependencies(
                 f"$.definition.nodes[{index}].config",
             )
         )
-        if identity == ("human.form", 1):
+        if identity in {("human.form", 1), ("human.form", 2)}:
+            schema_key = "form_schema" if identity[1] == 1 else "result_schema"
             issues.extend(
                 _portable_human_form_schema_issues(
-                    (node.get("config") or {}).get("form_schema"),
-                    f"$.definition.nodes[{index}].config.form_schema",
+                    (node.get("config") or {}).get(schema_key),
+                    f"$.definition.nodes[{index}].config.{schema_key}",
                 )
             )
         if node.get("runtime_policy"):
@@ -3326,15 +3356,19 @@ def preview_v1_migration(
     from app.execution.v2.regenerated_fiber_migration import WORKFLOW_METHODS, migrate_records
     from app.execution.v2.domain_record_migration import WORKFLOW_SLUGS, migrate_domain_records
 
-    if target_profile == "native_p3" and workflow.slug in (WORKFLOW_METHODS.keys() | WORKFLOW_SLUGS):
+    if target_profile in {"native_p3", "native_p4"} and workflow.slug in (WORKFLOW_METHODS.keys() | WORKFLOW_SLUGS):
         migrate = migrate_records if workflow.slug in WORKFLOW_METHODS else migrate_domain_records
+        if target_profile == "native_p4" and workflow.slug in WORKFLOW_SLUGS:
+            from app.execution.v2.business_migration import migrate_business
+
+            migrate = migrate_business
         candidate, transformations, blockers = migrate(db, workflow, candidate, suggestions)
         _rebuild_candidate_dependencies(candidate)
         minimum = "2.2.0" if workflow.slug in WORKFLOW_METHODS else "2.3.0"
         candidate["dependencies"]["engine"] = {"version_range": f">={minimum} <3.0.0"}
         _lock, candidate["capabilities"] = _resolve_dependencies(candidate, [])
         candidate["integrity"]["digest"] = _release_digest(candidate)
-    elif target_profile in {"native_p2", "native_p3"}:
+    elif target_profile in {"native_p2", "native_p3", "native_p4"}:
         candidate, transformations, blockers = _native_p2_candidate(
             workflow, candidate
         )
@@ -3372,16 +3406,19 @@ def preview_v1_migration(
     )
     compatibility_count = len(candidate["definition"]["nodes"]) - native_count
     migration_status = (
+        "p4_complete"
+        if target_profile == "native_p4" and not blockers and content_valid
+        else
         "p3_complete"
         if target_profile == "native_p3" and workflow.slug in WORKFLOW_METHODS and not blockers and content_valid
         else "p3_partial"
         if target_profile == "native_p3" and workflow.slug in WORKFLOW_SLUGS and transformations and content_valid
         else "p2_complete"
-        if target_profile in {"native_p2", "native_p3"}
+        if target_profile in {"native_p2", "native_p3", "native_p4"}
         and workflow.slug in P2_COMPLETE_WORKFLOW_SLUGS
         and not blockers
         else "p3_p4_deferred"
-        if target_profile in {"native_p2", "native_p3"}
+        if target_profile in {"native_p2", "native_p3", "native_p4"}
         else "compatibility_preview"
     )
     return {

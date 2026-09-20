@@ -795,7 +795,7 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
         self.assertEqual(len(packs(_auth=auth)["items"]), 7)
         self.assertGreaterEqual(len(assets(_auth=auth)["items"]), 1)
         specs = node_specs(node_type=None, _auth=auth)["items"]
-        self.assertEqual(len(specs), 65)
+        self.assertEqual(len(specs), 68)
         selected_spec = specs[0]
         selected_detail = node_spec(
             selected_spec["type"],

@@ -252,7 +252,7 @@ class WorkflowV1MigrationPreviewRequest(BaseModel):
 
     workflow_id: str = Field(min_length=1, max_length=36)
     source: Literal["published", "draft"] = "published"
-    target_profile: Literal["compat_v1", "native_p2", "native_p3"] = "compat_v1"
+    target_profile: Literal["compat_v1", "native_p2", "native_p3", "native_p4"] = "compat_v1"
     target_slug: Optional[str] = Field(
         default=None, min_length=1, max_length=100,
         pattern=r"^[a-z][a-z0-9_-]*$",

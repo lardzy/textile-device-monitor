@@ -144,6 +144,7 @@ class InstalledOperation:
     spec: dict[str, Any]
     implementation_digest: str
     handler: Callable[..., Any] | None
+    workflow_handler: Callable[..., Any] | None
     ready: bool
 
     @property
@@ -1349,8 +1350,9 @@ def _build_installed_registry() -> InstalledRegistry:
     from app.execution.v2.native_handlers import native_handler
     from app.execution.v2.regenerated_fiber_handlers import NATIVE_HANDLERS as domain_handlers
     from app.execution.v2.domain_record_handlers import NATIVE_HANDLERS as record_handlers
+    from app.execution.v2.record_input_handlers import NATIVE_HANDLERS as record_input_handlers
     from app.execution.connector_queries import execute_query_node, query_handler
-    from app.execution.connector_operations import operation_handler
+    from app.execution.connector_operations import operation_handler, workflow_operation_handler
 
     manifest_resources = {
         (manifest["pack_id"], manifest["pack_version"]): set(
@@ -1402,7 +1404,7 @@ def _build_installed_registry() -> InstalledRegistry:
         handler_channel = descriptor["handler_channel"]
         handler = (
             native_handler(identity[0], identity[1])
-            or domain_handlers.get(identity) or record_handlers.get(identity)
+            or domain_handlers.get(identity) or record_handlers.get(identity) or record_input_handlers.get(identity)
             or (execute_query_node if identity == ("connector.query", 1) else None)
             if handler_channel in {"worker_callable", "kernel_builtin"}
             else None
@@ -1507,7 +1509,11 @@ def _build_installed_registry() -> InstalledRegistry:
                         spec=deepcopy(operation_document),
                         implementation_digest=canonical_sha256({"contract_digest": contract_digest, "distribution_digest": pack.distribution_digest}),
                         handler=operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"]),
-                        ready=bool(pack.ready and operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"])),
+                        workflow_handler=workflow_operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"]),
+                        ready=bool(pack.ready and (
+                            operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"])
+                            or workflow_operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"])
+                        )),
                     )
                 )
             queries: list[InstalledQuery] = []

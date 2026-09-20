@@ -39,8 +39,31 @@ def operation_handler(connector_id, name, version):
     )
 
 
+def workflow_operation_handler(connector_id, name, version):
+    from app.execution import external_operations as operations
+
+    if connector_id != "legacy_fibrecheck" or version != 1:
+        return None
+    return {
+        "regenerated_fiber.count_upload": operations.prepare_legacy_regenerated_count_operation,
+        "special_wool.image_upload": operations.prepare_legacy_special_wool_image_operation,
+        "special_wool.image_review": operations.prepare_legacy_special_wool_review_operation,
+        "microscopy.check_record_entry": operations.prepare_legacy_microscopy_check_record_entry_operation,
+        "paper_fiber.qualitative_upload": operations.prepare_legacy_special_wool_qualitative_upload_operation,
+        "paper_fiber.qualitative_review": operations.prepare_legacy_special_wool_qualitative_review_operation,
+        "paper_fiber.check_record_entry": operations.prepare_legacy_generic_check_record_entry_operation,
+    }.get(name)
+
+
 def prepare_operation_node(context, *, operation):
     """Use the same submission service and durable queue for a frozen DAG node."""
+    if context.node["config"]["operation_ref"] != operation.operation_ref:
+        raise conflict("connector_operation_binding_mismatch", "操作与已发布契约不一致")
+    if operation.workflow_handler is not None:
+        return operation.workflow_handler(
+            context.db, run=context.run, node_run=context.node_run,
+            node=context.node, input_data=context.input_data,
+        )
     data = context.input_data
     summary = operation.handler(context.db, data)
     remote_key = lock_legacy_remote_business_scope(context.db, sample_number=summary["target_sample_number"])
