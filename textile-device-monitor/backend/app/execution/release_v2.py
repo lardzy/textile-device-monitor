@@ -3372,6 +3372,10 @@ def preview_v1_migration(
         candidate, transformations, blockers = _native_p2_candidate(
             workflow, candidate
         )
+    if target_profile == "native_p4" and not blockers:
+        from app.execution.v2.designer import compile_document
+
+        candidate = compile_document(candidate)["document"]
     if target_slug is not None:
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,99}", target_slug):
             raise ExecutionApiError(422, "target_slug_invalid", "目标 slug 格式不正确")

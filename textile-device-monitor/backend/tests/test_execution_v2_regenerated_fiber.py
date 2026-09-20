@@ -129,7 +129,8 @@ def comparable(env, output):
 @pytest.mark.parametrize("method", ["area", "count"])
 @pytest.mark.parametrize("suffix", [".xls", ".xlsx"])
 @pytest.mark.parametrize("count", [1, 2])
-def test_same_corpus_api_v1_v2_and_replacement(records_env, method, suffix, count):
+@pytest.mark.parametrize("profile", ["native_p3", "native_p4"])
+def test_same_corpus_api_v1_v2_and_replacement(records_env, method, suffix, count, profile):
     env = records_env
     entries = [workbook_file(env, method, suffix, i + 1) for i in range(count)]
     slug = f"regenerated-fiber-{method}-method"
@@ -148,10 +149,10 @@ def test_same_corpus_api_v1_v2_and_replacement(records_env, method, suffix, coun
     assert api_query == old_query
     assert comparable(env, api_read) == comparable(env, old_read)
 
-    migration = preview(env, slug, profile="native_p3")
-    assert migration == preview(env, slug, profile="native_p3")
+    migration = preview(env, slug, profile=profile)
+    assert migration == preview(env, slug, profile=profile)
     assert migration['content_valid'], migration.get('issues')
-    assert migration['migration_status'] == 'p3_complete', migration
+    assert migration['migration_status'] == ('p4_complete' if profile == 'native_p4' else 'p3_complete'), migration
     assert not migration['blockers']
     assert not migration['publish_ready']
     env.db.refresh(source)

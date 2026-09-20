@@ -373,12 +373,13 @@ def test_parked_required_node_returns_migration_blocker(environment):
 
 
 @pytest.mark.parametrize("slug", CHOICES)
+@pytest.mark.parametrize("profile", ["native_p2", "native_p4"])
 def test_selection_candidate_replaces_runs_and_reverts_through_http_and_worker(
-    environment, slug, monkeypatch
+    environment, slug, monkeypatch, profile
 ):
     env = environment
     monkeypatch.setattr(settings, "EXECUTION_V2_ROLLOUT_PROFILE", "p2_human")
-    migration = preview(env, slug)
+    migration = preview(env, slug, profile=profile)
     source = source_workflow(env, slug)
     prior_enabled = source.is_enabled
     original_definition = deepcopy(source.draft_definition)
@@ -748,11 +749,12 @@ def test_switch_permissions_csrf_conflicts_and_readiness(environment, monkeypatc
     )
 
 
+@pytest.mark.parametrize("profile", ["native_p2", "native_p4"])
 def test_controlled_excel_candidate_stays_internal_and_records_real_publish(
-    environment,
+    environment, profile,
 ):
     env = environment
-    migration = preview(env, CANARY)
+    migration = preview(env, CANARY, profile=profile)
     staged = stage(env, migration["candidate"])
     internal = publish(env, staged, migration["replacement_source"])
     assert (

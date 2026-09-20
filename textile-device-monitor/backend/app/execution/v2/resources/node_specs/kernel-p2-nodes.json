@@ -1676,6 +1676,208 @@
           "renderer_capability": "human.form@1.0.0"
         }
       }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "core.start",
+      "type_version": 2,
+      "name": "开始",
+      "category": "基础",
+      "description": "流程入口",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "kernel",
+          "pack_id": "textile.execution-kernel"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "workflow_input_schema"
+        },
+        "output": {
+          "source": "workflow_input_schema"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "基础"
+        },
+        "compatibility_renderer": "v1"
+      },
+      "ports": {
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "none",
+        "idempotency": "none",
+        "cancellation": "immediate",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "v1_snapshot",
+          "default_max_attempts": 1
+        },
+        "timeout": {
+          "execution_seconds_default": 300
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": []
+      },
+      "extensions": {
+        "textile": {
+          "compatibility_mode": "v1",
+          "required_config": [],
+          "handler_channel": "kernel_builtin"
+        }
+      }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "core.end",
+      "type_version": 2,
+      "name": "结束",
+      "category": "基础",
+      "description": "流程出口",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "kernel",
+          "pack_id": "textile.execution-kernel"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "workflow_output_schema"
+        },
+        "output": {
+          "source": "workflow_output_schema"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "基础"
+        },
+        "compatibility_renderer": "v1"
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [],
+        "condition_mode": "none"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "none",
+        "idempotency": "none",
+        "cancellation": "immediate",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "v1_snapshot",
+          "default_max_attempts": 1
+        },
+        "timeout": {
+          "execution_seconds_default": 300
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": []
+      },
+      "extensions": {
+        "textile": {
+          "compatibility_mode": "v1",
+          "required_config": [],
+          "handler_channel": "kernel_builtin"
+        }
+      }
     }
   ]
 }

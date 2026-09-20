@@ -17,4 +17,4 @@
 - 全量前端 144 个 Vitest 用例、Node 测试及构建通过。后端全量回归与针对历史制品兼容的补充回归见 `.tmp/workflow-p4-p5-20260920/business-*.log`。
 - 这属于本地实现与集成验收。生产切换、真实 Windows/Oracle 三段完整写入和现场业务等价验收尚未执行。本批没有向检务系统写入。
 
-P5 接续 NodeSpec 画布、配置表单和引用审计；`.twr`、Release fixture 执行器、完整绑定界面仍为独立交付。
+P5 已交付 NodeSpec 画布、配置表单和引用审计，见[P5 验收](./p5-designer-retirement-acceptance.md)；`.twr`、Release fixture 执行器、完整绑定界面仍为独立交付。

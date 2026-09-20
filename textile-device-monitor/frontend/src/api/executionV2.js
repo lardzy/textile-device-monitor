@@ -101,3 +101,7 @@ export const revertWorkflowReplacementV2 = (workflowId, payload) =>
   executionV2Client.post(`/workflows/${encodeURIComponent(workflowId)}/replacement/revert`, payload);
 
 export { executionV2Client };
+
+export const getWorkflowDesignerCatalogV2 = () => executionV2Client.get('/designer/catalog');
+export const compileWorkflowDesignerV2 = document => executionV2Client.post('/designer/compile', { document });
+export const getExecutionCompatibilityAudit = () => executionV2Client.get('/compatibility/audit');

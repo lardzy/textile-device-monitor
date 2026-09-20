@@ -811,6 +811,8 @@ def _batch_place(context: Any) -> dict[str, Any] | NodeExecutionResult:
 
 
 _NATIVE_HANDLERS: dict[tuple[str, int], NativeHandler] = {
+    ("core.start", 2): lambda context: context.input_data,
+    ("core.end", 2): lambda context: context.input_data,
     ("flow.branch", 1): _flow_branch,
     ("flow.fork", 1): _flow_passthrough,
     ("flow.join", 1): _flow_join,

@@ -59,6 +59,11 @@ describe('ExecutionWorkflowReleaseManager', () => {
         items: [], has_more: false, next_cursor: null,
       })),
       http.get('/api/execution/v2/packs', () => HttpResponse.json({ items: [] })),
+      http.put('/api/execution/v2/workflow-releases/:id/deployment-binding', async ({ request }) => {
+        const body = await request.json();
+        expect(body.root_bindings).toEqual([]);
+        return HttpResponse.json({ deployment_binding: { id: 'empty-binding', revision: 1, root_bindings: [] } });
+      }),
       http.get('/api/execution/v2/renderer-capabilities', () => HttpResponse.json({
         items: [], registry_revision: 'registry-1', rollout_profile: 'p1_readonly',
       })),
@@ -69,6 +74,27 @@ describe('ExecutionWorkflowReleaseManager', () => {
         node_capability_unavailable: { unavailable_node_count: 0 },
       })),
     );
+  });
+
+  it('selects the current personal credential revision and creates the first binding automatically', async () => {
+    let saved;
+    const document = { ...releaseDocument, resources: { root_slots: [], credential_slots: [{ slot_id: 'account', name: '检务账号', connector_id: 'legacy_fibrecheck', required: true }] } };
+    server.use(
+      http.get('/api/execution/v1/credentials', () => HttpResponse.json({ items: [{ id: 'my-account', system_key: 'legacy_inspection', account_name: '本人账号', is_active: true, configured: true, revision: 3 }] })),
+      http.get('/api/execution/v2/workflow-releases/account-release', () => HttpResponse.json({ id: 'account-release', status: 'staged', document })),
+      http.put('/api/execution/v2/workflow-releases/account-release/deployment-binding', async ({ request }) => {
+        saved = await request.json();
+        return HttpResponse.json({ deployment_binding: { id: 'binding', revision: 1, bindings: saved.bindings } });
+      }),
+      http.post('/api/execution/v2/workflow-releases/account-release/preflight', () => HttpResponse.json({ content_valid: true, publish_ready: false, issues: [], required_bindings: [{ kind: 'credential_slot', slot_id: 'account', required: true }] })),
+    );
+    renderManager('/execution/admin/releases/account-release');
+    await screen.findByRole('combobox', { name: '检务账号' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '检务账号' }).closest('.ant-select')).toHaveTextContent('本人账号'));
+    await userEvent.click(screen.getByRole('button', { name: /检查并发布/ }));
+    await waitFor(() => expect(saved?.bindings.credential_slots).toEqual({ account: { credential_id: 'my-account', revision: 3 } }));
+    expect(saved.expected_revision).toBe(0);
+    expect(screen.queryByRole('combobox', { name: /account.*read/ })).not.toBeInTheDocument();
   });
 
   it('publishes with the current project rule revision and existing root binding in one action', async () => {
@@ -200,7 +226,7 @@ describe('ExecutionWorkflowReleaseManager', () => {
 
     await waitFor(() => {
       expect(calls).toContainEqual(['get-release', null]);
-      expect(screen.getByText('Staged Release')).toBeInTheDocument();
+      expect(screen.getByText('版本信息')).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole('combobox', { name: /inspection_files/ }));
@@ -287,7 +313,7 @@ describe('ExecutionWorkflowReleaseManager', () => {
         expect(await request.json()).toEqual({
           workflow_id: 'workflow-v1',
           source: 'published',
-          target_profile: 'compat_v1',
+          target_profile: 'native_p4',
           target_slug: 'old-workflow-v2',
         });
         return HttpResponse.json({
@@ -364,6 +390,7 @@ describe('ExecutionWorkflowReleaseManager', () => {
 
     const user = userEvent.setup();
     renderManager('/execution/admin/releases/release-published');
+    await user.click(await screen.findByText('流程 JSON 与检查明细'));
 
     const editor = await screen.findByRole('textbox', { name: 'Workflow Release JSON' });
     expect(editor).toHaveAttribute('readonly');
@@ -371,12 +398,12 @@ describe('ExecutionWorkflowReleaseManager', () => {
     expect(screen.getByText('v2-readonly-file-query-smoke')).toBeInTheDocument();
     expect(screen.getByText('最新本地版本')).toBeInTheDocument();
     expect(screen.getByText('当前激活版本')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /导出 portable Release$/ }));
+    await user.click(screen.getByRole('button', { name: /导出流程 JSON$/ }));
     await waitFor(() => expect(exported).toEqual([true]));
 
     await user.type(screen.getByRole('spinbutton', { name: '目标本地版本' }), '1');
     await user.type(screen.getByRole('textbox', { name: '回滚原因' }), '回退只读基线');
-    await user.click(screen.getByRole('button', { name: /回滚 active pointer$/ }));
+    await user.click(screen.getByRole('button', { name: /回滚到所选版本$/ }));
     await waitFor(() => {
       expect(rollbacks).toEqual([{
         target_local_version: 1,

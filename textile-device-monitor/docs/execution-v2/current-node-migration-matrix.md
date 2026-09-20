@@ -1,18 +1,18 @@
 # 当前 39 个节点迁移矩阵
 
-> 状态：2026-09-20 P4 通用操作节点进度同步；39 项是旧节点迁移规划，不是当前全部安装能力清单。
+> 状态：2026-09-20 P5 代码交付同步；39 项是旧节点迁移规划，不是当前全部安装能力清单。
 >
-> 代码基线：`feature/execution-system` 提交 `f61327b`，加本批独立登记 API；SpecialWool 的 `picture_records=[]`、`picture_count=0` 与 `main_record_verified` 继续保留在 P0 快照。
+> 代码基线：`feature/execution-system`，P4 完整业务迁移提交 `1025fc0` 及本批 P5；SpecialWool 的 `picture_records=[]`、`picture_count=0` 与 `main_record_verified` 继续保留在 P0 快照。
 >
 > 枚举来源：`backend/app/execution/registry.py::_register_builtins()`
 >
 > 适用设计：Workflow Release v2、NodeSpec v2
 
-精确登记读取与字段指纹已实现，见[第三批验收](./p4-record-read-acceptance.md)。独立登记接口与实际样品验证见[P4 第二批验收](./p4-connector-operation-acceptance.md)；首个精确更正与自动恢复已实现，见[第四批验收](./p4-record-update-acceptance.md)；`external.operation` 已接新增/更正及自动恢复，其余操作适配继续推进，完整候选覆盖率不变。
+精确登记读取与字段指纹已实现，见[第三批验收](./p4-record-read-acceptance.md)。独立登记接口与实际样品验证见[P4 第二批验收](./p4-connector-operation-acceptance.md)；首个精确更正与自动恢复已实现，见[第四批验收](./p4-record-update-acceptance.md)；`external.operation` 已接全部 9 种操作，完整原生候选 9/9；P5 设计器和按引用退场见[验收说明](./p5-designer-retirement-acceptance.md)。
 
 ## 1. 结论与统计
 
-旧注册表共 **39 个 `type@type_version`**，其中 37 个可发布，两个连接器占位类型不可发布。另有 **26 份原生契约**（P2 18 份、P3 再生纤 2 份、电镜/纸纤维 4 份、P4 查询与操作 2 份），实际 Worker 合计 68 个绑定、66 ready；兼容与原生 `workbook.copy@1` 存在不同绑定，不能把 68 当作去重类型数。下表统计旧注册表。
+旧注册表共 **39 个 `type@type_version`**，其中 37 个可发布，两个连接器占位类型不可发布。另有 **31 份原生契约**，完整 Worker 能力文档合计 80 个绑定/78 ready；实际心跳按有效引用缩减兼容绑定。契约版本和来源不同的同名节点仍分别计数。下表统计旧注册表。
 
 P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切已实现。四条 `native_p2` 完整候选为电镜、麻棉、特种毛原始资料选择和受控 Excel 内部验收；`native_p3` 新增再生纤面积法/根数法，完整候选覆盖 **6/9**。已进行隔离 API/Worker、浏览器和 LibreOffice 容器验证，尚未接管生产。电镜/纸纤维共享服务、直接 API、四个原生节点和三条 `p3_partial` 候选已交付；P4 已收拢业务表单和外部链，`native_p4` 完整候选覆盖 **9/9**，见[完整业务迁移验收](./p4-business-migration-acceptance.md)。边界见[P2 接替验收](./p2-replacement-acceptance.md)、[P3 首批](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口](./p3-domain-services-acceptance.md)和[原生节点验收](./p3-native-domain-acceptance.md)。
 
@@ -52,7 +52,7 @@ P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切�
 | P2 基础节点收敛 | 引入 `human.form/select/approval`、`file.query/group`、`data.*`、`flow.*`、通用 workbook 原语 | 新工作流不再依赖人工节点隐藏标志或固定节点 ID |
 | P3 领域能力拆分 | 已合并再生纤方法节点；电镜/纸纤维查询、校验和渲染共用服务及直接 API，原生契约及本地步骤迁移已完成，业务表单与外部链保留 | 领域 golden 输出、模板和图片结果逐字段/逐摘要等价；本地合成语料通过，现场语料待验收 |
 | P4 Connector 化 | 引入 Connector manifest、OperationSpec/QuerySpec registry、精确 Worker/Bridge capability 调度；迁移七种旧系统写入与受限只读查询 | 新写入 release 只引用 `external.operation@1 + operation_ref`；只读 query 不获得写入权限；未知写入结果仍需对账 |
-| P5 特例退场 | 清除 engine/validation/frontend 硬编码；在无草稿、发布版和运行快照引用后停止创建 v1 | 全库引用审计为零；回放、滚动升级和回滚验收通过 |
+| P5 特例退场 | 新建入口使用 v2；v1 人工协议隔离，Worker 按有效引用停止兼容能力广告 | 本地引用清空、历史继续、回放和回切已验证；生产按实际引用退场 |
 
 ## 4. 39 项逐项迁移矩阵
 

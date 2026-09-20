@@ -1740,6 +1740,7 @@ def list_credentials(
             {
                 "id": item.id,
                 "system_key": item.system_key,
+                "revision": item.revision,
                 "account_name": item.account_name,
                 "configured": True,
                 "secret_mask": "••••••••",

@@ -2502,3 +2502,22 @@
     flex-direction: column;
   }
 }
+
+.execution-v2-designer__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
+  gap: 16px;
+  margin: 16px 0;
+}
+@media (max-width: 900px) {
+  .execution-v2-designer__layout { grid-template-columns: 1fr; }
+}
+.execution-release-body > details > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  border: 1px solid #e5e9f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #526076;
+}
+.execution-release-body > details[open] > summary { margin-bottom: 12px; }

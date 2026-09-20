@@ -34,6 +34,8 @@ const ExecutionNode = memo(({ data, selected }) => {
   const status = STATUS_META[data.status];
   const isStart = data.nodeType === 'core.start';
   const isEnd = data.nodeType === 'core.end';
+  const inputPorts = data.ports?.inputs ?? (isStart ? [] : [{}]);
+  const outputPorts = data.ports?.outputs ?? (isEnd ? [] : [{}]);
 
   return (
     <div
@@ -46,13 +48,17 @@ const ExecutionNode = memo(({ data, selected }) => {
       ].filter(Boolean).join(' ')}
       title={data.message || data.description}
     >
-      {!isStart && (
+      {inputPorts.map((port, index) => (
         <Handle
+          key={port.id || 'in'}
+          id={port.id}
+          title={port.id}
           type="target"
           position={Position.Left}
           className="execution-flow-node__handle"
+          style={{ top: `${100 * (index + 1) / (inputPorts.length + 1)}%` }}
         />
-      )}
+      ))}
       <div className="execution-flow-node__type">{data.category || '节点'}</div>
       <strong>{data.label || data.nodeType}</strong>
       {data.disabled && (
@@ -67,13 +73,17 @@ const ExecutionNode = memo(({ data, selected }) => {
           {status.label}
         </span>
       )}
-      {!isEnd && (
+      {outputPorts.map((port, index) => (
         <Handle
+          key={port.id || 'out'}
+          id={port.id}
+          title={port.id}
           type="source"
           position={Position.Right}
           className="execution-flow-node__handle"
+          style={{ top: `${100 * (index + 1) / (outputPorts.length + 1)}%` }}
         />
-      )}
+      ))}
     </div>
   );
 });

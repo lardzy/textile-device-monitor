@@ -183,53 +183,53 @@
     "node_types": [
       {
         "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "18da3209b30b5d54dbaac3f3f54068253dfab27d11508a49627263a9f67e4f1b",
+        "implementation_digest": "c9b30950de803782f1e7de2d5152b41714d63af3c887417b44eaa70a38c3007b",
         "type": "core.start",
         "type_version": 1
       },
       {
         "contract_digest": "6ddaa432eedf18f96f1aeb839be0ed6a2b72c811e97587601fa00aeac16dc5b5",
-        "implementation_digest": "f8943351cf47a24e7c4096760dee4bf50bb82fcedd1593d28f5b9584839913a3",
+        "implementation_digest": "2ca705f6a9d99c1f05a106085db5772713d898a6bab63ea56c36e70c5051987f",
         "type": "file.query",
         "type_version": 1
       },
       {
         "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
-        "implementation_digest": "67964f1211654ec8f550e0f4486af12893276a4bdd0a641b96696827814364b0",
+        "implementation_digest": "c0ba5d967c5c1078cfe69a5fa230c8155240c594dbdfa6437ef195b2c1357629",
         "type": "human.select",
         "type_version": 1
       },
       {
         "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
-        "implementation_digest": "a7178d00e1aa844036cfafe00479c6747178e3f3eafebc48f76dee535f81141d",
+        "implementation_digest": "621d6561f8ab04b1a7a306385a8a8f898d2bac03b5f3825be4902a6fdd1ede62",
         "type": "data.aggregate",
         "type_version": 1
       },
       {
         "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "15a9ccc3c64ccbad222667b153af7964af2a9800e41592ab8b25aaa13f55a5ba",
+        "implementation_digest": "6803f1c1e3c961ee30f5e665465ee78e75dfcab73d02e209bc781252d6dfa422",
         "type": "core.end",
         "type_version": 1
       }
     ],
     "packs": [
       {
-        "distribution_digest": "ed28997727ab1961ff3195bfad5ae031db880da3d3d169940de68a4fcd38c59c",
+        "distribution_digest": "1ef9868ab5d846418a6dd2143d65209f3cbd7c51328086befae52a0ce8872e20",
         "pack_id": "textile.execution-files",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.1.0"
+        "version_range": "1.1.1"
       },
       {
-        "distribution_digest": "99385b13aebfb8c7b941ad49dd3d76ca12cafb17e45f8e30438b98bf31b9c22a",
+        "distribution_digest": "ef5b9696a67e3945474968ebfa50bb03c6d78756e8585eb8aad855761dc16408",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.7.0"
+        "version_range": "2.8.0"
       }
     ]
   },
@@ -239,7 +239,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "e0ea527a094a59bc82a75c9781f81e9f3f29054748cb043419382893ad24b8b2",
+    "digest": "03652802d19519e25081744aa20e284777d6719d4c453b53f70c87a30b610f04",
     "scope": "document_without_integrity",
     "signatures": []
   },

@@ -35,6 +35,7 @@ import {
 } from '@ant-design/icons';
 import {
   getExecutionFileRoots,
+  getExecutionCredentials,
   getExecutionWorkflows,
   getProjectRules,
 } from '../../api/execution';
@@ -56,6 +57,7 @@ import {
 import { isWorkflowReleaseV2Document } from '../../utils/executionWorkflow';
 import ExecutionChrome from './ExecutionChrome';
 import WorkflowReplacementPanel from './WorkflowReplacementPanel';
+import WorkflowCompatibilityAudit from './WorkflowCompatibilityAudit';
 import './execution.css';
 
 const { Paragraph, Text } = Typography;
@@ -90,7 +92,7 @@ const bindingRowsOf = (report, release) => {
     || release?.document?.resources?.root_slots
     || release?.portable_document?.resources?.root_slots
     || [];
-  return rows.map((item) => {
+  return rows.filter(item => !item?.kind || item.kind === 'root_slot').map((item) => {
     if (typeof item === 'string') {
       return { slot: item, access: 'read', required: true };
     }
@@ -186,6 +188,7 @@ export default function ExecutionWorkflowReleaseManager() {
   const [release, setRelease] = useState(null);
   const [roots, setRoots] = useState([]);
   const [projectRules, setProjectRules] = useState([]);
+  const [credentials, setCredentials] = useState([]);
   const [loading, setLoading] = useState(Boolean(routeReleaseId));
   const [busy, setBusy] = useState('');
   const [loadError, setLoadError] = useState(null);
@@ -240,6 +243,8 @@ export default function ExecutionWorkflowReleaseManager() {
       }
       bindingForm.setFieldsValue({
         roots: values,
+        credentials: Object.fromEntries(Object.entries(binding?.bindings?.credential_slots || {})
+          .map(([slot, item]) => [slot, item.credential_id])),
         rules: Object.fromEntries(Object.entries(binding?.bindings?.rule_slots || {})
           .map(([slot, item]) => [slot, item.rule_key])),
       });
@@ -326,6 +331,28 @@ export default function ExecutionWorkflowReleaseManager() {
     return () => { active = false; };
   }, [ruleSlots, bindingForm]);
 
+  const credentialSlots = useMemo(() => {
+    try { return JSON.parse(documentText).resources?.credential_slots || []; }
+    catch { return []; }
+  }, [documentText]);
+
+  useEffect(() => {
+    if (!credentialSlots.length) return undefined;
+    let active = true;
+    getExecutionCredentials().then(items => {
+      if (!active) return;
+      setCredentials(items.filter(item => item.is_active && item.configured));
+      for (const slot of credentialSlots) {
+        const key = slot.connector_id === 'legacy_fibrecheck' ? 'legacy_inspection' : slot.connector_id;
+        const matches = items.filter(item => item.is_active && item.configured && item.system_key === key);
+        if (!bindingForm.getFieldValue(['credentials', slot.slot_id]) && matches.length === 1) {
+          bindingForm.setFieldValue(['credentials', slot.slot_id], matches[0].id);
+        }
+      }
+    }).catch(error => { if (active) message.error(error.message || '读取检务账号失败'); });
+    return () => { active = false; };
+  }, [credentialSlots, bindingForm]);
+
   const parseDocument = () => {
     let document;
     try {
@@ -367,7 +394,7 @@ export default function ExecutionWorkflowReleaseManager() {
   };
 
   const saveBinding = async () => {
-    if (!requiredBindings.length && !ruleSlots.length) return;
+
     const values = await bindingForm.validateFields();
     const current = release?.deployment_binding || {};
     const existing = Array.isArray(current.root_bindings)
@@ -379,7 +406,15 @@ export default function ExecutionWorkflowReleaseManager() {
       if (!rule) throw new Error('请选择可用的匹配规则');
       return [slot.slot_id, { rule_key: rule.rule_key, revision: rule.revision }];
     }));
-    const changed = requiredBindings.some(item => existing[item.slot] !== values.roots?.[item.slot])
+    const selectedCredentials = Object.fromEntries(credentialSlots.map(slot => {
+      const credential = credentials.find(item => item.id === values.credentials?.[slot.slot_id]);
+      if (!credential) throw new Error('请先配置并选择检务账号');
+      return [slot.slot_id, { credential_id: credential.id, revision: credential.revision }];
+    }));
+    const changed = !release?.deployment_binding || Object.entries(selectedCredentials).some(([slot, item]) => {
+      const previous = current.bindings?.credential_slots?.[slot];
+      return previous?.credential_id !== item.credential_id || previous?.revision !== item.revision;
+    }) || requiredBindings.some(item => existing[item.slot] !== values.roots?.[item.slot])
       || Object.entries(selectedRules).some(([slot, rule]) => {
         const previous = current.bindings?.rule_slots?.[slot];
         return previous?.rule_key !== rule.rule_key || previous?.revision !== rule.revision;
@@ -391,7 +426,7 @@ export default function ExecutionWorkflowReleaseManager() {
     const payload = await updateWorkflowReleaseBindingV2(currentReleaseId, {
         environment: current.environment || 'default',
         expected_revision: current.revision ?? release?.binding_revision ?? 0,
-        ...(ruleSlots.length ? {
+        ...(ruleSlots.length || credentialSlots.length ? {
           bindings: {
             root_slots: Object.fromEntries(rootBindings.map((item) => {
               const root = roots.find(value => value.id === item.storage_root_id || value.root_id === item.storage_root_id);
@@ -400,7 +435,7 @@ export default function ExecutionWorkflowReleaseManager() {
             })),
             rule_slots: selectedRules,
             role_slots: Object.fromEntries(Object.entries(current.bindings?.role_slots || {}).map(([slot, item]) => [slot, { role_key: item.role_key }])),
-            credential_slots: Object.fromEntries(Object.entries(current.bindings?.credential_slots || {}).map(([slot, item]) => [slot, { credential_id: item.credential_id, revision: item.revision }])),
+            credential_slots: selectedCredentials,
           },
         } : { root_bindings: rootBindings }),
     });
@@ -452,7 +487,7 @@ export default function ExecutionWorkflowReleaseManager() {
       const payload = await publishWorkflowReleaseV2(currentReleaseId, token);
       setRelease(existing => ({ ...existing, ...releaseOf(payload) }));
       setPublishReport(null);
-      message.success(releaseOf(payload).migration_source ? 'Release 已发布，请核对接替状态' : 'Release 已发布，active pointer 已更新');
+      message.success(releaseOf(payload).migration_source ? 'Release 已发布，请核对接替状态' : 'Release 已发布，当前版本已更新');
     } catch (requestError) {
       if (!requestError?.errorFields) message.error(requestError.message || '发布失败');
     } finally {
@@ -599,11 +634,18 @@ export default function ExecutionWorkflowReleaseManager() {
   return (
     <div className="execution-page execution-release-page">
       <ExecutionChrome
-        title="Workflow Release v2"
-        subtitle="以不可变 JSON 契约预检、绑定、发布和回滚工作流"
-        backTo={{ path: '/execution/admin', label: 'v1 流程管理' }}
+        title="工作流发布"
+        subtitle="绑定资源、发布新版本，管理接替与回退"
+        backTo={{ path: '/execution/admin', label: '流程管理' }}
         actions={(
           <Space>
+            <Button onClick={() => {
+              if (routeReleaseId) navigate(`/execution/admin/designer/${routeReleaseId}`);
+              else {
+                try { navigate('/execution/admin/designer', { state: { releaseDocument: JSON.parse(documentText), replacementSource } }); }
+                catch { navigate('/execution/admin/designer'); }
+              }
+            }}>{routeReleaseId ? '设计下一版本' : '打开设计器'}</Button>
             <Button icon={<EyeOutlined />} onClick={openMigrationPreview}>v1 候选预览</Button>
             {routeReleaseId && (
               <Button icon={<ReloadOutlined />} onClick={loadRelease}>刷新</Button>
@@ -615,9 +657,12 @@ export default function ExecutionWorkflowReleaseManager() {
         <Alert
           showIcon
           type="info"
-          message="Release v2 与旧画布严格隔离"
-          description="此页面只处理 format_version=2.0 的 portable Release。预检不会创建流程；apply 只创建 staged Release；只有发布会移动 active pointer。"
+          message="发布新版本"
+          description="确认资源绑定后发布。已运行的任务继续使用原版本；旧流程由接替操作切换。"
         />
+        <details>
+          <summary>运行环境与历史兼容</summary>
+          <WorkflowCompatibilityAudit />
         {registryHealth && (
           <Card title="Registry / Pack / Renderer / Rollout 状态" size="small">
             <Descriptions size="small" column={{ xs: 1, md: 2, xl: 4 }}>
@@ -644,6 +689,7 @@ export default function ExecutionWorkflowReleaseManager() {
             </Descriptions>
           </Card>
         )}
+        </details>
         {!routeReleaseId && releaseList.length > 0 && (
           <Card title="Workflow Release 列表（最近 30 项）" size="small">
             <List
@@ -693,6 +739,8 @@ export default function ExecutionWorkflowReleaseManager() {
           ]}
         />
 
+        <details open={!release}>
+          <summary>流程 JSON 与检查明细</summary>
         <Row gutter={[20, 20]}>
           <Col xs={24} xl={release ? 10 : 12}>
             <Card
@@ -746,10 +794,11 @@ export default function ExecutionWorkflowReleaseManager() {
             </Card>
           </Col>
         </Row>
+        </details>
 
         {release && (
           <>
-            <Card title="Staged Release">
+            <Card title="版本信息">
               <Descriptions size="small" column={{ xs: 1, md: 2, xl: 4 }}>
                 <Descriptions.Item label="Release ID">{currentReleaseId}</Descriptions.Item>
                 <Descriptions.Item label="状态">
@@ -813,7 +862,7 @@ export default function ExecutionWorkflowReleaseManager() {
                 <Card
                   title="部署绑定"
                 >
-                  {requiredBindings.length === 0 && ruleSlots.length === 0 ? (
+                  {requiredBindings.length === 0 && ruleSlots.length === 0 && credentialSlots.length === 0 ? (
                     <Alert showIcon type="success" message="此 Release 不需要数据根绑定" />
                   ) : (
                     <Form form={bindingForm} layout="vertical" disabled={Boolean(busy) || Boolean(localVersionOf(release))}>
@@ -830,6 +879,13 @@ export default function ExecutionWorkflowReleaseManager() {
                             placeholder="选择已配置的 StorageRoot"
                             options={rootOptions}
                           />
+                        </Form.Item>
+                      ))}
+                      {credentialSlots.map(slot => (
+                        <Form.Item key={slot.slot_id} name={['credentials', slot.slot_id]} label={slot.name || '检务账号'}
+                          rules={[{ required: slot.required, message: '请选择检务账号' }]}>
+                          <Select placeholder="选择已配置的账号" options={credentials.filter(item => item.system_key === (slot.connector_id === 'legacy_fibrecheck' ? 'legacy_inspection' : slot.connector_id))
+                            .map(item => ({ value: item.id, label: item.account_name || item.system_key }))} />
                         </Form.Item>
                       ))}
                       {ruleSlots.map(slot => (
@@ -868,7 +924,7 @@ export default function ExecutionWorkflowReleaseManager() {
                     </Space>
                   )}
                 >
-                  <PreflightReport report={publishReport} title="发布预检报告" />
+                  {localVersionOf(release) ? <Alert type="success" showIcon message="当前版本已发布" /> : <PreflightReport report={publishReport} title="发布预检报告" />}
                 </Card>
               </Col>
             </Row>
@@ -877,7 +933,7 @@ export default function ExecutionWorkflowReleaseManager() {
               <WorkflowReplacementPanel workflowId={currentWorkflowId} revisionKey={activeLocalVersionOf(release)} />
             )}
 
-            <Card title="已发布版本操作">
+            {Boolean(localVersionOf(release)) && <Card title="已发布版本操作">
               <Row gutter={[20, 20]} align="bottom">
                 <Col xs={24} lg={8}>
                   <Button
@@ -887,7 +943,7 @@ export default function ExecutionWorkflowReleaseManager() {
                     disabled={!currentWorkflowId || !localVersionOf(release)}
                     onClick={exportRelease}
                   >
-                    导出 portable Release
+                    导出流程 JSON
                   </Button>
                 </Col>
                 <Col xs={24} lg={16}>
@@ -914,13 +970,13 @@ export default function ExecutionWorkflowReleaseManager() {
                         loading={busy === 'rollback'}
                         disabled={!currentWorkflowId || !localVersionOf(release)}
                       >
-                        回滚 active pointer
+                        回滚到所选版本
                       </Button>
                     </Form.Item>
                   </Form>
                 </Col>
               </Row>
-            </Card>
+            </Card>}
           </>
         )}
       </div>

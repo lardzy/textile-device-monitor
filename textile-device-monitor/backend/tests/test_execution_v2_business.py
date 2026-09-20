@@ -128,6 +128,7 @@ def test_all_nine_builtins_have_complete_native_candidates(environment):
     for slug in sorted(slugs):
         migration = preview(environment, slug, profile="native_p4")
         assert migration["content_valid"], (slug, migration.get("issues"))
+        assert migration["compatibility_node_count"] == 0
         assert migration["migration_status"] == "p4_complete", (slug, migration.get("blockers"))
 
 

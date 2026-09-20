@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "48d611077085d4de69b878d6aad0e15b127a5c32d40db6d0f314978ef1c40029",
+  "distribution_digest": "95bfad16e202d159dc02558c405da445eb941c3e3601ba546f7fa4c9dde1da87",
   "engine_version_range": ">=2.1.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -9,7 +9,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "textile.execution-workbook",
-  "pack_version": "1.0.0",
+  "pack_version": "1.0.1",
   "provides": {
     "capabilities": [
       {
@@ -30,7 +30,7 @@
       {
         "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
         "handler_channel": "worker_callable",
-        "implementation_digest": "1c2ab31658340b72166a0311941095f94201f590d1bc6d5203587931e01595d3",
+        "implementation_digest": "0e00eeb2c453dce508d19150d0d2430f575f7e7072289731a3d5e08d28773998",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -40,7 +40,7 @@
       {
         "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
         "handler_channel": "worker_callable",
-        "implementation_digest": "367c2b03bbf8a1efc6c78e4ba2e3b5b51d9f0614d46a2aac905c1f8e2cf00add",
+        "implementation_digest": "3fc797f190148b4d85fa519cd16fa3d129bcbbbaf3186b1a11fb174cb243ff50",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -50,7 +50,7 @@
       {
         "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
         "handler_channel": "worker_callable",
-        "implementation_digest": "6ec5391d82e0d73ca4e62adfd250886df7763f735b218c8802e681346eab48a6",
+        "implementation_digest": "20aed69caa5ca77f48303c9d62102e313f595921dd63fbbffc140aaf35384055",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -60,7 +60,7 @@
       {
         "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
         "handler_channel": "worker_callable",
-        "implementation_digest": "c534fc7d02f8de82c68b4fb3415a8bcde19eeebf9774b02a75f123264cb07675",
+        "implementation_digest": "06192b9e9bd7121f9331119c987b0306c87db9558eef3d81c2aa281a4033d843",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",

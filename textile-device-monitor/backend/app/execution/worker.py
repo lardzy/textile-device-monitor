@@ -115,11 +115,13 @@ class _WorkerHeartbeat:
 
     def _record(self, status: str) -> None:
         with SessionLocal() as db:
+            from app.execution.compatibility import active_worker_capabilities
+
             record_worker_heartbeat(
                 db,
                 worker_id=self.worker_id,
                 status=status,
-                capability_document=self.capability_document,
+                capability_document=active_worker_capabilities(db, self.capability_document),
             )
             db.commit()
 
