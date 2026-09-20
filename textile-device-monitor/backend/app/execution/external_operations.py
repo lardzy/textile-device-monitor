@@ -3209,7 +3209,7 @@ def _reverify_operation_sources(
     operation: ExecutionExternalOperation,
 ) -> None:
     operation_type = _operation_type(operation)
-    if operation.run_id is None:
+    if operation.run_id is None or (operation.request_summary or {}).get("connector_submission"):
         # A direct request freezes caller-supplied values. It has no mutable
         # workbook or upstream Run to re-read. The Writer still verifies the
         # exact task project, current registration count and read-back.

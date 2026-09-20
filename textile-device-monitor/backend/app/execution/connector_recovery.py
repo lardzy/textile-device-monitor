@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from app.execution.connector_updates import UPDATE_OPERATION, update_receipt, updated_record_matches
 from app.execution.electron_microscopy import request_task_snapshot_refresh
 from app.execution.events import append_audit_log
+from app.execution.external_operations import lock_operation_context
 from app.execution.models import ExecutionExternalOperation, ExecutionTaskSnapshotCache, utcnow
 
 
@@ -19,11 +20,15 @@ def _utc(value):
 
 def recover_connector_updates(db) -> int:
     changed = 0
-    rows = (db.query(ExecutionExternalOperation).filter_by(status="reconciliation_required", run_id=None)
+    rows = (db.query(ExecutionExternalOperation).filter_by(status="reconciliation_required")
             .filter(ExecutionExternalOperation.request_summary["operation_type"].as_string() == UPDATE_OPERATION)
             .order_by(ExecutionExternalOperation.created_at).limit(20).all())
     for candidate in rows:
         if candidate.request_summary.get("operation_type") != UPDATE_OPERATION:
+            continue
+        run, node_run = lock_operation_context(db, run_id=candidate.run_id,
+                                              node_run_id=candidate.node_run_id, skip_locked=True)
+        if candidate.run_id is not None and (run is None or node_run is None):
             continue
         operation = (db.query(ExecutionExternalOperation).filter_by(id=candidate.id)
                      .populate_existing().with_for_update(skip_locked=True).one_or_none())
@@ -33,6 +38,8 @@ def recover_connector_updates(db) -> int:
         if attempt is None or attempt.status != "failed":
             continue
         verification = deepcopy(operation.verification or {})
+        if run is not None and run.status in {"cancelled", "cancel_pending", "failure_pending", "failed"}:
+            verification["cancel_requested"] = True
         state = verification.get("automatic_recovery", {})
         number = operation.request_summary["target_sample_number"]
         if state.get("attempt_id") != attempt.id:
@@ -101,6 +108,16 @@ def recover_connector_updates(db) -> int:
             operation.error_message = "已自动读取原记录；存在其他修改或已达到重试次数，请查看当前记录后处理"
         verification["automatic_recovery"] = state
         operation.verification = verification
+        if node_run is not None and node_run.status == "waiting_external":
+            from app.execution.engine import complete_external_node, cancel_external_waiting_node
+
+            if operation.status == "completed":
+                complete_external_node(db, node_run_id=node_run.id, output_data={
+                    "operation_id": operation.id, "status": "completed", "receipt": operation.receipt,
+                })
+            elif operation.status == "cancelled":
+                cancel_external_waiting_node(db, node_run_id=node_run.id,
+                                             error_code="run_cancelled", error_message="已核对原记录未改变")
         append_audit_log(db, action="connector_operation.automatic_recovery",
                          resource_type="execution_external_operation", resource_id=operation.id,
                          details={"attempt_id": attempt.id, "record_ref": summary["record_ref"],

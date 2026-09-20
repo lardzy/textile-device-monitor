@@ -142,6 +142,13 @@ class InstalledOperation:
     pack_version: str
     distribution_digest: str
     spec: dict[str, Any]
+    implementation_digest: str
+    handler: Callable[..., Any] | None
+    ready: bool
+
+    @property
+    def operation_ref(self) -> str:
+        return f"{self.connector_id}.{self.operation}@{self.contract_version}"
 
     def public_dict(self) -> dict[str, Any]:
         value = deepcopy(self.spec)
@@ -153,6 +160,9 @@ class InstalledOperation:
                 "pack_id": self.pack_id,
                 "pack_version": self.pack_version,
                 "distribution_digest": self.distribution_digest,
+                "operation_ref": self.operation_ref,
+                "implementation_digest": self.implementation_digest,
+                "ready": self.ready,
             }
         )
         return value
@@ -612,6 +622,7 @@ class InstalledRegistry:
         for spec in node_specs.all():
             executables.index_binding(spec, executables.resolve(spec))
         self.query_bindings: list[dict[str, Any]] = []
+        self.operation_bindings: list[dict[str, Any]] = []
         query_specs = [spec for spec in node_specs.all() if spec.type == "connector.query"]
         from app.execution.connector_queries import execute_query_node
 
@@ -625,6 +636,21 @@ class InstalledRegistry:
                         binding["execution_binding_digest"],
                         replace(executable, runtime_ready=binding["ready"],
                                 handler=partial(execute_query_node, query=query)),
+                    )
+        from app.execution.connector_operations import prepare_operation_node
+
+        for spec in (item for item in node_specs.all() if item.type == "external.operation"):
+            executable = executables.resolve(spec)
+            for connector in connectors.all():
+                for operation in connector.operations:
+                    if not operation.ready:
+                        continue
+                    binding = self.operation_node_binding(spec.execution_binding(), operation)
+                    self.operation_bindings.append(binding)
+                    executables.index_digest(
+                        binding["execution_binding_digest"],
+                        replace(executable, runtime_ready=binding["ready"],
+                                handler=partial(prepare_operation_node, operation=operation)),
                     )
         self.revision = canonical_sha256(
             {
@@ -743,7 +769,7 @@ class InstalledRegistry:
     def worker_capability_document(self) -> dict[str, Any]:
         nodes: list[dict[str, Any]] = []
         for spec in self.node_specs.all():
-            if spec.type == "connector.query":
+            if spec.type in {"connector.query", "external.operation"}:
                 # A generic shell alone cannot execute any connector capability.
                 continue
             executable = self.executables.resolve(spec)
@@ -773,7 +799,7 @@ class InstalledRegistry:
                     )
                 }
             )
-        for binding in self.query_bindings:
+        for binding in self.query_bindings + self.operation_bindings:
             nodes.append({key: binding[key] for key in (
                 "execution_binding_digest", "type", "type_version", "contract_digest",
                 "implementation_digest", "pack_id", "pack_version", "execution_kind", "ready",
@@ -785,6 +811,19 @@ class InstalledRegistry:
             "capability_digest": capability_digest,
             "nodes": nodes,
         }
+
+    @staticmethod
+    def operation_node_binding(binding: dict[str, Any], operation: InstalledOperation) -> dict[str, Any]:
+        value = deepcopy(binding)
+        value["connector_operation"] = operation.public_dict()
+        value["ready"] = binding["ready"] and operation.ready
+        value["execution_binding_digest"] = canonical_sha256({
+            "node_binding_digest": binding["execution_binding_digest"],
+            "operation_contract_digest": operation.contract_digest,
+            "operation_implementation_digest": operation.implementation_digest,
+            "connector_distribution_digest": operation.distribution_digest,
+        })
+        return value
 
 
 def _load_json_resource(path: str) -> dict[str, Any]:
@@ -1311,6 +1350,7 @@ def _build_installed_registry() -> InstalledRegistry:
     from app.execution.v2.regenerated_fiber_handlers import NATIVE_HANDLERS as domain_handlers
     from app.execution.v2.domain_record_handlers import NATIVE_HANDLERS as record_handlers
     from app.execution.connector_queries import execute_query_node, query_handler
+    from app.execution.connector_operations import operation_handler
 
     manifest_resources = {
         (manifest["pack_id"], manifest["pack_version"]): set(
@@ -1442,10 +1482,11 @@ def _build_installed_registry() -> InstalledRegistry:
         for connector_document in manifest["provides"]["connectors"]:
             operations: list[InstalledOperation] = []
             for operation_document in connector_document["operations"]:
-                if "input_schema" in operation_document:
-                    Draft202012Validator.check_schema(operation_document["input_schema"])
-                    if not _native_schema_is_closed(operation_document["input_schema"]):
-                        raise ValueError("OperationSpec input schema must be a closed object")
+                for direction in ("input", "output"):
+                    if f"{direction}_schema" in operation_document:
+                        Draft202012Validator.check_schema(operation_document[f"{direction}_schema"])
+                        if not _native_schema_is_closed(operation_document[f"{direction}_schema"]):
+                            raise ValueError("OperationSpec schemas must be closed objects")
                 contract_digest = canonical_sha256(
                     {
                         "connector_id": connector_document["connector_id"],
@@ -1464,6 +1505,9 @@ def _build_installed_registry() -> InstalledRegistry:
                         pack_version=pack.pack_version,
                         distribution_digest=pack.distribution_digest,
                         spec=deepcopy(operation_document),
+                        implementation_digest=canonical_sha256({"contract_digest": contract_digest, "distribution_digest": pack.distribution_digest}),
+                        handler=operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"]),
+                        ready=bool(pack.ready and operation_handler(connector_document["connector_id"], operation_document["operation"], operation_document["contract_version"])),
                     )
                 )
             queries: list[InstalledQuery] = []

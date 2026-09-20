@@ -15,6 +15,7 @@ EXAMPLE_ROOT = REPOSITORY_ROOT / "docs" / "execution-v2" / "examples"
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.execution.v2.examples import (  # noqa: E402
+    build_connector_operation_smoke_release,
     build_connector_query_smoke_release,
     build_controlled_xlsx_write_canary_release,
     build_native_human_file_selection_smoke_release,
@@ -24,6 +25,7 @@ from app.execution.v2.examples import (  # noqa: E402
 
 
 BUILDERS = {
+    "v2-connector-operation-smoke.json": build_connector_operation_smoke_release,
     "v2-connector-query-smoke.json": build_connector_query_smoke_release,
     "v2-connector-record-query-smoke.json": lambda: build_connector_query_smoke_release("check_record.list"),
     "v2-controlled-xlsx-write-canary.json": (

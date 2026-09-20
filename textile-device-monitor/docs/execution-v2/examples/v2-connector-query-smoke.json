@@ -249,16 +249,16 @@
     "connectors": [
       {
         "connector_id": "legacy_fibrecheck",
-        "distribution_digest": "29d58fb5745789a894c5a82c173b4e212c63de08ccdd7d3737c2f1f7b031c3a8",
+        "distribution_digest": "e17fbb90b5bd56bd380f626e151feae401dc0f35e39bf13b1919ff4a289623ba",
         "operations": [],
         "queries": [
           {
-            "contract_digest": "c5924d61b566e8d48ec3d03143f00082fbd21b0a7083725c7b169280ea7ed4d9",
+            "contract_digest": "aa46d41fc3cee0fea3103ee4fcd3c6c1374b2a6205558b47694dec2a068c3be6",
             "contract_version": 1,
             "query": "task_snapshot.get"
           }
         ],
-        "version_range": "1.4.0"
+        "version_range": "1.5.0"
       }
     ],
     "engine": {
@@ -267,41 +267,41 @@
     "node_types": [
       {
         "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "8c478a6a1418d6a335abd4df113341648fce3279d29c689ee43805f08d9c08f6",
+        "implementation_digest": "11c6239473c07dad5e95b4704a6a0fe68f541c29dee4dc524d420976fa08f4ec",
         "type": "core.start",
         "type_version": 1
       },
       {
         "contract_digest": "a6bbc7df93553aa4206567ec3734629d97644ea6fd8d1df099305b492f6e1c48",
-        "implementation_digest": "6fa47c0aa9341137d8a2e2c9ee4795aab0028ca75d8d5ef6972e22a8c5a71f64",
+        "implementation_digest": "56636bed99b59d00ef57e14fb6cc74d3e6fbd4b5ddcd6859ef75e22e82dd88cd",
         "type": "connector.query",
         "type_version": 1
       },
       {
         "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "760906334f25987f63956f27c298976d0411876515e7d7c924d10a4decf8cd16",
+        "implementation_digest": "33106b7a8f9ab8af3fd8561f7f5c4494e142392088923d9e28ac6a8f2415b172",
         "type": "core.end",
         "type_version": 1
       }
     ],
     "packs": [
       {
-        "distribution_digest": "4a4f6ee8205a2e95e31710b9eeffa53cdcb5beb82c35276708934b5d95a99d9c",
+        "distribution_digest": "cdd706f611aa9deb33a6bbecd42394371fbe33d801f65ff65fa1514824add045",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.5.0"
+        "version_range": "2.6.0"
       },
       {
-        "distribution_digest": "29d58fb5745789a894c5a82c173b4e212c63de08ccdd7d3737c2f1f7b031c3a8",
+        "distribution_digest": "e17fbb90b5bd56bd380f626e151feae401dc0f35e39bf13b1919ff4a289623ba",
         "pack_id": "legacy_fibrecheck.v1-compat",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.4.0"
+        "version_range": "1.5.0"
       }
     ]
   },
@@ -311,7 +311,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "0118554f676a3c5f9eed01dec98a681bc6ea695eefb805cb63f4ac838b25cdd4",
+    "digest": "536e0a70c88ae6b9c77546361e72c36d8ac61b7a4c37712fa5b570f16d364a75",
     "scope": "document_without_integrity",
     "signatures": []
   },

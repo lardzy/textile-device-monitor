@@ -270,6 +270,39 @@ def build_connector_query_smoke_release(query_name="task_snapshot.get") -> dict[
     return _seal(document)
 
 
+def build_connector_operation_smoke_release(operation_name="check_record.generic_entry") -> dict[str, Any]:
+    registry = get_installed_registry()
+    operation = registry.resolve_operation("legacy_fibrecheck", "*", operation_name, 1)
+    document = build_connector_query_smoke_release()
+    _specs, dependencies = _dependencies_for([("core.start", 1), ("external.operation", 1), ("core.end", 1)])
+    dependencies["packs"].append({
+        "pack_id": operation.pack_id, "version_range": operation.pack_version,
+        "distribution_digest": operation.distribution_digest, "required_on": ["api", "worker"],
+    })
+    dependencies["connectors"] = [{
+        "connector_id": operation.connector_id, "version_range": operation.connector_version,
+        "distribution_digest": operation.distribution_digest, "queries": [],
+        "operations": [{"operation": operation.operation, "contract_version": operation.contract_version,
+                        "contract_digest": operation.contract_digest}],
+    }]
+    document["dependencies"] = dependencies
+    document["release"].update(slug="v2-connector-operation-smoke", name="检务操作接口验收",
+                               description="一次提交，后台执行并自动核对。", release_note="P4 generic operation acceptance")
+    document["capabilities"].update(side_effect_level="external_write", requires_human_approval=False)
+    document["resources"]["credential_slots"] = [{
+        "slot_id": "legacy", "name": "检务账号", "connector_id": "legacy_fibrecheck", "credential_kind": "password", "required": True,
+    }]
+    definition = document["definition"]
+    definition["input_schema"] = deepcopy(operation.spec["input_schema"])
+    definition["output_schema"] = deepcopy(operation.spec["output_schema"])
+    start, node, end = definition["nodes"]
+    start["input_mapping"] = {key: f"$.inputs.{key}" for key in definition["input_schema"]["properties"]}
+    node.update(type="external.operation", name="执行检务操作", config={"operation_ref": operation.operation_ref, "credential_slot": "legacy"},
+                input_mapping=deepcopy(start["input_mapping"]))
+    end["input_mapping"] = {key: f"$.nodes.query.output.{key}" for key in definition["output_schema"]["properties"]}
+    return _seal(document)
+
+
 def build_native_human_file_selection_smoke_release() -> dict[str, Any]:
     """Portable P2 Human smoke release; it is never installed or activated."""
 

@@ -1,6 +1,6 @@
 # 当前 39 个节点迁移矩阵
 
-> 状态：2026-09-18 P4 精确记录读取进度同步；39 项是旧节点迁移规划，不是当前全部安装能力清单。
+> 状态：2026-09-20 P4 通用操作节点进度同步；39 项是旧节点迁移规划，不是当前全部安装能力清单。
 >
 > 代码基线：`feature/execution-system` 提交 `f61327b`，加本批独立登记 API；SpecialWool 的 `picture_records=[]`、`picture_count=0` 与 `main_record_verified` 继续保留在 P0 快照。
 >
@@ -8,11 +8,11 @@
 >
 > 适用设计：Workflow Release v2、NodeSpec v2
 
-精确登记读取与字段指纹已实现，见[第三批验收](./p4-record-read-acceptance.md)。独立登记接口与实际样品验证见[P4 第二批验收](./p4-connector-operation-acceptance.md)；首个精确更正与自动恢复已实现，见[第四批验收](./p4-record-update-acceptance.md)；`external.operation` 和其余操作适配继续推进，完整候选覆盖率不变。
+精确登记读取与字段指纹已实现，见[第三批验收](./p4-record-read-acceptance.md)。独立登记接口与实际样品验证见[P4 第二批验收](./p4-connector-operation-acceptance.md)；首个精确更正与自动恢复已实现，见[第四批验收](./p4-record-update-acceptance.md)；`external.operation` 已接新增/更正及自动恢复，其余操作适配继续推进，完整候选覆盖率不变。
 
 ## 1. 结论与统计
 
-旧注册表共 **39 个 `type@type_version`**，其中 37 个可发布，两个连接器占位类型不可发布。另有 **25 份原生契约**（P2 18 份、P3 再生纤 2 份、电镜/纸纤维 4 份、P4 查询 1 份），实际 Worker 合计 66 个绑定、64 ready；兼容与原生 `workbook.copy@1` 存在不同绑定，不能把 66 当作去重类型数。下表统计旧注册表。
+旧注册表共 **39 个 `type@type_version`**，其中 37 个可发布，两个连接器占位类型不可发布。另有 **26 份原生契约**（P2 18 份、P3 再生纤 2 份、电镜/纸纤维 4 份、P4 查询与操作 2 份），实际 Worker 合计 68 个绑定、66 ready；兼容与原生 `workbook.copy@1` 存在不同绑定，不能把 68 当作去重类型数。下表统计旧注册表。
 
 P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切已实现。四条 `native_p2` 完整候选为电镜、麻棉、特种毛原始资料选择和受控 Excel 内部验收；`native_p3` 新增再生纤面积法/根数法，完整候选覆盖 **6/9**。已进行隔离 API/Worker、浏览器和 LibreOffice 容器验证，尚未接管生产。电镜/纸纤维共享服务、直接 API、四个原生节点和三条 `p3_partial` 候选已交付；完整业务迁移仍需收敛表单及 P4 外部链。边界见[P2 接替验收](./p2-replacement-acceptance.md)、[P3 首批](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口](./p3-domain-services-acceptance.md)和[原生节点验收](./p3-native-domain-acceptance.md)。
 

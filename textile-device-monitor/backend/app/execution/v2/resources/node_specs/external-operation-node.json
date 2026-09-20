@@ -1,0 +1,130 @@
+{
+  "schema_version": "2.0",
+  "type": "external.operation",
+  "type_version": 1,
+  "name": "连接器操作",
+  "category": "连接器",
+  "description": "提交已注册操作，后台执行并返回写入回执。",
+  "execution": {
+    "kind": "external_side_effect",
+    "owner": {
+      "kind": "kernel",
+      "pack_id": "textile.execution-kernel"
+    },
+    "result_mode": "object"
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "operation_ref": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.-]*\\.[a-z][a-z0-9_.-]*@[1-9][0-9]*$"
+      },
+      "credential_slot": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "operation_ref",
+      "credential_slot"
+    ],
+    "additionalProperties": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "schema_bindings": {
+    "input": {
+      "source": "operation_spec",
+      "pointer": "/input_schema"
+    },
+    "output": {
+      "source": "operation_spec",
+      "pointer": "/output_schema"
+    }
+  },
+  "ui_schema": {
+    "palette": {
+      "group": "连接器",
+      "icon": "api"
+    }
+  },
+  "ports": {
+    "inputs": [
+      {
+        "id": "in",
+        "min_edges": 1,
+        "max_edges": null,
+        "default": true
+      }
+    ],
+    "outputs": [
+      {
+        "id": "out",
+        "min_edges": 0,
+        "max_edges": null,
+        "default": true
+      }
+    ],
+    "condition_mode": "none",
+    "graph_role": "ordinary"
+  },
+  "requirements": {
+    "resources": {
+      "root_slots": [],
+      "credential_slots": [
+        {
+          "config_pointer": "/credential_slot",
+          "required": true
+        }
+      ],
+      "role_slots": [],
+      "rule_slots": []
+    },
+    "capabilities": [],
+    "connectors": [],
+    "assets": []
+  },
+  "side_effect": {
+    "class": "external_write",
+    "idempotency": "operation_fence",
+    "cancellation": "fenced",
+    "receipt": "required",
+    "unknown_outcome": "reconciliation_required"
+  },
+  "policies": {
+    "retry": {
+      "mode": "fixed_engine"
+    },
+    "timeout": {
+      "mode": "fixed_engine"
+    },
+    "error": {
+      "default_action": "fail_run"
+    }
+  },
+  "suspension": {
+    "kind": "external_operation"
+  },
+  "lifecycle": {
+    "state": "active",
+    "publish_mode": "allowed",
+    "replacement": null,
+    "migration_ids": []
+  },
+  "extensions": {
+    "textile": {
+      "native": true
+    }
+  }
+}

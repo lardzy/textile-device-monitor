@@ -19,6 +19,7 @@ from app.execution.events import append_audit_log
 from app.execution.external_operations import (
     ACTIVE_REMOTE_OPERATION_STATUSES, LEGACY_CONNECTOR_KEY, LEGACY_CREDENTIAL_SYSTEM,
     _account_scope_key, _canonical_checksum, _ensure_operation_execution_available,
+    _credential_for_node, _create_prepared_external_operation,
     _validated_paper_project_binding, build_generic_entry_summary,
     lock_legacy_remote_business_scope, public_external_attempt, public_external_operation,
 )
@@ -32,10 +33,33 @@ from app.execution.project_rules import PAPER_FIBER_RULE_KEY, resolve_rule
 GENERIC_ENTRY = "legacy_fibrecheck.check_record.generic_entry@1"
 
 
+def operation_handler(connector_id, name, version):
+    return {GENERIC_ENTRY: _generic_summary, GENERIC_UPDATE: update_summary}.get(
+        f"{connector_id}.{name}@{version}"
+    )
+
+
+def prepare_operation_node(context, *, operation):
+    """Use the same submission service and durable queue for a frozen DAG node."""
+    data = context.input_data
+    summary = operation.handler(context.db, data)
+    remote_key = lock_legacy_remote_business_scope(context.db, sample_number=summary["target_sample_number"])
+    credential = _credential_for_node(context.db, run=context.run, node=context.node)
+    summary["connector_submission"] = {
+        "operation_ref": operation.operation_ref, "connector_version": operation.connector_version,
+        "contract_digest": operation.contract_digest, "input": deepcopy(data),
+    }
+    return _create_prepared_external_operation(
+        context.db, run=context.run, node_run=context.node_run, credential=credential,
+        account_scope_key=_account_scope_key(credential.account_name), remote_business_key=remote_key,
+        request_summary=summary, operation_key_prefix=operation.operation_ref,
+    )
+
+
 def operation_api_available(operation) -> bool:
     from app.execution.v2.registry import get_installed_registry
 
-    return (f"{operation.connector_id}.{operation.operation}@{operation.contract_version}" in {GENERIC_ENTRY, GENERIC_UPDATE}
+    return (operation_handler(operation.connector_id, operation.operation, operation.contract_version) is not None
             and isinstance(operation.spec.get("input_schema"), dict)
             and get_installed_registry().resolve_pack(operation.pack_id, operation.pack_version).ready)
 
@@ -106,8 +130,7 @@ def submit_operation(db: Session, *, actor: ExecutionUser, request) -> tuple[Exe
     if error:
         raise ExecutionApiError(422, "connector_operation_input_invalid", "操作参数不符合契约",
                                 details={"path": list(error.absolute_path), "message": error.message})
-    prepare = update_summary if request.operation_ref == GENERIC_UPDATE else _generic_summary
-    summary = prepare(db, request.input)
+    summary = contract.handler(db, request.input)
     # Match workflow preparation's sample → credential ordering.
     remote_key = lock_legacy_remote_business_scope(db, sample_number=summary["target_sample_number"])
     credential = (db.query(ExecutionCredential).filter_by(

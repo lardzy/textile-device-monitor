@@ -1,17 +1,17 @@
 {
   "assets": [],
-  "distribution_digest": "29d58fb5745789a894c5a82c173b4e212c63de08ccdd7d3737c2f1f7b031c3a8",
+  "distribution_digest": "e17fbb90b5bd56bd380f626e151feae401dc0f35e39bf13b1919ff4a289623ba",
   "engine_version_range": ">=2.4.0 <3.0.0",
   "extensions": {
     "textile": {
       "candidate_compilation_only": false,
       "generic_connector_query_enabled": true,
-      "generic_external_operation_enabled": false
+      "generic_external_operation_enabled": true
     }
   },
   "manifest_schema_version": "1.0",
   "pack_id": "legacy_fibrecheck.v1-compat",
-  "pack_version": "1.4.0",
+  "pack_version": "1.5.0",
   "provides": {
     "capabilities": [
       {
@@ -220,6 +220,30 @@
               "type": "object"
             },
             "operation": "check_record.generic_entry",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
             "side_effect_class": "external_write",
             "stages": [
               "authenticated",
@@ -308,6 +332,30 @@
               "type": "object"
             },
             "operation": "check_record.generic_update",
+            "output_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "type": "object"
+                },
+                "remote_write_performed": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "operation_id",
+                "status",
+                "receipt",
+                "remote_write_performed"
+              ],
+              "type": "object"
+            },
             "side_effect_class": "external_write",
             "stages": [
               "authenticated",
@@ -892,7 +940,7 @@
             "side_effect_class": "read_only"
           }
         ],
-        "version": "1.4.0"
+        "version": "1.5.0"
       }
     ],
     "nodes": []
@@ -906,6 +954,7 @@
     "connector_operations.py",
     "connector_records.py",
     "connector_updates.py",
-    "connector_recovery.py"
+    "connector_recovery.py",
+    "v2/resources/node_specs/external-operation-node.json"
   ]
 }

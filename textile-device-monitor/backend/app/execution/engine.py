@@ -368,6 +368,14 @@ def _node_input(
         int(node.get("type_version") or 1),
     )
     input_schema = node_type.input_schema if node_type is not None else {}
+    native_contract = False
+    if run.release_id is not None:
+        instances = (run.dependency_lock or {}).get("node_instances") or []
+        instance = (instances.get(node["id"]) if isinstance(instances, dict) else
+                    next((item for item in instances if item.get("node_id") == node["id"]), None))
+        if instance:
+            input_schema = instance.get("effective_input_schema") or {}
+            native_contract = instance.get("source") == "resource"
     declared_properties = input_schema.get("properties") or {}
     required_properties = set(input_schema.get("required") or [])
 
@@ -381,7 +389,9 @@ def _node_input(
         resolved = {}
         for key, value in mapping.items():
             try:
-                resolved[key] = _resolve_value(value, context)
+                resolved[key] = (_lookup_path(context, value, strict=True)
+                                 if native_contract and isinstance(value, str) and value.startswith("$.")
+                                 else _resolve_value(value, context))
             except ExecutionApiError as exc:
                 is_declared_optional = (
                     exc.code == "mapping_value_missing"
@@ -390,7 +400,8 @@ def _node_input(
                 )
                 if not is_declared_optional:
                     raise
-                resolved[key] = None
+                if not native_contract:
+                    resolved[key] = None
     else:
         resolved = _resolve_value(mapping, context)
     return resolved if isinstance(resolved, dict) else {"value": resolved}
@@ -4128,17 +4139,21 @@ def _prepare_external_operation_wait(
             prepare_legacy_special_wool_review_operation
         ),
     }
-    try:
-        preparer = preparers[node_run.node_type]
-    except KeyError as exc:
-        raise ValueError("unsupported_external_node") from exc
-    operation, reused = preparer(
-        db,
-        run=run,
-        node_run=node_run,
-        node=context.node,
-        input_data=context.input_data,
-    )
+    if node_run.node_type == "external.operation":
+        from app.execution.v2.registry import get_installed_registry
+
+        preparer = get_installed_registry().handler_for_binding(node_run.execution_binding_digest)
+        if preparer is None:
+            raise ValueError("unsupported_external_node")
+        operation, reused = preparer(context)
+    else:
+        try:
+            preparer = preparers[node_run.node_type]
+        except KeyError as exc:
+            raise ValueError("unsupported_external_node") from exc
+        operation, reused = preparer(
+            db, run=run, node_run=node_run, node=context.node, input_data=context.input_data,
+        )
     execution_available = (
         (operation.request_summary or {})
         .get("execution_capability", {"available": True})
@@ -4298,6 +4313,10 @@ def complete_external_node(
             "外部操作对应节点已不再等待连接器处理",
             node_id=node_run.node_id,
         )
+    if node_run.node_type == "external.operation":
+        output_data = {key: (output_data or {}).get(key) for key in ("operation_id", "status", "receipt")}
+        output_data["remote_write_performed"] = bool((output_data.get("receipt") or {}).get("changed", True))
+        _validate_v2_node_payload(run, node_run, value=output_data, direction="output")
     now = utcnow()
     node_run.status = "succeeded"
     node_run.output_data = output_data or {}

@@ -1,0 +1,267 @@
+{
+  "assets": [],
+  "capabilities": {
+    "declared": [],
+    "requires_human_approval": false,
+    "side_effect_level": "external_write"
+  },
+  "definition": {
+    "edges": [
+      {
+        "id": "start-query",
+        "join_policy": "all",
+        "source": "start",
+        "target": "query"
+      },
+      {
+        "id": "query-end",
+        "join_policy": "all",
+        "source": "query",
+        "target": "end"
+      }
+    ],
+    "global_defaults": {},
+    "global_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_existing_register_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "inspection_number": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9-]+$",
+          "type": "string"
+        },
+        "judge_basis": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "judgement": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "project_key": {
+          "pattern": "^task-project:[a-f0-9]{24}$",
+          "type": "string"
+        },
+        "result_value": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "sample_identity": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "standard_value": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "",
+            "%"
+          ]
+        }
+      },
+      "required": [
+        "inspection_number",
+        "project_key",
+        "expected_existing_register_count",
+        "result_value"
+      ],
+      "type": "object"
+    },
+    "nodes": [
+      {
+        "config": {},
+        "id": "start",
+        "input_mapping": {
+          "expected_existing_register_count": "$.inputs.expected_existing_register_count",
+          "inspection_number": "$.inputs.inspection_number",
+          "judge_basis": "$.inputs.judge_basis",
+          "judgement": "$.inputs.judgement",
+          "project_key": "$.inputs.project_key",
+          "result_value": "$.inputs.result_value",
+          "sample_identity": "$.inputs.sample_identity",
+          "standard_value": "$.inputs.standard_value",
+          "unit": "$.inputs.unit"
+        },
+        "name": "开始",
+        "type": "core.start",
+        "type_version": 1,
+        "ui": {
+          "x": 40,
+          "y": 180
+        }
+      },
+      {
+        "config": {
+          "credential_slot": "legacy",
+          "operation_ref": "legacy_fibrecheck.check_record.generic_entry@1"
+        },
+        "id": "query",
+        "input_mapping": {
+          "expected_existing_register_count": "$.inputs.expected_existing_register_count",
+          "inspection_number": "$.inputs.inspection_number",
+          "judge_basis": "$.inputs.judge_basis",
+          "judgement": "$.inputs.judgement",
+          "project_key": "$.inputs.project_key",
+          "result_value": "$.inputs.result_value",
+          "sample_identity": "$.inputs.sample_identity",
+          "standard_value": "$.inputs.standard_value",
+          "unit": "$.inputs.unit"
+        },
+        "name": "执行检务操作",
+        "type": "external.operation",
+        "type_version": 1,
+        "ui": {
+          "x": 300,
+          "y": 180
+        }
+      },
+      {
+        "config": {},
+        "id": "end",
+        "input_mapping": {
+          "operation_id": "$.nodes.query.output.operation_id",
+          "receipt": "$.nodes.query.output.receipt",
+          "remote_write_performed": "$.nodes.query.output.remote_write_performed",
+          "status": "$.nodes.query.output.status"
+        },
+        "name": "结束",
+        "type": "core.end",
+        "type_version": 1,
+        "ui": {
+          "x": 560,
+          "y": 180
+        }
+      }
+    ],
+    "output_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "object"
+        },
+        "remote_write_performed": {
+          "type": "boolean"
+        },
+        "status": {
+          "const": "completed"
+        }
+      },
+      "required": [
+        "operation_id",
+        "status",
+        "receipt",
+        "remote_write_performed"
+      ],
+      "type": "object"
+    },
+    "schema_version": "2.0"
+  },
+  "dependencies": {
+    "connectors": [
+      {
+        "connector_id": "legacy_fibrecheck",
+        "distribution_digest": "e17fbb90b5bd56bd380f626e151feae401dc0f35e39bf13b1919ff4a289623ba",
+        "operations": [
+          {
+            "contract_digest": "8e84e1331dd902122a22b0a5632b49d3166e9459812d7eb43f2b3f6821c7c433",
+            "contract_version": 1,
+            "operation": "check_record.generic_entry"
+          }
+        ],
+        "queries": [],
+        "version_range": "1.5.0"
+      }
+    ],
+    "engine": {
+      "version_range": ">=2.1.0 <3.0.0"
+    },
+    "node_types": [
+      {
+        "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
+        "implementation_digest": "11c6239473c07dad5e95b4704a6a0fe68f541c29dee4dc524d420976fa08f4ec",
+        "type": "core.start",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "3ce699ec8e05f35a9b7a74c663ca0b61025690f18e73b0e580816fdfd6f4f97f",
+        "implementation_digest": "0130dfe9d67127d70d894d39b563de3303fa9a1e030a3f157775bcd60fab258e",
+        "type": "external.operation",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
+        "implementation_digest": "33106b7a8f9ab8af3fd8561f7f5c4494e142392088923d9e28ac6a8f2415b172",
+        "type": "core.end",
+        "type_version": 1
+      }
+    ],
+    "packs": [
+      {
+        "distribution_digest": "cdd706f611aa9deb33a6bbecd42394371fbe33d801f65ff65fa1514824add045",
+        "pack_id": "textile.execution-kernel",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": "2.6.0"
+      },
+      {
+        "distribution_digest": "e17fbb90b5bd56bd380f626e151feae401dc0f35e39bf13b1919ff4a289623ba",
+        "pack_id": "legacy_fibrecheck.v1-compat",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": "1.5.0"
+      }
+    ]
+  },
+  "fixtures": [],
+  "format": "textile-workflow-release",
+  "format_version": "2.0",
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "RFC8785",
+    "digest": "f80db5b11a35e2243b8eb7d98bcca618bde8639c153153585d29c5c991d42ecb",
+    "scope": "document_without_integrity",
+    "signatures": []
+  },
+  "release": {
+    "category_key": "other",
+    "description": "一次提交，后台执行并自动核对。",
+    "name": "检务操作接口验收",
+    "release_note": "P4 generic operation acceptance",
+    "release_version": 1,
+    "slug": "v2-connector-operation-smoke"
+  },
+  "resources": {
+    "credential_slots": [
+      {
+        "connector_id": "legacy_fibrecheck",
+        "credential_kind": "password",
+        "name": "检务账号",
+        "required": true,
+        "slot_id": "legacy"
+      }
+    ],
+    "role_slots": [],
+    "root_slots": [],
+    "rule_slots": []
+  }
+}

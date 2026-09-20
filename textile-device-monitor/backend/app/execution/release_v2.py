@@ -172,7 +172,8 @@ def rollout_profile_blockers(
         source = str(instance.get("source") or "v1_registry_adapter")
         code: str | None = None
         if kind == "external_side_effect" or side_effect == "external_write":
-            code = "external_write_blocked_until_p4"
+            if source != "resource" or not instance.get("connector_operation") or rank < 3:
+                code = "external_write_blocked_until_p4"
         elif source == "v1_registry_adapter" and side_effect in {
             "reversible_local_write",
             "durable_write",
@@ -484,6 +485,8 @@ def _effective_schemas(
             return deepcopy(pointer(config, schema_binding.get("pointer")))
         if source == "query_spec":
             return deepcopy(pointer(binding.get("connector_query") or {}, schema_binding.get("pointer")))
+        if source == "operation_spec":
+            return deepcopy(pointer(binding.get("connector_operation") or {}, schema_binding.get("pointer")))
         raise LookupError(source)
 
     try:
@@ -556,6 +559,7 @@ def _resolve_dependencies(
 
     resolved_connectors: list[dict[str, Any]] = []
     resolved_operation_keys: set[tuple[str, str, int]] = set()
+    resolved_operations: dict[tuple[str, str, int], Any] = {}
     resolved_queries: dict[tuple[str, str, int], Any] = {}
     connector_dependencies: dict[str, dict[str, Any]] = {}
     registry = registry_api.get_installed_registry()
@@ -598,6 +602,10 @@ def _resolve_dependencies(
                     operation["contract_digest"],
                 )
                 resolved_value = _public_value(resolved)
+                operation_key = (connector_id, operation["operation"], operation["contract_version"])
+                if operation_key in resolved_operations:
+                    raise LookupError(f"Operation dependency is duplicated: {operation_key}")
+                resolved_operations[operation_key] = resolved
                 locked_operations.append(resolved_value)
                 resolved_operation_keys.add(
                     (
@@ -772,10 +780,24 @@ def _resolve_dependencies(
                 query = resolved_queries[key]
                 binding = registry.query_node_binding(binding, query)
                 used_query_keys.add(key)
-            except (LookupError, ValueError):
+            except (LookupError, ValueError, KeyError):
                 issues.append(_issue(
                     "connector_query_dependency_missing", f"$.definition.nodes[{index}].config.query_ref",
                     f"Exact Connector QuerySpec is not locked: {reference}",
+                ))
+        if identity == ("external.operation", 1):
+            reference = str((node.get("config") or {}).get("operation_ref") or "")
+            try:
+                key = registry_api.resolve_connector_reference(reference, connector_dependencies)
+                operation = resolved_operations[key]
+                if not operation.ready:
+                    raise LookupError(reference)
+                binding = registry.operation_node_binding(binding, operation)
+                used_operation_keys.add(key)
+            except (LookupError, ValueError, KeyError):
+                issues.append(_issue(
+                    "connector_operation_dependency_missing", f"$.definition.nodes[{index}].config.operation_ref",
+                    f"Exact Connector OperationSpec is unavailable or not locked: {reference}",
                 ))
         try:
             input_schema, output_schema = _effective_schemas(
@@ -903,6 +925,7 @@ def _resolve_dependencies(
                 "publishable": bool(binding.get("publishable")),
                 "installed_ready": bool(binding.get("ready")),
                 **({"connector_query": deepcopy(binding["connector_query"])} if "connector_query" in binding else {}),
+                **({"connector_operation": deepcopy(binding["connector_operation"])} if "connector_operation" in binding else {}),
                 "effective_input_schema": input_schema,
                 "effective_input_schema_digest": canonical_sha256(input_schema),
                 "effective_output_schema": output_schema,
