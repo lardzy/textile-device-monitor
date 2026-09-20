@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveSchemas, graphEdges, graphNodes, parseMapping, portableEdge, schemaDefaults } from './v2Designer';
+import { compatibleTypes, upstreamNodeIds, effectiveSchemas, graphEdges, graphNodes, parseMapping, portableEdge, schemaDefaults } from './v2Designer';
 
 describe('v2 designer document transformations', () => {
+  it('suggests only upstream nodes and compatible types, including through joins', () => {
+    const definition = { edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'end' }, { source: 'c', target: 'end' }, { source: 'end', target: 'later' }] };
+    expect([...upstreamNodeIds(definition, 'end')].sort()).toEqual(['a', 'b', 'c']);
+    expect(compatibleTypes({ type: 'string' }, { type: 'number' })).toBe(false);
+    expect(compatibleTypes({ type: 'integer' }, { type: ['number', 'null'] })).toBe(true);
+    expect(compatibleTypes({}, { type: 'object' })).toBe(true);
+    expect(upstreamNodeIds({ edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }] }, 'a')).toEqual(new Set(['b']));
+  });
   it('preserves portable port identities, geometry and edge conditions', () => {
     const node = { id: 'begin', type: 'core.start', type_version: 2, name: '开始', ui: { x: 31, y: 44 } };
     const spec = { ...node, ports: { inputs: [], outputs: [{ id: 'out' }], graph_role: 'start' } };

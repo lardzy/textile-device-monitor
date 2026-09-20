@@ -56,3 +56,17 @@ def test_installed_and_shared_templates_are_selectable_and_never_overwritten(env
     original.write_bytes(b"changed after publishing")
     with pytest.raises(ExecutionApiError):
         resolve_template(env.db, chosen)
+
+
+def test_template_mount_failure_does_not_block_login_or_storage_catalog(environment, monkeypatch):
+    from app.execution.persistence import ensure_storage_roots
+    from app.execution.v2 import templates
+
+    def unavailable():
+        raise PermissionError("read-only test mount")
+
+    monkeypatch.setattr(templates, "install_templates", unavailable)
+    ensure_storage_roots(environment.db)
+    root = environment.db.query(ExecutionStorageRoot).filter_by(root_id="execution_templates").one()
+    assert not root.is_available
+    assert "初始化失败" in root.availability_message

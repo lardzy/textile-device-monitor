@@ -489,7 +489,7 @@ class ExternalReconciliationGenericEntryNoSideEffectEvidence(BaseModel):
     writer_stage: str = Field(min_length=1, max_length=50)
 
 
-class ExternalOperationReconciliationRequest(BaseModel):
+class ConnectorOperationReconciliationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["confirm_completed", "confirm_no_side_effect"]
@@ -497,6 +497,10 @@ class ExternalOperationReconciliationRequest(BaseModel):
     payload_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirmed_sample_number: str = Field(min_length=1, max_length=200)
     note: str = Field(min_length=1, max_length=2000)
+    evidence: dict[str, Any]
+
+
+class ExternalOperationReconciliationRequest(ConnectorOperationReconciliationRequest):
     evidence: (
         ExternalReconciliationCompletedEvidence
         | ExternalReconciliationNoSideEffectEvidence

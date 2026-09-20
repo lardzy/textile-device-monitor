@@ -104,31 +104,11 @@ def designer_catalog(
     db: Session = Depends(get_db),
     _auth: AuthContext = Depends(permission("workflow.design")),
 ):
-    from app.execution.models import ExecutionWorkflow
-    from app.execution.v2.designer import seal, starter_document
-    from app.execution.release_v2 import P2_COMPLETE_WORKFLOW_SLUGS
-    from app.execution.v2.domain_record_migration import WORKFLOW_SLUGS
-    from app.execution.v2.regenerated_fiber_migration import WORKFLOW_METHODS
+    from app.execution.v2.designer import starter_document
+    from app.execution.v2.workflow_templates import list_workflow_templates
 
     registry = get_installed_registry()
-    slugs = set(P2_COMPLETE_WORKFLOW_SLUGS) | set(WORKFLOW_SLUGS) | set(WORKFLOW_METHODS)
-    templates = []
-    occupied = {row.slug: row for row in db.query(ExecutionWorkflow).all()}
-    for workflow in db.query(ExecutionWorkflow).filter(ExecutionWorkflow.slug.in_(slugs)).order_by(ExecutionWorkflow.slug).all():
-        if workflow.management_mode != "draft_v1" or workflow.published_version_number is None:
-            continue
-        target_slug = workflow.slug + "-v2"
-        suffix = 2
-        while target_slug in occupied and occupied[target_slug].replaces_workflow_id != workflow.id:
-            target_slug = f"{workflow.slug}-v2-{suffix}"
-            suffix += 1
-        preview = preview_v1_migration(db, workflow_id=workflow.id, source="published", actor=_auth.user, target_profile="native_p4", target_slug=target_slug)
-        if preview["content_valid"] and preview["migration_status"] == "p4_complete":
-            latest = db.query(func.max(ExecutionWorkflowRelease.source_version)).filter(ExecutionWorkflowRelease.source_slug == target_slug).scalar()
-            if latest is not None:
-                preview["candidate"]["release"]["release_version"] = latest + 1
-                seal(preview["candidate"])
-            templates.append({"name": workflow.name, **preview})
+    templates = list_workflow_templates(db)
     return {"starter": starter_document(), "templates": templates,
             "node_specs": [item.public_dict() for item in registry.list_node_specs() if item.source == "resource" and item.publishable],
             "connectors": registry.list_connectors()}
@@ -137,11 +117,12 @@ def designer_catalog(
 @router.post("/designer/compile")
 def designer_compile(
     document: dict[str, Any] = Body(embed=True),
+    exact: bool = Body(default=False),
     _auth: AuthContext = Depends(permission("workflow.design")),
 ):
     from app.execution.v2.designer import compile_document
 
-    return compile_document(document)
+    return compile_document(document, exact=exact)
 
 
 @router.get("/node-specs/{node_type}/{type_version}")
@@ -162,6 +143,16 @@ def node_spec(
             "NodeSpec 不存在",
             details={"type": node_type, "type_version": type_version},
         ) from exc
+
+
+@router.post("/designer/test")
+def designer_test(
+    document: dict[str, Any] = Body(embed=True),
+    _auth: AuthContext = Depends(permission("workflow.design")),
+):
+    from app.execution.v2.fixtures import run_fixtures
+
+    return run_fixtures(document)
 
 
 @router.get("/packs")

@@ -181,6 +181,7 @@ from app.execution.schemas import (
     ExternalBridgeStageRequest,
     ExternalOperationApprovalRequest,
     ExternalOperationReconciliationRequest,
+    ConnectorOperationReconciliationRequest,
     FileRefreshRequest,
     HumanTaskClaimRequest,
     HumanTaskDraftRequest,
@@ -1735,7 +1736,10 @@ def list_credentials(
     auth: AuthContext = Depends(permission("credential.manage")),
     db: Session = Depends(get_db),
 ):
+    from app.execution.adapter_packages import credential_systems
+
     return {
+        "systems": list(credential_systems().values()),
         "items": [
             {
                 "id": item.id,
@@ -1762,7 +1766,9 @@ def upsert_credential(
     auth: AuthContext = Depends(permission("credential.manage", csrf=True)),
     db: Session = Depends(get_db),
 ):
-    if system_key not in {"legacy_inspection", "new_inspection"}:
+    from app.execution.adapter_packages import credential_systems
+
+    if system_key not in credential_systems():
         raise ExecutionApiError(422, "system_key_invalid", "未知的外部系统")
     record = (
         db.query(ExecutionCredential)
@@ -2812,7 +2818,7 @@ def reconcile_external_operation_result(
         payload_checksum=payload.payload_checksum,
         confirmed_sample_number=payload.confirmed_sample_number,
         note=payload.note,
-        evidence=payload.evidence.model_dump(mode="json"),
+        evidence=payload.evidence if isinstance(payload.evidence, dict) else payload.evidence.model_dump(mode="json"),
     )
     db.commit()
     view = public_external_operation(operation)
@@ -2821,6 +2827,16 @@ def reconcile_external_operation_result(
         "operation": view,
         "remote_write_performed": view["remote_write_performed"],
     }
+
+
+@router.post("/connector-operations/{operation_id}/reconcile")
+def reconcile_connector_operation_result(
+    operation_id: str,
+    payload: ConnectorOperationReconciliationRequest,
+    auth: AuthContext = Depends(permission("external_operation.reconcile", csrf=True)),
+    db: Session = Depends(get_db),
+):
+    return reconcile_external_operation_result(operation_id, payload, auth, db)
 
 
 def _require_bridge_key(provided_key: Optional[str]) -> None:

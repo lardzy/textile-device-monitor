@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Alert, AutoComplete, Button, Card, Collapse, Form, Input, InputNumber, List, Select, Space, Spin, Switch, Tag, Typography, message } from 'antd';
-import { applyWorkflowReleaseV2, preflightWorkflowReleaseV2, compileWorkflowDesignerV2, getWorkflowDesignerCatalogV2, getWorkflowReleaseV2 } from '../../api/executionV2';
+import { applyWorkflowReleaseV2, preflightWorkflowReleaseV2, compileWorkflowDesignerV2, getWorkflowDesignerCatalogV2, getWorkflowReleaseV2, testWorkflowDesignerV2 } from '../../api/executionV2';
 import ExecutionChrome from './ExecutionChrome';
 import WorkflowCanvas from './WorkflowCanvas';
 import SchemaFields from './SchemaFields';
 import TemplatePicker from './TemplatePicker';
-import { effectiveSchemas, graphEdges, graphNodes, parseMapping, portableEdge, schemaDefaults, specKey } from './v2Designer';
+import { compatibleTypes, upstreamNodeIds, effectiveSchemas, graphEdges, graphNodes, parseMapping, portableEdge, schemaDefaults, specKey } from './v2Designer';
 import './execution.css';
 
 const jsonText = value => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
@@ -36,6 +36,7 @@ export default function ExecutionWorkflowV2Designer() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [report, setReport] = useState(null);
+  const [fixtureReport, setFixtureReport] = useState(null);
   const [saved, setSaved] = useState(false);
   const [configForm] = Form.useForm();
   const storageKey = `execution:v2-designer:${releaseId || 'new'}`;
@@ -88,7 +89,7 @@ export default function ExecutionWorkflowV2Designer() {
   const schemas = effectiveSchemas(selected, selectedSpec, catalog?.connectors, document?.definition);
   useEffect(() => { configForm.resetFields(); configForm.setFieldsValue(selected?.config || {}); }, [selectedId, selected?.type, configForm]);
 
-  const edit = updater => { setDocument(previous => updater(structuredClone(previous))); setReport(null); };
+  const edit = updater => { setDocument(previous => updater(structuredClone(previous))); setReport(null); setFixtureReport(null); };
   const editNode = changes => edit(value => {
     value.definition.nodes = value.definition.nodes.map(node => node.id === selectedId ? { ...node, ...changes } : node);
     return value;
@@ -125,18 +126,20 @@ export default function ExecutionWorkflowV2Designer() {
   };
   const dataReferences = useMemo(() => {
     if (!document) return [];
-    const choices = Object.keys(document.definition.input_schema?.properties || {}).map(key => ({ value: `$.inputs.${key}`, label: `输入 · ${key}` }));
-    document.definition.nodes.filter(node => node.id !== selectedId).forEach(node => {
+    const choices = Object.entries(document.definition.input_schema?.properties || {}).map(([key, schema]) => ({ value: `$.inputs.${key}`, label: `输入 · ${key}`, schema }));
+    const upstream = upstreamNodeIds(document.definition, selectedId);
+    document.definition.nodes.filter(node => upstream.has(node.id)).forEach(node => {
       const spec = specs.find(item => specKey(item) === specKey(node));
       const output = effectiveSchemas(node, spec, catalog?.connectors, document.definition).output;
-      choices.push({ value: `$.nodes.${node.id}.output`, label: `${node.name} · 全部结果` });
-      Object.keys(output?.properties || {}).forEach(key => choices.push({ value: `$.nodes.${node.id}.output.${key}`, label: `${node.name} · ${output.properties[key].title || key}` }));
+      choices.push({ value: `$.nodes.${node.id}.output`, label: `${node.name} · 全部结果`, schema: output });
+      Object.keys(output?.properties || {}).forEach(key => choices.push({ value: `$.nodes.${node.id}.output.${key}`, label: `${node.name} · ${output.properties[key].title || key}`, schema: output.properties[key] }));
     });
     return choices;
   }, [document, selectedId, specs, catalog]);
 
   if (!document || !catalog) return <div className="execution-page">{error ? <Alert type="error" message={error} /> : <Spin tip="加载设计器" />}</div>;
   const configSchema = structuredClone(selectedSpec?.config_schema || { type: 'object', properties: {} });
+  if (selected?.type === 'data.python' && configSchema.properties?.code) configSchema.properties.code.format = 'textarea';
   ['query_ref', 'operation_ref'].forEach(key => {
     if (!configSchema.properties?.[key]) return;
     const contracts = catalog.connectors.flatMap(item => item[key === 'query_ref' ? 'queries' : 'operations'] || []);
@@ -144,7 +147,12 @@ export default function ExecutionWorkflowV2Designer() {
   });
   return <div className="execution-page execution-v2-designer">
     <ExecutionChrome title="工作流设计器" subtitle="选择模板、调整步骤，生成新版本" backTo={{ path: '/execution/admin', label: '流程管理' }} actions={
-      <Space><Tag>{saved ? '草稿已保存到此浏览器' : '草稿尚未保存'}</Tag><Button type="primary" loading={busy} onClick={prepare}>准备发布</Button></Space>
+      <Space><Tag>{saved ? '草稿已保存到此浏览器' : '草稿尚未保存'}</Tag><Button loading={busy} onClick={async () => {
+        setBusy(true);
+        try { setFixtureReport(await testWorkflowDesignerV2(document)); }
+        catch (cause) { message.error(cause.message || '样例执行失败'); }
+        finally { setBusy(false); }
+      }}>运行离线样例</Button><Button type="primary" loading={busy} onClick={prepare}>准备发布</Button></Space>
     } />
     <Card size="small">
       <Space wrap align="start">
@@ -157,6 +165,13 @@ export default function ExecutionWorkflowV2Designer() {
       </Space>
     </Card>
     {report && <Alert type="error" showIcon message="请先修正以下问题" description={<ul>{report.issues.map((issue, index) => <li key={index}>{issue.message} <Typography.Text type="secondary">{issue.path}</Typography.Text></li>)}</ul>} />}
+    {fixtureReport && <Alert type={fixtureReport.passed === true ? 'success' : fixtureReport.passed === null ? 'info' : 'error'} showIcon message={fixtureReport.message || (fixtureReport.passed ? '离线样例通过' : '离线样例未通过')} description={<>
+      <div>验证顺序流程的计算与模拟结果；不访问文件、人工待办或外部系统。</div>
+      {(fixtureReport.issues || []).map((issue, index) => <div key={index}>{issue.message}</div>)}
+      {(fixtureReport.items || []).map(item => <div key={item.fixture_id}>{item.name}：{item.passed ? '通过' : item.error || '断言未通过'}
+        {(item.assertions || []).filter(assertion => !assertion.passed).map((assertion, index) => <div key={index}>{assertion.path}：实际 {JSON.stringify(assertion.actual)}，预期 {assertion.operator} {JSON.stringify(assertion.value)}</div>)}
+      </div>)}
+    </>} />}
     <div className="execution-v2-designer__layout">
       <Card title="流程步骤" extra={<Space>展开画布<Switch checked={advanced} onChange={setAdvanced} aria-label="展开画布" /></Space>}>
         <Select showSearch optionFilterProp="label" aria-label="添加节点" placeholder="添加步骤" value={null} style={{ width: '100%', marginBottom: 12 }} options={specs.map(spec => ({ value: specKey(spec), label: `${spec.category} · ${spec.name} (${spec.type}@${spec.type_version})` }))} onChange={addNode} />
@@ -185,7 +200,7 @@ export default function ExecutionWorkflowV2Designer() {
           }} /></Form.Item>}
           <Typography.Title level={5}>输入来源</Typography.Title>
           <Form layout="vertical">{[...new Set([...Object.keys(schemas.input?.properties || {}), ...Object.keys(selected.input_mapping || {})])].map(key => <Form.Item key={key} label={schemas.input?.properties?.[key]?.title || key} required={schemas.input?.required?.includes(key)}>
-            <AutoComplete aria-label={`输入 ${key}`} options={dataReferences} value={jsonText(selected.input_mapping?.[key]) || ''} filterOption={(text, option) => `${option.label} ${option.value}`.toLowerCase().includes(text.toLowerCase())} onChange={text => {
+            <AutoComplete aria-label={`输入 ${key}`} options={dataReferences.filter(option => compatibleTypes(option.schema, schemas.input?.properties?.[key]))} value={jsonText(selected.input_mapping?.[key]) || ''} filterOption={(text, option) => `${option.label} ${option.value}`.toLowerCase().includes(text.toLowerCase())} onChange={text => {
               const mapping = { ...selected.input_mapping }; const value = parseMapping(text);
               if (value === undefined) delete mapping[key]; else mapping[key] = value;
               editNode({ input_mapping: mapping });
@@ -207,6 +222,7 @@ export default function ExecutionWorkflowV2Designer() {
       <JsonEditor label="流程输入" value={document.definition.input_schema} onChange={schema => edit(value => { value.definition.input_schema = schema; return value; })} />
       <JsonEditor label="流程输出" value={document.definition.output_schema} onChange={schema => edit(value => { value.definition.output_schema = schema; return value; })} />
       <JsonEditor label="资源槽" value={document.resources} onChange={resources => edit(value => { value.resources = resources; return value; })} />
+      <JsonEditor label="离线样例" value={document.fixtures || []} onChange={fixtures => edit(value => { value.fixtures = fixtures; return value; })} />
       <JsonEditor label="完整流程" value={document} onChange={value => { if (value?.format === 'textile-workflow-release' && Array.isArray(value.definition?.nodes) && Array.isArray(value.definition?.edges) && value.release) setDocument(value); else message.error('请输入完整 Workflow Release 文档'); }} />
     </> }]} />
   </div>;

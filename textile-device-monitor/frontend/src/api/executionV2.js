@@ -107,4 +107,5 @@ export { executionV2Client };
 
 export const getWorkflowDesignerCatalogV2 = () => executionV2Client.get('/designer/catalog');
 export const compileWorkflowDesignerV2 = document => executionV2Client.post('/designer/compile', { document });
+export const testWorkflowDesignerV2 = document => executionV2Client.post('/designer/test', { document });
 export const getExecutionCompatibilityAudit = () => executionV2Client.get('/compatibility/audit');

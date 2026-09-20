@@ -88,8 +88,6 @@ def bound_adapter(operation):
         if contract.implementation_digest != submission["implementation_digest"]:
             raise ValueError("adapter implementation changed")
         package = installed_adapters().get((contract.pack_id, contract.pack_version))
-        if package is None and operation.connector_key == "legacy_fibrecheck":
-            return None
         if package is None:
             raise LookupError("adapter package missing")
     except (LookupError, ValueError, KeyError) as exc:
@@ -99,6 +97,16 @@ def bound_adapter(operation):
 
 def credential_system(connector_id):
     return "legacy_inspection" if connector_id == "legacy_fibrecheck" else connector_id
+
+
+def credential_systems():
+    systems = {"legacy_inspection": {"key": "legacy_inspection", "name": "旧检务系统", "description": "用于检务系统适配器。"},
+               "new_inspection": {"key": "new_inspection", "name": "新检务系统", "description": "预留系统账号。"}}
+    for package in installed_adapters().values():
+        for connector in package.manifest["provides"]["connectors"]:
+            key = credential_system(connector["connector_id"])
+            systems.setdefault(key, {"key": key, "name": connector["connector_id"], "description": "由已安装适配器提供。"})
+    return systems
 
 
 def binding_fields(contract):

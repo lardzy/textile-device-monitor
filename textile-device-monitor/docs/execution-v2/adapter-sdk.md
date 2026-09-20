@@ -19,4 +19,6 @@ uv pip install --target runtime/execution-runtime/adapters .tmp/adapter-wheels/t
 
 安装更新可保留旧版本服务运行至旧操作完成，或先排空操作再更新；如果精确实现不可用，待处理操作保持待处理并返回版本不匹配。普通 JSON 分发与运行时精确冻结是两个不同层次。
 
+凭据目录由已安装适配器自动扩展，账号设置页面同步显示；`PUT /api/execution/v1/credentials/{connector_id}` 保存自己的账号。通用 `POST /api/execution/v1/connector-operations/{operation_id}/reconcile` 接收 `action / attempt_id / payload_checksum / confirmed_sample_number / note / evidence`，由该操作冻结的适配器解释 evidence 并核验回执；旧系统原有对账 API 继续兼容。查询、新增、取消、完成和对账复用现有服务，不创建第二套状态机。
+
 验证：真实构建并在隔离目录安装 wheel，独立进程发现包并完成查询；API 提交 → 持久队列 → Bridge 领取 → 分阶段回执已使用离线适配器通过。纸纤维独立上传/复核/登记共用现有服务通过。未安装到生产目录，也未访问真实检务写入。

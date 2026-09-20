@@ -10,8 +10,12 @@ from app.execution.persistence import build_file_gateway
 from app.execution.storage import ArtifactRef
 
 
+def template_directory():
+    return Path(settings.EXECUTION_TEMPLATE_ROOT or Path(settings.EXECUTION_RUNTIME_ROOT) / "templates")
+
+
 def install_templates():
-    target = Path(settings.EXECUTION_TEMPLATE_ROOT or Path(settings.EXECUTION_RUNTIME_ROOT) / "templates")
+    target = template_directory()
     target.mkdir(parents=True, exist_ok=True)
     for source in sorted((Path(__file__).parents[1] / "templates").glob("*.xls*")):
         destination = target / source.name

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryFile
@@ -89,9 +90,15 @@ def _storage_path_available(path: Path, access_mode: str) -> bool:
 
 
 def ensure_storage_roots(db: Session) -> None:
-    from app.execution.v2.templates import install_templates
+    from app.execution.v2.templates import install_templates, template_directory
 
-    template_root = install_templates()
+    template_root, template_error = template_directory(), None
+    try:
+        install_templates()
+    except OSError as exc:
+        # An unavailable optional directory must not prevent login or history access.
+        template_error = "模板目录初始化失败，请检查目录权限和挂载"
+        logging.getLogger(__name__).warning("Template directory unavailable: %s: %s", template_root, exc)
     source_root = Path(
         str(getattr(settings, "EXECUTION_SOURCE_ROOT", "/data/execution/source"))
     )
@@ -165,6 +172,9 @@ def ensure_storage_roots(db: Session) -> None:
                 else "目录尚未挂载或不存在"
             )
         )
+        if root_id == "execution_templates" and template_error:
+            root.is_available = False
+            root.availability_message = template_error
     db.flush()
     availability_by_root = {
         root.root_id: root.is_available

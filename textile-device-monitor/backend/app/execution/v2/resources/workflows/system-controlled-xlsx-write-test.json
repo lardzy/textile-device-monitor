@@ -110,7 +110,7 @@
         "input_mapping": {},
         "name": "开始",
         "type": "core.start",
-        "type_version": 1,
+        "type_version": 2,
         "ui": {
           "x": 60,
           "y": 180
@@ -265,7 +265,7 @@
         },
         "name": "结束",
         "type": "core.end",
-        "type_version": 1,
+        "type_version": 2,
         "ui": {
           "x": 1900,
           "y": 180
@@ -282,100 +282,87 @@
   "dependencies": {
     "connectors": [],
     "engine": {
-      "version_range": ">=2.1.0 <3.0.0"
+      "version_range": ">=2.5.0 <3.0.0"
     },
     "node_types": [
       {
         "contract_digest": "f8f40977f40d7de6e34ac5ea6200f57521704fdb39e07804a18bfbd9f716ab54",
-        "implementation_digest": "3f1b1936b7747621f00ff76d38cce4a3edef5d2a7f5812f169b1a66965a59377",
         "type": "artifact.publish",
         "type_version": 2
       },
       {
-        "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "f610833a6fc109fd92e98d3631c07a4fa23195dace7d1ca426f8ac40c1f72566",
+        "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
         "type": "core.end",
-        "type_version": 1
+        "type_version": 2
       },
       {
-        "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "04fc0478e3d3ef21449bf1bc33b3af6fd0e95143fa6cfb9dbdcf07819f1d7bc7",
+        "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
         "type": "core.start",
-        "type_version": 1
+        "type_version": 2
       },
       {
         "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
-        "implementation_digest": "39e2cd6823f1d6d5350794d11f56ac1c2496dbbe1681549fb39bfec325989fa9",
         "type": "human.approval",
         "type_version": 1
       },
       {
         "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
-        "implementation_digest": "fcb71b184e4c3ca054dbcfd02b88032591c7e6db69be2fe565297d0c8b02448c",
         "type": "workbook.classify",
         "type_version": 1
       },
       {
         "contract_digest": "e2c9297c270b3c2617b8f5921f8be45df413a0f5624bf71e9ec7407dca4cdca1",
-        "implementation_digest": "d62b17aed26086d84000517570e5a2e19fbfede612ecdaa33e542032b607e38d",
         "type": "workbook.copy",
         "type_version": 1
       },
       {
         "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
-        "implementation_digest": "791f71140c95146e1d30ecece27ab1e0566df7f9b8c035f5bdd7fecd937cd0d3",
         "type": "workbook.extract_fields",
         "type_version": 1
       },
       {
         "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
-        "implementation_digest": "19f01fd3e577b71845786dd9b42006ce5aacb9abd5364386cb218e93a642e08d",
         "type": "workbook.verify",
         "type_version": 2
       },
       {
         "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
-        "implementation_digest": "6d72ca6d33f16ea8f7a5db7782af0efc5161f8413611a0749e01cf548f9c0569",
         "type": "workbook.write_cells",
         "type_version": 2
       }
     ],
     "packs": [
       {
-        "distribution_digest": "b6af4ba7e38bd52ab485526d7c204997785422f01ff186409b787e021d77d3c2",
         "pack_id": "textile.execution-files",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.1.3"
+        "version_range": ">=1.1.3 <2.0.0"
       },
       {
-        "distribution_digest": "96d0b7e9702013f02b1a51d53a1b5ade9925d67d3c3ff0c61c1b9bc79fff1d93",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.9.1"
+        "version_range": ">=2.9.1 <3.0.0"
       },
       {
-        "distribution_digest": "fe52789ed82ac6a2a90c26e9349879326cff512ca60ece58e41d19b348bdc019",
         "pack_id": "textile.execution-v1-compat",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.1.6"
+        "version_range": ">=2.1.6 <3.0.0"
       },
       {
-        "distribution_digest": "ae7da00ba041f6d18e74b89459e131f1be72d11775f60b114d81eeb65fd02e0e",
         "pack_id": "textile.execution-workbook",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.1.1"
+        "version_range": ">=1.1.1 <2.0.0"
       }
     ]
   },
@@ -385,17 +372,17 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "afe09b2d80e9fb8a1a5ceb9f58a430337e09082ddd3ab208eb158be16fd89ce9",
+    "digest": "009afa17c61ab334d266debbbe760fd60deb6b3d2aeceea258f9ae59ca2690cf",
     "scope": "document_without_integrity",
     "signatures": []
   },
   "release": {
     "category_key": "special_wool",
-    "description": "仅用于隔离测试 root 的 copy/write/verify/approval/publish 闭环。",
-    "name": "Execution v2 受控工作簿写入 Canary",
-    "release_note": "P2 hidden controlled-write canary; never auto-activate",
+    "description": "仅管理员可见，用于验证复制、写入、重读、确认和发布链路。",
+    "name": "受控 Excel 写入验收",
+    "release_note": "独立 JSON 工作流模板",
     "release_version": 1,
-    "slug": "v2-controlled-xlsx-write-canary"
+    "slug": "system-controlled-xlsx-write-test-v2"
   },
   "resources": {
     "credential_slots": [],

@@ -26,6 +26,14 @@ def test_compile_connector_keeps_exact_operation_bindings():
     result = compile_document(build_connector_operation_smoke_release())
     assert result["content_valid"], result["issues"]
     assert result["document"]["dependencies"]["connectors"][0]["operations"]
+    from app.execution.release_v2 import _resolve_dependencies
+    dependency = result["document"]["dependencies"]["connectors"][0]
+    assert dependency["version_range"].startswith(">=")
+    assert "contract_digest" not in dependency["operations"][0]
+    lock, _ = _resolve_dependencies(result["document"], [])
+    assert lock["connectors"][0]["operations"][0]["contract_digest"]
+    exact = compile_document(build_connector_operation_smoke_release(), exact=True)
+    assert exact["document"]["dependencies"]["connectors"][0]["operations"][0]["contract_digest"]
 
 
 def test_catalog_and_compilation_api(environment):
@@ -92,3 +100,17 @@ def test_templates_remain_available_when_a_suggested_slug_is_occupied(environmen
     assert len(catalog['templates']) == 9
     template = next(item for item in catalog['templates'] if item['workflow_id'] == source.id)
     assert template['candidate']['release']['slug'] == source.slug+'-v2-2'
+
+
+def test_catalog_does_not_depend_on_legacy_workflow_rows(environment):
+    from app.execution.models import ExecutionWorkflow
+
+    for workflow in environment.db.query(ExecutionWorkflow).all():
+        workflow.slug = "local-" + workflow.slug
+        workflow.management_mode = "release_v2"
+    environment.db.commit()
+    catalog = request(environment, "GET", "v2/designer/catalog")
+    assert len(catalog["templates"]) == 9
+    assert all(item["workflow_id"] is None and item["replacement_source"] is None for item in catalog["templates"])
+    for item in catalog["templates"]:
+        assert compile_document(item["candidate"])["content_valid"]

@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "afadcf612ba854517c10da238ea9fdb8d85898e3949b910efff9453237ce31d2",
+  "distribution_digest": "60ae3b9b88a3f0914e7ed78de0816dcba357999257add91866b141aa0d8398b8",
   "engine_version_range": ">=2.5.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -11,7 +11,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "legacy_fibrecheck.v1-compat",
-  "pack_version": "1.7.0",
+  "pack_version": "1.7.1",
   "provides": {
     "capabilities": [
       {
@@ -1395,7 +1395,7 @@
             "side_effect_class": "read_only"
           }
         ],
-        "version": "1.7.0"
+        "version": "1.7.1"
       }
     ],
     "nodes": []

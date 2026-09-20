@@ -755,7 +755,9 @@ def validate_definition(
             credential_names.add(name)
             if isinstance(system_key, str):
                 credential_system_by_name[name] = system_key
-        if system_key not in {"legacy_inspection", "new_inspection"}:
+        from app.execution.adapter_packages import credential_systems
+
+        if system_key not in credential_systems():
             issues.append(
                 ValidationIssue(
                     "credential_system_invalid",

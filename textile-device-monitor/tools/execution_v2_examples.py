@@ -22,9 +22,11 @@ from app.execution.v2.examples import (  # noqa: E402
     build_readonly_file_query_smoke_release,
     build_domain_records_smoke_release,
 )
+from app.execution.v2.data_examples import build_data_python_release
 
 
 BUILDERS = {
+    "v2-data-python-example.json": build_data_python_release,
     "v2-connector-operation-smoke.json": build_connector_operation_smoke_release,
     "v2-connector-query-smoke.json": build_connector_query_smoke_release,
     "v2-connector-record-query-smoke.json": lambda: build_connector_query_smoke_release("check_record.list"),

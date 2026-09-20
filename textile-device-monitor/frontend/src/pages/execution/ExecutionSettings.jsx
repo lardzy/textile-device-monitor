@@ -24,7 +24,7 @@ import {
 import dayjs from 'dayjs';
 import {
   createExecutionUser,
-  getExecutionCredentials,
+  getExecutionCredentialCatalog,
   getExecutionUsers,
   updateExecutionUser,
   upsertExecutionCredential,
@@ -57,6 +57,7 @@ export default function ExecutionSettings() {
   const [credentialForm] = Form.useForm();
   const [userForm] = Form.useForm();
   const [credentials, setCredentials] = useState([]);
+  const [systems, setSystems] = useState(SYSTEMS);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -70,8 +71,9 @@ export default function ExecutionSettings() {
     setError(null);
     try {
       if (canManageCredentials) {
-        const credentialRows = await getExecutionCredentials();
-        setCredentials(credentialRows);
+        const catalog = await getExecutionCredentialCatalog();
+        setCredentials(catalog.items || []);
+        setSystems(catalog.systems || SYSTEMS);
       }
       if (canManageUsers) {
         setUsers(await getExecutionUsers());
@@ -167,7 +169,7 @@ export default function ExecutionSettings() {
         description="页面和接口不会回显密码；Windows Bridge 还会用本机受控口令核对任务绑定账号，管理员可通过 Bridge 令牌统一启停真实写入。"
       />
       <div className="execution-credential-grid">
-        {SYSTEMS.map((system) => {
+        {systems.map((system) => {
           const current = credentialsBySystem.get(system.key);
           return (
             <Card key={system.key} className="execution-credential-card">

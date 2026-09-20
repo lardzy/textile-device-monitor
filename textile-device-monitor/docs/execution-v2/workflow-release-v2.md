@@ -1,6 +1,6 @@
 # Workflow Release v2 可评审设计
 
-状态（2026-09-20）：P0–P5 本轮代码与本地验收已完成，完整原生候选 **9/9**。已交付领域服务、通用 Connector 查询/操作、精确更正与自动核对、一次业务表单、NodeSpec 设计器和按引用退场。生产接管、真实 Windows/Oracle 完整写入及现场文件输出等价仍需投用验收。见[P4 完整业务迁移](./p4-business-migration-acceptance.md)、[P5 设计器与退场验收](./p5-designer-retirement-acceptance.md)。以下保留完整设计；`.twr`、Release fixture 执行器和完整绑定界面仍为独立交付。
+状态（2026-09-20）：P0–P5 代码与本地验收已完成，完整原生候选 **9/9**。后续四批增加 JSON 内嵌规则、通用数据/Python/模板渲染节点、独立适配器 wheel、独立业务模板和顺序离线样例验证，见 [JSON 分发交付](./json-distribution-delivery.md)。生产接管、真实 Windows/Oracle 完整写入及现场文件输出等价仍需投用验收。见[P4 完整业务迁移](./p4-business-migration-acceptance.md)、[P5 设计器与退场验收](./p5-designer-retirement-acceptance.md)。以下保留完整设计；`.twr`、分支/并行与真实 IO fixture 执行器和完整绑定界面仍为独立交付。
 
 | 阶段 | 当前实现与验证边界 |
 |---|---|
@@ -17,7 +17,7 @@ P2 四条指电镜、麻棉、特种毛原始资料选择，以及受控 Excel �
 
 ## 1. 结论与设计边界
 
-Workflow Release v2 是一个**可移植、不可变、可预检**的工作流发布契约。它描述流程图、节点契约依赖、逻辑资源槽、资产摘要、测试夹具和完整性信息，但不携带运行代码和环境私有值。
+Workflow Release v2 是一个**可移植、不可变、可预检**的工作流发布契约。它描述流程图、节点契约依赖、逻辑资源槽、资产摘要、测试夹具和完整性信息，不携带适配器实现和环境私有值。受信任作者的 `data.python` 纯计算代码与完整业务规则可以内嵌；模板二进制随安装包发布或置于共享目录。
 
 对 Dify 的参考取舍是：借鉴“图是可序列化数据、节点元数据驱动设计器、运行能力与流程 DSL 分离”；不照搬其产品 DSL 或把插件代码塞入流程。本项目额外保留受控文件 root、不可变发布快照，以及外部写入 fence/receipt/reconciliation 等领域安全语义。
 

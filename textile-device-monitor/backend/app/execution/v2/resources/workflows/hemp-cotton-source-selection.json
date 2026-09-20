@@ -11,42 +11,39 @@
   "definition": {
     "edges": [
       {
-        "id": "start-query",
+        "id": "e1",
         "join_policy": "all",
         "source": "start",
         "target": "query"
       },
       {
-        "id": "query-select",
+        "id": "e2",
         "join_policy": "all",
         "source": "query",
         "target": "select"
       },
       {
-        "id": "select-aggregate",
+        "id": "e3",
         "join_policy": "all",
         "source": "select",
-        "target": "aggregate"
+        "target": "result"
       },
       {
-        "id": "aggregate-end",
+        "id": "e4",
         "join_policy": "all",
-        "source": "aggregate",
+        "source": "result",
         "target": "end"
       }
     ],
     "global_defaults": {},
     "global_schema": {
-      "additionalProperties": false,
       "properties": {},
       "type": "object"
     },
     "input_schema": {
-      "additionalProperties": false,
       "properties": {
         "inspection_number": {
-          "maxLength": 200,
-          "minLength": 1,
+          "title": "检验编号",
           "type": "string"
         }
       },
@@ -62,7 +59,7 @@
         "input_mapping": {},
         "name": "开始",
         "type": "core.start",
-        "type_version": 1,
+        "type_version": 2,
         "ui": {
           "x": 40,
           "y": 180
@@ -70,55 +67,54 @@
       },
       {
         "config": {
-          "extensions": [
-            ".xls",
-            ".xlsx"
-          ],
-          "limit": 20,
+          "limit": 6,
           "projection": [
             "id",
             "root_id",
             "relative_path",
             "name",
             "suffix",
+            "size",
             "modified_at",
-            "fingerprint"
+            "category",
+            "fingerprint",
+            "metadata"
           ],
-          "recent_days": 30,
-          "root_slot": "source",
+          "recent_days": 7,
+          "root_slot": "hemp_cotton_records",
           "sort": "modified_desc"
         },
         "id": "query",
         "input_mapping": {
           "inspection_number": "$.inputs.inspection_number"
         },
-        "name": "查询索引",
+        "name": "查询原始资料",
         "type": "file.query",
         "type_version": 1,
         "ui": {
-          "x": 300,
+          "x": 280,
           "y": 180
         }
       },
       {
         "config": {
           "auto_submit_single_candidate": false,
-          "description": "浏览器仅提交稳定候选 ID。",
+          "description": "",
           "item_kind": "artifact",
-          "max_selected": 20,
+          "max_selected": 100,
           "min_selected": 1,
-          "require_primary": true,
-          "title": "选择待处理文件"
+          "require_primary": false,
+          "title": "请选择本次执行使用的原始资料"
         },
         "id": "select",
         "input_mapping": {
           "items": "$.nodes.query.output.items"
         },
-        "name": "选择文件",
+        "name": "选择原始资料",
         "type": "human.select",
         "type_version": 1,
         "ui": {
-          "x": 560,
+          "x": 540,
           "y": 180
         }
       },
@@ -127,15 +123,15 @@
           "conflict": "error",
           "mode": "collect"
         },
-        "id": "aggregate",
+        "id": "result",
         "input_mapping": {
           "items": "$.nodes.select.output.selected_items"
         },
-        "name": "汇总选择",
+        "name": "汇总选择结果",
         "type": "data.aggregate",
         "type_version": 1,
         "ui": {
-          "x": 820,
+          "x": 800,
           "y": 180
         }
       },
@@ -143,34 +139,20 @@
         "config": {},
         "id": "end",
         "input_mapping": {
-          "count": "$.nodes.aggregate.output.count",
-          "selected_items": "$.nodes.aggregate.output.value"
+          "result": "$.nodes.result.output"
         },
         "name": "结束",
         "type": "core.end",
-        "type_version": 1,
+        "type_version": 2,
         "ui": {
-          "x": 1080,
+          "x": 1040,
           "y": 180
         }
       }
     ],
     "output_schema": {
-      "additionalProperties": false,
-      "properties": {
-        "count": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "selected_items": {
-          "items": {},
-          "type": "array"
-        }
-      },
-      "required": [
-        "selected_items",
-        "count"
-      ],
+      "additionalProperties": true,
+      "properties": {},
       "type": "object"
     },
     "schema_version": "2.0"
@@ -178,58 +160,51 @@
   "dependencies": {
     "connectors": [],
     "engine": {
-      "version_range": ">=2.1.0 <3.0.0"
+      "version_range": ">=2.5.0 <3.0.0"
     },
     "node_types": [
       {
-        "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "04fc0478e3d3ef21449bf1bc33b3af6fd0e95143fa6cfb9dbdcf07819f1d7bc7",
+        "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
+        "type": "core.end",
+        "type_version": 2
+      },
+      {
+        "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
         "type": "core.start",
+        "type_version": 2
+      },
+      {
+        "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
+        "type": "data.aggregate",
         "type_version": 1
       },
       {
         "contract_digest": "6ddaa432eedf18f96f1aeb839be0ed6a2b72c811e97587601fa00aeac16dc5b5",
-        "implementation_digest": "2041cbce0d5798dafca3315caa97ef2866efaf10cdc7734e4486de8aabc5cb2d",
         "type": "file.query",
         "type_version": 1
       },
       {
         "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
-        "implementation_digest": "0b138932eb2f5f431d056759034d653d852e4f2d182b04d72b1ff2fddd970fc4",
         "type": "human.select",
-        "type_version": 1
-      },
-      {
-        "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
-        "implementation_digest": "a0492b2b5cf0ee7b0842f204628b92de9f3aea1c9eb6d23a3b2e499492dcde6c",
-        "type": "data.aggregate",
-        "type_version": 1
-      },
-      {
-        "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "f610833a6fc109fd92e98d3631c07a4fa23195dace7d1ca426f8ac40c1f72566",
-        "type": "core.end",
         "type_version": 1
       }
     ],
     "packs": [
       {
-        "distribution_digest": "b6af4ba7e38bd52ab485526d7c204997785422f01ff186409b787e021d77d3c2",
         "pack_id": "textile.execution-files",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.1.3"
+        "version_range": ">=1.1.3 <2.0.0"
       },
       {
-        "distribution_digest": "96d0b7e9702013f02b1a51d53a1b5ade9925d67d3c3ff0c61c1b9bc79fff1d93",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.9.1"
+        "version_range": ">=2.9.1 <3.0.0"
       }
     ]
   },
@@ -239,17 +214,17 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "fe9c2f501ab63a03a1238037900ffc794342b428b839e8646f69d66c25b5b4f2",
+    "digest": "d608eb6ac32b74dde2f393ed877157c3ca2f8207b378dc5f5b775315dc4bbe91",
     "scope": "document_without_integrity",
     "signatures": []
   },
   "release": {
-    "category_key": "other",
-    "description": "验证索引查询、稳定 ID 选择、汇总与人工任务恢复。",
-    "name": "Execution v2 原生人工文件选择闭环",
-    "release_note": "P2 native Human smoke release",
+    "category_key": "hemp_cotton",
+    "description": "按检验编号从文件索引中发现并人工确认原始资料。",
+    "name": "麻棉原始资料发现与选择",
+    "release_note": "独立 JSON 工作流模板",
     "release_version": 1,
-    "slug": "v2-native-human-file-selection-smoke"
+    "slug": "hemp-cotton-source-selection-v2"
   },
   "resources": {
     "credential_slots": [],
@@ -257,10 +232,9 @@
     "root_slots": [
       {
         "access": "read",
-        "description": "绑定到只读索引根。",
-        "name": "文件索引源",
+        "name": "source",
         "required": true,
-        "slot_id": "source"
+        "slot_id": "hemp_cotton_records"
       }
     ],
     "rule_slots": []

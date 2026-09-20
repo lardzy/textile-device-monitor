@@ -314,8 +314,7 @@
             "type": "object",
             "required": [
               "operation",
-              "contract_version",
-              "contract_digest"
+              "contract_version"
             ],
             "properties": {
               "operation": {
@@ -340,8 +339,7 @@
             "type": "object",
             "required": [
               "query",
-              "contract_version",
-              "contract_digest"
+              "contract_version"
             ],
             "properties": {
               "query": {

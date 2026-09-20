@@ -2,9 +2,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ExecutionWorkflowV2Designer from './ExecutionWorkflowV2Designer';
-import { applyWorkflowReleaseV2, preflightWorkflowReleaseV2, compileWorkflowDesignerV2, getWorkflowDesignerCatalogV2 } from '../../api/executionV2';
+import { applyWorkflowReleaseV2, preflightWorkflowReleaseV2, compileWorkflowDesignerV2, getWorkflowDesignerCatalogV2, testWorkflowDesignerV2 } from '../../api/executionV2';
 
-vi.mock('../../api/executionV2', () => ({ applyWorkflowReleaseV2: vi.fn(), preflightWorkflowReleaseV2: vi.fn(), getWorkflowDesignerCatalogV2: vi.fn(), compileWorkflowDesignerV2: vi.fn(), getWorkflowReleaseV2: vi.fn() }));
+vi.mock('../../api/executionV2', () => ({ applyWorkflowReleaseV2: vi.fn(), preflightWorkflowReleaseV2: vi.fn(), getWorkflowDesignerCatalogV2: vi.fn(), compileWorkflowDesignerV2: vi.fn(), getWorkflowReleaseV2: vi.fn(), testWorkflowDesignerV2: vi.fn() }));
 vi.mock('./ExecutionChrome', () => ({ default: ({ title, actions }) => <header>{title}{actions}</header> }));
 vi.mock('./WorkflowCanvas', () => ({ default: () => <div>流程画布</div> }));
 const starter = { format: 'textile-workflow-release', release: { slug: 'new-workflow-v2', name: '新工作流', release_version: 1 }, resources: {}, definition: {
@@ -20,6 +20,14 @@ beforeEach(() => {
   getWorkflowDesignerCatalogV2.mockResolvedValue({ starter: structuredClone(starter), templates: [], connectors: [], node_specs: starter.definition.nodes.map(node => ({ ...node, config_schema: { type: 'object', properties: {} }, schema_bindings: { input: { source: node.id === 'end' ? 'workflow_output_schema' : 'workflow_input_schema' } } })) });
 });
 describe('v2 workflow designer', () => {
+  it('runs offline fixtures without publishing and shows failed assertions', async () => {
+    testWorkflowDesignerV2.mockResolvedValue({ passed: false, issues: [], items: [{ fixture_id: 'one', name: '计算', passed: false, assertions: [{ path: '$.outputs.total', actual: 2, operator: 'eq', value: 3, passed: false }] }] });
+    show(); await screen.findByDisplayValue('新工作流');
+    fireEvent.click(screen.getByRole('button', { name: '运行离线样例' }));
+    expect(await screen.findByText('离线样例未通过')).toBeInTheDocument();
+    expect(await screen.findByText(/实际 2/)).toBeInTheDocument();
+    expect(applyWorkflowReleaseV2).not.toHaveBeenCalled();
+  });
   it('edits a schema-driven input, saves a browser draft and prepares a release', async () => {
     compileWorkflowDesignerV2.mockImplementation(async document => ({ content_valid: true, document: { ...document, integrity: { digest: 'compiled' } }, issues: [] }));
     show();

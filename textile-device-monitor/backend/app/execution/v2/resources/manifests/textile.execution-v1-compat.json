@@ -100,7 +100,7 @@
       "version": "1.0.0"
     }
   ],
-  "distribution_digest": "a79ce395e00414bcdb657df6aefff00a274caff807e705cf8f711520ac853303",
+  "distribution_digest": "fe52789ed82ac6a2a90c26e9349879326cff512ca60ece58e41d19b348bdc019",
   "engine_version_range": ">=2.1.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -109,7 +109,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "textile.execution-v1-compat",
-  "pack_version": "2.1.5",
+  "pack_version": "2.1.6",
   "provides": {
     "capabilities": [
       {
@@ -122,7 +122,7 @@
       {
         "contract_digest": "8ee1d1d97fdf7f989bf0ca25f170f0c827ab1ef3ad8b50a25f016d252d9583e0",
         "handler_channel": "worker_callable",
-        "implementation_digest": "ec9d41c57103c5ffe17baa62c1747fef16d43ac1e07a243a8f203866eb10ea02",
+        "implementation_digest": "b9b2c38cc82e02ddf8058c50b27f1ae57448e7a3523f9f03fbc1e0323b1052e1",
         "source": "v1_registry_adapter",
         "type": "artifact.publish",
         "type_version": 1
@@ -130,7 +130,7 @@
       {
         "contract_digest": "2efe2171eb3d172dbca6552dfb11be5123316aea3fe3611aee724c0cc5a9389c",
         "handler_channel": "worker_callable",
-        "implementation_digest": "acd33967a996f889edbcd27ff80988a676d1c9bd1b68b94a691a66ddfa848b91",
+        "implementation_digest": "5ed5563d179f20c058bc5b6be6dcbabc7120bbb7640e3fe62f8be80ca503ac89",
         "source": "v1_registry_adapter",
         "type": "core.project_match",
         "type_version": 1
@@ -138,7 +138,7 @@
       {
         "contract_digest": "53d585de3396a08bf11291658818d0d58b52f1b2e041f53f3fdd16715a5d6999",
         "handler_channel": "worker_callable",
-        "implementation_digest": "df2f90fcd23058377254c193d15c8fed56a841895ac0db08b8cd9f69d0c5babf",
+        "implementation_digest": "93fd63394cf222cb91659ee0fd951609e9aa17aa77713d12ddb09fd6eb3ced2e",
         "source": "v1_registry_adapter",
         "type": "data.microscopy_record_context",
         "type_version": 1
@@ -146,7 +146,7 @@
       {
         "contract_digest": "6971c95465acf1f6ceadb4b3444078dd2877cec3128538ec4249f4edef0f755e",
         "handler_channel": "worker_callable",
-        "implementation_digest": "89773408238778e6f2b1bc0f58138c0d82e740a2a10c50951f03c0fbda4490c6",
+        "implementation_digest": "2c5b52e465cb119f3e00d813ea650ea348c4355f99b26458b3fac1cc577c287b",
         "source": "v1_registry_adapter",
         "type": "electron.group",
         "type_version": 1
@@ -154,7 +154,7 @@
       {
         "contract_digest": "789482b472053f13f2ba4bdee27a2a5664b142494480045e510b9b53d2e15ca4",
         "handler_channel": "worker_callable",
-        "implementation_digest": "714dab5dc39e3651c585f91df314cf9743cc99221f16e449de6a1926a8618d26",
+        "implementation_digest": "f9925d5e9caaf35a2aca0c2c7615dbbcf8b84154f38cb26e0e9f8f38a4271cd9",
         "source": "v1_registry_adapter",
         "type": "excel.classify",
         "type_version": 1
@@ -162,7 +162,7 @@
       {
         "contract_digest": "0b86829abd557c18bfcc2ac8b31df5dfbd8187ed171122db61ad8db7e75e3264",
         "handler_channel": "worker_callable",
-        "implementation_digest": "e8b46f3003f7d79e1dfcb54a1ad0b6a2e057c1d811028981bcaecc7e38a24629",
+        "implementation_digest": "57129a92ff0df474c0629741f02990c5ddcdaf4dc9dd52e5432473f6fefcd3a3",
         "source": "v1_registry_adapter",
         "type": "excel.extract_summary",
         "type_version": 1
@@ -170,7 +170,7 @@
       {
         "contract_digest": "356f49525f2f21845a5640453e29e99003c7cd5d3eab4bc78c48ade4fd02c820",
         "handler_channel": "worker_callable",
-        "implementation_digest": "c69ab336428a01e84507b721c1ce2fa2863902341c2d82e5a02d582635b7ff11",
+        "implementation_digest": "d35c94a7ff2238316a870622865f0168de03241f4cf91d425b4a55568dbccb27",
         "source": "v1_registry_adapter",
         "type": "file.electron_microscopy_gbt36422",
         "type_version": 1
@@ -178,7 +178,7 @@
       {
         "contract_digest": "b1d4fe1f4f4a2232ab9fc36729303118c5f850fe62ffd9ae38d2c665dcb4acd4",
         "handler_channel": "worker_callable",
-        "implementation_digest": "7771d6bacd52cf9472e2345622d88b5aeb9b0b8c1c3bc09c8bec420e5fe1e687",
+        "implementation_digest": "a5477da6bb347fe332a402c61c578364ed7a494c36c68cba6df172418c28dad1",
         "source": "v1_registry_adapter",
         "type": "file.index_query",
         "type_version": 1
@@ -186,7 +186,7 @@
       {
         "contract_digest": "4c4b52679f8d8687a51f14bda16060aaa7968b7be2ac7aa49b4bec3fff38653f",
         "handler_channel": "worker_callable",
-        "implementation_digest": "7944b67cc1264b4f31c97b8a525f996935d7f37fbc985a064495683bb23ff59a",
+        "implementation_digest": "cc3d4f03bd3f7cca2476cc879e3eb79c2523edc342d9f2157dba84c25a43f5fd",
         "source": "v1_registry_adapter",
         "type": "file.paper_fiber_gbt4688_qualitative",
         "type_version": 1
@@ -194,7 +194,7 @@
       {
         "contract_digest": "db40e1c45b7629183088d9097641ea24ad6710ee6fba0361663586de00724dd5",
         "handler_channel": "worker_callable",
-        "implementation_digest": "c2059e755f9bb5a49f59681d90bfabac1ec617509c8cf96c3710e50160b22ffc",
+        "implementation_digest": "66555d14156f324e5f5d772a9e32281709bc63410a3e220333c05e01f564a1b4",
         "source": "v1_registry_adapter",
         "type": "file.regenerated_fiber_area_method",
         "type_version": 1
@@ -202,7 +202,7 @@
       {
         "contract_digest": "176a998600abc8b4dabddd0f1be07f7824fd372b2ef8ac15f89963ea8a639226",
         "handler_channel": "worker_callable",
-        "implementation_digest": "132ad6bdbe4431bd09a4c9602e32212ee3a97bf6a3f53360faf88dc1ba9acd34",
+        "implementation_digest": "1d648390c6ac7a3d94c61955d0466d4f96012b8648e6e22afc54a7d3e5e616a2",
         "source": "v1_registry_adapter",
         "type": "file.regenerated_fiber_count_method",
         "type_version": 1
@@ -210,7 +210,7 @@
       {
         "contract_digest": "d9c19b81c31f2a4985a2518ce37889b31c882ace01b0e431e7b5fdf5d0431dae",
         "handler_channel": "worker_callable",
-        "implementation_digest": "ca4b76245e87529f4eea465efe73da21a9d56160ad01834c293276d17d2a4339",
+        "implementation_digest": "83f722849e536d9ba724e6310820ef630d2fbfef4af10872b67c6114379e34f9",
         "source": "v1_registry_adapter",
         "type": "result.regenerated_fiber_area_method",
         "type_version": 1
@@ -218,7 +218,7 @@
       {
         "contract_digest": "d3f2c8ed2cb094e988f280ec3cfe5690f2ca572606143ced83ac202d629555f9",
         "handler_channel": "worker_callable",
-        "implementation_digest": "b257eede21f3066a950387c89e4e7c3109fff7062fb67297960d293ec0aec791",
+        "implementation_digest": "c38e0bd76c6cafbffed23f2597abc722db00a6acb40900ac7aa70c66b675d1c5",
         "source": "v1_registry_adapter",
         "type": "result.regenerated_fiber_count_method",
         "type_version": 1
@@ -226,7 +226,7 @@
       {
         "contract_digest": "a294f098010fcf3d3f787fe51412e74f9e100527466a5d29266af70c3d0f496d",
         "handler_channel": "worker_callable",
-        "implementation_digest": "e02bf50075c70233cb3b5472b6fb275af2215d6c9e194c13d65d178d0767def2",
+        "implementation_digest": "6e503cd0e6058fd21de0a0e18c9e8da8c3fd0a46e59ef46e783f584f35591b7d",
         "source": "v1_registry_adapter",
         "type": "workbook.copy",
         "type_version": 1
@@ -234,7 +234,7 @@
       {
         "contract_digest": "423fc86b9b02b8cb59ac23f05e813b8294d4e6eaa87b00415a9daf7827f910ad",
         "handler_channel": "worker_callable",
-        "implementation_digest": "bdbb5abc8fdff40c34c5e1fece6445541a699b7fcd8d15be41b8ec8a98009ef2",
+        "implementation_digest": "b8c26caf16924bafcfc4c3f2280e37a8fe0fa50346b15d5723b0db8e7171113a",
         "source": "v1_registry_adapter",
         "type": "workbook.microscopy_check_record",
         "type_version": 1
@@ -242,7 +242,7 @@
       {
         "contract_digest": "ce429678987a48df4a762760b982b2693cef4b617d17d801b1342e7e08203b1b",
         "handler_channel": "worker_callable",
-        "implementation_digest": "445854e1abe410ebe83d3000b964da59510605881556d82f4faa04b36d7eebd3",
+        "implementation_digest": "760bb10a005f05f165772ca0ac3b046fb422e16dee3919ef81170069f9757b9a",
         "source": "v1_registry_adapter",
         "type": "workbook.microscopy_original_record",
         "type_version": 1
@@ -250,7 +250,7 @@
       {
         "contract_digest": "9a3bac33e72f67c1a8abf8b883e5c532c625d90d8a8d790a7bdf4740de7839bf",
         "handler_channel": "worker_callable",
-        "implementation_digest": "fbfa22cd33e515ca5ca53810e3e7cf57b717461f868672d9fabd8f10381461ce",
+        "implementation_digest": "31907f29c5126660759f35d1dcf90831beb23e1903a6c318a38acabf789c0858",
         "source": "v1_registry_adapter",
         "type": "workbook.verify",
         "type_version": 1
@@ -258,7 +258,7 @@
       {
         "contract_digest": "e81e271a3273cbac1dc1c88c04a9b17a1c9aad200f6e1ee442ea4ebf8403aac4",
         "handler_channel": "worker_callable",
-        "implementation_digest": "e736f0d50143c43f8bf06d1ef1b3821836951daa6b5664ec94b6d8c37d4ddc8f",
+        "implementation_digest": "d0220e5d3104e29e26db312eababc186894e0d6322b193d837164ac1f1eceb80",
         "source": "v1_registry_adapter",
         "type": "workbook.write_cells",
         "type_version": 1
@@ -266,7 +266,7 @@
       {
         "contract_digest": "e2c9297c270b3c2617b8f5921f8be45df413a0f5624bf71e9ec7407dca4cdca1",
         "handler_channel": "worker_callable",
-        "implementation_digest": "7934c50fc3bdbcc088db7b433913de1863b2d0518455d33d529923c07b4eca88",
+        "implementation_digest": "d62b17aed26086d84000517570e5a2e19fbfede612ecdaa33e542032b607e38d",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",

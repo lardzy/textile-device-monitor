@@ -632,7 +632,7 @@ def _resolve_dependencies(
                     connector.version,
                     operation["operation"],
                     operation["contract_version"],
-                    operation["contract_digest"],
+                    operation.get("contract_digest"),
                 )
                 resolved_value = _public_value(resolved)
                 operation_key = (connector_id, operation["operation"], operation["contract_version"])
@@ -663,7 +663,7 @@ def _resolve_dependencies(
             try:
                 resolved = registry.connectors.resolve_query(
                     connector_id, connector.version, query["query"],
-                    query["contract_version"], query["contract_digest"],
+                    query["contract_version"], query.get("contract_digest"),
                 )
                 if not resolved.ready:
                     raise LookupError(f"Query handler is unavailable: {resolved.query_ref}")

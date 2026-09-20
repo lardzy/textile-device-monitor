@@ -285,7 +285,7 @@
       ],
       "contracts": [
         {
-          "contract_digest": "880f6833c2582e45cfafb0ac4ca89da6f3f7a95ac95dce56e1eb6d20333009be",
+          "contract_digest": "476e158a825e949906208b6aa38dabd11c573234f9f25d4ed4c2281ce80ba12d",
           "operation_ref": "legacy_fibrecheck.check_record.generic_entry@1",
           "receipt_fixture": {
             "operation_id": "00000000-0000-0000-0000-000000000001",
@@ -353,7 +353,7 @@
           }
         },
         {
-          "contract_digest": "5eb52febfd2bd6ed23f9c30324a90ce0896b7506c73f5c50dcbf19617679ed53",
+          "contract_digest": "986d9ea80021d0a6eada2586b8d55e5975094751af23ace501017ac77bfc53db",
           "operation_ref": "legacy_fibrecheck.microscopy.check_record_entry@1",
           "receipt_fixture": {
             "operation_id": "00000000-0000-0000-0000-000000000001",
@@ -425,7 +425,7 @@
           }
         },
         {
-          "contract_digest": "faa6d3c11e4cc7065126543ddb4301fb956ca264963d08594bca83cc1ac52d1f",
+          "contract_digest": "d2dd346ef09bcf1ccc5ad66151275abb59beb0e70aa54f12dbd668d434ab91bf",
           "operation_ref": "legacy_fibrecheck.paper_fiber.qualitative_review@1",
           "receipt_fixture": {
             "operation_id": "00000000-0000-0000-0000-000000000001",
@@ -490,7 +490,7 @@
           }
         },
         {
-          "contract_digest": "f6ac82a3f94ceaf82acff35867eab2b821a102c3512b05a40476e35a13ee4a1a",
+          "contract_digest": "44beaedc91d12c0149457adc104d022455cd326cb1257c2da1210a2ea5535694",
           "operation_ref": "legacy_fibrecheck.paper_fiber.qualitative_upload@1",
           "receipt_fixture": {
             "completion_stage": "main_record_verified",
@@ -569,7 +569,7 @@
           }
         },
         {
-          "contract_digest": "c9ea36ba765ea94422dafc9f2119fe5678205e4eb038d8e6085707f84e81c0aa",
+          "contract_digest": "fc912c5572df3ee508715a6ff9b254be555b395c8e4eedbe850059a1d2abf84f",
           "operation_ref": "legacy_fibrecheck.regenerated_fiber.count_upload@1",
           "receipt_fixture": {
             "operation_id": "00000000-0000-0000-0000-000000000001",
@@ -641,7 +641,7 @@
           }
         },
         {
-          "contract_digest": "883dec02e2339e0c8cdad7752bc78a51e67bb8e3deaa7ca853d53e236d67b846",
+          "contract_digest": "e1dab79192f06eabeefba05a030e096c82093aea5d9e2896521b646678b07800",
           "operation_ref": "legacy_fibrecheck.special_wool.image_review@1",
           "receipt_fixture": {
             "operation_id": "00000000-0000-0000-0000-000000000001",
@@ -710,7 +710,7 @@
           }
         },
         {
-          "contract_digest": "982b913bb6868c97fda0bd766a6be6542f0b1b67bccc5185a75de286eb7e6ce4",
+          "contract_digest": "00ec5cdab172b10a58bf4a1d22775c216bde831120854f1a392976865dfb3cfc",
           "operation_ref": "legacy_fibrecheck.special_wool.image_upload@1",
           "receipt_fixture": {
             "completion_stage": "main_record_verified",
@@ -3364,9 +3364,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "8ee1d1d97fdf7f989bf0ca25f170f0c827ab1ef3ad8b50a25f016d252d9583e0",
-        "implementation_digest": "ec9d41c57103c5ffe17baa62c1747fef16d43ac1e07a243a8f203866eb10ea02",
+        "implementation_digest": "b9b2c38cc82e02ddf8058c50b27f1ae57448e7a3523f9f03fbc1e0323b1052e1",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "文件",
@@ -3478,9 +3478,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "7573cc8f12a42642bf0783cee4891db04b27f3b3af90947484152d746d8ef50d",
-        "implementation_digest": "2076cedf378d7b3ae00bd1aa123e3f681e6910d52c015aa87f55da91ec5c3e84",
+        "implementation_digest": "3f05c356c39f6ee959cf6e0f4232179a92085967ba3b7a0a1c1eb745b245b748",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "控制",
@@ -3501,9 +3501,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "fa0b4b7fd81caa85834f7ec70c79dcb0555687954f2113aa4394e409f36af564",
+        "implementation_digest": "f610833a6fc109fd92e98d3631c07a4fa23195dace7d1ca426f8ac40c1f72566",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "基础",
@@ -3524,9 +3524,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "2efe2171eb3d172dbca6552dfb11be5123316aea3fe3611aee724c0cc5a9389c",
-        "implementation_digest": "acd33967a996f889edbcd27ff80988a676d1c9bd1b68b94a691a66ddfa848b91",
+        "implementation_digest": "5ed5563d179f20c058bc5b6be6dcbabc7120bbb7640e3fe62f8be80ca503ac89",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "基础",
@@ -3594,9 +3594,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "2231944db397f64eafa7d40a7fcdc64e02ee416dda98a92c538ddd4d9ab2ea60",
+        "implementation_digest": "04fc0478e3d3ef21449bf1bc33b3af6fd0e95143fa6cfb9dbdcf07819f1d7bc7",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "基础",
@@ -3617,9 +3617,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "53d585de3396a08bf11291658818d0d58b52f1b2e041f53f3fdd16715a5d6999",
-        "implementation_digest": "df2f90fcd23058377254c193d15c8fed56a841895ac0db08b8cd9f69d0c5babf",
+        "implementation_digest": "93fd63394cf222cb91659ee0fd951609e9aa17aa77713d12ddb09fd6eb3ced2e",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "数据",
@@ -3724,9 +3724,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "6971c95465acf1f6ceadb4b3444078dd2877cec3128538ec4249f4edef0f755e",
-        "implementation_digest": "89773408238778e6f2b1bc0f58138c0d82e740a2a10c50951f03c0fbda4490c6",
+        "implementation_digest": "2c5b52e465cb119f3e00d813ea650ea348c4355f99b26458b3fac1cc577c287b",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "文件",
@@ -3792,9 +3792,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "789482b472053f13f2ba4bdee27a2a5664b142494480045e510b9b53d2e15ca4",
-        "implementation_digest": "714dab5dc39e3651c585f91df314cf9743cc99221f16e449de6a1926a8618d26",
+        "implementation_digest": "f9925d5e9caaf35a2aca0c2c7615dbbcf8b84154f38cb26e0e9f8f38a4271cd9",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "Excel",
@@ -3889,9 +3889,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "0b86829abd557c18bfcc2ac8b31df5dfbd8187ed171122db61ad8db7e75e3264",
-        "implementation_digest": "e8b46f3003f7d79e1dfcb54a1ad0b6a2e057c1d811028981bcaecc7e38a24629",
+        "implementation_digest": "57129a92ff0df474c0629741f02990c5ddcdaf4dc9dd52e5432473f6fefcd3a3",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "Excel",
@@ -3977,9 +3977,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "ece7ebe6a80ad8053175941b6d8421b459417725650b74054f8c05ea3e1f6dc8",
-        "implementation_digest": "b479bd0bf5028e0900c6e1a23e61d6b4b8546c16ace6fca8b40a88bc0ca19089",
+        "implementation_digest": "a08f6ce135731d37e7f3826ec258c5e8c6c07588f78201537fa111a5c648d1f1",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4086,9 +4086,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "9a6d760d3588576d916f5719b698780a0bbbfe278cf0c74da1b8da5d7c304ec6",
-        "implementation_digest": "3e52f20a5e165cc0fe831deb31fb91d3ffa45fa2fff635f75b168c0bb9b9069e",
+        "implementation_digest": "1cefc51e4d366c948a8fb8727e7f46c7395fa2d019b6c2baa0cbe236bfd9271d",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4109,9 +4109,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "54b2583df92826e3bf3b0f6bab2e4cdaa8a758a95524888411ab04314b35db71",
-        "implementation_digest": "043f2368ed372a5c067e1dcdc5e04487e3c8b666884b7b7feecae421ab731633",
+        "implementation_digest": "8c1a7dfa7ff5f52d625a6292cb3120532b15a9b282112000a9663cef2752e14b",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4275,9 +4275,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "bf9b7739456ed1bd3c0c382d3e53924fedb20562e84134d4acdbd6e6b55e542b",
-        "implementation_digest": "25e4b6400318bbc3eaf61cea103722585d437aab474fd5ac4e1399f4d4722dc4",
+        "implementation_digest": "faf1329618bd84a9546b8c67cd6c391493f92a2cdf05c2acb2ab32c9304d9d6d",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4380,9 +4380,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "e9001a50118b65f31840a56dd6fc2e234a7677d3e13d5250a96d0687e3cf70f9",
-        "implementation_digest": "20d8127d588d89bc3838e6245337c2d7cbfa460b69bb84b87737047403938263",
+        "implementation_digest": "04a2f771f71685c0734680c1c4280e506fac750c2ac9710ca0fc445662f6b82c",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4555,9 +4555,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "d1711ed8605de362a586f53c1e9ae4c32994513a5df28027a75faf53b8d34c18",
-        "implementation_digest": "a6d3ca1349a4f6bcbb8e9dea34225f33855b17ef8da414a5372aa996d6fb31ad",
+        "implementation_digest": "f7333636439a77c81fb240b501fa6dd6353f6885903ed164a0b16d237faa2e20",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4646,9 +4646,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "5fa4ab3eec4332c1b2255d34251f0207417a01ffcf4bac4fd8f769b0b742df2a",
-        "implementation_digest": "10e85c26b58d66824073247068f477c1de4166584b9b27d1cad02d00de039055",
+        "implementation_digest": "589be62fcbad883943061205e89300657f13b23a580c45e1b9048e85a6ef57c1",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4762,9 +4762,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "05c7b18f9ecc3615e4d0f15e9661b7c4c9304c7287173f8e5ff3362ce1386846",
-        "implementation_digest": "9955982d6d07eb5699739c4fce9d8200cf303cf1d9ecb54477ec600117d31fd8",
+        "implementation_digest": "43a96ad73b30945368488ea2f3a9b66d40219d62f56d5604eb15ac4185606f71",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4854,9 +4854,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "6a0b931648ad154b64a103a8f59cb52c7f1e5352d5fd949f81f2eaf856162194",
-        "implementation_digest": "b8a049b9008c271f977859bcae35392c89f6cc70024f7b41f5142278c20052b5",
+        "implementation_digest": "04f31f5347e4468351620aa41cce3c126816ee24d62ebd230daae95ced26a422",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "连接器",
@@ -4877,9 +4877,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "356f49525f2f21845a5640453e29e99003c7cd5d3eab4bc78c48ade4fd02c820",
-        "implementation_digest": "c69ab336428a01e84507b721c1ce2fa2863902341c2d82e5a02d582635b7ff11",
+        "implementation_digest": "d35c94a7ff2238316a870622865f0168de03241f4cf91d425b4a55568dbccb27",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "文件",
@@ -4993,9 +4993,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "b1d4fe1f4f4a2232ab9fc36729303118c5f850fe62ffd9ae38d2c665dcb4acd4",
-        "implementation_digest": "7771d6bacd52cf9472e2345622d88b5aeb9b0b8c1c3bc09c8bec420e5fe1e687",
+        "implementation_digest": "a5477da6bb347fe332a402c61c578364ed7a494c36c68cba6df172418c28dad1",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "文件",
@@ -5061,9 +5061,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "4c4b52679f8d8687a51f14bda16060aaa7968b7be2ac7aa49b4bec3fff38653f",
-        "implementation_digest": "7944b67cc1264b4f31c97b8a525f996935d7f37fbc985a064495683bb23ff59a",
+        "implementation_digest": "cc3d4f03bd3f7cca2476cc879e3eb79c2523edc342d9f2157dba84c25a43f5fd",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "文件",
@@ -5156,9 +5156,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "db40e1c45b7629183088d9097641ea24ad6710ee6fba0361663586de00724dd5",
-        "implementation_digest": "c2059e755f9bb5a49f59681d90bfabac1ec617509c8cf96c3710e50160b22ffc",
+        "implementation_digest": "66555d14156f324e5f5d772a9e32281709bc63410a3e220333c05e01f564a1b4",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "文件",
@@ -5230,9 +5230,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "176a998600abc8b4dabddd0f1be07f7824fd372b2ef8ac15f89963ea8a639226",
-        "implementation_digest": "132ad6bdbe4431bd09a4c9602e32212ee3a97bf6a3f53360faf88dc1ba9acd34",
+        "implementation_digest": "1d648390c6ac7a3d94c61955d0466d4f96012b8648e6e22afc54a7d3e5e616a2",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "文件",
@@ -5304,9 +5304,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "699ce3b667070136f9adf65401108c2e206503cf0abe8c3b2899ce8f6f5c5512",
-        "implementation_digest": "f81a4d265614b3aee44a75a2392631bd1e4c184d0ac210b00a6de91452d6b0b2",
+        "implementation_digest": "183b8029715712313345d4e5c39fdadfbd183d5b00e8e4ebb061407a4a96ef3e",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "人工",
@@ -5357,9 +5357,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "352e55ed588da6904e8d04b6ab2349965075cc80546b9927c90b302aa950cd1f",
-        "implementation_digest": "08b6ec0cf31b62aeb443b74acf40f9e9bf2342aca766295a513ae7bd32a0d8a1",
+        "implementation_digest": "6a9e3ac1acf8ec0a5e1f4887d663f5e239e316f7c36f646c21a29b0362c89142",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "人工",
@@ -5446,9 +5446,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "5a746790be7d9680edfd610c988c0543892081b84614cd4c5350e7768188031e",
-        "implementation_digest": "72e51a650ce33a865a8f889dfbdb212854cff76064092e25982a03da11e5c880",
+        "implementation_digest": "dd51b29bb78bd6971c5e67017c1cf7adccf8f0ee72d5c580775d310ae9be8596",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "人工",
@@ -5577,9 +5577,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "1206ba58a155b0196133f266f03ebc89f8fe0eb9ef7b570502ddfdaadb2d065d",
-        "implementation_digest": "0e1911a3b1a45500e1e35f1016080f1dce73e6b8ff882687684f84c32c231d19",
+        "implementation_digest": "9eb12b7194bcecb5f0061418fe21878bfb6f667194d4e768057df7448127e308",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "人工",
@@ -5630,9 +5630,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "1f19fb726aff264af5eee81400094d5336a67d3258913889cf1207f92fa4ae07",
-        "implementation_digest": "2930b99ebeb7368d6029cfe6e1479f59dd849d5ac595bb0019b44640c8e682ab",
+        "implementation_digest": "867361c23a2f3a315e2dade120c44ed61514a1c14f7a9e0dd4754e54c220e5e2",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "人工",
@@ -5683,9 +5683,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "e017ef465f00d2dd1882b0ad3fb624786dde33ca818ca6f4d816ba5452b921d5",
-        "implementation_digest": "aaa9232fa50f7b23fe755be92a2550179e7d32bdd15faadb9af435fae98a6242",
+        "implementation_digest": "936fdc233b57687655e7c06a14c64c01072c98c2d084ce85b00bd34a8df219ae",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "控制",
@@ -5706,9 +5706,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "2573495e88eb51e55cb32283f5f943b64e428820b174cfd60768a8d2720bc57f",
-        "implementation_digest": "16e36248b8dadd8fe4334273aa60db45250698a2cb2d4c33d8774d354037d653",
+        "implementation_digest": "a884eae8f38e0e61c90f0e95707c6604843a0b817cb8027558d88749a5aa9cab",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "控制",
@@ -5729,9 +5729,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "f59416d444c53cea3ae5813da265a18b495d5f5cdd02e56c428282ec59bf2b3d",
-        "implementation_digest": "c3e6df45395a187fd2ed12d6049629809be6c036271681a11dd1f5e94c3c13ac",
+        "implementation_digest": "75389ea39f3942b535050872364828c02381566aaabc172ebe01e0a7ec4833bd",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "基础",
@@ -5752,9 +5752,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "d9c19b81c31f2a4985a2518ce37889b31c882ace01b0e431e7b5fdf5d0431dae",
-        "implementation_digest": "ca4b76245e87529f4eea465efe73da21a9d56160ad01834c293276d17d2a4339",
+        "implementation_digest": "83f722849e536d9ba724e6310820ef630d2fbfef4af10872b67c6114379e34f9",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "结果",
@@ -5805,9 +5805,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "d3f2c8ed2cb094e988f280ec3cfe5690f2ca572606143ced83ac202d629555f9",
-        "implementation_digest": "b257eede21f3066a950387c89e4e7c3109fff7062fb67297960d293ec0aec791",
+        "implementation_digest": "c38e0bd76c6cafbffed23f2597abc722db00a6acb40900ac7aa70c66b675d1c5",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "结果",
@@ -5858,9 +5858,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "c96d48247a80dd9afcea38183a45d9ef19223cc3292e3eceecf507154c7a2b22",
-        "implementation_digest": "3833ba9ec9045ca295a7cdfd494fc482e650a274c705dc990e17d853e49f6778",
+        "implementation_digest": "3430946e8c033cbeae6a8854550f91449a1b49dfd4e25ece7a7854645f782e80",
         "pack_id": "textile.execution-kernel",
-        "pack_version": "2.9.0"
+        "pack_version": "2.9.1"
       },
       "registry_fact": {
         "category": "基础",
@@ -5890,9 +5890,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "e2c9297c270b3c2617b8f5921f8be45df413a0f5624bf71e9ec7407dca4cdca1",
-        "implementation_digest": "7934c50fc3bdbcc088db7b433913de1863b2d0518455d33d529923c07b4eca88",
+        "implementation_digest": "d62b17aed26086d84000517570e5a2e19fbfede612ecdaa33e542032b607e38d",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "Excel",
@@ -5977,9 +5977,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "423fc86b9b02b8cb59ac23f05e813b8294d4e6eaa87b00415a9daf7827f910ad",
-        "implementation_digest": "bdbb5abc8fdff40c34c5e1fece6445541a699b7fcd8d15be41b8ec8a98009ef2",
+        "implementation_digest": "b8c26caf16924bafcfc4c3f2280e37a8fe0fa50346b15d5723b0db8e7171113a",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "Excel",
@@ -6176,9 +6176,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "ce429678987a48df4a762760b982b2693cef4b617d17d801b1342e7e08203b1b",
-        "implementation_digest": "445854e1abe410ebe83d3000b964da59510605881556d82f4faa04b36d7eebd3",
+        "implementation_digest": "760bb10a005f05f165772ca0ac3b046fb422e16dee3919ef81170069f9757b9a",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "Excel",
@@ -6370,9 +6370,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "9a3bac33e72f67c1a8abf8b883e5c532c625d90d8a8d790a7bdf4740de7839bf",
-        "implementation_digest": "fbfa22cd33e515ca5ca53810e3e7cf57b717461f868672d9fabd8f10381461ce",
+        "implementation_digest": "31907f29c5126660759f35d1dcf90831beb23e1903a6c318a38acabf789c0858",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "Excel",
@@ -6449,9 +6449,9 @@
     {
       "compatibility_nodespec": {
         "contract_digest": "e81e271a3273cbac1dc1c88c04a9b17a1c9aad200f6e1ee442ea4ebf8403aac4",
-        "implementation_digest": "e736f0d50143c43f8bf06d1ef1b3821836951daa6b5664ec94b6d8c37d4ddc8f",
+        "implementation_digest": "d0220e5d3104e29e26db312eababc186894e0d6322b193d837164ac1f1eceb80",
         "pack_id": "textile.execution-v1-compat",
-        "pack_version": "2.1.5"
+        "pack_version": "2.1.6"
       },
       "registry_fact": {
         "category": "Excel",
@@ -6540,7 +6540,7 @@
       "side_effect_stage"
     ]
   },
-  "snapshot_digest": "f923cdea0379777bb5833bb3b9c3616444690a581a3a52f0665a60862d4545cc",
+  "snapshot_digest": "b47561cfd25cf78547d5e7965bc7a56b3064e009404ef3fc5b71d19cb30c9342",
   "snapshot_schema_version": "1.0",
   "workflow_inventory_digest": "3b9b1f16a1111fc7687c281b0b2a3ad956231a5f7d0284bec80d4d7fdf98d494"
 }

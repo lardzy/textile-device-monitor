@@ -12,7 +12,7 @@
 
 ## 1. 结论与统计
 
-旧注册表共 **39 个 `type@type_version`**，其中 37 个可发布，两个连接器占位类型不可发布。另有 **31 份原生契约**，完整 Worker 能力文档合计 80 个绑定/78 ready；实际心跳按有效引用缩减兼容绑定。契约版本和来源不同的同名节点仍分别计数。下表统计旧注册表。
+旧注册表共 **39 个 `type@type_version`**，其中 37 个可发布，两个连接器占位类型不可发布。JSON 分发四批完成后另有 **38 份原生契约**，基础安装包含 8 个 Pack，完整 Worker 能力文档合计 87 个绑定/85 ready；实际心跳按有效引用缩减兼容绑定，独立适配器会增加自己的绑定。新增三种数据/Python节点、通用模板渲染及三个配置化显微 `@2`，见[交付说明](./json-distribution-delivery.md)。契约版本和来源不同的同名节点仍分别计数。下表统计旧注册表。
 
 P0/P1 与 P2 基础能力、停放节点过滤、新 slug、归档接替/回切已实现。四条 `native_p2` 完整候选为电镜、麻棉、特种毛原始资料选择和受控 Excel 内部验收；`native_p3` 新增再生纤面积法/根数法，完整候选覆盖 **6/9**。已进行隔离 API/Worker、浏览器和 LibreOffice 容器验证，尚未接管生产。电镜/纸纤维共享服务、直接 API、四个原生节点和三条 `p3_partial` 候选已交付；P4 已收拢业务表单和外部链，`native_p4` 完整候选覆盖 **9/9**，见[完整业务迁移验收](./p4-business-migration-acceptance.md)。边界见[P2 接替验收](./p2-replacement-acceptance.md)、[P3 首批](./p3-regenerated-fiber-acceptance.md)、[P3 第二批接口](./p3-domain-services-acceptance.md)和[原生节点验收](./p3-native-domain-acceptance.md)。
 

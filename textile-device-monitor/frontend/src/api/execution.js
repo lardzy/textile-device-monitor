@@ -54,6 +54,7 @@ export const updateExecutionUser = (userId, payload) =>
 
 export const getExecutionCredentials = async () =>
   listPayload(await executionClient.get('/credentials'), ['items', 'credentials']);
+export const getExecutionCredentialCatalog = () => executionClient.get('/credentials');
 
 export const upsertExecutionCredential = (systemKey, payload) =>
   executionClient.put(`/credentials/${systemKey}`, payload);

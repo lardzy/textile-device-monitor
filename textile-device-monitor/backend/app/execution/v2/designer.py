@@ -18,7 +18,7 @@ def seal(document):
     return document
 
 
-def compile_document(document):
+def compile_document(document, *, exact=False):
     """Resolve current native contracts, derive capabilities, and return reviewable JSON.
 
     This neither publishes nor changes deployment identities. Imported signed releases
@@ -66,6 +66,17 @@ def compile_document(document):
                 packs.append({"pack_id": connector.pack_id, "version_range": connector.pack_version,
                               "distribution_digest": connector.distribution_digest, "required_on": ["api", "worker", "bridge"]})
         candidate["dependencies"]["packs"].sort(key=lambda value: value["pack_id"])
+        if not exact:
+            for group in ("packs", "connectors"):
+                for dependency in candidate["dependencies"][group]:
+                    version = dependency["version_range"]
+                    major = int(version.split(".", 1)[0])
+                    dependency["version_range"] = f">={version} <{major + 1}.0.0"
+                    dependency.pop("distribution_digest", None)
+                    for member in dependency.get("operations", []) + dependency.get("queries", []):
+                        member.pop("contract_digest", None)
+            for dependency in candidate["dependencies"]["node_types"]:
+                dependency.pop("implementation_digest", None)
     except (LookupError, ValueError, TypeError) as exc:
         raise ExecutionApiError(422, "designer_contract_unavailable", str(exc)) from exc
     _lock, computed = _resolve_dependencies(candidate, [])

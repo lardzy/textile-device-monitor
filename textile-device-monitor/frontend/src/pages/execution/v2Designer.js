@@ -1,4 +1,24 @@
 export const specKey = node => `${node.type}@${node.type_version}`;
+export const upstreamNodeIds = (definition, nodeId) => {
+  const result = new Set();
+  const pending = [nodeId];
+  while (pending.length) {
+    const current = pending.pop();
+    (definition?.edges || []).filter(edge => edge.target === current).forEach(edge => {
+      if (edge.source !== nodeId && !result.has(edge.source)) {
+        result.add(edge.source);
+        pending.push(edge.source);
+      }
+    });
+  }
+  return result;
+};
+// Suggestions only: actual schema validation remains with the release compiler.
+export const compatibleTypes = (source = {}, target = {}) => {
+  const types = schema => Array.isArray(schema?.type) ? schema.type : schema?.type ? [schema.type] : [];
+  const from = types(source), to = types(target);
+  return !from.length || !to.length || from.some(type => to.includes(type) || (type === 'integer' && to.includes('number')));
+};
 export const schemaDefaults = schema => Object.fromEntries(
   Object.entries(schema?.properties || {}).flatMap(([key, value]) => (
     Object.hasOwn(value, 'const') ? [[key, value.const]]
