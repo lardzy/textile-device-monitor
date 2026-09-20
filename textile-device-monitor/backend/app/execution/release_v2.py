@@ -799,6 +799,23 @@ def _resolve_dependencies(
                     f"$.definition.nodes[{index}].config.{schema_key}",
                 )
             )
+        if identity[0] in {"data.python", "data.validate"}:
+            from app.execution.v2.data_handlers import check_local_schema
+            from app.execution.v2.python_runner import validate_source
+
+            config = node.get("config") or {}
+            try:
+                if identity[0] == "data.python":
+                    validate_source(config.get("code"))
+                    for direction in ("input", "output"):
+                        schema = config.get(f"{direction}_schema")
+                        check_local_schema(schema)
+                        if schema.get("type") != "object" or schema.get("additionalProperties") is not False:
+                            raise ValueError("Python 输入输出必须声明封闭对象 schema")
+                else:
+                    check_local_schema(config.get("schema"))
+            except Exception as exc:
+                issues.append(_issue("data_config_invalid", f"$.definition.nodes[{index}].config", str(exc)))
         if node.get("runtime_policy"):
             issues.append(
                 _issue(
@@ -1258,7 +1275,7 @@ def _project_config_schema(schema: Any) -> Any:
                 return key[:-len(suffix)] + replacement
         return key
 
-    value["properties"] = {runtime_key(key): item for key, item in properties.items()}
+    value["properties"] = {runtime_key(key): _project_config_schema(item) for key, item in properties.items()}
     value["required"] = [runtime_key(key) for key in value.get("required") or []]
     return value
 
@@ -1985,7 +2002,8 @@ def compile_runtime_projection(
     native_join_modes: dict[str, str] = {}
     for node in definition["nodes"]:
         value = deepcopy(node)
-        value["config"] = _project_config_value(value.get("config") or {}, bindings)
+        if value["type"] not in {"data.python", "data.transform", "data.validate"}:
+            value["config"] = _project_config_value(value.get("config") or {}, bindings)
         value.pop("runtime_policy", None)
         nodes.append(value)
         if value.get("type") == "flow.join":

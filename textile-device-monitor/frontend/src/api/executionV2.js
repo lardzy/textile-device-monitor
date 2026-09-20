@@ -29,6 +29,9 @@ export const getExecutionV2Packs = async () =>
 export const getExecutionV2Assets = async () =>
   listPayload(await executionV2Client.get('/assets'), ['items', 'assets']);
 
+export const getExecutionTemplatesV2 = async params =>
+  listPayload(await executionV2Client.get('/templates', { params }), ['items']);
+
 export const getExecutionV2RendererCapabilities = () =>
   executionV2Client.get('/renderer-capabilities');
 

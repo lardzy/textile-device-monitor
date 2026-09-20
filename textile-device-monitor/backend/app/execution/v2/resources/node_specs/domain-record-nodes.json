@@ -1570,6 +1570,1071 @@
           "native": true
         }
       }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "microscopy.image_candidates",
+      "type_version": 2,
+      "name": "显微图片候选",
+      "category": "显微",
+      "description": "复用领域查询、校验与工作簿服务；无需增加业务批准。",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "capability_pack",
+          "pack_id": "textile.domain-records"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "root_slot": {
+            "type": "string"
+          },
+          "rule_slot": {
+            "type": "string"
+          },
+          "record_family": {
+            "type": "string"
+          },
+          "require_full_task_match": {
+            "type": "boolean"
+          },
+          "family_profile": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "project_name_aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "test_method": {
+                "type": "string"
+              },
+              "check_item_no": {
+                "type": "string"
+              },
+              "check_item_name": {
+                "type": "string"
+              },
+              "record_title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "check_record_filename_segment": {
+                "type": "string"
+              },
+              "max_selected_images": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "template_bindings": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "project_name_aliases",
+              "test_method",
+              "check_item_no",
+              "check_item_name",
+              "record_title",
+              "check_record_filename_segment",
+              "max_selected_images",
+              "template_bindings"
+            ]
+          }
+        },
+        "required": [
+          "root_slot",
+          "rule_slot",
+          "record_family",
+          "require_full_task_match",
+          "family_profile"
+        ],
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "inspection_number": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "inspection_number"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "folders": {
+            "type": "array"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "root_id": {
+                  "type": "string"
+                },
+                "relative_path": {
+                  "type": "string"
+                },
+                "fingerprint": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "root_id",
+                "relative_path",
+                "fingerprint"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "folder_selection_required": {
+            "type": "boolean"
+          },
+          "selected_folder_ids": {
+            "type": "array"
+          },
+          "image_count": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "record_family": {
+            "type": "string"
+          },
+          "max_selected_images": {
+            "type": "integer"
+          },
+          "task": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "task_validation_state": {
+            "type": "string"
+          },
+          "task_cache_state": {
+            "type": "string"
+          },
+          "missing_conditions": {
+            "type": "array"
+          },
+          "rule_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rule_revision": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "root_id": {
+                  "type": "string"
+                },
+                "relative_path": {
+                  "type": "string"
+                },
+                "fingerprint": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "artifact",
+                    "image"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "preview_url": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "label",
+                "root_id",
+                "relative_path",
+                "fingerprint",
+                "metadata"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "folders",
+          "images",
+          "folder_selection_required",
+          "selected_folder_ids",
+          "image_count",
+          "truncated",
+          "record_family",
+          "max_selected_images",
+          "task",
+          "task_validation_state",
+          "task_cache_state",
+          "missing_conditions",
+          "rule_key",
+          "rule_revision",
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "显微",
+          "icon": "file"
+        },
+        "inspector": {
+          "widgets": {
+            "/root_slot": {
+              "widget": "root-slot-picker",
+              "options": {
+                "required_access": "read"
+              }
+            }
+          }
+        }
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 1,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none",
+        "graph_role": "ordinary"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [
+            {
+              "config_pointer": "/root_slot",
+              "access": "read",
+              "required": true
+            }
+          ],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": [
+            {
+              "config_pointer": "/rule_slot",
+              "rule_type": "project_match",
+              "contract_version": 1,
+              "required": true
+            }
+          ]
+        },
+        "capabilities": [
+          {
+            "capability_id": "microscopy.records",
+            "version_range": ">=1.0.0 <2.0.0"
+          }
+        ],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "read_only",
+        "idempotency": "none",
+        "cancellation": "immediate",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": [
+          "microscopy-image_candidates-v1"
+        ]
+      },
+      "extensions": {
+        "textile": {
+          "native": true
+        }
+      }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "microscopy.original_record.render",
+      "type_version": 2,
+      "name": "显微原始记录生成",
+      "category": "显微",
+      "description": "复用领域查询、校验与工作簿服务；无需增加业务批准。",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "capability_pack",
+          "pack_id": "textile.domain-records"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "source_root_slot": {
+            "type": "string"
+          },
+          "staging_root_slot": {
+            "type": "string"
+          },
+          "record_family": {
+            "type": "string"
+          },
+          "family_profile": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "project_name_aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "test_method": {
+                "type": "string"
+              },
+              "check_item_no": {
+                "type": "string"
+              },
+              "check_item_name": {
+                "type": "string"
+              },
+              "record_title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "check_record_filename_segment": {
+                "type": "string"
+              },
+              "max_selected_images": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "template_bindings": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "project_name_aliases",
+              "test_method",
+              "check_item_no",
+              "check_item_name",
+              "record_title",
+              "check_record_filename_segment",
+              "max_selected_images",
+              "template_bindings"
+            ]
+          }
+        },
+        "required": [
+          "source_root_slot",
+          "staging_root_slot",
+          "record_family",
+          "family_profile"
+        ],
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "inspection_number": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sample_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sample_identification": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "judgement_required": {
+            "type": "boolean"
+          },
+          "judgement_basis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "indicator_requirement": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "test_result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "judgement": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "root_id": {
+                  "type": "string"
+                },
+                "relative_path": {
+                  "type": "string"
+                },
+                "fingerprint": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "root_id",
+                "relative_path",
+                "fingerprint"
+              ],
+              "additionalProperties": true
+            },
+            "minItems": 1,
+            "maxItems": 10
+          }
+        },
+        "required": [
+          "inspection_number",
+          "judgement_required",
+          "sample_name",
+          "images"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "original_record": {
+            "type": "object",
+            "properties": {
+              "artifact_id": {
+                "type": "string"
+              },
+              "root_id": {
+                "type": "string"
+              },
+              "relative_path": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string",
+                "pattern": "\\.xls$"
+              },
+              "media_type": {
+                "type": "string"
+              },
+              "size_bytes": {
+                "type": "integer"
+              },
+              "content_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "role": {
+                "type": "string",
+                "const": "working"
+              },
+              "download_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_id",
+              "root_id",
+              "relative_path",
+              "filename",
+              "content_sha256"
+            ],
+            "additionalProperties": true
+          },
+          "selected_image_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "template_binding": {
+            "type": "object"
+          },
+          "verification": {
+            "type": "object"
+          },
+          "print": {
+            "type": "object"
+          },
+          "source_inspection_number": {
+            "type": "string"
+          },
+          "inspection_number": {
+            "type": "string"
+          },
+          "reused": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "original_record",
+          "selected_image_ids",
+          "image_count",
+          "template_binding",
+          "verification",
+          "print",
+          "source_inspection_number",
+          "inspection_number",
+          "reused"
+        ],
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "显微",
+          "icon": "file"
+        },
+        "inspector": {
+          "widgets": {
+            "/source_root_slot": {
+              "widget": "root-slot-picker",
+              "options": {
+                "required_access": "read"
+              }
+            },
+            "/staging_root_slot": {
+              "widget": "root-slot-picker",
+              "options": {
+                "required_access": "write"
+              }
+            }
+          }
+        }
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 1,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none",
+        "graph_role": "ordinary"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [
+            {
+              "config_pointer": "/source_root_slot",
+              "access": "read",
+              "required": true
+            },
+            {
+              "config_pointer": "/staging_root_slot",
+              "access": "write",
+              "required": true
+            }
+          ],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [
+          {
+            "capability_id": "microscopy.records",
+            "version_range": ">=1.0.0 <2.0.0"
+          }
+        ],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "reversible_local_write",
+        "idempotency": "business_key",
+        "cancellation": "fenced",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": [
+          "microscopy-original_record-render-v1"
+        ]
+      },
+      "extensions": {
+        "textile": {
+          "native": true
+        }
+      }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "microscopy.check_record.render",
+      "type_version": 2,
+      "name": "显微登记工作簿生成",
+      "category": "显微",
+      "description": "复用领域查询、校验与工作簿服务；无需增加业务批准。",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "capability_pack",
+          "pack_id": "textile.domain-records"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "staging_root_slot": {
+            "type": "string"
+          },
+          "record_family": {
+            "type": "string"
+          },
+          "family_profile": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "project_name_aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "test_method": {
+                "type": "string"
+              },
+              "check_item_no": {
+                "type": "string"
+              },
+              "check_item_name": {
+                "type": "string"
+              },
+              "record_title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "check_record_filename_segment": {
+                "type": "string"
+              },
+              "max_selected_images": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "template_bindings": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "project_name_aliases",
+              "test_method",
+              "check_item_no",
+              "check_item_name",
+              "record_title",
+              "check_record_filename_segment",
+              "max_selected_images",
+              "template_bindings"
+            ]
+          }
+        },
+        "required": [
+          "staging_root_slot",
+          "record_family",
+          "family_profile"
+        ],
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "inspection_number": {
+            "type": "string",
+            "minLength": 1
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "template_binding": {
+            "type": "object"
+          },
+          "sample_identification": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "test_method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "judgement_required": {
+            "type": "boolean"
+          },
+          "judgement_basis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "indicator_requirement": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "test_result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remark": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "judgement": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "check_item_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "inspection_number",
+          "judgement_required",
+          "image_count"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "check_record": {
+            "type": "object",
+            "properties": {
+              "root_id": {
+                "type": "string"
+              },
+              "relative_path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "root_id",
+              "relative_path"
+            ],
+            "additionalProperties": true
+          },
+          "legacy_registration_workbook": {
+            "type": "object",
+            "properties": {
+              "root_id": {
+                "type": "string"
+              },
+              "relative_path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "root_id",
+              "relative_path"
+            ],
+            "additionalProperties": true
+          },
+          "source_inspection_number": {
+            "type": "string"
+          },
+          "inspection_number": {
+            "type": "string"
+          },
+          "image_count": {
+            "type": "integer"
+          },
+          "template_binding": {
+            "type": "object"
+          },
+          "verification": {
+            "type": "object"
+          },
+          "reused": {
+            "type": "boolean"
+          },
+          "expected_key_identities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "artifact_id",
+          "check_record",
+          "legacy_registration_workbook",
+          "source_inspection_number",
+          "inspection_number",
+          "image_count",
+          "template_binding",
+          "verification",
+          "reused",
+          "expected_key_identities"
+        ],
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "显微",
+          "icon": "file"
+        },
+        "inspector": {
+          "widgets": {
+            "/staging_root_slot": {
+              "widget": "root-slot-picker",
+              "options": {
+                "required_access": "write"
+              }
+            }
+          }
+        }
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 1,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none",
+        "graph_role": "ordinary"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [
+            {
+              "config_pointer": "/staging_root_slot",
+              "access": "write",
+              "required": true
+            }
+          ],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [
+          {
+            "capability_id": "microscopy.records",
+            "version_range": ">=1.0.0 <2.0.0"
+          }
+        ],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "reversible_local_write",
+        "idempotency": "business_key",
+        "cancellation": "fenced",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": [
+          "microscopy-check_record-render-v1"
+        ]
+      },
+      "extensions": {
+        "textile": {
+          "native": true
+        }
+      }
     }
   ]
 }

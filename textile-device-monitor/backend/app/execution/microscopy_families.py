@@ -211,6 +211,14 @@ def microscopy_family_for_key(value: object) -> Optional[MicroscopyRecordFamily]
 def microscopy_family_from_config(config: object) -> MicroscopyRecordFamily:
     """Resolve the family pinned by a workflow node's ``record_family`` config."""
 
+    if isinstance(config, dict) and isinstance(config.get("family_profile"), dict):
+        profile = config["family_profile"]
+        if profile["key"] != config.get("record_family"):
+            raise ExecutionApiError(422, "family_profile_mismatch", "项目配置与家族标识不一致")
+        return MicroscopyRecordFamily(**{**profile,
+            "project_name_aliases": frozenset(profile["project_name_aliases"]),
+            "template_bindings": {int(key): value for key, value in profile["template_bindings"].items()}})
+
     key = (
         config.get("record_family")
         if isinstance(config, dict)

@@ -176,16 +176,16 @@
     "connectors": [
       {
         "connector_id": "legacy_fibrecheck",
-        "distribution_digest": "727a8f83f94965f47a4def1c48eca356640e76473641dbe76cfdd7be6ecec579",
+        "distribution_digest": "9e718c0ca1d33751a52ed18bb7730bbb665b6e09ae8f0ccdcfccc1e8f0d4767a",
         "operations": [
           {
-            "contract_digest": "93553a7aafe386ff7192aa8d1a86b6b8c0b8ede9a737863160fa9dbd7accc72a",
+            "contract_digest": "8e7cfb08f9c0ee3497fde53b729a990653ff4ba9d8b90bb2d9ff8ed38f1c4896",
             "contract_version": 1,
             "operation": "check_record.generic_entry"
           }
         ],
         "queries": [],
-        "version_range": "1.6.0"
+        "version_range": "1.6.1"
       }
     ],
     "engine": {
@@ -222,13 +222,13 @@
         "version_range": "2.8.1"
       },
       {
-        "distribution_digest": "727a8f83f94965f47a4def1c48eca356640e76473641dbe76cfdd7be6ecec579",
+        "distribution_digest": "9e718c0ca1d33751a52ed18bb7730bbb665b6e09ae8f0ccdcfccc1e8f0d4767a",
         "pack_id": "legacy_fibrecheck.v1-compat",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.6.0"
+        "version_range": "1.6.1"
       }
     ]
   },
@@ -238,7 +238,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "bfe58d7a56aaf38eeef5439975427b7af1f6838ad2acd17799e1048451aa43b7",
+    "digest": "518378dd592f5a59476c78bc02f8f72fd91cb10232395764e5f464348aad759a",
     "scope": "document_without_integrity",
     "signatures": []
   },

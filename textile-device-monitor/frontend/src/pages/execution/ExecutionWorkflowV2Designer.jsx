@@ -5,6 +5,7 @@ import { applyWorkflowReleaseV2, preflightWorkflowReleaseV2, compileWorkflowDesi
 import ExecutionChrome from './ExecutionChrome';
 import WorkflowCanvas from './WorkflowCanvas';
 import SchemaFields from './SchemaFields';
+import TemplatePicker from './TemplatePicker';
 import { effectiveSchemas, graphEdges, graphNodes, parseMapping, portableEdge, schemaDefaults, specKey } from './v2Designer';
 import './execution.css';
 
@@ -173,6 +174,15 @@ export default function ExecutionWorkflowV2Designer() {
         {selected && <>
           <Form layout="vertical"><Form.Item label="步骤名称"><Input aria-label="步骤名称" value={selected.name} onChange={event => editNode({ name: event.target.value })} /></Form.Item></Form>
           <Form form={configForm} layout="vertical" onValuesChange={(_changed, values) => editNode({ config: values })}><SchemaFields schema={configSchema} /></Form>
+          {selectedSpec?.config_schema?.properties?.template && <Form.Item label="从安装或共享目录选择模板"><TemplatePicker onSelect={item => {
+            edit(value => {
+              const slot = `template_${selected.id.replace(/[^a-z0-9_]/gi, '_').toLowerCase()}`.slice(0, 64);
+              if (!value.resources.root_slots.some(root => root.slot_id === slot)) value.resources.root_slots.push({ slot_id: slot, name: '模板目录', access: 'read', required: true });
+              const node = value.definition.nodes.find(entry => entry.id === selected.id);
+              node.config = { ...node.config, template: { root_slot: slot, relative_path: item.relative_path, sha256: item.sha256 } };
+              return value;
+            });
+          }} /></Form.Item>}
           <Typography.Title level={5}>输入来源</Typography.Title>
           <Form layout="vertical">{[...new Set([...Object.keys(schemas.input?.properties || {}), ...Object.keys(selected.input_mapping || {})])].map(key => <Form.Item key={key} label={schemas.input?.properties?.[key]?.title || key} required={schemas.input?.required?.includes(key)}>
             <AutoComplete aria-label={`输入 ${key}`} options={dataReferences} value={jsonText(selected.input_mapping?.[key]) || ''} filterOption={(text, option) => `${option.label} ${option.value}`.toLowerCase().includes(text.toLowerCase())} onChange={text => {

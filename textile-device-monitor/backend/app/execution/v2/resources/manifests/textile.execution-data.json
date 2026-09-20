@@ -1,0 +1,49 @@
+{
+  "assets": [],
+  "distribution_digest": "64b3c955fab06f2a6678f1ee19b924889dc6ca44f80a4b184adc96da9d767847",
+  "engine_version_range": ">=2.2.0 <3.0.0",
+  "manifest_schema_version": "1.0",
+  "pack_id": "textile.execution-data",
+  "pack_version": "1.0.0",
+  "provides": {
+    "capabilities": [],
+    "connectors": [],
+    "nodes": [
+      {
+        "contract_digest": "9561e05d901a95d4a68a9f956f03c269ba5effde404e7ebf8b0d94a6ed422409",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "a018d0808eb4a1a5bb4a55b734400ec8021be7f778c689e224e27fe4083ea2e7",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/data-nodes.json",
+        "type": "data.transform",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "6da7c7af1cffb9369b88738f987a633399f2f2cb8b2a2c22a2f1821e6a9c9869",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "ef0ad7217e1ee82808010cf4e1dc5358ba55f501b341f66b13988f9899f9ef1a",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/data-nodes.json",
+        "type": "data.validate",
+        "type_version": 1
+      },
+      {
+        "contract_digest": "ea15ca177631463bf20a910521902626d15308660774498a561206202ef16111",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "b77f2be3b56cad770c965428665f6e9d2a4b558638946b760b23643264e4ba4c",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/data-nodes.json",
+        "type": "data.python",
+        "type_version": 1
+      }
+    ]
+  },
+  "resource_paths": [
+    "v2/data_handlers.py",
+    "v2/python_runner.py",
+    "v2/resources/node_specs/data-nodes.json"
+  ]
+}

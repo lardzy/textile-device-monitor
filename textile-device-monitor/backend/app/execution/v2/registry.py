@@ -1348,6 +1348,8 @@ def _build_installed_registry() -> InstalledRegistry:
         )
 
     from app.execution.v2.native_handlers import native_handler
+    from app.execution.v2.data_handlers import NATIVE_HANDLERS as data_handlers
+    from app.execution.v2.workbook_render import render as render_workbook
     from app.execution.v2.regenerated_fiber_handlers import NATIVE_HANDLERS as domain_handlers
     from app.execution.v2.domain_record_handlers import NATIVE_HANDLERS as record_handlers
     from app.execution.v2.record_input_handlers import NATIVE_HANDLERS as record_input_handlers
@@ -1404,6 +1406,8 @@ def _build_installed_registry() -> InstalledRegistry:
         handler_channel = descriptor["handler_channel"]
         handler = (
             native_handler(identity[0], identity[1])
+            or data_handlers.get(identity)
+            or (render_workbook if identity == ("workbook.render", 1) else None)
             or domain_handlers.get(identity) or record_handlers.get(identity) or record_input_handlers.get(identity)
             or (execute_query_node if identity == ("connector.query", 1) else None)
             if handler_channel in {"worker_callable", "kernel_builtin"}

@@ -93,3 +93,4 @@ NATIVE_HANDLERS = {
     ("microscopy.original_record.render", 1): original_record,
     ("microscopy.check_record.render", 1): check_record,
 }
+NATIVE_HANDLERS.update({(name, 2): handler for (name, version), handler in list(NATIVE_HANDLERS.items()) if name.startswith("microscopy.")})

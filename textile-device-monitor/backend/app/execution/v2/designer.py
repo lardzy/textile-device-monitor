@@ -28,6 +28,9 @@ def compile_document(document):
     issues = _validate_document_shape(seal(candidate))
     if issues:
         return {"document": candidate, "content_valid": False, "issues": issues}
+    from app.execution.v2.domain_profiles import expand_domain_profiles
+
+    expand_domain_profiles(candidate)
     registry = get_installed_registry()
     connectors = {}
     try:
