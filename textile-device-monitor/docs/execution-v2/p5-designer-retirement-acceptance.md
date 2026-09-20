@@ -15,7 +15,7 @@
 - `/execution/v2/designer/catalog`：原生节点、Connector 元数据、空白图和内置组合。
 - `/execution/v2/designer/compile`：只生成可审阅候选，复用 Release 校验；自动解析准确依赖、计算能力及摘要。修改签名文档产生新的未签名候选。
 - `core.start@2`、`core.end@2` 以原生契约读取流程输入输出；`native_p4` 的九条候选全部没有兼容节点。
-- 当前注册表有 31 份原生契约、39 份历史兼容契约、7 个 Pack；完整能力文档为 80 个绑定/78 ready。Kernel 2.8.0、Files 1.1.1、Workbook 1.0.1、v1 Compat 2.1.4、Domain Records 1.1.0、Regenerated Fiber 1.0.0、Legacy Connector 1.6.0。
+- 当前注册表有 31 份原生契约、39 份历史兼容契约、7 个 Pack；完整能力文档为 80 个绑定/78 ready。Kernel 2.8.1、Files 1.1.1、Workbook 1.0.1、v1 Compat 2.1.4、Domain Records 1.1.0、Regenerated Fiber 1.0.0、Legacy Connector 1.6.0。
 - v1 新建画布入口已从日常管理界面移除。v1 人工业务协议移入 `compatibility_human.py`，原生表单由统一协议处理；旧编辑/重试 API 仍供历史维护使用。
 
 ## 引用审计与退场

@@ -477,4 +477,3 @@ def normalize_v1_submission(db, *, run, node_run, data, task=None, actor=None):
         "primary_file_id": primary_file_id,
         "primary_file": primary_file,
     }
-
