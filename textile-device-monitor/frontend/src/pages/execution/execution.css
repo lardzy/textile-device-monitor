@@ -2521,3 +2521,8 @@
   color: #526076;
 }
 .execution-release-body > details[open] > summary { margin-bottom: 12px; }
+.execution-schema-editor__field { padding: 8px 0; border-bottom: 1px solid #eef0f4; }
+.execution-designer-object { padding: 8px 12px; border-left: 2px solid #edf1f7; display: grid; gap: 8px; }
+.execution-designer-object .ant-input, .execution-designer-object .ant-select { width: 100%; }
+.execution-designer-array-row { padding: 8px; border: 1px solid #edf1f7; border-radius: 6px; width: 100%; }
+.execution-v2-designer pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }

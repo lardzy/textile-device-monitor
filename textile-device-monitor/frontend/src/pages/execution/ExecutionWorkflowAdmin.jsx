@@ -123,13 +123,13 @@ export default function ExecutionWorkflowAdmin() {
       key: 'actions',
       width: 200,
       render: (_, row) => row.management_mode === 'release_v2' ? (
-        <Button
+        <Space size={0}><Button type="link" icon={<EditOutlined />} onClick={() => navigate(`/execution/admin/designer/workflows/${row.id || row.workflow_id}`)}>设计</Button><Button
           type="link"
           icon={<FileTextOutlined />}
           onClick={() => navigate(releasePathFor(row))}
         >
           Release 管理
-        </Button>
+        </Button></Space>
       ) : (
         <Space size={0}>
           <Button

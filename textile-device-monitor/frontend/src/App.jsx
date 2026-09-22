@@ -29,7 +29,6 @@ const ExecutionRunHistory = lazy(() => import('./pages/execution/ExecutionRunHis
 const ExecutionRunWorkspace = lazy(() => import('./pages/execution/ExecutionRunWorkspace'));
 const ExecutionTaskInbox = lazy(() => import('./pages/execution/ExecutionTaskInbox'));
 const ExecutionWorkflowAdmin = lazy(() => import('./pages/execution/ExecutionWorkflowAdmin'));
-const ExecutionWorkflowDesigner = lazy(() => import('./pages/execution/ExecutionWorkflowDesigner'));
 const ExecutionWorkflowV2Designer = lazy(() => import('./pages/execution/ExecutionWorkflowV2Designer'));
 const ExecutionWorkflowReleaseManager = lazy(() => import('./pages/execution/ExecutionWorkflowReleaseManager'));
 const ExecutionSettings = lazy(() => import('./pages/execution/ExecutionSettings'));
@@ -104,8 +103,9 @@ const appRoutes = (
           <Route path="settings" element={<ExecutionSettings />} />
           <Route element={<ExecutionAdminRoute />}>
             <Route path="admin" element={<ExecutionWorkflowAdmin />} />
-            <Route path="admin/workflows/:workflowId" element={<ExecutionWorkflowDesigner />} />
+            <Route path="admin/workflows/:workflowId" element={<ExecutionWorkflowV2Designer />} />
             <Route path="admin/designer" element={<ExecutionWorkflowV2Designer />} />
+            <Route path="admin/designer/workflows/:workflowId" element={<ExecutionWorkflowV2Designer />} />
             <Route path="admin/designer/:releaseId" element={<ExecutionWorkflowV2Designer />} />
             <Route path="admin/releases" element={<ExecutionWorkflowReleaseManager />} />
             <Route path="admin/releases/:releaseId" element={<ExecutionWorkflowReleaseManager />} />

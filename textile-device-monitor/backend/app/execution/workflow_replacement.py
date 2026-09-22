@@ -44,7 +44,7 @@ def assert_not_archived(workflow: ExecutionWorkflow) -> None:
 
 
 def is_catalog_workflow(workflow: ExecutionWorkflow) -> bool:
-    return workflow.archived_at is None and not (
+    return workflow.published_version_number is not None and workflow.archived_at is None and not (
         workflow.replaces_workflow_id and not workflow.is_enabled
     )
 

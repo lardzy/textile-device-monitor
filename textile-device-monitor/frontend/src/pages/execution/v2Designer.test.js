@@ -29,3 +29,59 @@ describe('v2 designer document transformations', () => {
     expect(effectiveSchemas({ config: { operation_ref: 'legacy.write@1' } }, { schema_bindings: { output: { source: 'operation_spec' } } }, [{ operations: [{ operation_ref: 'legacy.write@1', output_schema: output }] }]).output).toEqual(output);
   });
 });
+
+import { deleteSelection, referenceIssues, rewriteOutputReferences, insertOnEdge, validConnection, designerHistory } from './v2Designer';
+const graph = () => ({ definition: {
+  nodes: [
+    { id: 'a', type: 'data.python', type_version: 1, config: { output_schema: { type: 'object', properties: { result: { type: 'object', properties: { value: { type: 'string' } }, additionalProperties: false } }, additionalProperties: false } }, input_mapping: {} },
+    { id: 'b', type: 'data.python', type_version: 1, config: { code: "$.nodes.a.output.result.value", input_schema: { type: 'object', properties: { payload: { type: 'array', items: { type: 'string' } } } } }, input_mapping: { payload: ['$.nodes.a.output.result.value'] } },
+  ], edges: [{ id: 'ab', source: 'a', target: 'b', condition: { path: '$.nodes.a.output.result.value', operator: 'truthy' } }],
+}, fixtures: [{ fixture_id: 'test', mocks: [{ node_id: 'a' }], assertions: [{ path: '$.nodes.a.output.result.value', operator: 'eq', value: 'example' }] }] });
+const specs = [{ type: 'data.python', type_version: 1, schema_bindings: { input: { source: 'node_config', pointer: '/input_schema' }, output: { source: 'node_config', pointer: '/output_schema' } } }];
+describe('reliable graph editing', () => {
+  it('deletes nodes and mocks together, retains broken references and assertions, restores atomically', () => {
+    const initial = { document: graph(), selection: { nodes: ['a'], edges: [] } };
+    const state = designerHistory({ present: initial, past: [], future: [] }, { type: 'edit', update: value => ({ ...value, document: deleteSelection(value.document, ['a']) }) });
+    expect(state.present.document.definition.edges).toEqual([]);
+    expect(state.present.document.fixtures[0].mocks).toEqual([]);
+    expect(referenceIssues(state.present.document, specs).map(issue => issue.message)).toEqual(['来源已删除', '来源已删除']);
+    expect(designerHistory(state, { type: 'undo' }).present).toEqual(initial);
+  });
+  it('rewrites exact nested output references without editing code, literals or similarly named fields', () => {
+    const document = graph();
+    document.definition.nodes[1].input_mapping.other = '$.nodes.a.output.result_other';
+    const renamed = rewriteOutputReferences(document, 'a', 'result', 'renamed');
+    expect(renamed.definition.nodes[1].input_mapping.payload[0]).toBe('$.nodes.a.output.renamed.value');
+    expect(renamed.definition.edges[0].condition.path).toBe('$.nodes.a.output.renamed.value');
+    expect(renamed.fixtures[0].assertions[0].path).toBe('$.nodes.a.output.renamed.value');
+    expect(renamed.definition.nodes[1].config.code).toBe('$.nodes.a.output.result.value');
+    expect(renamed.definition.nodes[1].input_mapping.other).toBe('$.nodes.a.output.result_other');
+  });
+  it('rechecks disconnected, removed and type-changed source fields', () => {
+    const document = graph();
+    expect(referenceIssues(document, specs)).toEqual([]);
+    document.definition.nodes[0].config.output_schema.properties.result.properties.value.type = 'number';
+    expect(referenceIssues(document, specs)[0].message).toBe('来源字段类型不匹配');
+    delete document.definition.nodes[0].config.output_schema.properties.result.properties.value;
+    expect(referenceIssues(document, specs)[0].message).toBe('来源字段不存在');
+    document.definition.edges = [];
+    expect(referenceIssues(document, specs)[0].message).toBe('来源已不在上游');
+  });
+  it('inserts on an edge without moving its branch condition and rejects cycles', () => {
+    const document = graph();
+    const result = insertOnEdge(document, 'ab', { id: 'middle', type: 'data.python' });
+    expect(result.definition.edges[0]).toMatchObject({ source: 'a', target: 'middle', condition: document.definition.edges[0].condition });
+    expect(result.definition.edges[1]).toMatchObject({ source: 'middle', target: 'b' });
+    expect(validConnection(result.definition, { source: 'b', target: 'a' })).toBe(false);
+    expect(validConnection(document.definition, { source: 'a', target: 'b', sourceHandle: null, targetHandle: null })).toBe(false);
+  });
+  it('bounds history and clears redo after a new edit', () => {
+    let state = { present: { n: 0 }, past: [], future: [] };
+    for (let i = 0; i < 60; i += 1) state = designerHistory(state, { type: 'edit', update: value => ({ n: value.n + 1 }) });
+    expect(state.past).toHaveLength(50);
+    state = designerHistory(state, { type: 'undo' });
+    expect(state.future[0].n).toBe(60);
+    state = designerHistory(state, { type: 'edit', update: value => ({ n: value.n + 2 }) });
+    expect(state.future).toEqual([]);
+  });
+});

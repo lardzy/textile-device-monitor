@@ -62,3 +62,119 @@ export const effectiveSchemas = (node, spec, connectors = [], definition = {}) =
   });
   return result;
 };
+
+export const isReference = value => typeof value === 'string' && value.startsWith('$.');
+
+export function collectReferences(document) {
+  const result = [];
+  const visit = (value, path, owner) => {
+    if (isReference(value)) result.push({ expression: value, path, ...owner });
+    else if (Array.isArray(value)) value.forEach((item, index) => visit(item, [...path, index], owner));
+    else if (value && typeof value === 'object') Object.entries(value).forEach(([key, item]) => visit(item, [...path, key], owner));
+  };
+  (document.definition?.nodes || []).forEach((node, index) => visit(node.input_mapping, ['definition', 'nodes', index, 'input_mapping'], { nodeId: node.id, label: node.name }));
+  (document.definition?.edges || []).forEach((edge, index) => {
+    if (isReference(edge.condition?.path)) result.push({ expression: edge.condition.path, path: ['definition', 'edges', index, 'condition', 'path'], edgeId: edge.id, nodeId: edge.source, allowSelf: true, label: edge.label || '连接条件' });
+  });
+  (document.fixtures || []).forEach((fixture, index) => {
+    (fixture.assertions || []).forEach((assertion, position) => {
+      if (isReference(assertion.path)) result.push({ expression: assertion.path, path: ['fixtures', index, 'assertions', position, 'path'], fixtureId: fixture.fixture_id || index, label: '样例断言' });
+    });
+  });
+  return result;
+}
+
+export function referenceIssues(document, specs = [], connectors = []) {
+  if (!document) return [];
+  const definition = document.definition;
+  return collectReferences(document).flatMap(reference => {
+    const source = [...definition.nodes].sort((a, b) => b.id.length - a.id.length).find(node => ['output', 'status'].some(kind => reference.expression === `$.nodes.${node.id}.${kind}` || reference.expression.startsWith(`$.nodes.${node.id}.${kind}.`)));
+    const match = source ? reference.expression.slice(`$.nodes.${source.id}.`.length).match(/^(output|status)(?:\.(.*))?$/) : reference.expression.match(/^\$\.nodes\.(.+?)\.(output|status)(?:\.(.*))?$/);
+    if (!match) return [];
+    const [id, kind, suffix] = source ? [source.id, match[1], match[2]] : match.slice(1);
+    let message;
+    if (!source) message = '来源已删除';
+    else if (reference.fixtureId === undefined && !(reference.allowSelf && reference.nodeId === id) && !upstreamNodeIds(definition, reference.nodeId).has(id)) message = '来源已不在上游';
+    else if (kind === 'output') {
+      let schema = effectiveSchemas(source, specs.find(spec => specKey(spec) === specKey(source)), connectors, definition).output;
+      for (const key of suffix ? suffix.split('.') : []) {
+        if (!schema) break;
+        if (schema.type === 'array' && /^\d+$/.test(key)) schema = schema.items;
+        else if (schema.properties?.[key]) schema = schema.properties[key];
+        else { if (schema.additionalProperties === false) message = '来源字段不存在'; schema = undefined; break; }
+      }
+      if (!message && reference.fixtureId === undefined && !reference.edgeId && schema) {
+        const target = definition.nodes.find(node => node.id === reference.nodeId);
+        let expected = effectiveSchemas(target, specs.find(spec => target && specKey(spec) === specKey(target)), connectors, definition).input;
+        for (const key of reference.path.slice(4)) expected = expected?.type === 'array' ? expected.items : expected?.properties?.[key];
+        if (expected && !compatibleTypes(schema, expected)) message = '来源字段类型不匹配';
+      }
+    }
+    return message ? [{ ...reference, message, sourceNodeId: id }] : [];
+  });
+}
+
+export function deleteSelection(document, nodeIds, edgeIds = []) {
+  const result = structuredClone(document);
+  const removed = new Set(nodeIds);
+  result.definition.nodes = result.definition.nodes.filter(node => !removed.has(node.id));
+  result.definition.edges = result.definition.edges.filter(edge => !removed.has(edge.source) && !removed.has(edge.target) && !edgeIds.includes(edge.id));
+  (result.fixtures || []).forEach(fixture => {
+    if (Array.isArray(fixture.mocks)) fixture.mocks = fixture.mocks.filter(mock => !removed.has(mock.node_id));
+  });
+  return result;
+}
+
+export function rewriteOutputReferences(document, nodeId, oldKey, newKey) {
+  const result = structuredClone(document);
+  const prefix = `$.nodes.${nodeId}.output.${oldKey}`;
+  collectReferences(result).forEach(reference => {
+    if (reference.expression !== prefix && !reference.expression.startsWith(`${prefix}.`)) return;
+    let parent = result;
+    reference.path.slice(0, -1).forEach(key => { parent = parent[key]; });
+    parent[reference.path.at(-1)] = `$.nodes.${nodeId}.output.${newKey}${reference.expression.slice(prefix.length)}`;
+  });
+  return result;
+}
+
+export function validConnection(definition, connection, replacingId) {
+  const { source, target, sourceHandle, targetHandle } = connection;
+  if (!source || !target || source === target) return false;
+  const from = definition.nodes.find(node => node.id === source);
+  const to = definition.nodes.find(node => node.id === target);
+  if (!from || !to || from.type === 'core.end' || to.type === 'core.start') return false;
+  const edges = definition.edges.filter(edge => edge.id !== replacingId);
+  if (edges.some(edge => edge.source === source && edge.target === target && (edge.source_handle || '') === (sourceHandle || '') && (edge.target_handle || '') === (targetHandle || ''))) return false;
+  return !upstreamNodeIds({ ...definition, edges }, source).has(target);
+}
+
+export function insertOnEdge(document, edgeId, node) {
+  const result = structuredClone(document);
+  const edge = result.definition.edges.find(item => item.id === edgeId);
+  result.definition.nodes.push(node);
+  if (edge) {
+    const target = edge.target, targetHandle = edge.target_handle, join = edge.join_policy;
+    edge.target = node.id; delete edge.target_handle; edge.join_policy = 'all';
+    result.definition.edges.push({ id: `edge-${crypto.randomUUID()}`, source: node.id, target, join_policy: join || 'all', ...(targetHandle ? { target_handle: targetHandle } : {}) });
+  }
+  return result;
+}
+
+export function variableTree(schema, prefix, label, depth = 0) {
+  const children = depth < 8 ? Object.entries(schema?.properties || {}).map(([key, value]) => variableTree(value, `${prefix}.${key}`, value.title || key, depth + 1)) : [];
+  if (schema?.type === 'array' && schema.items && depth < 8) children.push(variableTree(schema.items, `${prefix}.0`, '第 1 项', depth + 1));
+  return { title: label, value: prefix, key: prefix, children, schema };
+}
+
+export function designerHistory(state, action) {
+  if (action.type === 'reset') return { present: action.value, past: [], future: [], group: null };
+  if (action.type === 'undo' && state.past.length) return { present: state.past.at(-1), past: state.past.slice(0, -1), future: [state.present, ...state.future], group: null };
+  if (action.type === 'redo' && state.future.length) return { present: state.future[0], past: [...state.past, state.present].slice(-50), future: state.future.slice(1), group: null };
+  if (action.type === 'select') return JSON.stringify(state.present?.selection) === JSON.stringify(action.selection) ? state : { ...state, present: { ...state.present, selection: action.selection } };
+  if (action.type === 'break') return { ...state, group: null };
+  if (action.type !== 'edit' || !state.present) return state;
+  const next = action.update(structuredClone(state.present));
+  if (JSON.stringify(next) === JSON.stringify(state.present)) return state;
+  const coalesce = action.group && action.group === state.group && action.at - state.at < 1000;
+  return { present: next, past: coalesce ? state.past : [...state.past, state.present].slice(-50), future: [], group: action.group, at: action.at };
+}

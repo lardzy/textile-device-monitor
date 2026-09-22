@@ -275,6 +275,7 @@ class ExecutionWorkflow(Base):
     name = Column(String(200), nullable=False)
     description = Column(Text)
     draft_definition = Column(JSON_VARIANT, nullable=False)
+    designer_draft = Column(JSON_VARIANT)
     management_mode = Column(
         String(20), nullable=False, default="draft_v1", index=True
     )

@@ -1419,6 +1419,30 @@ def _content_semantic_issues(
         for_publish=False,
         compatibility_node_ids=compatibility_node_ids,
     )
+    # Assertions remain visible after deletion, but a release cannot carry
+    # dangling sample references. Sample data and Python source are literals.
+    from app.execution.validation import _validate_mapping_reference, _schema_at_path, ValidationIssue
+    sample_issues = []
+    lock, _ = _resolve_dependencies(document, [])
+    contracts = {item["node_id"]: SimpleNamespace(output_schema=item["effective_output_schema"])
+                 for item in lock["node_instances"]}
+    nodes = {node["id"]: node for node in projection["nodes"]}
+    for index, fixture in enumerate(document.get("fixtures") or []):
+        for mock in fixture.get("mocks") or []:
+            if mock["node_id"] not in nodes:
+                sample_issues.append(ValidationIssue("fixture_node_missing", "样例 Mock 的节点不存在", f"$.fixtures[{index}].mocks"))
+        for position, assertion in enumerate(fixture.get("assertions") or []):
+            expression = assertion["path"]
+            path = f"$.fixtures[{index}].assertions[{position}].path"
+            if expression == "$.outputs" or expression.startswith("$.outputs."):
+                _, rejected = _schema_at_path(document["definition"]["output_schema"], expression.split(".")[2:])
+                if rejected:
+                    sample_issues.append(ValidationIssue("fixture_output_missing", "样例断言的输出字段不存在", path))
+                continue
+            source = next((key for key in sorted(nodes, key=len, reverse=True) if expression.startswith(f"$.nodes.{key}.")), "")
+            _validate_mapping_reference(expression=expression, path=path, target_node_id=source,
+                target_schema=None, input_schema=projection["input_schema"], global_schema=projection["global_schema"],
+                node_by_id=nodes, node_contract_by_id=contracts, outgoing={}, issues=sample_issues, allow_self=True)
     return [
         _issue(
             issue.code,
@@ -1426,7 +1450,7 @@ def _content_semantic_issues(
             issue.message,
             level=issue.level,
         )
-        for issue in result.issues
+        for issue in (*result.issues, *sample_issues)
     ]
 
 

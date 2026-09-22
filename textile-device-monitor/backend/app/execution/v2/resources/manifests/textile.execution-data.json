@@ -1,10 +1,10 @@
 {
   "assets": [],
-  "distribution_digest": "62f89243ba1f9a56baa5a9e11bb5423be41277dd36565f62c24f90f3d7157169",
+  "distribution_digest": "a60dfab615647f603fb422e31788494152be64062ea87212ab7c59e22ea9dda4",
   "engine_version_range": ">=2.2.0 <3.0.0",
   "manifest_schema_version": "1.0",
   "pack_id": "textile.execution-data",
-  "pack_version": "1.0.1",
+  "pack_version": "1.0.2",
   "provides": {
     "capabilities": [],
     "connectors": [],
@@ -12,7 +12,7 @@
       {
         "contract_digest": "9561e05d901a95d4a68a9f956f03c269ba5effde404e7ebf8b0d94a6ed422409",
         "handler_channel": "worker_callable",
-        "implementation_digest": "a7df474805a256a6d68b70ebbfa3a1a9756365675684d3da7b84f6ed5234267d",
+        "implementation_digest": "f7e01db479c1c7aa63d9b0f3c394195a3fe47e021e0b8d354fc3b1ee04746d27",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/data-nodes.json",
@@ -22,7 +22,7 @@
       {
         "contract_digest": "6da7c7af1cffb9369b88738f987a633399f2f2cb8b2a2c22a2f1821e6a9c9869",
         "handler_channel": "worker_callable",
-        "implementation_digest": "2a40b025e5b8dea34bdce8cd83cd414425fc04dd4ea35d4375ac79e8c2cd4861",
+        "implementation_digest": "95c23e18e8c3ad8b7f09c0d49f7752fb52ea5db0ece2e595e50e612de2ea4d49",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/data-nodes.json",
@@ -32,7 +32,7 @@
       {
         "contract_digest": "ea15ca177631463bf20a910521902626d15308660774498a561206202ef16111",
         "handler_channel": "worker_callable",
-        "implementation_digest": "ca830f8ae406f1c0921d87ca6a65c091dc1f1b37f8348e39bc7bf28300b2221c",
+        "implementation_digest": "abc0ca329a1c010de9ee487051860e2f41be486eab51b4ed9830257c6e417dd1",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/data-nodes.json",

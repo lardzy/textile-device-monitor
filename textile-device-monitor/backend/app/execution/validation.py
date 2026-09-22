@@ -474,6 +474,7 @@ def _validate_mapping_reference(
     node_contract_by_id: dict[str, Any],
     outgoing: dict[str, list[str]],
     issues: list[ValidationIssue],
+    allow_self: bool = False,
 ) -> None:
     source_schema: dict[str, Any] | None = None
     rejected_path = False
@@ -517,7 +518,7 @@ def _validate_mapping_reference(
                 )
             )
             return
-        if not _node_is_upstream(source_id, target_node_id, outgoing):
+        if not (allow_self and source_id == target_node_id) and not _node_is_upstream(source_id, target_node_id, outgoing):
             issues.append(
                 ValidationIssue(
                     "mapping_source_not_upstream",
@@ -1022,6 +1023,16 @@ def validate_definition(
                     outgoing=outgoing,
                     issues=issues,
                 )
+
+    for edge in edges:
+        condition = edge.get("condition")
+        if isinstance(condition, dict) and isinstance(condition.get("path"), str) and edge.get("source") in node_by_id:
+            _validate_mapping_reference(
+                expression=condition["path"], path=f"$.edges[{edge.get('id')}].condition.path",
+                target_node_id=edge["source"], target_schema=None, allow_self=True,
+                input_schema=document.get("input_schema") or {}, global_schema=document.get("global_schema") or {},
+                node_by_id=node_by_id, node_contract_by_id=node_contract_by_id, outgoing=outgoing, issues=issues,
+            )
 
     for source_id, node in node_by_id.items():
         if node.get("type") not in {"branch.condition", "flow.branch"}:

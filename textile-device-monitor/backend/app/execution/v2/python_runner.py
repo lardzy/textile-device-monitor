@@ -11,8 +11,9 @@ import importlib
 import io
 import json
 import sys
+import traceback
 
-MODULES = {"json", "math", "re", "datetime", "decimal", "statistics", "collections", "itertools"}
+MODULES = {"json", "math", "re", "datetime", "decimal", "statistics", "collections", "itertools", "unicodedata"}
 BUILTINS = {"abs", "all", "any", "bool", "dict", "enumerate", "filter", "float", "int", "isinstance", "len",
             "list", "map", "max", "min", "range", "reversed", "round", "set", "sorted", "str", "sum", "tuple", "zip",
             "Exception", "ValueError", "TypeError", "KeyError", "print"}
@@ -43,7 +44,7 @@ class BoundedLog(io.StringIO):
         return super().write(value)
 
 
-def run(payload):
+def run(payload, logs=None):
     tree = validate_source(payload["code"])
     # Imports are loaded before user code. The import hook never resolves arbitrary modules.
     modules = {name: importlib.import_module(name) for name in MODULES}
@@ -53,18 +54,20 @@ def run(payload):
         return modules[name]
     namespace = {"__builtins__": {name: getattr(builtins, name) for name in BUILTINS}}
     namespace["__builtins__"]["__import__"] = allowed_import
-    with contextlib.redirect_stdout(BoundedLog()):
+    logs = logs if logs is not None else BoundedLog()
+    with contextlib.redirect_stdout(logs):
         exec(compile(tree, "<workflow-python-v1>", "exec"), namespace)
         output = namespace["main"](payload["inputs"])
     if not isinstance(output, dict):
         raise ValueError("main(inputs) 必须返回 JSON 对象")
-    encoded = json.dumps({"output": output}, ensure_ascii=False, allow_nan=False)
+    encoded = json.dumps({"output": output, "logs": logs.getvalue()}, ensure_ascii=False, allow_nan=False)
     if len(encoded.encode()) > 1024 * 1024:
         raise ValueError("Python 输出超过 1 MiB")
     return encoded
 
 
 if __name__ == "__main__":
+    logs = BoundedLog()
     try:
         try:
             import resource
@@ -73,7 +76,9 @@ if __name__ == "__main__":
                 resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024,) * 2)
         except ImportError:
             pass
-        print(run(json.loads(sys.stdin.read(1024 * 1024 + 1))))
+        print(run(json.loads(sys.stdin.read(1024 * 1024 + 1)), logs))
     except Exception as error:
-        print(f"{type(error).__name__}: {error}", file=sys.stderr)
+        frames = [frame for frame in traceback.extract_tb(error.__traceback__) if frame.filename == "<workflow-python-v1>"]
+        line = getattr(error, "lineno", None) or (frames[-1].lineno if frames else None)
+        print(json.dumps({"logs": logs.getvalue(), "error": {"stage": "code", "type": type(error).__name__, "message": str(error)[:4000], "line": line}}, ensure_ascii=False))
         sys.exit(1)

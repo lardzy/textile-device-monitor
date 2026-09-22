@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from time import perf_counter
 
 from jsonschema import Draft202012Validator
 
@@ -84,32 +85,55 @@ def validate(context):
     return {"data": data, "valid": not errors, "errors": errors}
 
 
-def python_compute(context):
-    config = context.node["config"]
+def python_test(config, inputs):
+    """The same execution path serves trials and Worker runs; diagnostics stay outside outputs."""
     from app.execution.v2.python_runner import validate_source
-
-    validate_source(config["code"])
-    for direction in ("input", "output"):
-        check_local_schema(config[f"{direction}_schema"])
-    Draft202012Validator(config["input_schema"]).validate(context.input_data)
-    payload = json.dumps({"code": config["code"], "inputs": context.input_data}, ensure_ascii=False, allow_nan=False)
-    if len(payload.encode()) > 1024 * 1024:
-        raise ExecutionApiError(422, "python_input_too_large", "Python 节点输入不能超过 1 MiB")
-    with tempfile.TemporaryDirectory(prefix="workflow-python-") as directory:
-        try:
+    started = perf_counter()
+    report = {"passed": False, "output": None, "logs": "", "error": None}
+    stage = "config"
+    try:
+        if config.get("runtime_version", 1) != 1:
+            raise ValueError("不支持的 Python 运行版本")
+        timeout = config.get("timeout_seconds", 5)
+        if not isinstance(timeout, (int, float)) or not 1 <= timeout <= 30:
+            raise ValueError("执行时间必须为 1–30 秒")
+        for direction in ("input", "output"):
+            check_local_schema(config[f"{direction}_schema"])
+        stage = "code"
+        validate_source(config["code"])
+        stage = "input"
+        Draft202012Validator(config["input_schema"]).validate(inputs)
+        payload = json.dumps({"code": config["code"], "inputs": inputs}, ensure_ascii=False, allow_nan=False)
+        if len(payload.encode()) > 1024 * 1024:
+            raise ValueError("Python 节点输入不能超过 1 MiB")
+        stage = "code"
+        with tempfile.TemporaryDirectory(prefix="workflow-python-") as directory:
             result = subprocess.run(
                 [sys.executable, "-I", "-S", str(Path(__file__).with_name("python_runner.py"))],
                 input=payload, text=True, capture_output=True, cwd=directory,
-                env={}, timeout=config.get("timeout_seconds", 5), check=False,
+                env={}, timeout=timeout, check=False,
             )
-        except subprocess.TimeoutExpired as exc:
-            raise ExecutionApiError(422, "python_timeout", "Python 计算超过执行时间") from exc
-    if result.returncode:
-        raise ExecutionApiError(422, "python_execution_failed", "Python 计算失败", details={"message": result.stderr[:4000]})
-    response = json.loads(result.stdout)
-    output = response["output"]
-    Draft202012Validator(config["output_schema"]).validate(output)
-    return output
+        response = json.loads(result.stdout) if result.stdout else {}
+        report["logs"] = response.get("logs", "")[:16384]
+        if result.returncode:
+            report["error"] = response.get("error") or {"stage": stage, "type": "ProcessError", "message": result.stderr[:4000] or "计算进程退出", "line": None}
+        else:
+            stage = "output"
+            Draft202012Validator(config["output_schema"]).validate(response["output"])
+            report.update(passed=True, output=response["output"])
+    except subprocess.TimeoutExpired:
+        report["error"] = {"stage": "timeout", "type": "Timeout", "message": "Python 计算超过执行时间", "line": None}
+    except Exception as exc:
+        report["error"] = {"stage": stage, "type": type(exc).__name__, "message": str(exc)[:4000], "line": getattr(exc, "lineno", None)}
+    report["duration_ms"] = round((perf_counter() - started) * 1000, 2)
+    return report
+
+
+def python_compute(context):
+    result = python_test(context.node["config"], context.input_data)
+    if not result["passed"]:
+        raise ExecutionApiError(422, "python_timeout" if result["error"]["stage"] == "timeout" else "python_execution_failed", result["error"]["message"], details=result["error"])
+    return result["output"]
 
 
 NATIVE_HANDLERS = {("data.transform", 1): transform, ("data.validate", 1): validate, ("data.python", 1): python_compute}

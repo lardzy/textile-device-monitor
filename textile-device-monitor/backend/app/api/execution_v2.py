@@ -124,6 +124,51 @@ def designer_compile(
     return compile_document(document, exact=exact)
 
 
+@router.post("/designer/drafts", status_code=201)
+def create_designer_draft(
+    document: dict[str, Any] = Body(embed=True),
+    bindings: dict[str, Any] = Body(default={}),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(permission("workflow.design", csrf=True)),
+):
+    from app.execution.v2.drafts import save_draft
+    result = save_draft(db, document=document, bindings=bindings, actor=auth.user)
+    db.commit()
+    return result
+
+
+@router.post("/designer/python-test")
+def designer_python_test(
+    config: dict[str, Any] = Body(embed=True),
+    inputs: dict[str, Any] = Body(embed=True),
+    _auth: AuthContext = Depends(permission("workflow.design", csrf=True)),
+):
+    from app.execution.v2.data_handlers import python_test
+    return python_test(config, inputs)
+
+
+@router.get("/workflows/{workflow_id}/designer-draft")
+def read_designer_draft(
+    workflow_id: str, db: Session = Depends(get_db),
+    _auth: AuthContext = Depends(permission("workflow.design")),
+):
+    from app.execution.v2.drafts import get_draft
+    return get_draft(db, workflow_id)
+
+
+@router.put("/workflows/{workflow_id}/designer-draft")
+def update_designer_draft(
+    workflow_id: str, document: dict[str, Any] = Body(embed=True),
+    revision: int = Body(ge=1), bindings: dict[str, Any] = Body(default={}),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(permission("workflow.design", csrf=True)),
+):
+    from app.execution.v2.drafts import save_draft
+    result = save_draft(db, document=document, bindings=bindings, actor=auth.user, workflow_id=workflow_id, revision=revision)
+    db.commit()
+    return result
+
+
 @router.get("/node-specs/{node_type}/{type_version}")
 def node_spec(
     node_type: str,

@@ -107,6 +107,12 @@ export default function WorkflowCanvas({
   onDrop,
   onDragOver,
   onInit,
+  onDeleteSelection,
+  onUndo,
+  onRedo,
+  onNodeDragStop,
+  onReconnect,
+  isValidConnection,
   defaultViewport,
   fitView = false,
   focusNodeIds = [],
@@ -142,13 +148,22 @@ export default function WorkflowCanvas({
   }, [flowInstance, focusNodeKey]);
 
   return (
-    <ReactFlow
+    <div style={{ height: '100%' }} tabIndex={readonly ? -1 : 0} aria-label="流程画布" onPointerDownCapture={event => {
+      if (!readonly && !event.target.closest('input,textarea,select,[contenteditable="true"]')) event.currentTarget.focus({ preventScroll: true });
+    }} onKeyDown={event => {
+      if (readonly || event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+      if ((event.key === 'Delete' || event.key === 'Backspace') && onDeleteSelection) { event.preventDefault(); onDeleteSelection(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && onUndo) { event.preventDefault(); event.shiftKey ? onRedo?.() : onUndo(); }
+    }}><ReactFlow
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
       onNodesChange={readonly ? undefined : onNodesChange}
       onEdgesChange={readonly ? undefined : onEdgesChange}
       onConnect={readonly ? undefined : onConnect}
+      onReconnect={readonly ? undefined : onReconnect}
+      isValidConnection={isValidConnection}
+      onNodeDragStop={onNodeDragStop}
       onNodeClick={onNodeClick}
       onEdgeClick={onEdgeClick}
       onPaneClick={onPaneClick}
@@ -159,6 +174,9 @@ export default function WorkflowCanvas({
       nodesDraggable={!readonly}
       nodesConnectable={!readonly}
       elementsSelectable
+      selectionOnDrag={!readonly && Boolean(onDeleteSelection)}
+      panOnDrag={onDeleteSelection ? [1, 2] : true}
+      multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
       deleteKeyCode={null}
       fitView={fitView}
       minZoom={0.25}
@@ -180,6 +198,6 @@ export default function WorkflowCanvas({
         }[node.data?.tone] || '#5b7cfa')}
       />
       {children}
-    </ReactFlow>
+    </ReactFlow></div>
   );
 }

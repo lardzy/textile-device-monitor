@@ -109,3 +109,7 @@ export const getWorkflowDesignerCatalogV2 = () => executionV2Client.get('/design
 export const compileWorkflowDesignerV2 = document => executionV2Client.post('/designer/compile', { document });
 export const testWorkflowDesignerV2 = document => executionV2Client.post('/designer/test', { document });
 export const getExecutionCompatibilityAudit = () => executionV2Client.get('/compatibility/audit');
+export const createDesignerDraftV2 = payload => executionV2Client.post('/designer/drafts', payload);
+export const getDesignerDraftV2 = workflowId => executionV2Client.get(`/workflows/${encodeURIComponent(workflowId)}/designer-draft`);
+export const saveDesignerDraftV2 = (workflowId, payload) => executionV2Client.put(`/workflows/${encodeURIComponent(workflowId)}/designer-draft`, payload);
+export const testPythonNodeV2 = payload => executionV2Client.post('/designer/python-test', payload);
