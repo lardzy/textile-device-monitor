@@ -29,13 +29,13 @@ from app.execution.models import (
 from app.execution.adapter_packages import binding_fields, credential_system
 
 
-from app.execution.connector_original_records import (ENTRY as GENERIC_ENTRY, UPLOAD, REVIEW, REFERENCES,
-    upload_summary, review_summary, entry_summary, bind_actor)
+from app.execution.connector_original_records import (ENTRY as GENERIC_ENTRY, UPLOAD, REVIEW, EXCEL_ENTRY, REFERENCES,
+    upload_summary, review_summary, entry_summary, excel_entry_summary, bind_actor)
 
 
 def operation_handler(connector_id, name, version):
     return {UPLOAD: upload_summary, REVIEW: review_summary, GENERIC_ENTRY: entry_summary,
-            GENERIC_UPDATE: update_summary}.get(f"{connector_id}.{name}@{version}")
+            GENERIC_UPDATE: update_summary, EXCEL_ENTRY: excel_entry_summary}.get(f"{connector_id}.{name}@{version}")
 
 
 def workflow_operation_handler(connector_id, name, version):

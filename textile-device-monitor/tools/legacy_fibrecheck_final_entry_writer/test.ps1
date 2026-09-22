@@ -512,6 +512,34 @@ try {
         @('--offline-validate', '--package', $v2EmptyIdentityPath, '--source-root', $sourceDir) 0 `
         @('workbook_verified', 'offline_validation_completed')
 
+    $neutralExcel = $v2EmptyIdentity | ConvertFrom-Json
+    $neutralExcel.schema_version = 5
+    $neutralExcel.check_item_no = '99.CUSTOM'
+    $neutralExcel.check_item_name = 'Custom test'
+    $neutralExcel.task_project.check_item_no = '99.CUSTOM'
+    $neutralExcel.task_project.check_item_name = 'Custom test'
+    $neutralExcel.task_project.check_method = 'CUSTOM/2026'
+    $identity = @('task_check_item_id','check_item_id','check_item_no','check_item_name','check_method','seq_num') | ForEach-Object { [string]$neutralExcel.task_project.$_ }
+    $identityHash = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes(($identity -join [char]0)))
+    $neutralExcel.task_project.project_key = 'task-project:' + ([BitConverter]::ToString($identityHash).Replace('-','').ToLowerInvariant()).Substring(0,24)
+    $neutralExcel.expected_existing_register_count = 3
+    $neutralExcel.excel_record.template_name = 'Custom template.xls'
+    $neutralExcel.excel_record.key_result_count = 2
+    $neutralExcel.excel_record.expected_key_identities = @('A','B')
+    $neutralExcel.excel_record.register.level = 'Level 1'
+    $neutralExcel.excel_record.register.equipment_no = 'SEM-1'
+    $neutralExcel.excel_record.register.check_basis = 'Custom basis'
+    $neutralExcelPath = Join-Path $fixtureDir 'neutral-excel-v5.json'
+    Write-Utf8NoBom $neutralExcelPath ($neutralExcel | ConvertTo-Json -Depth 20)
+    Assert-Case 'neutral v5 custom project template multi-result append' `
+        @('--offline-validate', '--package', $neutralExcelPath, '--source-root', $sourceDir) 0 `
+        @('workbook_verified', 'offline_validation_completed')
+    $neutralExcel.excel_record.key_result_count = 3
+    Write-Utf8NoBom $neutralExcelPath ($neutralExcel | ConvertTo-Json -Depth 20)
+    Assert-Case 'neutral v5 rejects inconsistent result identities' `
+        @('--offline-validate', '--package', $neutralExcelPath, '--source-root', $sourceDir) 21 `
+        @('expected_key_identities_count_mismatch')
+
     # 5103.426 cross-section project (reconciliation sample 260191285)
     $csBase = $v2ValidIdentity.Replace(
         '"check_item_no": "5103.5"', '"check_item_no": "5103.426"').Replace(

@@ -22,7 +22,7 @@ from app.execution.electron_microscopy import (
     request_task_snapshot_refresh,
     task_snapshot_status,
 )
-from app.api.execution import preview_indexed_electron_image
+from app.api.execution import preview_indexed_image
 from app.execution.paper_fiber import (
     PAPER_FIBER_PROJECT_NAME,
     PAPER_FIBER_TEST_METHOD,
@@ -371,11 +371,11 @@ class ElectronMicroscopyWorkflowTests(unittest.TestCase):
     def test_index_preview_checks_fingerprint_and_image_allowlist(self):
         entry = self._image("26A029794-lisy/纵面/preview.BMP")
         self.db.commit()
-        response = preview_indexed_electron_image(entry.id, None, self.db)
+        response = preview_indexed_image(entry.id, None, self.db)
         self.assertEqual(response.media_type, "image/bmp")
         (self.root_path / entry.relative_path).write_bytes(b"changed")
         with self.assertRaises(ExecutionApiError) as raised:
-            preview_indexed_electron_image(entry.id, None, self.db)
+            preview_indexed_image(entry.id, None, self.db)
         self.assertEqual(raised.exception.code, "indexed_image_stale")
 
 

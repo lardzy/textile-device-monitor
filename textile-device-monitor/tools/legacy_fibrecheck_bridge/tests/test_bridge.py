@@ -596,6 +596,37 @@ class BridgeProtocolTests(unittest.TestCase):
             )
         self.assertEqual(result, "claimed")
 
+    def test_neutral_excel_accepts_configured_project_template_and_multiple_results(self):
+        claim = final_entry_claim()
+        operation = claim['operation']
+        summary = operation['request_summary']
+        payload = operation['machine_payload']
+        project = paper_task_project()  # An unrelated project still uses the same Excel protocol.
+        payload.update(schema_version=5, task_project=project, check_item_no=project['check_item_no'],
+                       check_item_name=project['check_item_name'], expected_existing_register_count=2)
+        excel = payload['excel_record']
+        excel.update(template_name='可配置模板', key_result_count=2, expected_key_identities=['A', 'B'])
+        summary.update(operation_ref='legacy_fibrecheck.check_record.excel_entry@1', task_project=project,
+                       template_binding={'template_name':'可配置模板', 'mapping_config_sha256':'b'*64})
+        summary.pop('sample_identity_contract')
+        validated, source = bridge.validate_final_entry_machine_payload(operation, summary)
+        raw = final_entry_raw_receipt()
+        raw.update(package_schema_version=5, task_project=project, check_item_no=project['check_item_no'], check_item_name=project['check_item_name'])
+        for stage in raw['stages']:
+            detail = stage.get('detail', {})
+            if 'schema_version' in detail: detail['schema_version'] = 5
+            if 'expected_existing_register_count' in detail: detail['expected_existing_register_count'] = 2
+            if 'existing_register_count' in detail: detail['existing_register_count'] = 2
+            if 'key_result_count' in detail: detail['key_result_count'] = 2
+            if 'expected_result_count' in detail: detail['expected_result_count'] = project['check_count']
+        converted = bridge.convert_final_entry_receipt(operation, summary, validated, source, raw)
+        self.assertEqual(converted['final_entry']['resulting_register_count'], 3)
+        self.assertEqual(converted['final_entry']['key_result_count'], 2)
+        self.assertEqual(converted['final_entry']['package_schema_version'], 5)
+        raw['task_project'] = final_entry_task_project()
+        with self.assertRaises(bridge.BridgeError):
+            bridge.convert_final_entry_receipt(operation, summary, validated, source, raw)
+
     def test_claim_is_account_scoped_and_mismatch_never_starts_writer(self):
         api = ApiStub(claim=claim_document("another-user"))
         with patch.object(bridge, "api_request", side_effect=api), patch.object(
@@ -637,6 +668,8 @@ class BridgeProtocolTests(unittest.TestCase):
                 bridge.LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION,
                 bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
                 'legacy_fibrecheck.check_record.generic_entry@2',
+                'legacy_fibrecheck.check_record.excel_entry@1',
+                'legacy_fibrecheck.check_record.generic_update@1',
                 bridge.LEGACY_GENERIC_UPDATE_OPERATION,
             ],
         )

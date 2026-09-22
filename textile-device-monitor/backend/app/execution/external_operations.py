@@ -1373,22 +1373,16 @@ def validate_external_receipt(
             require_match_count=False,
             require_check_count=True,
         )
+        expected_package = summary.get("final_entry_package") or {}
+        neutral = expected_package.get("schema_version") == 5
         binding = _strict_object(
-            document.get("template_binding"),
-            path="$.template_binding",
-            required={
-                "binding_version",
-                "image_count",
-                "legacy_template_name",
-                "local_asset_name",
-                "local_asset_sha256",
-                "mapping_config_sha256",
-            },
+            document.get("template_binding"), path="$.template_binding",
+            required=({"template_name", "mapping_config_sha256"} if neutral else {
+                "binding_version", "image_count", "legacy_template_name", "local_asset_name",
+                "local_asset_sha256", "mapping_config_sha256"}),
         )
-        _required_count(
-            binding.get("image_count"),
-            path="$.template_binding.image_count",
-        )
+        if not neutral:
+            _required_count(binding.get("image_count"), path="$.template_binding.image_count")
         if binding != summary.get("template_binding"):
             raise _machine_document_error(
                 "$.template_binding", "校对回执的模板绑定与预检单不一致"
@@ -1426,10 +1420,10 @@ def validate_external_receipt(
             path="$.final_entry.key_result_count",
         )
         if (
-            final_entry.get("package_schema_version") != 2
+            final_entry.get("package_schema_version") != expected_package.get("schema_version")
             or actual_expected_existing != expected_existing
             or actual_resulting != expected_existing + 1
-            or actual_key_count != 1
+            or actual_key_count != (expected_package.get("excel_record") or {}).get("key_result_count")
             or final_entry.get("content_sha256")
             != artifact.get("content_sha256")
             or final_entry.get("proofed") is not True
@@ -5744,6 +5738,7 @@ def _final_entry_reconciliation_expectations(
     )
     exceptional_append = bool(
         isinstance(summary.get("existing_record_decision"), dict)
+        or (summary.get("final_entry_package") or {}).get("schema_version") in {4, 5}
         or (
             isinstance(expected_task_count, int)
             and not isinstance(expected_task_count, bool)
@@ -5794,6 +5789,11 @@ def _final_entry_expected_reconciliation_evidence(
         "expected_existing_register_count": existing,
         "writer_stage": attempt.current_stage,
     }
+    if (operation.request_summary.get("final_entry_package") or {}).get("schema_version") == 5:
+        return {**common,
+            "confirm_completed": {"receipt": "完整的 Excel Writer 回读回执；按原操作身份和文件摘要核验"},
+            "confirm_no_side_effect": {"actual_register_count": existing, "target_file_count": 0,
+                                       "writer_stage": attempt.current_stage, "latest_allowed_writer_stage": write_boundary}}
     return {
         **common,
         "confirm_completed": {
@@ -6043,6 +6043,15 @@ def _validate_final_entry_reconciliation_evidence(
         _operation_stage_profile(operation)
     )
     boundary_index = attempt_stages.index(write_boundary)
+    if (operation.request_summary.get("final_entry_package") or {}).get("schema_version") == 5:
+        if action == "confirm_completed":
+            return validate_external_receipt(operation, evidence.get("receipt") or {})
+        if (evidence.get("writer_stage") != attempt.current_stage
+                or attempt_stages.index(attempt.current_stage) > boundary_index
+                or evidence.get("actual_register_count") != expected["expected_existing_register_count"]
+                or evidence.get("target_file_count") != 0):
+            raise conflict("external_reconciliation_evidence_incomplete", "登记状态、文件或写入阶段未能证明没有写入")
+        return None
 
     def reject(reason: str, **details: Any) -> None:
         raise ExecutionApiError(
@@ -7070,9 +7079,8 @@ def claim_approved_external_operation(
             is False
         ):
             continue
-        from app.execution.connector_original_records import REFERENCES
         exact_reference = (operation.request_summary.get("connector_submission") or {}).get("operation_ref")
-        if exact_reference in REFERENCES and exact_reference not in supported_types:
+        if exact_reference and exact_reference not in supported_types:
             continue
         if node_run is not None and node_run.status != "waiting_external":
             raise conflict(

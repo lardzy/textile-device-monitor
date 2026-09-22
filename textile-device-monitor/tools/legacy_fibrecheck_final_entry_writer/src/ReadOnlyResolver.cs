@@ -373,10 +373,9 @@ namespace LegacyFibreCheckFinalEntryWriter
                 ? package.ExcelRecord.TemplateName == "微观形貌.xls"
                 : FinalEntryPackage.SupportedMicroscopyTemplates.ContainsKey(
                     package.ExcelRecord.TemplateName);
-            if (!FinalEntryPackage.IsSupportedExcelProject(
-                    package.CheckItemNo, package.CheckItemName)
-                || !string.IsNullOrWhiteSpace(snapshot.OriginalDataInputUiClassName)
-                || !templateSupported)
+            if ((package.SchemaVersion != 5 && (!FinalEntryPackage.IsSupportedExcelProject(
+                    package.CheckItemNo, package.CheckItemName) || !templateSupported))
+                || !string.IsNullOrWhiteSpace(snapshot.OriginalDataInputUiClassName))
             {
                 throw new PackageValidationException("excel_route_not_supported_in_v1");
             }
@@ -416,7 +415,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                         : FinalEntryPackage.SupportedMicroscopyTemplates.ContainsKey(
                             templateName);
                     if (string.IsNullOrWhiteSpace(recordId) || !recordIds.Add(recordId)
-                        || !supportedTemplate)
+                        || (package.SchemaVersion != 5 && !supportedTemplate))
                     {
                         throw new PackageValidationException(
                             "existing_excel_register_template_or_identity_invalid");
@@ -433,8 +432,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 db, FileReferenceCountSql, package, snapshot, null);
             snapshot.ExistingProofedCount = Count(
                 db, ProofedCountSql, package, snapshot, null);
-            if (snapshot.ExistingFileReferenceCount != snapshot.ExistingRegisterCount
-                || snapshot.ExistingProofedCount != snapshot.ExistingRegisterCount)
+            if (package.SchemaVersion != 5 && (snapshot.ExistingFileReferenceCount != snapshot.ExistingRegisterCount
+                || snapshot.ExistingProofedCount != snapshot.ExistingRegisterCount))
             {
                 throw new PackageValidationException("existing_excel_records_incomplete");
             }
@@ -458,11 +457,13 @@ namespace LegacyFibreCheckFinalEntryWriter
                         && identity != "纵面" && identity != "横截面";
                     bool identityDuplicate = package.SchemaVersion == 1
                         && !existingIdentities.Add(identity);
-                    if (!recordIds.Contains(recordId) || !linkedRecordIds.Add(recordId)
+                    string keyIdentity = recordId + "\0" + Text(row, "SeqNum");
+                    linkedRecordIds.Add(recordId);
+                    if (!recordIds.Contains(recordId) || snapshot.ExistingKeyIdentityByRecordId.ContainsKey(keyIdentity)
                         || !snapshot.ExistingExcelRecordTemplates.TryGetValue(
                             recordId, out registeredTemplate)
                         || identityInvalid || identityDuplicate
-                        || Text(row, "SeqNum") != "1"
+                        || (package.SchemaVersion != 5 && Text(row, "SeqNum") != "1")
                         || !string.Equals(Text(row, "CheckItemName"),
                             package.CheckItemName, StringComparison.Ordinal)
                         || !string.Equals(Text(row, "ExcelTemplateName"),
@@ -472,7 +473,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                             "existing_excel_key_contract_invalid");
                     }
                     snapshot.ExistingKeyIdentities.Add(identity);
-                    snapshot.ExistingKeyIdentityByRecordId.Add(recordId, identity);
+                    snapshot.ExistingKeyIdentityByRecordId.Add(keyIdentity, identity);
                     AppendCanonical(identityCanonical, recordId);
                     AppendCanonical(identityCanonical, identity);
                     AppendCanonical(identityCanonical, Text(row, "SeqNum"));
@@ -480,12 +481,12 @@ namespace LegacyFibreCheckFinalEntryWriter
                     AppendCanonical(identityCanonical, Text(row, "ExcelTemplateName"));
                 }
             }
-            if (snapshot.ExistingKeyResultCount != snapshot.ExistingRegisterCount)
+            if (package.SchemaVersion != 5 && snapshot.ExistingKeyResultCount != snapshot.ExistingRegisterCount)
             {
                 throw new PackageValidationException("existing_excel_key_result_count_mismatch");
             }
             snapshot.ExistingKeyLinkedRecordCount = linkedRecordIds.Count;
-            if (snapshot.ExistingKeyLinkedRecordCount != snapshot.ExistingRegisterCount
+            if ((package.SchemaVersion != 5 && snapshot.ExistingKeyLinkedRecordCount != snapshot.ExistingRegisterCount)
                 || Convert.ToInt32(db.Scalar(
                     ExcelKeyScopeMismatchCountSql,
                     new List<DbParam>
@@ -507,8 +508,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                     throw new PackageValidationException("key_identity_already_exists");
                 }
             }
-            VerifySelectedSampleIdentity(
-                package.ExcelRecord.ExpectedKeyIdentities[0], snapshot);
+            if (package.SchemaVersion != 5)
+                VerifySelectedSampleIdentity(package.ExcelRecord.ExpectedKeyIdentities[0], snapshot);
 
             // This explicit SELECT is a mandatory safety boundary.  The official
             // OriginalKeyDataConfigUtility inserts a mapping when it cannot find one.

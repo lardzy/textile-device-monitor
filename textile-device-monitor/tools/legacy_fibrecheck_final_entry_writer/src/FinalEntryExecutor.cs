@@ -470,7 +470,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 {
                     scopeField = "sample_no";
                 }
-                else if (item.SeqNum != 1)
+                else if (item.SeqNum != (package.SchemaVersion == 5 ? index + 1 : 1))
                 {
                     scopeField = "seq_num";
                 }

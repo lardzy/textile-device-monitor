@@ -403,7 +403,7 @@ def configured_operation_types(args) -> tuple[str, ...]:
     ):
         configured.append(LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION)
         configured.append(LEGACY_GENERIC_FINAL_ENTRY_OPERATION)
-        configured.append('legacy_fibrecheck.check_record.generic_entry@2')
+        configured.extend(['legacy_fibrecheck.check_record.generic_entry@2', 'legacy_fibrecheck.check_record.excel_entry@1', 'legacy_fibrecheck.check_record.generic_update@1'])
         configured.append(LEGACY_GENERIC_UPDATE_OPERATION)
     return tuple(configured)
 
@@ -703,7 +703,9 @@ def validate_special_wool_qualitative_upload_receipt(
     return document
 
 
-def _validated_final_entry_task_project(value, *, path: str) -> dict:
+def _validated_final_entry_task_project(value, *, path: str, neutral: bool = False) -> dict:
+    if neutral:
+        return _validated_paper_task_project(value, path=path, neutral=True)
     project = _strict_map(
         value,
         path=path,
@@ -757,11 +759,48 @@ def _validated_final_entry_task_project(value, *, path: str) -> dict:
     return project
 
 
+def validate_neutral_excel_payload(operation, summary):
+    payload = _strict_map(operation.get('machine_payload'), path='machine_payload', required={
+        'schema_version', 'operation_type', 'sample_number', 'check_item_no', 'check_item_name',
+        'task_project', 'expected_existing_register_count', 'excel_record'})
+    if (summary.get('operation_ref') != 'legacy_fibrecheck.check_record.excel_entry@1'
+            or payload['schema_version'] != 5 or payload['operation_type'] != 'excel_check_record'
+            or payload['sample_number'] != summary.get('target_sample_number')):
+        raise BridgeError('Excel schema v5 操作或编号不匹配')
+    project = _validated_final_entry_task_project(payload['task_project'], path='machine_payload.task_project', neutral=True)
+    if (project != summary.get('task_project') or payload['check_item_no'] != project['check_item_no']
+            or payload['check_item_name'] != project['check_item_name']):
+        raise BridgeError('Excel 任务项目与摘要不一致')
+    _required_int(payload['expected_existing_register_count'], path='expected_existing_register_count')
+    excel = _strict_map(payload['excel_record'], path='excel_record', required={
+        'template_name', 'collection_mode', 'expected_mapping_config_sha256', 'key_result_count',
+        'expected_key_identities', 'register', 'workbook'})
+    binding = {'template_name': excel['template_name'], 'mapping_config_sha256': excel['expected_mapping_config_sha256']}
+    if binding != summary.get('template_binding') or excel['collection_mode'] != 'standard':
+        raise BridgeError('Excel 模板或采集模式与摘要不一致')
+    files = summary.get('files')
+    if not isinstance(files, list) or len(files) != 1:
+        raise BridgeError('Excel 登记必须绑定一份工作簿')
+    source = _strict_map(files[0], path='files[0]', required={
+        'artifact_id', 'root_id', 'relative_path', 'filename', 'size_bytes', 'content_sha256'})
+    workbook = _strict_map(excel['workbook'], path='workbook', required={
+        'relative_path', 'filename', 'size_bytes', 'content_sha256'})
+    if any(workbook[key] != source[key] for key in workbook):
+        raise BridgeError('Excel 工作簿与签发制品不一致')
+    identities = excel['expected_key_identities']
+    if (not isinstance(identities, list) or not identities or any(not isinstance(item, str) for item in identities)
+            or excel['key_result_count'] != len(identities)):
+        raise BridgeError('Excel 关键结果数量与识别列表不一致')
+    return payload, source
+
+
 def validate_final_entry_machine_payload(
     operation: dict,
     summary: dict,
 ) -> tuple[dict, dict]:
     payload = operation.get("machine_payload")
+    if isinstance(payload, dict) and payload.get("schema_version") == 5:
+        return validate_neutral_excel_payload(operation, summary)
     if not isinstance(payload, dict):
         raise BridgeError("FinalEntry claim 缺少 machine_payload")
     payload = _strict_map(
@@ -1338,6 +1377,8 @@ def convert_final_entry_receipt(
     source: dict,
     raw_receipt: dict,
 ) -> dict:
+    package_version = machine_payload.get("schema_version")
+    neutral = package_version == 5
     override_payload = machine_payload.get("controlled_test_override")
     raw = _strict_map(
         raw_receipt,
@@ -1361,7 +1402,7 @@ def convert_final_entry_receipt(
         or raw.get("mode") != "excel_check_record"
         or raw.get("exit_code") != 0
         or raw.get("reconciliation_required") is not False
-        or raw.get("package_schema_version") != 2
+        or raw.get("package_schema_version") != package_version
         or raw.get("sample_number") != machine_payload.get("sample_number")
         or raw.get("check_item_no") != machine_payload.get("check_item_no")
         or raw.get("check_item_name") != machine_payload.get("check_item_name")
@@ -1371,11 +1412,11 @@ def convert_final_entry_receipt(
         raise BridgeError("FinalEntry raw receipt 缺少阶段列表")
     stages = _raw_stage_index(raw["stages"])
     measured_project = _validated_final_entry_task_project(
-        raw.get("task_project"), path="raw_receipt.task_project"
+        raw.get("task_project"), path="raw_receipt.task_project", neutral=neutral
     )
     package_project = _validated_final_entry_task_project(
         machine_payload.get("task_project"),
-        path="machine_payload.task_project",
+        path="machine_payload.task_project", neutral=neutral,
     )
     if measured_project != package_project:
         raise BridgeError("FinalEntry Writer 实测任务项目与私有任务包不一致")
@@ -1403,7 +1444,7 @@ def convert_final_entry_receipt(
     existing_decision = machine_payload.get("existing_record_decision")
     expected_existing_decision = existing_decision is not None
     if (
-        package_detail.get("schema_version") != 2
+        package_detail.get("schema_version") != package_version
         or package_detail.get("operation_type") != "excel_check_record"
         or package_detail.get("expected_existing_register_count") != expected_existing
         or package_detail.get(
@@ -1570,7 +1611,7 @@ def convert_final_entry_receipt(
         if "controlled_test_override" in raw:
             raise BridgeError("普通 FinalEntry 回执不得包含受控覆盖对象")
         resulting_count = expected_existing + 1
-        if expected_result_count == 1 and expected_existing > 0:
+        if not neutral and expected_result_count == 1 and expected_existing > 0:
             raise BridgeError("FinalEntry 单份项目已有登记但缺少继续新增确认")
 
     inverse_stage = {
@@ -1600,7 +1641,7 @@ def convert_final_entry_receipt(
         "task_project": dict(measured_project),
         "template_binding": dict(summary["template_binding"]),
         "final_entry": {
-            "package_schema_version": 2,
+            "package_schema_version": package_version,
             "expected_existing_register_count": expected_existing,
             "resulting_register_count": resulting_count,
             "key_result_count": key_result_count,

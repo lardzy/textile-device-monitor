@@ -8,7 +8,8 @@
     # 1.0.3：FibreCheckWriter 图片类上传与官方手工同形（FileType=定量试验、
     #        ReviewUserItem1 留空、不再写 OriginalDataPictureFile 子记录）
     # 1.1.0：中性原始记录上传/复核及 schema 4 通用登记；新版精确能力广告。
-    PackageVersion    = '1.1.0'
+    # 1.2.0：schema 5 中性 Excel 登记，项目/模板/字段和结果数量来自 JSON。
+    PackageVersion    = '1.2.0'
 
     # 执行系统源码树（含 tools\*；writer 已编译产物在其 out\ 下）
     RepoSourceRoot    = 'C:\Users\lishuyang\Downloads\textile-device-monitor-cdde9ec\textile-device-monitor'
@@ -29,8 +30,8 @@
     # Writer 源可执行文件 SHA-256 钉值：与本次验收通过的编译产物绑定。
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
-        'FibreCheckWriter.exe'           = '1cd72217e62c6d737c9f532b15736a5b7729e2a6a9008e0a39ef66347453929b'
-        'FibreCheckFinalEntryWriter.exe' = 'e35111ef0b675739247c8ef44091009a4fc1008c483de52aad1c6c9bda3f3f60'
+        'FibreCheckWriter.exe'           = '60f13e956c87d19b88d337e790846ad682f923ae92a36ac4b92a53426602837f'
+        'FibreCheckFinalEntryWriter.exe' = '154683fd78f81744bd4f327cc5c91561212d7fda9a80c30b4ff587c2cf3c790a'
     }
 
     # probe 离线依赖打包时的 pip 源（构建机需要能访问；--no-input）

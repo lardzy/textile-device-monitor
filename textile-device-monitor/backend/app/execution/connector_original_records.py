@@ -18,7 +18,8 @@ from app.execution.workbook_format import WorkbookFormat, detect_workbook_format
 UPLOAD = 'legacy_fibrecheck.original_record.upload@1'
 REVIEW = 'legacy_fibrecheck.original_record.review@1'
 ENTRY = 'legacy_fibrecheck.check_record.generic_entry@2'
-REFERENCES = {UPLOAD, REVIEW, ENTRY}
+EXCEL_ENTRY = 'legacy_fibrecheck.check_record.excel_entry@1'
+REFERENCES = {UPLOAD, REVIEW, ENTRY, EXCEL_ENTRY}
 PROJECT_FIELDS = ('project_key', 'task_check_item_id', 'check_item_id', 'check_item_no', 'check_item_name', 'check_method', 'seq_num', 'check_count')
 
 
@@ -110,6 +111,49 @@ def entry_summary(db, data):
         'machine_contract': {'receipt_type': 'legacy_generic_check_record_entry', 'schema_version': 1, 'proof_required': False}}
 
 
+def excel_entry_summary(db, data):
+    """Submit a standard Excel collector package without a business template table."""
+    number = data['inspection_number'].strip().upper()
+    project, current = project_binding(db, number, data['project'])
+    expected = data['expected_existing_register_count']
+    if current.get('register_count') != expected:
+        raise conflict('connector_registration_changed', '已有登记数量已变化，请重新查询')
+    reference = None
+    if data.get('review_result'):
+        source, reference = _source(db, data['review_result'], REVIEW)
+        if source.request_summary['task_project'] != project or source.request_summary['source_inspection_number'] != number:
+            raise conflict('connector_review_project_mismatch', '复核回执与本次登记的项目不一致')
+    ref = ArtifactRef(**data['source'])
+    gateway = build_file_gateway(db)
+    path = gateway.resolve(ref, expected_type='file')
+    fingerprint = gateway.fingerprint(ref)
+    if fingerprint.sha256 != data['sha256']:
+        raise conflict('connector_source_changed', '登记工作簿已变化，请重新生成')
+    if detect_workbook_format(path) != WorkbookFormat.OLE or path.suffix.lower() != '.xls':
+        raise ExecutionApiError(422, 'connector_entry_format_unsupported', '当前检务 Excel 采集接口接收真实 XLS')
+    file = {**ref.as_dict(), 'artifact_id': fingerprint.sha256, 'filename': path.name,
+            'content_sha256': fingerprint.sha256, 'size_bytes': fingerprint.size}
+    template = deepcopy(data['template'])
+    excel = {'template_name': template['template_name'], 'collection_mode': 'standard',
+             'expected_mapping_config_sha256': template['mapping_config_sha256'],
+             'key_result_count': len(data['expected_key_identities']),
+             'expected_key_identities': deepcopy(data['expected_key_identities']), 'register': deepcopy(data['register']),
+             'workbook': {key: file[key] for key in ('relative_path', 'filename', 'size_bytes', 'content_sha256')}}
+    package = {'schema_version': 5, 'operation_type': 'excel_check_record', 'sample_number': number,
+               'check_item_no': project['check_item_no'], 'check_item_name': project['check_item_name'], 'task_project': project,
+               'expected_existing_register_count': expected, 'excel_record': excel}
+    return {'schema_version': 1, 'operation_type': 'legacy_microscopy_check_record_entry', 'profile': 'excel_check_record_entry_v1',
+        'source_inspection_number': number, 'target_sample_number': number, 'task_project': project,
+        'source_review_operation': reference, 'files': [file], 'template_binding': template, 'final_entry_package': package,
+        'final_entry_summary': {'expected_task_check_count': project['check_count'], 'expected_existing_register_count': expected,
+                               'resulting_register_count': expected + 1, 'key_result_count': excel['key_result_count']},
+        'business_fields': {'inspection_item': project['check_item_name'], 'inspection_method': project['check_method'],
+                            'inspection_copies': project['check_count'], 'sample_identity': excel['register']['sample_identity']},
+        'execution_capability': {'available': bool(settings.EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED)},
+        'safety': {'remote_write_performed': False, 'requires_final_approval': False, 'requires_source_reverification': True, 'overwrite_allowed': False},
+        'machine_contract': {'receipt_type': 'legacy_microscopy_check_record_entry', 'schema_version': 1}}
+
+
 def bind_actor(db, summary, actor_id):
     """Bind authenticated ownership once, after common service preparation."""
     for key in ('source_operation', 'source_review_operation'):
@@ -126,7 +170,7 @@ def bind_actor(db, summary, actor_id):
 def reverify_sources(db, operation):
     from app.execution.external_operations import _canonical_checksum
     summary = operation.request_summary
-    if summary['profile'] == 'original_record_upload_v1':
+    if summary['profile'] in {'original_record_upload_v1', 'excel_check_record_entry_v1'}:
         for source in summary['files']:
             actual = build_file_gateway(db).fingerprint(ArtifactRef(source['root_id'], source['relative_path']))
             if actual.sha256 != source['content_sha256']:

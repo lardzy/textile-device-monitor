@@ -159,7 +159,7 @@ namespace LegacyFibreCheckFinalEntryWriter
             {
                 return GenericRecordUpdate.Load(root);
             }
-            if (schemaVersion != 1 && schemaVersion != 2 && schemaVersion != 4)
+            if (schemaVersion != 1 && schemaVersion != 2 && schemaVersion != 4 && schemaVersion != 5)
             {
                 throw new PackageValidationException("schema_version_unsupported");
             }
@@ -213,13 +213,13 @@ namespace LegacyFibreCheckFinalEntryWriter
                 }
                 package.ExcelRecord = ParseExcel(
                     RequireMap(root, "excel_record"), schemaVersion);
-                if (!IsSupportedExcelProject(
+                if (schemaVersion != 5 && !IsSupportedExcelProject(
                     package.CheckItemNo, package.CheckItemName))
                 {
                     throw new PackageValidationException("excel_project_not_supported_in_v1");
                 }
             }
-            if (schemaVersion == 2 || schemaVersion == 4)
+            if (schemaVersion == 2 || schemaVersion == 4 || schemaVersion == 5)
             {
                 package.TaskProject = ParseTaskProject(
                     RequireMap(root, "task_project"), package);
@@ -228,6 +228,9 @@ namespace LegacyFibreCheckFinalEntryWriter
                     ValidatePaperGenericScope(package);
                 }
             }
+            if (schemaVersion == 5 && (package.OperationType != ExcelOperation
+                || root.ContainsKey("controlled_test_override") || root.ContainsKey("existing_record_decision")))
+                throw new PackageValidationException("excel_v5_scope_invalid");
             if (schemaVersion == 4 && (package.OperationType != GenericOperation
                 || root.ContainsKey("controlled_test_override") || root.ContainsKey("existing_record_decision")))
                 throw new PackageValidationException("generic_v4_scope_invalid");
@@ -293,7 +296,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                 : result.CheckItemNo == PaperCheckItemNo
                     && result.CheckItemName == PaperCheckItemName
                     && result.CheckMethod == PaperCheckMethod;
-            supportedProject = supportedProject || (package.SchemaVersion == 4 && package.OperationType == GenericOperation);
+            supportedProject = supportedProject || (package.SchemaVersion == 4 && package.OperationType == GenericOperation)
+                || (package.SchemaVersion == 5 && package.OperationType == ExcelOperation);
             if (!ProjectKeyPattern.IsMatch(result.ProjectKey)
                 || !RedactedIdPattern.IsMatch(result.TaskCheckItemId)
                 || !RedactedIdPattern.IsMatch(result.CheckItemId)
@@ -436,7 +440,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                     == ExistingRecordDecision.ExpectedExistingRegisterCount
                 && ExpectedExistingRegisterCount + 1
                     == ExistingRecordDecision.ResultingRegisterCount;
-            return controlled || confirmedExisting || (SchemaVersion == 4 && taskCheckCount == 1);
+            return controlled || confirmedExisting || ((SchemaVersion == 4 || SchemaVersion == 5) && taskCheckCount == 1);
         }
 
         private static ExistingRecordDecisionPayload ParseExistingRecordDecision(
@@ -625,6 +629,12 @@ namespace LegacyFibreCheckFinalEntryWriter
         private static void ValidateExcelScope(
             ExcelRecordPayload result, int schemaVersion)
         {
+            if (schemaVersion == 5)
+            {
+                if (Path.GetExtension(result.Workbook.Filename).ToLowerInvariant() != ".xls")
+                    throw new PackageValidationException("excel_workbook_requires_xls");
+                return; // Project, templates, register values and result count come from the package.
+            }
             // v1 intentionally implements only the exact Excel route proven against
             // 26A045793. Other template-selection branches have additional desktop-only
             // business rules and must remain fail-closed until separately modelled.

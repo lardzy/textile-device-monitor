@@ -272,14 +272,14 @@ namespace LegacyFibreCheckFinalEntryWriter
                     if (remainingRecordIds.Count != 0
                         || Count(db,
                             "SELECT COUNT(*) FROM \"CheckRecordRegister\" WHERE \"SampleNo\"=:sample_no AND \"CheckItemID\"=:item_id AND \"OriginalDataFilename\" IS NOT NULL",
-                            ProjectScope(package, snapshot)) != expectedCount)
+                            ProjectScope(package, snapshot)) != snapshot.ExistingFileReferenceCount + 1)
                     {
                         throw Reconciliation("excel_readback_project_count_mismatch");
                     }
                     int proofedCount = Count(db,
                         "SELECT COUNT(*) FROM \"CheckRecordRegister\" WHERE \"SampleNo\"=:sample_no AND \"CheckItemID\"=:item_id AND \"ProofTime\" IS NOT NULL AND \"ProofUser\" IS NOT NULL",
                         ProjectScope(package, snapshot));
-                    int expectedProofed = package.ExpectedExistingRegisterCount + (proofExpected ? 1 : 0);
+                    int expectedProofed = snapshot.ExistingProofedCount + (proofExpected ? 1 : 0);
                     if (proofedCount != expectedProofed)
                     {
                         throw Reconciliation("excel_readback_project_proof_count_mismatch");
@@ -289,21 +289,17 @@ namespace LegacyFibreCheckFinalEntryWriter
                         new Dictionary<string, string>(
                             snapshot.ExistingKeyIdentityByRecordId,
                             StringComparer.Ordinal);
-                    if (expectedIdentitiesByRecordId.Count
-                            != package.ExpectedExistingRegisterCount
-                        || expectedIdentitiesByRecordId.ContainsKey(record.ID)
-                        || package.ExcelRecord.ExpectedKeyIdentities.Count != 1)
-                    {
+                    if (expectedIdentitiesByRecordId.Count != snapshot.ExistingKeyResultCount)
                         throw Reconciliation("excel_readback_existing_key_identity_mismatch");
-                    }
-                    expectedIdentitiesByRecordId.Add(
-                        record.ID, package.ExcelRecord.ExpectedKeyIdentities[0]);
+                    for (int index = 0; index < package.ExcelRecord.ExpectedKeyIdentities.Count; index++)
+                        expectedIdentitiesByRecordId.Add(record.ID + "\0" + (index + 1).ToString(),
+                            package.ExcelRecord.ExpectedKeyIdentities[index]);
                     var remainingKeyRecordIds = new HashSet<string>(
-                        allowedRecordIds, StringComparer.Ordinal);
+                        expectedIdentitiesByRecordId.Keys, StringComparer.Ordinal);
                     using (DataTable projectKeys = db.Query(
                         ExcelProjectKeySql, ProjectScope(package, snapshot)))
                     {
-                        if (projectKeys.Rows.Count != expectedCount)
+                        if (projectKeys.Rows.Count != snapshot.ExistingKeyResultCount + package.ExcelRecord.KeyResultCount)
                         {
                             throw Reconciliation("excel_readback_key_result_count_mismatch");
                         }
@@ -312,13 +308,14 @@ namespace LegacyFibreCheckFinalEntryWriter
                             string keyRecordId = Text(row, "OriginalRecordID");
                             string expectedIdentity;
                             string expectedTemplate;
-                            if (!remainingKeyRecordIds.Remove(keyRecordId)
+                            string keyIdentity = keyRecordId + "\0" + Text(row, "SeqNum");
+                            if (!remainingKeyRecordIds.Remove(keyIdentity)
                                 || !expectedIdentitiesByRecordId.TryGetValue(
-                                    keyRecordId, out expectedIdentity)
+                                    keyIdentity, out expectedIdentity)
                                 || !expectedTemplatesByRecordId.TryGetValue(
                                     keyRecordId, out expectedTemplate)
                                 || !Same(Text(row, "SampleIdentity"), expectedIdentity)
-                                || !Same(Text(row, "SeqNum"), "1")
+                                || (package.SchemaVersion != 5 && !Same(Text(row, "SeqNum"), "1"))
                                 || !Same(Text(row, "CheckItemName"), package.CheckItemName)
                                 || !Same(Text(row, "ExcelTemplateName"),
                                     expectedTemplate))
