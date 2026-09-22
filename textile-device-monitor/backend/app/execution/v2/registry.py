@@ -1063,7 +1063,7 @@ def _build_installed_registry() -> InstalledRegistry:
         handler = (
             native_handler(identity[0], identity[1])
             or data_handlers.get(identity)
-            or (render_workbook if identity == ("workbook.render", 1) else None)
+            or (render_workbook if identity in {("workbook.render", 1), ("workbook.render", 2)} else None)
             or (execute_query_node if identity in {("connector.query", 1), ("connector.query", 2)} else None)
             if handler_channel in {"worker_callable", "kernel_builtin"}
             else None

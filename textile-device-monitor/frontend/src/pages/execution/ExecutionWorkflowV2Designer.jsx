@@ -63,7 +63,7 @@ export default function ExecutionWorkflowV2Designer() {
     let cancelled = false;
     (async () => {
       try {
-        const [next, nextRoots, nextCredentials] = await Promise.all([getWorkflowDesignerCatalogV2(), getExecutionFileRoots(), getExecutionCredentials()]);
+        const [next, nextRoots, nextCredentials] = await Promise.all([getWorkflowDesignerCatalogV2(), getExecutionFileRoots({ includeWritable: true }), getExecutionCredentials()]);
         let initial = structuredClone(location.state?.releaseDocument || next.starter), localBindings = emptyBindings(), owner = {};
         if (workflowId) {
           const draft = await getDesignerDraftV2(workflowId); initial = draft.document; localBindings = draft.bindings || emptyBindings(); owner = draft;
@@ -151,14 +151,16 @@ export default function ExecutionWorkflowV2Designer() {
     const node = { id, type: spec.type, type_version: spec.type_version, name: preset?.name || spec.name, config, input_mapping: {}, ui: { x: (source?.ui?.x || 40) + 240, y: source?.ui?.y || 300 } };
     edit(value => { value.document = insertOnEdge(value.document, edge?.id, node); value.selection = { nodes: [id], edges: [] }; return value; });
   };
-  const bindRoot = (key, rootId, access = 'read', template) => edit(value => {
+  const bindRoot = (key, rootId, access = 'read', template, templateKey) => edit(value => {
     const root = roots.find(item => item.root_id === rootId);
-    const slot = `${selected.id}_${key}`.replace(/[^a-z0-9_]/gi, '_').toLowerCase().slice(0, 64);
+    const slot = `${selected.id}_${key}${templateKey === undefined ? '' : `_${templateKey}`}`.replace(/[^a-z0-9_]/gi, '_').toLowerCase().slice(0, 64);
     const resources = value.document.resources;
     resources.root_slots ||= [];
     if (!resources.root_slots.some(item => item.slot_id === slot)) resources.root_slots.push({ slot_id: slot, name: template ? '模板目录' : `${selected.name}目录`, access, required: true });
     const node = value.document.definition.nodes.find(item => item.id === selected.id);
-    node.config[key] = template ? { root_slot: slot, relative_path: template.relative_path, sha256: template.sha256 } : slot;
+    const reference = template ? { root_slot: slot, relative_path: template.relative_path, sha256: template.sha256 } : slot;
+    if (templateKey === undefined) node.config[key] = reference;
+    else node.config[key] = { ...node.config[key], [templateKey]: reference };
     value.bindings.root_slots[slot] = { root_id: root.root_id, revision: root.binding_revision || 1 };
     return value;
   });
@@ -241,6 +243,7 @@ export default function ExecutionWorkflowV2Designer() {
             {configProperties.input_schema && <Form.Item label="输入变量定义"><SchemaEditor value={selected.config.input_schema} label="输入字段" onChange={(schema, rename) => editSchema('input_schema', schema, rename)} /></Form.Item>}
             {Object.entries(configProperties).filter(([key]) => !['input_schema', 'output_schema', ...(selected.type === 'data.python' ? ['code'] : [])].includes(key)).map(([key, schema]) => {
               if (key === 'template') return <Form.Item label="选择安装或共享目录中的模板" key={key}><TemplatePicker onSelect={item => bindRoot('template', item.root_id, 'read', item)} /><Typography.Text>{selected.config.template?.relative_path}</Typography.Text></Form.Item>;
+              if (key === 'templates') return <Form.Item label="模板集合（由上游选择模板键）" key={key}><TemplateCollection key={selected.id} value={selected.config.templates || {}} onChange={value => editConfig('templates', value)} onSelect={(name, item) => bindRoot('templates', item.root_id, 'read', item, name)} /></Form.Item>;
               if (key === 'root_slot' || key.endsWith('_root_slot')) {
                 const requirement = selectedSpec.requirements?.resources?.root_slots?.find(item => item.config_pointer === `/${key}`);
                 const access = requirement?.access || (key.includes('publish') ? 'publish' : 'write');
@@ -278,4 +281,18 @@ export default function ExecutionWorkflowV2Designer() {
       {fixtureReport && <Alert type={fixtureReport.passed ? 'success' : 'warning'} message={fixtureReport.message || (fixtureReport.passed ? '离线样例通过' : '离线样例未通过')} description={<pre>{JSON.stringify(fixtureReport.items || fixtureReport.issues, null, 2)}</pre>} />}
     </> }]} />
   </div>;
+}
+
+function TemplateCollection({ value, onChange, onSelect }) {
+  const [newKey, setNewKey] = useState('');
+  return <Space direction="vertical" style={{ width: '100%' }}>
+    {Object.entries(value).map(([key, template]) => <div key={key}>
+      <Typography.Text strong>模板键：{key}</Typography.Text>
+      <div><Typography.Text>{template.relative_path || '尚未选择'}</Typography.Text></div>
+      <Space><TemplatePicker onSelect={item => onSelect(key, item)} />
+        <Button danger size="small" onClick={() => { const next = { ...value }; delete next[key]; onChange(next); }}>移除模板</Button></Space>
+    </div>)}
+    <Input aria-label="新模板键" placeholder="新增模板键，如 3" value={newKey} onChange={event => setNewKey(event.target.value)} />
+    {newKey.trim() && !Object.hasOwn(value, newKey.trim()) && <TemplatePicker onSelect={item => { onSelect(newKey.trim(), item); setNewKey(''); }} />}
+  </Space>;
 }

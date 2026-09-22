@@ -714,6 +714,10 @@ def _batch_place_output(
     cancelled: bool = False,
 ) -> dict[str, Any]:
     placed_files = list(receipt.get("placed_files") or [])
+    if plan.get("generic"):
+        placed_files.extend(plan.get("matched_files") or [])
+        order = {item["target_filename"]: index for index, item in enumerate(plan["files"])}
+        placed_files.sort(key=lambda item: order[item["target_filename"]])
     stable_receipt = {
         "placement_cancelled": cancelled,
         "plan_digest": canonical_sha256(plan),
@@ -723,6 +727,9 @@ def _batch_place_output(
         "placed_files": [] if cancelled else placed_files,
         "reconciliation_required": False,
     }
+    if plan.get("generic"):
+        stable_receipt.update(display_directory=plan["display_directory"],
+                              reused_count=0 if cancelled else len(plan["matched_files"]))
     return {
         **stable_receipt,
         "receipt_digest": canonical_sha256(stable_receipt),
@@ -741,6 +748,7 @@ def _batch_place(context: Any) -> dict[str, Any] | NodeExecutionResult:
     from app.execution.persistence import build_file_gateway
     from app.execution.report_image_placement import (
         _recognized_or_resumed_receipt,
+        build_file_placement_plan,
         build_placement_plan,
         execute_placement_plan,
     )
@@ -755,22 +763,27 @@ def _batch_place(context: Any) -> dict[str, Any] | NodeExecutionResult:
     # Worker lease renewal uses its existing independent short transaction.
     context.db.flush()
     context.db.commit()
-    plan = build_placement_plan(
-        gateway,
-        config=config,
-        inspection_number=inspection_number,
-        sample_identity=input_data.get("sample_identity"),
-        selected_images=input_data.get("items"),
-    )
+    if int(context.node.get("type_version") or 1) >= 2:
+        from app.execution.persistence import storage_root_by_key
+
+        root = storage_root_by_key(context.db, config["target_root_id"])
+        plan = build_file_placement_plan(gateway, root_id=root.root_id,
+            directory=input_data["target_directory"], files=input_data["files"], display_base=root.source_uri or "")
+        context.db.commit()
+    else:
+        plan = build_placement_plan(gateway, config=config, inspection_number=inspection_number,
+            sample_identity=input_data.get("sample_identity"), selected_images=input_data.get("items"))
+    matched_names = {item["target_filename"] for item in plan.get("matched_files") or []}
+    execution_plan = {**plan, "files": [item for item in plan["files"] if item["target_filename"] not in matched_names]}
     plan_digest = canonical_sha256(plan)
     request = input_data.get("_native_suspension_request") or {}
     if request:
         if request.get("plan_digest") != plan_digest:
-            raise ExecutionApiError(
-                409,
-                "file_batch_place_plan_changed",
-                "文件或目标冲突状态已变化，原决定未执行，请重新运行并确认",
-            )
+            if plan.get("generic"):
+                request = {}  # Present the current conflict set in a new task.
+            else:
+                raise ExecutionApiError(409, "file_batch_place_plan_changed", "文件或目标冲突状态已变化，请重新确认")
+    if request:
         decision = request.get("decision")
         if decision == "cancel":
             return _batch_place_output(plan, {}, cancelled=True)
@@ -781,7 +794,7 @@ def _batch_place(context: Any) -> dict[str, Any] | NodeExecutionResult:
                 "批量放置决定必须是 overwrite 或 cancel",
             )
         try:
-            receipt = execute_placement_plan(gateway, plan, overwrite=True)
+            receipt = execute_placement_plan(gateway, execution_plan, overwrite=True)
         except ExecutionApiError as exc:
             if exc.code == "report_image_reconciliation_required":
                 raise ExecutionApiError(
@@ -795,7 +808,7 @@ def _batch_place(context: Any) -> dict[str, Any] | NodeExecutionResult:
 
     if plan.get("conflicts"):
         try:
-            reused = _recognized_or_resumed_receipt(gateway, plan)
+            reused = None if plan.get("generic") else _recognized_or_resumed_receipt(gateway, plan)
         except ExecutionApiError as exc:
             if exc.code == "report_image_reconciliation_required":
                 raise ExecutionApiError(
@@ -841,7 +854,7 @@ def _batch_place(context: Any) -> dict[str, Any] | NodeExecutionResult:
             },
         )
     try:
-        receipt = execute_placement_plan(gateway, plan, overwrite=False)
+        receipt = execute_placement_plan(gateway, execution_plan, overwrite=False)
     except ExecutionApiError as exc:
         if exc.code == "report_image_reconciliation_required":
             raise ExecutionApiError(
@@ -866,6 +879,7 @@ _NATIVE_HANDLERS: dict[tuple[str, int], NativeHandler] = {
     ("file.query", 2): _file_query,
     ("file.group", 1): _file_group,
     ("file.batch_place", 1): _batch_place,
+    ("file.batch_place", 2): _batch_place,
     ("artifact.publish", 2): _artifact_publish_v2,
     ("workbook.classify", 1): _workbook_classify,
     ("workbook.extract_fields", 1): _workbook_extract_fields,

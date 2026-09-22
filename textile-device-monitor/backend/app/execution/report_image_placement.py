@@ -203,6 +203,42 @@ def _indexed_fingerprint(stat_result: os.stat_result) -> str:
     return f"{stat_result.st_size}:{stat_result.st_mtime_ns}"
 
 
+def build_file_placement_plan(gateway, *, root_id, directory, files, display_base=""):
+    """Generic copy contract: the workflow supplies every directory and name."""
+    try:
+        relative = normalize_relative_path(directory)
+        target = gateway.resolve(ArtifactRef(root_id, relative), must_exist=False, for_write=True)
+    except StorageError as exc:
+        raise ExecutionApiError(422, "file_batch_place_directory_invalid", "目标相对目录不可用") from exc
+    names, conflicts, matched, targets = set(), [], [], {}
+    for item in files:
+        name = item["target_filename"]
+        if (not name or _FILENAME_ILLEGAL_PATTERN.search(name) or name.endswith((".", " "))
+                or name.casefold() in names or name in {".", ".."}
+                or re.fullmatch(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?", name)):
+            raise ExecutionApiError(422, "file_batch_place_filename_invalid", "目标文件名无效或重复", details={"filename": name})
+        names.add(name.casefold())
+        source = item["source"]
+        source_path = _resolve_source_path(gateway, source)
+        size, sha = _hash_open_source(source_path, source)
+        destination = target / name
+        if destination.exists() and not _is_reservation_remnant(destination):
+            if not destination.is_file():
+                raise ExecutionApiError(409, "file_batch_place_target_not_file", "目标名称已被目录占用", details={"filename": name})
+            target_size, target_sha = _content_fingerprint(destination)
+            if (target_size, target_sha) == (size, sha):
+                matched.append({"target_filename": name, "source_id": source.get("id"),
+                    "source_relative_path": source["relative_path"], "source_fingerprint": source["fingerprint"],
+                    "size_bytes": size, "content_sha256": sha})
+            else:
+                conflicts.append(name)
+                targets[name] = target_sha
+    return {"generic": True, "target_root_id": root_id, "target_relative_dir": relative,
+            "display_directory": display_base.rstrip("/\\") + "\\" + relative.replace("/", "\\") if display_base else relative,
+            "files": files, "image_count": len(files), "conflicts": conflicts, "conflict_count": len(conflicts),
+            "matched_files": matched, "target_fingerprints": targets}
+
+
 def _validate_open_source(
     source: dict[str, Any],
     stat_result: os.stat_result,
@@ -742,6 +778,9 @@ def execute_placement_plan(
                 )
             if not target.is_file():
                 raise OSError(f"target_not_file:{target.name}")
+            expected_sha = (plan.get("target_fingerprints") or {}).get(item["target_name"])
+            if expected_sha and _content_fingerprint(target)[1] != expected_sha:
+                raise ExecutionApiError(409, "report_image_conflict_detected", "确认后目标内容发生变化，请重新核对")
             backup = _temporary_path(
                 target_dir,
                 item["target_name"],

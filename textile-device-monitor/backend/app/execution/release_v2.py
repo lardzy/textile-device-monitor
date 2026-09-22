@@ -1242,6 +1242,23 @@ def _binding_publish_issues(
             )
         )
     issues.extend(_live_binding_issues(db, binding.binding or {}))
+    from app.execution.v2.templates import resolve_template
+    for node in document["definition"]["nodes"]:
+        if node["type"] != "workbook.render":
+            continue
+        config = node.get("config") or {}
+        references = list((config.get("templates") or {}).values()) or [config.get("template")]
+        for reference in references:
+            if not reference:
+                continue
+            bound = (binding.binding.get("root_slots") or {}).get(reference.get("root_slot"))
+            if not bound:
+                issues.append(_issue("template_root_unbound", f"$.definition.nodes.{node['id']}.config", "模板目录尚未绑定"))
+                continue
+            try:
+                resolve_template(db, {**reference, "root_id": bound["root_id"]})
+            except Exception as exc:
+                issues.append(_issue("template_unavailable", f"$.definition.nodes.{node['id']}.config", str(exc)))
     groups = binding.binding or {}
     for group in SLOT_GROUPS:
         values = groups.get(group) or {}
@@ -1261,6 +1278,15 @@ def _project_config_schema(schema: Any) -> Any:
     if not isinstance(schema, dict):
         return deepcopy(schema)
     value = deepcopy(schema)
+    for key in ("items", "additionalProperties"):
+        if isinstance(value.get(key), dict):
+            value[key] = _project_config_schema(value[key])
+    for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+        if isinstance(value.get(key), list):
+            value[key] = [_project_config_schema(item) for item in value[key]]
+    for key in ("patternProperties", "$defs"):
+        if isinstance(value.get(key), dict):
+            value[key] = {name: _project_config_schema(item) for name, item in value[key].items()}
     properties = value.get("properties")
     if not isinstance(properties, dict):
         return value

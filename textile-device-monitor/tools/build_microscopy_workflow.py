@@ -1,6 +1,7 @@
 """Development compiler: every business rule and Python source travels in JSON."""
 from copy import deepcopy
 import json
+import hashlib
 from pathlib import Path
 
 from build_paper_workflow import RESOURCE, S, O, A, obj, node, output, python_node, PRESETS
@@ -13,6 +14,7 @@ SOURCES = Path(__file__).with_name('workflow_sources')
 def build():
     PRESETS.clear()
     registry = get_installed_registry()
+    templates = json.loads((SOURCES/'microscopy_templates.json').read_text())
     document = starter_document()
     document['release'].update(slug='fiber-microscopy-v2', name='纤维微观形貌', category_key='other',
         description='GB/T 36422-2018；选图、记录生成、共享图片及检务登记；规则可在 Python 节点编辑。')
@@ -33,7 +35,7 @@ def build():
         {'inspection_number': S, 'snapshot': O, 'items': A, 'truncated': {'type': 'boolean'}, 'rules': O, 'template_counts': {'type': 'array', 'items': {'type': 'integer'}}},
         {'inspection_number': S, 'items': item_schema, 'projects': item_schema, 'allowed_selected_counts': counts},
         {'inspection_number': '$.inputs.inspection_number', 'snapshot': output('task', 'snapshot'), 'items': output('files', 'items'),
-         'truncated': output('files', 'truncated'), 'template_counts': [1, 2, 3, 5, 6, 7, 10],
+         'truncated': output('files', 'truncated'), 'template_counts': [int(key) for key in templates],
          'rules': {'project_numbers': ['5103.5'], 'project_names': ['纤维微观形貌', '膜平面形貌'], 'methods': ['GB/T 36422-2018']}})
     project = node('project', '选择检测项目', 'human.select',
         {'title': '选择检测项目', 'item_kind': 'option', 'min_selected': 1, 'max_selected': 1,
@@ -51,12 +53,45 @@ def build():
                    'basis_separator': r'[;；\r\n]+', 'judgements': ['符合', '不符合']}})
     form = node('form', '补充必要字段', 'human.form', {'title': '补充记录字段', 'result_schema': form_schema, 'auto_submit_complete': True},
         {'form_schema': output('prepare_form', 'form_schema'), 'defaults': output('prepare_form', 'defaults'), 'context': output('prepare_form', 'context')}, 2)
-    end = node('end', '查询与选择完成', 'core.end', mapping={'project': output('project', 'primary_item'), 'images': output('images', 'selected_items'), 'form': output('form')}, version=2)
-    nodes = [document['definition']['nodes'][0], query, files, candidates, project, select, prepare, form, end]
+    place_spec = registry.resolve_node_spec('file.batch_place', 2).public_dict()
+    render_spec = registry.resolve_node_spec('workbook.render', 2).public_dict()
+    payload = python_node('payload', '显微 · 组装字段和路径', (SOURCES/'microscopy_payload.py').read_text(),
+        {'inspection_number': S, 'project': O, 'images': A, 'form': O, 'rules': O, 'templates': O},
+        {'inspection_number': S, 'project': O, 'values': O, 'images': render_spec['input_schema']['properties']['images'],
+         'files': place_spec['input_schema']['properties']['files'], 'target_directory': S, 'template_key': S,
+         'template_binding': O, 'expected_existing_register_count': {'type': 'integer'}},
+        {'inspection_number': output('candidates', 'inspection_number'), 'project': output('project', 'primary_item'),
+         'images': output('images', 'selected_items'), 'form': output('form'), 'templates': templates,
+         'rules': {'record_title': '纤维微观形貌检验原始记录',
+                   'target_directory': '数据分析中心/3-报告上传图片/8-材料检测中心/1-微观形貌-GB T 36422'}})
+    for slot, name, access in [('execution_templates','工作簿模板目录','read'), ('execution_staging','生成工作簿目录','write'), ('report_upload_images','共享图片目标目录','write')]:
+        document['resources']['root_slots'].append({'slot_id':slot,'name':name,'access':access,'required':True})
+    def reference(filename):
+        asset = RESOURCE.parents[1]/'templates'/filename
+        return {'root_slot':'execution_templates','relative_path':filename,'sha256':hashlib.sha256(asset.read_bytes()).hexdigest()}
+    def fields(mapping, sheet):
+        return [{'sheet':sheet,'cell':cell,'value':{'path':'#/'+key},'kind':'text'} for cell,key in mapping.items()]
+    original = node('original', '生成带图片的原始记录', 'workbook.render',
+        {'templates':{'original':reference('gbt36422-2018-microscopy-original-record-v1.xls')}, 'staging_root_slot':'execution_staging',
+         'filename':'纤维微观形貌-原始记录.xls',
+         'fields':fields({'A1':'title','B2':'inspection_number','B3':'sample_name','L3':'sample_identity','B33':'judge_basis','I33':'indicator_requirement','B34':'test_result','I34':'judgement','B35':'remark'}, '微观形貌'),
+         'image_layout':{'sheet':'微观形貌','range':'A4:L32','print_area':'$A$1:$L$37','max_width':21600,'max_height':11700,'gap':0,'biff_excel_x_scale':1.0},
+         'number_formats':{'K2':{'format':'YYYY/M/D','display_pattern':r'^\d{4}/\d{1,2}/\d{1,2}$'}}},
+        {'template_key':'original','values':output('payload','values'),'images':output('payload','images')},2)
+    check = node('check', '生成检务登记工作簿', 'workbook.render',
+        {'templates':{key:reference(value['local_asset_name']) for key,value in templates.items()}, 'staging_root_slot':'execution_staging',
+         'filename':'纤维微观形貌-检务登记.xls',
+         'fields':fields({'AS4':'inspection_number','Z7':'sample_identity','I8':'method','I9':'judge_basis','I10':'indicator_requirement','I11':'test_result','G12':'remark','G13':'judgement',
+                          'BI7':'item_name','BK7':'sample_identity','BI8':'method','BI9':'judge_basis','BI10':'indicator_requirement','BI11':'test_result','BI12':'remark','BI13':'judgement'},'Sheet1')},
+        {'template_key':output('payload','template_key'),'values':output('payload','values')},2)
+    place = node('place', '放置局域网图片', 'file.batch_place', {'target_root_slot':'report_upload_images'},
+        {'target_directory':output('payload','target_directory'),'files':output('payload','files')},2)
+    end = node('end', '文件准备完成', 'core.end', mapping={'original':output('original'),'check':output('check'),'placement':output('place')}, version=2)
+    nodes = [document['definition']['nodes'][0], query, files, candidates, project, select, prepare, form, payload, original, check, place, end]
     for index, item in enumerate(nodes):
         item['ui'] = {'x': 40 + index * 260, 'y': 160}
     document['definition'].update(nodes=nodes, edges=[{'id': a['id']+'-'+b['id'], 'source': a['id'], 'target': b['id'], 'join_policy': 'all'} for a, b in zip(nodes, nodes[1:])],
-        output_schema=obj({'project': O, 'images': A, 'form': O}))
+        output_schema=obj({'original': O, 'check': O, 'placement': O}))
     result = compile_document(document)
     if not result['content_valid']:
         raise ValueError(json.dumps(result['issues'], ensure_ascii=False, indent=2))

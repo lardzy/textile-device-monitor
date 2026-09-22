@@ -52,12 +52,13 @@ def _connect(pipe_name, timeout=30.0):
     raise RuntimeError("libreoffice_connection_timeout") from last_error
 
 
-def _canvas_geometry(sheet, max_width, max_height):
-    first = sheet.getCellByPosition(0, 3)  # A4
+def _canvas_geometry(sheet, max_width, max_height, cell_range="A4:L32"):
+    bounds = sheet.getCellRangeByName(cell_range).RangeAddress
+    first = sheet.getCellByPosition(bounds.StartColumn, bounds.StartRow)
     origin_x = int(first.Position.X)
     origin_y = int(first.Position.Y)
-    width = sum(int(sheet.Columns.getByIndex(index).Width) for index in range(12))
-    height = sum(int(sheet.Rows.getByIndex(index).Height) for index in range(3, 32))
+    width = sum(int(sheet.Columns.getByIndex(index).Width) for index in range(bounds.StartColumn, bounds.EndColumn + 1))
+    height = sum(int(sheet.Rows.getByIndex(index).Height) for index in range(bounds.StartRow, bounds.EndRow + 1))
     width = min(width, int(max_width))
     height = min(height, int(max_height))
     if width <= 0 or height <= 0:
@@ -194,7 +195,7 @@ def _write(payload):
                     sheet.getCellRangeByName(cell_name).NumberFormat = format_key
             canvas = payload["canvas"]
             origin_x, origin_y, width, height = _canvas_geometry(
-                sheet, canvas["max_width"], canvas["max_height"]
+                sheet, canvas["max_width"], canvas["max_height"], canvas["range"]
             )
             scale = min(
                 1.0,
@@ -222,7 +223,7 @@ def _write(payload):
                 shape.Graphic = graphic
                 draw_page.add(shape)
                 shape.Name = "microscopy_image_%d" % int(image["index"])
-                shape.Anchor = sheet.getCellRangeByName("A4")
+                shape.Anchor = sheet.getCellRangeByName(canvas["range"].split(":")[0])
                 shape.ResizeWithCell = False
                 point = uno.createUnoStruct("com.sun.star.awt.Point")
                 point.X = (
@@ -283,7 +284,7 @@ def _write(payload):
                 if pattern and re.fullmatch(pattern, rendered) is None:
                     number_format_verified = False
             origin_x, origin_y, width, height = _canvas_geometry(
-                sheet, canvas["max_width"], canvas["max_height"]
+                sheet, canvas["max_width"], canvas["max_height"], canvas["range"]
             )
             logical_scale = min(
                 1.0,

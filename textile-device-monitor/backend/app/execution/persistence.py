@@ -163,6 +163,8 @@ def ensure_storage_roots(db: Session) -> None:
             root.access_mode = access_mode
             root.category_key = category
         root.is_available = available
+        if root_id == "report_upload_images" and not root.source_uri:
+            root.source_uri = settings.EXECUTION_REPORT_IMAGE_DISPLAY_UNC
         root.availability_message = (
             None
             if available

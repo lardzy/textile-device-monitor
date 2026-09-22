@@ -80,6 +80,13 @@ def test_native_selection_rejects_unsupported_counts_without_completing_task(env
     cache.snapshot = snap
     env.db.commit()
     doc = document()
+    last = next(i for i, n in enumerate(doc['definition']['nodes']) if n['id'] == 'form')
+    doc['definition']['nodes'] = doc['definition']['nodes'][:last+1] + [doc['definition']['nodes'][-1]]
+    doc['definition']['nodes'][-1]['input_mapping'] = {'form': '$.nodes.form.output'}
+    doc['definition']['output_schema'] = {'type': 'object', 'properties': {'form': {'type': 'object'}}, 'required': ['form'], 'additionalProperties': False}
+    doc['definition']['edges'] = [{'id':a['id']+'-'+b['id'],'source':a['id'],'target':b['id'],'join_policy':'all'} for a,b in zip(doc['definition']['nodes'],doc['definition']['nodes'][1:])]
+    doc['resources']['root_slots'] = [r for r in doc['resources']['root_slots'] if r['slot_id']=='electron_microscopy_records']
+    doc['resources']['credential_slots'] = []
     next(n for n in doc['definition']['nodes'] if n['id'] == 'task')['input_mapping']['refresh'] = False
     compiled = compile_document(doc)
     assert compiled['content_valid'], compiled['issues']

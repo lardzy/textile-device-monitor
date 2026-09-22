@@ -93,8 +93,8 @@ export const getExecutionWorkflow = workflowId =>
 export const getExecutionNodeTypes = async () =>
   listPayload(await executionClient.get('/node-types'), ['items', 'node_types']);
 
-export const getExecutionFileRoots = async () =>
-  listPayload(await executionClient.get('/files/roots'), ['items']);
+export const getExecutionFileRoots = async ({ includeWritable = false } = {}) =>
+  listPayload(await executionClient.get('/files/roots', { params: { include_writable: includeWritable } }), ['items']);
 
 export const getProjectRules = async () =>
   listPayload(await executionClient.get('/project-rules'), ['items']);

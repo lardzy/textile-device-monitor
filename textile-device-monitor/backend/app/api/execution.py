@@ -4557,6 +4557,7 @@ def audit_records(
 
 @router.get("/files/roots")
 def storage_roots(
+    include_writable: bool = False,
     _auth: AuthContext = Depends(permission("file.read")),
     db: Session = Depends(get_db),
 ):
@@ -4580,7 +4581,7 @@ def storage_roots(
             for root in db.query(ExecutionStorageRoot)
             .filter(
                 ExecutionStorageRoot.is_active.is_(True),
-                ExecutionStorageRoot.access_mode == "read",
+                ExecutionStorageRoot.access_mode.in_(["read", "write", "publish"] if include_writable else ["read"]),
             )
             .order_by(ExecutionStorageRoot.name.asc())
             .all()
