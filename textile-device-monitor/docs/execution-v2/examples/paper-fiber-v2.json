@@ -6,13 +6,13 @@
     "slug": "paper-fiber-v2",
     "description": "原始 Excel 读取、必要选择、上传复核及登记；全部业务规则可编辑。",
     "category_key": "other",
-    "release_note": "真实上传、复核与登记",
-    "release_version": 5
+    "release_note": "final",
+    "release_version": 8
   },
   "fixtures": [],
   "integrity": {
     "scope": "document_without_integrity",
-    "digest": "57dd7f185013ecbc0a0923559c2914a7ee678fe1a588558d9d3586a3e2d98532",
+    "digest": "eb3e3f94302632d5668c7e02e196b95cc9963401bc83477018f355835ae26872",
     "algorithm": "sha256",
     "signatures": [],
     "canonicalization": "RFC8785"
@@ -162,7 +162,7 @@
         "type": "file.query",
         "config": {
           "sort": "modified_desc",
-          "limit": 100,
+          "limit": 1000,
           "root_slot": "paper_fiber_records",
           "extensions": [
             ".xls",
@@ -181,7 +181,7 @@
           ],
           "recent_days": null
         },
-        "type_version": 1,
+        "type_version": 2,
         "input_mapping": {
           "inspection_number": "$.inputs.inspection_number"
         }
@@ -195,12 +195,13 @@
         "name": "纸浆 · 筛选文件",
         "type": "data.python",
         "config": {
-          "code": "import re\nimport unicodedata\ndef main(inputs):\n    number = unicodedata.normalize('NFKC', inputs['inspection_number']).strip().upper()\n    rules = inputs['rules']\n    expression = r'(?<![A-Z0-9])' + re.escape(number) + r'(?![A-Z0-9])'\n    items = []\n    for item in inputs['items']:\n        path = unicodedata.normalize('NFKC', item['relative_path']).replace('\\\\', '/').upper()\n        if not re.search(expression, path):\n            continue\n        if any(word.upper() in path for word in rules['exclude_words']):\n            continue\n        items.append(item)\n    if not items:\n        raise ValueError('目录中没有匹配该编号的 Excel；请核对目录与文件索引')\n    return {'sources': items, 'inspection_number': number}\n",
+          "code": "import re\nimport unicodedata\ndef main(inputs):\n    if inputs['truncated']:\n        raise ValueError('文件超过查询上限，请缩小目录范围后重新查询')\n    number = unicodedata.normalize('NFKC', inputs['inspection_number']).strip().upper()\n    rules = inputs['rules']\n    expression = r'(?<![A-Z0-9])' + re.escape(number) + r'(?![A-Z0-9])'\n    items = []\n    for item in inputs['items']:\n        path = unicodedata.normalize('NFKC', item['relative_path']).replace('\\\\', '/').upper()\n        if not re.search(expression, path):\n            continue\n        if any(word.upper() in path for word in rules['exclude_words']):\n            continue\n        items.append(item)\n    if not items:\n        raise ValueError('目录中没有匹配该编号的 Excel；请核对目录与文件索引')\n    return {'sources': items, 'inspection_number': number}\n",
           "input_schema": {
             "type": "object",
             "required": [
               "inspection_number",
               "items",
+              "truncated",
               "rules"
             ],
             "properties": {
@@ -225,6 +226,9 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "truncated": {
+                "type": "boolean"
               },
               "inspection_number": {
                 "type": "string"
@@ -263,6 +267,7 @@
               "~$"
             ]
           },
+          "truncated": "$.nodes.files.output.truncated",
           "inspection_number": "$.inputs.inspection_number"
         }
       },
@@ -383,7 +388,8 @@
                     "kind": {
                       "enum": [
                         "artifact",
-                        "image"
+                        "image",
+                        "option"
                       ],
                       "type": "string"
                     },
@@ -405,7 +411,8 @@
                           "kind": {
                             "enum": [
                               "artifact",
-                              "image"
+                              "image",
+                              "option"
                             ],
                             "type": "string"
                           },
@@ -495,7 +502,7 @@
           "require_primary": true,
           "auto_submit_single_candidate": true
         },
-        "type_version": 1,
+        "type_version": 2,
         "input_mapping": {
           "items": "$.nodes.candidates.output.items",
           "context": {
@@ -1138,7 +1145,7 @@
           "worker",
           "bridge"
         ],
-        "version_range": ">=2.0.1 <3.0.0"
+        "version_range": ">=2.1.0 <3.0.0"
       },
       {
         "pack_id": "textile.execution-data",
@@ -1154,7 +1161,7 @@
           "api",
           "worker"
         ],
-        "version_range": ">=1.1.5 <2.0.0"
+        "version_range": ">=1.3.0 <2.0.0"
       },
       {
         "pack_id": "textile.execution-kernel",
@@ -1162,7 +1169,7 @@
           "api",
           "worker"
         ],
-        "version_range": ">=2.10.0 <3.0.0"
+        "version_range": ">=2.11.0 <3.0.0"
       },
       {
         "pack_id": "textile.execution-workbook",
@@ -1170,7 +1177,7 @@
           "api",
           "worker"
         ],
-        "version_range": ">=2.10.1 <3.0.0"
+        "version_range": ">=2.11.0 <3.0.0"
       }
     ],
     "engine": {
@@ -1199,7 +1206,7 @@
           }
         ],
         "connector_id": "legacy_fibrecheck",
-        "version_range": ">=2.0.0 <3.0.0"
+        "version_range": ">=2.1.0 <3.0.0"
       }
     ],
     "node_types": [
@@ -1230,8 +1237,8 @@
       },
       {
         "type": "file.query",
-        "type_version": 1,
-        "contract_digest": "6ddaa432eedf18f96f1aeb839be0ed6a2b72c811e97587601fa00aeac16dc5b5"
+        "type_version": 2,
+        "contract_digest": "efebfc61cac6386d5640d1f9928b579ea7883f131847c2a18e903746b44297e9"
       },
       {
         "type": "human.form",
@@ -1240,8 +1247,8 @@
       },
       {
         "type": "human.select",
-        "type_version": 1,
-        "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2"
+        "type_version": 2,
+        "contract_digest": "e7c6b60b9587207efc068e6b1b161608c80b5b102f95120297471bd9b9e36fb2"
       },
       {
         "type": "workbook.extract_fields",

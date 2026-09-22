@@ -163,7 +163,7 @@
           "api",
           "worker"
         ],
-        "version_range": ">=2.10.0 <3.0.0"
+        "version_range": ">=2.11.0 <3.0.0"
       }
     ]
   },
@@ -199,7 +199,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "901424e679b6ef51808692dcc2b87f6a5e38e7a993ad0fdf58f12e3ec428e64a",
+    "digest": "cfa2f077d03f00fd29ee6ca77f59abbc4e68af6c93e668c1396715fcbbaf125e",
     "scope": "document_without_integrity",
     "signatures": []
   },

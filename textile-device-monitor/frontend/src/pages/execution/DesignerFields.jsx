@@ -51,6 +51,14 @@ export function SchemaEditor({ value, onChange, label = '字段', prefix = '' })
 }
 
 export function ValueEditor({ schema = {}, value, onChange, label, depth = 0, bindChildren = false, variables = [] }) {
+  if (!schema.type && !schema.enum) {
+    const type = value === null ? 'null' : value === undefined ? 'string' : inferredSchema(value).type;
+    const options = [...TYPES, 'null'].map(item => ({ value: item, label: LABELS[item] || '空值' }));
+    return <Space direction="vertical" style={{ width: '100%' }}>
+      <Select aria-label={`${label} 值类型`} value={type} options={options} onChange={next => onChange(next === 'null' ? null : defaultValue({ type: next }))} />
+      {type !== 'null' && <ValueEditor schema={{ ...schema, type }} value={value} onChange={onChange} label={label} depth={depth} bindChildren={bindChildren} variables={variables} />}
+    </Space>;
+  }
   const type = typeOf(schema);
   const Child = bindChildren ? BindingEditor : ValueEditor;
   if (schema.enum) return <Select aria-label={label} value={value} allowClear options={schema.enum.map(item => ({ value: item, label: String(item) }))} onChange={onChange} />;

@@ -1,18 +1,20 @@
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import shutil
 
 import pytest
 import xlrd
+from PIL import Image
 
 from app.execution.errors import ExecutionApiError
 from app.execution.models import ExecutionStorageRoot
 from app.execution.v2.native_handlers import _batch_place, NodeExecutionResult
 from app.execution.v2.workbook_render import render_file
 from app.execution.v2.designer import compile_document
-from app.execution.workbook_images import layout_images
+from app.execution.workbook_images import layout_images, render_image_workbook
 from native_io_helpers import image_files
 from workflow_native_helpers import environment, stage, publish
 from test_execution_microscopy_json import document, trial
@@ -51,6 +53,30 @@ def test_every_registration_template_keeps_literal_feed_cells(tmp_path,count):
         assert book.sheet_by_name('Sheet1').cell_value(6,60)=='纤维微观形貌' # BI7
         assert book.sheet_by_name('Sheet1').cell_value(6,62)=='正/反面' # BK7
     finally:book.release_resources()
+
+
+@pytest.mark.skipif(os.getenv('EXECUTION_RUN_UNO_INTEGRATION_TESTS') != '1', reason='Requires Worker UNO')
+@pytest.mark.parametrize('count', [1, 2, 3, 5, 6, 7, 10])
+def test_generic_original_record_reopens_all_image_counts(tmp_path, count):
+    node = next(n for n in document()['definition']['nodes'] if n['id'] == 'original')
+    config = node['config']
+    template = Path(__file__).parents[1] / 'app/execution/templates' / config['templates']['original']['relative_path']
+    selected = []
+    for index in range(count):
+        source = tmp_path / f'{index}.png'
+        Image.new('RGB', (160, 100) if index % 2 == 0 else (100, 160), 'white').save(source)
+        selected.append((str(index), source))
+    long_name = '长样品名称及全角字符ＡＢＣ' * 8
+    result = render_image_workbook(template, tmp_path / 'original.xls', cells={'B2': '260191178', 'B3': long_name},
+        selected=selected, layout=config['image_layout'], number_formats=config.get('number_formats'))
+    assert result['images_written'] == count
+    assert result['geometry']['verified']
+    assert result['uno']['print_area_verified']
+    book = xlrd.open_workbook(tmp_path / 'original.xls')
+    try:
+        assert book.sheet_by_name(config['image_layout']['sheet']).cell_value(2, 1) == long_name
+    finally:
+        book.release_resources()
 
 
 def placement_context(env):
@@ -111,7 +137,15 @@ def test_template_collection_preflight_verifies_every_bound_template(environment
     for path in source.glob('*.xls'):shutil.copyfile(path,Path(env.roots['execution_templates'].local_path)/path.name)
     root=ExecutionStorageRoot(root_id='report_upload_images',name='共享',local_path=str(env.path/'share'),access_mode='write',is_available=True,is_active=True)
     Path(root.local_path).mkdir();env.db.add(root);env.db.commit();env.roots[root.root_id]=root
-    doc=document();compiled=compile_document(doc);assert compiled['content_valid'],compiled['issues']
+    doc=document()
+    # This test isolates template bindings from the final Connector credentials.
+    keep={'start','task','files','candidates','project','images','prepare_form','form','payload','original','check','place','end'}
+    doc['definition']['nodes']=[n for n in doc['definition']['nodes'] if n['id'] in keep]
+    doc['definition']['nodes'][-1]['input_mapping']={'files':'$.nodes.check.output'}
+    doc['definition']['output_schema']={'type':'object','properties':{'files':{'type':'object'}},'required':['files'],'additionalProperties':False}
+    doc['definition']['edges']=[{'id':a['id']+'-'+b['id'],'source':a['id'],'target':b['id'],'join_policy':'all'} for a,b in zip(doc['definition']['nodes'],doc['definition']['nodes'][1:])]
+    doc['resources']['credential_slots']=[]
+    compiled=compile_document(doc);assert compiled['content_valid'],compiled['issues']
     release=stage(env,compiled['document'])
     publish(env,release)
     target=Path(env.roots['execution_templates'].local_path)/'gbt36422-2018-microscopy-3-images-v1.xls'

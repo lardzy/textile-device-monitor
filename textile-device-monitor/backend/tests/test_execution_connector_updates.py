@@ -72,7 +72,7 @@ def after_record(env):
 
 def claim_update(env):
     result = claim_approved_external_operation(env.db, bridge_id="update-writer", account_name="test-operator",
-                                              supported_operation_types={UPDATE_OPERATION})
+                                              supported_operation_types={UPDATE_OPERATION, GENERIC_UPDATE})
     env.db.commit()
     assert result is not None
     return result

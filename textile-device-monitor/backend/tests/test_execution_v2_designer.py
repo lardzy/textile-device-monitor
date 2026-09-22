@@ -38,7 +38,7 @@ def test_compile_connector_keeps_exact_operation_bindings():
 
 def test_catalog_and_compilation_api(environment):
     catalog = request(environment, "GET", "v2/designer/catalog")
-    assert len(catalog["templates"]) == 1
+    assert {item["template_id"] for item in catalog["templates"]} == {"paper-fiber-v2", "fiber-microscopy-v2"}
     assert all(n["source"] == "resource" for n in catalog["node_specs"])
     result = request(environment, "POST", "v2/designer/compile", {"document": catalog["starter"]})
     assert result["content_valid"], result["issues"]
@@ -92,8 +92,8 @@ def test_templates_remain_available_when_a_suggested_slug_is_occupied(environmen
     doc['release']['slug'] = 'paper-fiber-v2'
     request(environment, 'POST', 'v2/designer/drafts', {'document': doc, 'bindings': {}}, status=201)
     catalog = request(environment, 'GET', 'v2/designer/catalog')
-    assert len(catalog['templates']) == 1
-    assert catalog['templates'][0]['candidate']['release']['slug'] == 'paper-fiber-v2-2'
+    assert len(catalog['templates']) == 2
+    assert next(t for t in catalog['templates'] if t['template_id']=='paper-fiber-v2')['candidate']['release']['slug'] == 'paper-fiber-v2-2'
 
 
 def test_catalog_does_not_depend_on_legacy_workflow_rows(environment):
@@ -104,7 +104,7 @@ def test_catalog_does_not_depend_on_legacy_workflow_rows(environment):
         workflow.management_mode = "release_v2"
     environment.db.commit()
     catalog = request(environment, "GET", "v2/designer/catalog")
-    assert len(catalog["templates"]) == 1
+    assert {item["template_id"] for item in catalog["templates"]} == {"paper-fiber-v2", "fiber-microscopy-v2"}
     assert all(item["workflow_id"] is None and item["replacement_source"] is None for item in catalog["templates"])
     for item in catalog["templates"]:
         assert compile_document(item["candidate"])["content_valid"]

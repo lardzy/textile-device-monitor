@@ -37,4 +37,7 @@ def main(inputs):
     return {'inspection_number': number, 'project': {k: project[k] for k in keys}, 'values': fields,
             'images': images, 'files': files, 'target_directory': rules['target_directory'].rstrip('/') + '/' + number,
             'template_key': key, 'template_binding': template,
+            'registration_template': {'template_name': template['legacy_template_name'], 'mapping_config_sha256': template['mapping_config_sha256']},
+            'register': {'level': '', 'sample_identity': identity, 'equipment_no': '', 'check_basis': ''},
+            'expected_key_identities': [identity], 'business_fields': rules['upload_fields'],
             'expected_existing_register_count': project['register_count']}

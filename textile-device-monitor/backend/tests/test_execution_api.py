@@ -414,6 +414,7 @@ class ExecutionApiContractTests(unittest.TestCase):
             db=self.db,
         )
         self.assertEqual(len(payload["events"]), 100)
+        self.assertEqual(payload["workflow_version"], run.workflow_version.version_number)
         self.assertEqual(payload["events"][0]["payload"]["index"], 1)
         self.assertEqual(payload["events"][-1]["payload"]["index"], 100)
         self.assertEqual(

@@ -21,7 +21,7 @@ def build():
     document['definition']['input_schema']['properties']['relative_directory'] = {
         'type': 'string', 'title': '图片相对目录（可选）', 'default': ''}
     document['resources'] = {'root_slots': [{'slot_id': 'electron_microscopy_records', 'name': '显微图片目录', 'access': 'read', 'required': True}],
-                             'credential_slots': [], 'rule_slots': [], 'role_slots': []}
+                             'credential_slots': [{'slot_id':'inspection','name':'检务账号','connector_id':'legacy_fibrecheck','credential_kind':'password','required':True}], 'rule_slots': [], 'role_slots': []}
     query = node('task', '查询检务任务', 'connector.query',
         {'query_ref': 'legacy_fibrecheck.task_snapshot.get@1', 'wait_until_ready': True, 'wait_timeout_seconds': 120, 'retry_interval_seconds': 2},
         {'inspection_number': '$.inputs.inspection_number', 'refresh': True}, 2)
@@ -55,14 +55,20 @@ def build():
         {'form_schema': output('prepare_form', 'form_schema'), 'defaults': output('prepare_form', 'defaults'), 'context': output('prepare_form', 'context')}, 2)
     place_spec = registry.resolve_node_spec('file.batch_place', 2).public_dict()
     render_spec = registry.resolve_node_spec('workbook.render', 2).public_dict()
+    entry_schema = registry.connectors.resolve_operation('legacy_fibrecheck', '*', 'check_record.excel_entry', 1).spec['input_schema']['properties']
+    upload_schema = registry.connectors.resolve_operation('legacy_fibrecheck', '*', 'original_record.upload', 1).spec['input_schema']['properties']
     payload = python_node('payload', '显微 · 组装字段和路径', (SOURCES/'microscopy_payload.py').read_text(),
         {'inspection_number': S, 'project': O, 'images': A, 'form': O, 'rules': O, 'templates': O},
         {'inspection_number': S, 'project': O, 'values': O, 'images': render_spec['input_schema']['properties']['images'],
          'files': place_spec['input_schema']['properties']['files'], 'target_directory': S, 'template_key': S,
-         'template_binding': O, 'expected_existing_register_count': {'type': 'integer'}},
+         'template_binding': O, 'registration_template': entry_schema['template'], 'register': entry_schema['register'],
+         'expected_key_identities': entry_schema['expected_key_identities'], 'business_fields': upload_schema['business_fields'],
+         'expected_existing_register_count': entry_schema['expected_existing_register_count']},
         {'inspection_number': output('candidates', 'inspection_number'), 'project': output('project', 'primary_item'),
          'images': output('images', 'selected_items'), 'form': output('form'), 'templates': templates,
          'rules': {'record_title': '纤维微观形貌检验原始记录',
+                   'upload_fields': {'fiber_category':'图片','inspection_method':'','inspection_item':'图片','review_item':'',
+                                     'inspection_copies':1,'review_copies':1,'file_type':'定量试验'},
                    'target_directory': '数据分析中心/3-报告上传图片/8-材料检测中心/1-微观形貌-GB T 36422'}})
     for slot, name, access in [('execution_templates','工作簿模板目录','read'), ('execution_staging','生成工作簿目录','write'), ('report_upload_images','共享图片目标目录','write')]:
         document['resources']['root_slots'].append({'slot_id':slot,'name':name,'access':access,'required':True})
@@ -86,12 +92,32 @@ def build():
         {'template_key':output('payload','template_key'),'values':output('payload','values')},2)
     place = node('place', '放置局域网图片', 'file.batch_place', {'target_root_slot':'report_upload_images'},
         {'target_directory':output('payload','target_directory'),'files':output('payload','files')},2)
-    end = node('end', '文件准备完成', 'core.end', mapping={'original':output('original'),'check':output('check'),'placement':output('place')}, version=2)
-    nodes = [document['definition']['nodes'][0], query, files, candidates, project, select, prepare, form, payload, original, check, place, end]
+    branch = node('submit_branch', '图片放置是否取消', 'flow.branch', {'expression_version':1,'multi_match':'all'})
+    original_source = {key:output('original','artifact.'+key) for key in ['root_id','relative_path']}
+    check_source = {key:output('check','artifact.'+key) for key in ['root_id','relative_path']}
+    upload = node('upload','上传原始记录','external.operation',{'operation_ref':'legacy_fibrecheck.original_record.upload@1','credential_slot':'inspection'},
+        {**{key:output('payload',key) for key in ['inspection_number','project','business_fields']},'source':original_source,'sha256':output('original','artifact.sha256')})
+    review = node('review','复核原始记录','external.operation',{'operation_ref':'legacy_fibrecheck.original_record.review@1','credential_slot':'inspection'}, {'upload_result':output('upload')})
+    entry = node('entry','Excel 采集登记','external.operation',{'operation_ref':'legacy_fibrecheck.check_record.excel_entry@1','credential_slot':'inspection'},
+        {**{key:output('payload',key) for key in ['inspection_number','project','expected_existing_register_count','register','expected_key_identities']},
+         'template':output('payload','registration_template'),'source':check_source,'sha256':output('check','artifact.sha256'),'review_result':output('review')})
+    files_result = {'original':output('original'),'check':output('check'),'placement':output('place')}
+    cancelled = node('cancelled','未提交，保留生成文件','core.end',mapping={**files_result,'submitted':False,'message':'图片放置已取消，未提交检务',
+        'upload':None,'review':None,'entry':None},version=2)
+    end = node('end', '完成', 'core.end', mapping={**files_result,'submitted':True,'message':'图片已放置，原始记录已上传复核，Excel 登记已完成',
+        'upload':output('upload'),'review':output('review'),'entry':output('entry')},version=2)
+    nodes = [document['definition']['nodes'][0], query, files, candidates, project, select, prepare, form, payload, original, check, place, branch, upload, review, entry, end]
     for index, item in enumerate(nodes):
         item['ui'] = {'x': 40 + index * 260, 'y': 160}
-    document['definition'].update(nodes=nodes, edges=[{'id': a['id']+'-'+b['id'], 'source': a['id'], 'target': b['id'], 'join_policy': 'all'} for a, b in zip(nodes, nodes[1:])],
-        output_schema=obj({'original': O, 'check': O, 'placement': O}))
+    edges = [{'id': a['id']+'-'+b['id'], 'source': a['id'], 'target': b['id'], 'join_policy':'all'} for a,b in zip(nodes,nodes[1:])]
+    next(edge for edge in edges if edge['source']=='submit_branch')['condition'] = 'default'
+    edges.append({'id':'cancel-placement','source':'submit_branch','target':'cancelled','join_policy':'all',
+                  'condition':{'path':output('place','placement_cancelled'),'operator':'truthy'}})
+    cancelled['ui'] = {'x':branch['ui']['x']+260,'y':420}
+    nodes.append(cancelled)
+    receipt = {'type':['object','null'],'additionalProperties':True}
+    document['definition'].update(nodes=nodes, edges=edges,
+        output_schema=obj({'original':O,'check':O,'placement':O,'submitted':{'type':'boolean'},'message':S,'upload':receipt,'review':receipt,'entry':receipt}))
     result = compile_document(document)
     if not result['content_valid']:
         raise ValueError(json.dumps(result['issues'], ensure_ascii=False, indent=2))

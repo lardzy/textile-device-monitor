@@ -1152,7 +1152,7 @@
     "packs": [
       {
         "pack_id": "legacy_fibrecheck.v1-compat",
-        "version_range": ">=2.0.1 <3.0.0",
+        "version_range": ">=2.1.0 <3.0.0",
         "required_on": [
           "api",
           "worker",
@@ -1195,7 +1195,7 @@
     "connectors": [
       {
         "connector_id": "legacy_fibrecheck",
-        "version_range": ">=2.0.0 <3.0.0",
+        "version_range": ">=2.1.0 <3.0.0",
         "operations": [
           {
             "operation": "original_record.upload",
@@ -1255,7 +1255,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "6a9e139368a2a651496dc19357d30fa35778532480d796573900c7b47ba7e5f8",
+    "digest": "9e37d4287043fa827fb6d91ef1fbd13ff8cc4f65ea411726c104826082b5d10a",
     "signatures": []
   }
 }

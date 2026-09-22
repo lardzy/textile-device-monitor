@@ -1,0 +1,428 @@
+{
+  "date": "2026-09-22",
+  "scope": "Local Compose, Windows 11 Bridge/Writer, actual LAN files and inspection system",
+  "stage_commits": [
+    "91861e8",
+    "0a8fcc5",
+    "7bae5b8"
+  ],
+  "final_commit": "The commit containing this record; not pushed",
+  "runtime": {
+    "migration": "0013_designer_drafts",
+    "workflows": [
+      {
+        "id": "84abf195-e120-4f95-b81c-2b2d4a2a960c",
+        "slug": "fiber-microscopy-v2",
+        "version": 3,
+        "release_digest": "bca3f548e0aaf2af4d516f0bb7e50c1a42c8b5669db794e2cba2cf21e02524fe",
+        "node_count": 18,
+        "missing_worker_nodes": []
+      },
+      {
+        "id": "ae766b2c-f51e-40ff-baca-10608dfe4602",
+        "slug": "paper-fiber-v2",
+        "version": 8,
+        "release_digest": "eb3e3f94302632d5668c7e02e196b95cc9963401bc83477018f355835ae26872",
+        "node_count": 14,
+        "missing_worker_nodes": []
+      }
+    ],
+    "workers": [
+      {
+        "worker_id": "a913b793cb8b",
+        "engine_version": "2.5.0",
+        "capability_digest": "7fa4c256137a80e798b2ca3d6091d5f79c84822e2af565b5af880732cc54d4f6"
+      }
+    ],
+    "binding_count": 41,
+    "counts": {
+      "execution_workflows": 2,
+      "execution_workflow_versions": 11,
+      "execution_runs": 6,
+      "execution_human_tasks": 3,
+      "execution_external_operations": 6,
+      "execution_project_rules": 0,
+      "execution_users": 1,
+      "execution_credentials": 1,
+      "execution_storage_roots": 9
+    },
+    "run_statuses": {
+      "completed": 6
+    },
+    "operation_statuses": {
+      "completed": 6
+    },
+    "containers": {
+      "textile-monitor-backend": {
+        "image": "sha256:45a3f0f7b5f8cb983b97bf6f1c0e69b299cd0cec6a53d14609377396c1cffe63",
+        "status": "running",
+        "health": "healthy"
+      },
+      "textile-execution-worker": {
+        "image": "sha256:e524cd328baf40207b9d60e2fc6b4ef09380c71d7061a9b55ce6f213b5d101b7",
+        "status": "running",
+        "health": "healthy"
+      },
+      "textile-monitor-frontend": {
+        "image": "sha256:6f69720904efcb80552b35aa6b8137ec3a3c45a419a8990112ff6de2719d4787",
+        "status": "running",
+        "health": "healthy"
+      }
+    },
+    "source_files_match_per_container": 120,
+    "catalog": {
+      "node_count": 33,
+      "template_count": 2
+    },
+    "api_ready": 200,
+    "frontend_index_matches": true,
+    "packs": [
+      {
+        "pack_id": "legacy_fibrecheck.v1-compat",
+        "pack_version": "2.1.0",
+        "distribution_digest": "676defabd0a028e27a7e0537af2a8d84d4d05cf3da653867fc7b4ae88c252fb5"
+      },
+      {
+        "pack_id": "textile.execution-data",
+        "pack_version": "1.0.2",
+        "distribution_digest": "a60dfab615647f603fb422e31788494152be64062ea87212ab7c59e22ea9dda4"
+      },
+      {
+        "pack_id": "textile.execution-files",
+        "pack_version": "1.3.0",
+        "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781"
+      },
+      {
+        "pack_id": "textile.execution-kernel",
+        "pack_version": "2.11.0",
+        "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462"
+      },
+      {
+        "pack_id": "textile.execution-workbook",
+        "pack_version": "2.11.0",
+        "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab"
+      }
+    ]
+  },
+  "exports": {
+    "fiber-microscopy-v2": {
+      "path": "docs/execution-v2/examples/fiber-microscopy-v2.json",
+      "sha256": "2e46332a771116a69a003020f29345f4037a9cdae37da5f9c7bef9e8ccbbb7c7",
+      "python_nodes": 3
+    },
+    "paper-fiber-v2": {
+      "path": "docs/execution-v2/examples/paper-fiber-v2.json",
+      "sha256": "5e0ac4a65a5a159a000e088a8879098c142ab666835ed65f995f9d284f96d477",
+      "python_nodes": 4
+    }
+  },
+  "deployment": {
+    "bridge": {
+      "version": "1.2.0",
+      "upload_sha256": "60f13e956c87d19b88d337e790846ad682f923ae92a36ac4b92a53426602837f",
+      "entry_sha256": "154683fd78f81744bd4f327cc5c91561212d7fda9a80c30b4ff587c2cf3c790a",
+      "pins": {
+        "FibreCheckFinalEntryWriter.exe": "154683fd78f81744bd4f327cc5c91561212d7fda9a80c30b4ff587c2cf3c790a",
+        "FibreCheckWriter.exe": "60f13e956c87d19b88d337e790846ad682f923ae92a36ac4b92a53426602837f"
+      },
+      "staging": "\\\\Mac\\Home\\Downloads\\exec-stage-sync",
+      "tasks": [
+        {
+          "TaskName": "TextileExecutionSnapshotBridge",
+          "State": 4
+        },
+        {
+          "TaskName": "TextileExecutionWriteBridge",
+          "State": 4
+        }
+      ]
+    },
+    "installer": "/Users/lishuyang/Downloads/textile-microscopy-rebuild-20260922/repo/packaging/windows-bridge/output/textile-execution-bridge-setup-1.2.0.exe",
+    "installer_sha256": "10f444b97c5ea85fbdc36d26340176b693b920eab2916c533a853cbeed1b1c81",
+    "runtime_host_path": "/Users/lishuyang/Downloads/exec-stage-sync",
+    "preserved_runtime_files_verified": 106,
+    "dedicated_legacy_paper_worker": false
+  },
+  "real_acceptance": {
+    "inspection_number": "260191178",
+    "run_id": "1b07c44e-1588-46d6-af78-a8d25d4f8521",
+    "workflow_version": 3,
+    "status": "completed",
+    "phase1_run": "ff38baa4-0947-405f-ba36-6b0d4f6a2539",
+    "phase2_run": "7709cbec-dd7b-48e0-b1c2-123b6240129a",
+    "human_steps": [
+      "Select and order three images"
+    ],
+    "uploads_before": [
+      "260191178",
+      "260191178-1"
+    ],
+    "uploads_after": [
+      "260191178",
+      "260191178-1",
+      "260191178-2"
+    ],
+    "added_upload_number": "260191178-2",
+    "added_upload_record": "sha256:f7c51070d3cbc42b",
+    "projects_before": {
+      "5103.5": 1,
+      "5102.8": 1
+    },
+    "projects_after": {
+      "5103.5": 2,
+      "5102.8": 1
+    },
+    "new_register_ref": "check-record:sha256:14316ec95c997366",
+    "new_register_fingerprint": "5f7ea0afd92333411a336d41aa031c7a8f274e467a6ed7bee8d690c8ba389888",
+    "previous_register_fingerprints_unchanged": true,
+    "new_record_is_additional": true,
+    "retry_created_extra_records": false,
+    "entry_file": "62cac654-c534-49c9-a4bf-b4b51df781de.xls",
+    "entry_key_result_count": 1,
+    "entry_proofed": true,
+    "operations": {
+      "upload": {
+        "id": "115f5483-15b9-4d24-9b09-ef5cfd1e267a",
+        "status": "completed",
+        "payload_checksum": "a34f423e516e8a9eb9a1da905c08d61e5282c4faa5b6e8d358b487a08043a404"
+      },
+      "review": {
+        "id": "f73f913b-6771-4c88-a220-3536f556b8b4",
+        "status": "completed",
+        "payload_checksum": "9b18de5beeed4e7558a5ea6f6dcaa4299d18623d4cbf5e5a80ba9b7579de7e30"
+      },
+      "entry": {
+        "id": "f0780058-7945-4b1d-b3a1-fa0a3bc0680f",
+        "status": "completed",
+        "payload_checksum": "ccccab458aed1c6456f42556fbedbd7268eeff938ad21e1926065d343d88cda1"
+      }
+    },
+    "retry": "Five source-unreadable failures before remote writes; unified staging directory; same Run, operation ID, operation key and payload checksum reused successfully",
+    "readback_at": "2026-09-22T13:17:35.106504+00:00",
+    "upload_through_entry_seconds": 83.919,
+    "artifacts": {
+      "original": {
+        "artifact": {
+          "sha256": "80e725cded8bc7828d2292b87ef25a202996b3aadb0f8b1cd7cc7f032c225863",
+          "root_id": "execution_staging",
+          "relative_path": "rendered/1b07c44e-1588-46d6-af78-a8d25d4f8521/1d934fbb-ed13-42a8-9f7a-54f6e9f0d04c/f39bd70c2968d08c70ac362582c351dc190187fd02a17b49a2099bf8acc44be3.xls"
+        },
+        "artifact_id": "f6901b88-e5cc-41b0-9c66-989af219485a",
+        "verification": {
+          "uno": {
+            "cells": {
+              "A1": "纤维微观形貌检验原始记录",
+              "B2": "260191178",
+              "B3": "Surgicel-Fibrillar",
+              "L3": "",
+              "B33": "",
+              "B34": "",
+              "B35": "",
+              "I33": "",
+              "I34": ""
+            },
+            "canvas": {
+              "width": 21600,
+              "height": 11700,
+              "biff_excel_x_scale": 1.0
+            },
+            "images": [
+              {
+                "x": 1497,
+                "y": 0,
+                "index": 0,
+                "width": 7796,
+                "height": 5849,
+                "encoded": {
+                  "x": 1497,
+                  "y": 0,
+                  "width": 7796,
+                  "height": 5849
+                },
+                "logical": {
+                  "x": 1497,
+                  "y": 0,
+                  "width": 7796,
+                  "height": 5849
+                },
+                "source_id": "c84cc07d-a738-44b7-95bc-41ed154fd438",
+                "resize_with_cell": false
+              },
+              {
+                "x": 12289,
+                "y": 0,
+                "index": 1,
+                "width": 7793,
+                "height": 5849,
+                "encoded": {
+                  "x": 12289,
+                  "y": 0,
+                  "width": 7793,
+                  "height": 5849
+                },
+                "logical": {
+                  "x": 12289,
+                  "y": 0,
+                  "width": 7793,
+                  "height": 5849
+                },
+                "source_id": "9333cf8a-9cd2-4d85-8bb3-6608396deb09",
+                "resize_with_cell": false
+              },
+              {
+                "x": 6895,
+                "y": 5849,
+                "index": 2,
+                "width": 7791,
+                "height": 5849,
+                "encoded": {
+                  "x": 6895,
+                  "y": 5849,
+                  "width": 7791,
+                  "height": 5849
+                },
+                "logical": {
+                  "x": 6895,
+                  "y": 5849,
+                  "width": 7791,
+                  "height": 5849
+                },
+                "source_id": "6f2ac7a1-e2eb-4003-bb2e-fb3288c55e5f",
+                "resize_with_cell": false
+              }
+            ],
+            "reopened": true,
+            "verified": true,
+            "print_area": "$A$1:$L$37",
+            "image_count": 3,
+            "number_formats": {
+              "K2": "YYYY/M/D"
+            },
+            "print_area_verified": true,
+            "number_format_verified": true,
+            "ordinary_print_area_removed": true
+          },
+          "geometry": {
+            "scale": 1.0,
+            "issues": [],
+            "verified": true,
+            "non_overlapping": true,
+            "geometry_tolerance": 216
+          },
+          "print_area": "$A$1:$L$37",
+          "cells_verified": 9,
+          "images_written": 3
+        }
+      },
+      "check": {
+        "artifact": {
+          "sha256": "6744070bfa7198ee7f403a84246062764438761c1a60dd06cc211d6285f25789",
+          "root_id": "execution_staging",
+          "relative_path": "rendered/1b07c44e-1588-46d6-af78-a8d25d4f8521/9ef6eb18-b8a8-48a7-ba7b-72337a83de05/d8caf47b4bbda27171422c63ae450c130f2df1ff9061516e53fec4a028afdd1e.xls"
+        },
+        "artifact_id": "28dadeab-4124-48eb-a07e-c5d720a2393a",
+        "verification": {
+          "cells_verified": 16,
+          "images_written": 0
+        }
+      }
+    },
+    "placement": {
+      "plan_digest": "ae38b509016620f947e781dcb6e233b4a74d1fe4fe0391da5cc984bc71304ee6",
+      "placed_count": 3,
+      "placed_files": [
+        {
+          "source_id": "c84cc07d-a738-44b7-95bc-41ed154fd438",
+          "size_bytes": 1341553,
+          "content_sha256": "286ea405adc04dc891f03ef1e517645388699f3fd732d726d7ad8fdf490dfb67",
+          "target_filename": "260191178.png",
+          "source_fingerprint": "1341553:1785837620945323800",
+          "source_relative_path": "260191178粘/图片标记/挑图/发送/1_q01_measurements_fullres.png"
+        },
+        {
+          "source_id": "9333cf8a-9cd2-4d85-8bb3-6608396deb09",
+          "size_bytes": 1310583,
+          "content_sha256": "c017c67612b19fdcc6b4d62ba8c546e9d8455a7afec003d55d3338b37cc890d2",
+          "target_filename": "260191178-1.png",
+          "source_fingerprint": "1310583:1785837621470894700",
+          "source_relative_path": "260191178粘/图片标记/挑图/发送/1_q02_measurements_fullres.png"
+        },
+        {
+          "source_id": "6f2ac7a1-e2eb-4003-bb2e-fb3288c55e5f",
+          "size_bytes": 1204018,
+          "content_sha256": "b468c9d9cbcb165a0ddf25acd4fd3e973c1d8bbd5c72788760f0caa772f216b9",
+          "target_filename": "260191178-2.png",
+          "source_fingerprint": "1204018:1785837621966234200",
+          "source_relative_path": "260191178粘/图片标记/挑图/发送/1_q03_measurements_fullres.png"
+        }
+      ],
+      "reused_count": 3,
+      "receipt_digest": "e860dbf5ea9961479f50367063973166718bef5edf39c505ce3d3852dada7ae7",
+      "target_root_id": "report_upload_images",
+      "display_directory": "\\\\192.168.105.82\\公共交换文件\\数据分析中心\\3-报告上传图片\\8-材料检测中心\\1-微观形貌-GB T 36422\\260191178",
+      "placement_cancelled": false,
+      "target_relative_dir": "数据分析中心/3-报告上传图片/8-材料检测中心/1-微观形貌-GB T 36422/260191178",
+      "reconciliation_required": false
+    }
+  },
+  "verification": {
+    "backend": {
+      "passed": 624,
+      "subtests_passed": 55,
+      "skipped": 4
+    },
+    "final_api_and_import_checks": 19,
+    "postgres_concurrency_passed": 29,
+    "postgres_migration_cycle": "0013 -> 0012 -> 0013",
+    "frontend_node_passed": 18,
+    "frontend_vitest_passed": 160,
+    "frontend_build": "passed",
+    "bridge_connector_passed": 63,
+    "bridge_connector_subtests_passed": 14,
+    "windows_writer_offline_passed": 71,
+    "portable_import": "Bundled and exported microscopy JSON each runs full Worker/UNO/file pipeline in empty databases with only directory and credential binding; normal submission and cancel branch; remote receipts simulated. Both paper JSON variants run all 14 nodes with simulated remote receipts.",
+    "image_counts_reopened": [
+      1,
+      2,
+      3,
+      5,
+      6,
+      7,
+      10
+    ],
+    "long_text_preserved": true,
+    "template_feed_fields_verified": [
+      "BI7",
+      "BK7",
+      "BI8",
+      "BI9",
+      "BI10",
+      "BI11",
+      "BI12",
+      "BI13"
+    ],
+    "browser": [
+      "directory_filter",
+      "full_size_preview",
+      "selection_order",
+      "four_images_rejected",
+      "three_images_submitted",
+      "completed_run",
+      "template_directory_selection",
+      "template_change_undo",
+      "object_mapping_edit_and_undo"
+    ],
+    "pack_digests": "current",
+    "contract_snapshot": "current",
+    "generic_examples_checked": 7
+  },
+  "boundaries": [
+    "No execution data reset in this change. Existing paper runs and receipts are preserved.",
+    "Paper v8 was regression-tested in isolation; no additional real paper registration was performed.",
+    "Multiple-key Excel registration has offline protocol coverage; actual acceptance used one key result.",
+    "Share disconnection, source mutation and partial failure recovery use isolated fault injection, not intentional faults against the actual share.",
+    "Elapsed remote duration excludes human selection and the initial staging-directory repair."
+  ],
+  "evidence_directory": ".tmp/microscopy-rebuild-20260922",
+  "database_backup": ".tmp/microscopy-rebuild-20260922/database-before.dump"
+}

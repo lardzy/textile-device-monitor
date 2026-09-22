@@ -2122,7 +2122,7 @@ def test_standalone_connector_submission_concurrency(kind, mode, monkeypatch):
         if mode == "recovery":
             operation_id, _ = submit(0, wait=False)
             with SessionLocal() as db:
-                operation, attempt, _ = claim_approved_external_operation(db, bridge_id="interrupted", account_name=f"p4-{suffix}", supported_operation_types={UPDATE_OPERATION})
+                operation, attempt, _ = claim_approved_external_operation(db, bridge_id="interrupted", account_name=f"p4-{suffix}", supported_operation_types={UPDATE_OPERATION, "legacy_fibrecheck.check_record.generic_update@1"})
                 db.commit()
                 fail_external_attempt(db, attempt_id=attempt.id, bridge_id="interrupted", stage="update_started", error_code="connection_lost")
                 db.commit()

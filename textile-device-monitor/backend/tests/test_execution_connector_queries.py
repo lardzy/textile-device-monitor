@@ -35,7 +35,7 @@ def test_api_reads_existing_cache_without_a_run_or_refresh(environment):
     capabilities = request(env, "GET", "v1/connectors/legacy_fibrecheck/capabilities")
     spec = capabilities["queries"][0]
     assert spec["query_ref"] == QUERY and spec["direct_api_available"]
-    assert len(capabilities["operations"]) == 4
+    assert len(capabilities["operations"]) == 5
     assert all(operation["direct_api_available"] for operation in capabilities["operations"])
     result = query(env, connector_version=spec["connector_version"], contract_digest=spec["contract_digest"])
     assert result["result"]["snapshot"] == snapshot
