@@ -1,0 +1,775 @@
+{
+  "assets": [],
+  "capabilities": {
+    "declared": [
+      "file.index.read",
+      "file.read"
+    ],
+    "side_effect_level": "none",
+    "requires_human_approval": true
+  },
+  "definition": {
+    "edges": [
+      {
+        "id": "start-task",
+        "source": "start",
+        "target": "task",
+        "join_policy": "all"
+      },
+      {
+        "id": "task-files",
+        "source": "task",
+        "target": "files",
+        "join_policy": "all"
+      },
+      {
+        "id": "files-candidates",
+        "source": "files",
+        "target": "candidates",
+        "join_policy": "all"
+      },
+      {
+        "id": "candidates-project",
+        "source": "candidates",
+        "target": "project",
+        "join_policy": "all"
+      },
+      {
+        "id": "project-images",
+        "source": "project",
+        "target": "images",
+        "join_policy": "all"
+      },
+      {
+        "id": "images-prepare_form",
+        "source": "images",
+        "target": "prepare_form",
+        "join_policy": "all"
+      },
+      {
+        "id": "prepare_form-form",
+        "source": "prepare_form",
+        "target": "form",
+        "join_policy": "all"
+      },
+      {
+        "id": "form-end",
+        "source": "form",
+        "target": "end",
+        "join_policy": "all"
+      }
+    ],
+    "global_defaults": {},
+    "global_schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_number": {
+          "minLength": 1,
+          "title": "检验编号",
+          "type": "string"
+        },
+        "relative_directory": {
+          "type": "string",
+          "title": "图片相对目录（可选）",
+          "default": ""
+        }
+      },
+      "required": [
+        "inspection_number"
+      ],
+      "type": "object"
+    },
+    "nodes": [
+      {
+        "config": {},
+        "id": "start",
+        "input_mapping": {},
+        "name": "开始",
+        "type": "core.start",
+        "type_version": 2,
+        "ui": {
+          "x": 40,
+          "y": 160
+        }
+      },
+      {
+        "id": "task",
+        "name": "查询检务任务",
+        "type": "connector.query",
+        "type_version": 2,
+        "config": {
+          "query_ref": "legacy_fibrecheck.task_snapshot.get@1",
+          "wait_until_ready": true,
+          "wait_timeout_seconds": 120,
+          "retry_interval_seconds": 2
+        },
+        "input_mapping": {
+          "inspection_number": "$.inputs.inspection_number",
+          "refresh": true
+        },
+        "ui": {
+          "x": 300,
+          "y": 160
+        }
+      },
+      {
+        "id": "files",
+        "name": "查询图片索引",
+        "type": "file.query",
+        "type_version": 2,
+        "config": {
+          "root_slot": "electron_microscopy_records",
+          "extensions": [
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".bmp",
+            ".tif",
+            ".tiff"
+          ],
+          "recent_days": null,
+          "limit": 1000,
+          "sort": "name_asc",
+          "projection": [
+            "id",
+            "root_id",
+            "relative_path",
+            "fingerprint",
+            "metadata"
+          ]
+        },
+        "input_mapping": {
+          "inspection_number": "$.inputs.inspection_number",
+          "relative_directory": "$.inputs.relative_directory"
+        },
+        "ui": {
+          "x": 560,
+          "y": 160
+        }
+      },
+      {
+        "id": "candidates",
+        "name": "显微 · 匹配项目和图片",
+        "type": "data.python",
+        "type_version": 1,
+        "config": {
+          "runtime_version": 1,
+          "timeout_seconds": 5,
+          "code": "\"\"\"Copied verbatim into the workflow's editable Python node.\"\"\"\nimport re\nimport unicodedata\n\n\ndef clean(value):\n    return unicodedata.normalize('NFKC', str(value or '')).strip()\n\n\ndef main(inputs):\n    if inputs['truncated']:\n        raise ValueError('图片超过查询上限，请填写更具体的相对目录后重新查询')\n    number = clean(inputs['inspection_number']).upper()\n    rules = inputs['rules']\n    pattern = r'(?<![A-Z0-9])' + re.escape(number) + r'(?![A-Z0-9])'\n    items = []\n    for source in inputs['items']:\n        path = clean(source['relative_path']).replace('\\\\', '/')\n        if not re.search(pattern, path.upper()):\n            continue\n        item = dict(source)\n        item['kind'] = 'image'\n        item['metadata'] = dict(source.get('metadata') or {})\n        items.append(item)\n    items.sort(key=lambda item: [int(part) if part.isdigit() else part.casefold()\n                                for part in re.split(r'(\\d+)', item['relative_path'])])\n    if not items:\n        raise ValueError('未找到匹配编号的图片，请核对图片目录和文件索引')\n    projects = []\n    for project in inputs['snapshot']['projects']:\n        matches = (clean(project.get('check_item_no')) in rules['project_numbers']\n                   or clean(project.get('check_item_name')) in rules['project_names'])\n        if not matches or clean(project.get('check_method')) not in rules['methods']:\n            continue\n        projects.append({'id': project['project_key'], 'kind': 'option',\n                         'label': str(project.get('seq_num', '')) + ' · ' + project['check_item_name'] + ' · ' + project['check_method'],\n                         'fingerprint': project['project_key'], 'metadata': {'project': project}})\n    if not projects:\n        raise ValueError('任务没有符合项目与方法规则的检测项目')\n    counts = sorted(int(key) for key in inputs['template_counts'])\n    return {'inspection_number': number, 'items': items, 'projects': projects,\n            'allowed_selected_counts': counts}\n",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "inspection_number": {
+                "type": "string"
+              },
+              "snapshot": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "rules": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "template_counts": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              }
+            },
+            "required": [
+              "inspection_number",
+              "snapshot",
+              "items",
+              "truncated",
+              "rules",
+              "template_counts"
+            ],
+            "additionalProperties": false
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "inspection_number": {
+                "type": "string"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "artifact",
+                        "image",
+                        "option"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "root_id": {
+                      "type": "string"
+                    },
+                    "relative_path": {
+                      "type": "string"
+                    },
+                    "fingerprint": {
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "items": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "artifact",
+                              "image",
+                              "option"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "root_id": {
+                            "type": "string"
+                          },
+                          "relative_path": {
+                            "type": "string"
+                          },
+                          "fingerprint": {
+                            "type": "string"
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "label",
+                          "fingerprint"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "label",
+                    "fingerprint"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "artifact",
+                        "image",
+                        "option"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "root_id": {
+                      "type": "string"
+                    },
+                    "relative_path": {
+                      "type": "string"
+                    },
+                    "fingerprint": {
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "items": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "artifact",
+                              "image",
+                              "option"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "root_id": {
+                            "type": "string"
+                          },
+                          "relative_path": {
+                            "type": "string"
+                          },
+                          "fingerprint": {
+                            "type": "string"
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "label",
+                          "fingerprint"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "label",
+                    "fingerprint"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "allowed_selected_counts": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              }
+            },
+            "required": [
+              "inspection_number",
+              "items",
+              "projects",
+              "allowed_selected_counts"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "input_mapping": {
+          "inspection_number": "$.inputs.inspection_number",
+          "snapshot": "$.nodes.task.output.snapshot",
+          "items": "$.nodes.files.output.items",
+          "truncated": "$.nodes.files.output.truncated",
+          "template_counts": [
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            10
+          ],
+          "rules": {
+            "project_numbers": [
+              "5103.5"
+            ],
+            "project_names": [
+              "纤维微观形貌",
+              "膜平面形貌"
+            ],
+            "methods": [
+              "GB/T 36422-2018"
+            ]
+          }
+        },
+        "ui": {
+          "x": 820,
+          "y": 160
+        }
+      },
+      {
+        "id": "project",
+        "name": "选择检测项目",
+        "type": "human.select",
+        "type_version": 2,
+        "config": {
+          "title": "选择检测项目",
+          "item_kind": "option",
+          "min_selected": 1,
+          "max_selected": 1,
+          "require_primary": true,
+          "auto_submit_single_candidate": true
+        },
+        "input_mapping": {
+          "items": "$.nodes.candidates.output.projects"
+        },
+        "ui": {
+          "x": 1080,
+          "y": 160
+        }
+      },
+      {
+        "id": "images",
+        "name": "选择并排列图片",
+        "type": "human.select",
+        "type_version": 2,
+        "config": {
+          "title": "选择并排列图片",
+          "item_kind": "image",
+          "min_selected": 1,
+          "max_selected": 10,
+          "require_primary": false,
+          "auto_submit_single_candidate": true
+        },
+        "input_mapping": {
+          "items": "$.nodes.candidates.output.items",
+          "allowed_selected_counts": "$.nodes.candidates.output.allowed_selected_counts"
+        },
+        "ui": {
+          "x": 1340,
+          "y": 160
+        }
+      },
+      {
+        "id": "prepare_form",
+        "name": "显微 · 准备必要输入",
+        "type": "data.python",
+        "type_version": 1,
+        "config": {
+          "runtime_version": 1,
+          "timeout_seconds": 5,
+          "code": "\"\"\"Copied verbatim into the workflow's editable Python node.\"\"\"\nimport re\nimport unicodedata\n\n\ndef clean(value):\n    return ' '.join(unicodedata.normalize('NFKC', str(value or '')).split())\n\n\ndef options(value, separator):\n    values = value if isinstance(value, list) else [value]\n    return list(dict.fromkeys(clean(part) for item in values\n                             for part in re.split(separator, str(item or ''))\n                             if clean(part) and clean(part) != '---'))\n\n\ndef main(inputs):\n    project = inputs['project']['metadata']['project']\n    snapshot, rules = inputs['snapshot'], inputs['rules']\n    names = options(snapshot.get('sample_names') or snapshot.get('sample_name'), rules['name_separator'])\n    identities = options(project.get('sample_identify'), rules['identity_separator'])\n    fields = {'sample_name': {'type': 'string', 'title': '样品名称', 'minLength': 1, 'maxLength': 500},\n              'sample_identity': {'type': 'string', 'title': '样品识别', 'maxLength': 500},\n              'remark': {'type': 'string', 'title': '备注', 'maxLength': 1000}}\n    defaults = {'sample_name': names[0] if len(names) == 1 else '',\n                'sample_identity': identities[0] if len(identities) == 1 else '', 'remark': ''}\n    if len(names) > 1:\n        fields['sample_name']['examples'] = names\n    if identities:\n        fields['sample_identity'].update(enum=identities, minLength=1)\n    elif not identities:\n        fields['sample_identity']['const'] = ''\n    needs_judgement = str(project.get('give_judgement') or '').strip().casefold() not in ('', '0', 'false', 'no', '否')\n    if needs_judgement:\n        for key, title in [('judge_basis', '判定依据'), ('indicator_requirement', '指标要求'),\n                           ('test_result', '测试结果'), ('judgement', '判定结果')]:\n            fields[key] = {'type': 'string', 'title': title, 'minLength': 1, 'maxLength': 1000}\n            defaults[key] = ''\n        bases = options(project.get('check_basis_options') or snapshot.get('check_basis'), rules['basis_separator'])\n        fields['judge_basis']['examples'] = bases\n        defaults['judge_basis'] = bases[0] if len(bases) == 1 else ''\n        fields['judgement']['enum'] = rules['judgements']\n    return {'form_schema': {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False},\n            'defaults': defaults, 'context': {'项目': inputs['project']['label'], '图片数量': len(inputs['images'])}}\n",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "snapshot": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "project": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "images": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "rules": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "snapshot",
+              "project",
+              "images",
+              "rules"
+            ],
+            "additionalProperties": false
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "form_schema": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "defaults": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "form_schema",
+              "defaults",
+              "context"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "input_mapping": {
+          "snapshot": "$.nodes.task.output.snapshot",
+          "project": "$.nodes.project.output.primary_item",
+          "images": "$.nodes.images.output.selected_items",
+          "rules": {
+            "name_separator": "[\\r\\n;；]+",
+            "identity_separator": "[、,，;；\\r\\n]+",
+            "basis_separator": "[;；\\r\\n]+",
+            "judgements": [
+              "符合",
+              "不符合"
+            ]
+          }
+        },
+        "ui": {
+          "x": 1600,
+          "y": 160
+        }
+      },
+      {
+        "id": "form",
+        "name": "补充必要字段",
+        "type": "human.form",
+        "type_version": 2,
+        "config": {
+          "title": "补充记录字段",
+          "result_schema": {
+            "type": "object",
+            "properties": {
+              "sample_name": {
+                "type": "string"
+              },
+              "sample_identity": {
+                "type": "string"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "judge_basis": {
+                "type": "string"
+              },
+              "indicator_requirement": {
+                "type": "string"
+              },
+              "test_result": {
+                "type": "string"
+              },
+              "judgement": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sample_name",
+              "sample_identity",
+              "remark"
+            ],
+            "additionalProperties": false
+          },
+          "auto_submit_complete": true
+        },
+        "input_mapping": {
+          "form_schema": "$.nodes.prepare_form.output.form_schema",
+          "defaults": "$.nodes.prepare_form.output.defaults",
+          "context": "$.nodes.prepare_form.output.context"
+        },
+        "ui": {
+          "x": 1860,
+          "y": 160
+        }
+      },
+      {
+        "id": "end",
+        "name": "查询与选择完成",
+        "type": "core.end",
+        "type_version": 2,
+        "config": {},
+        "input_mapping": {
+          "project": "$.nodes.project.output.primary_item",
+          "images": "$.nodes.images.output.selected_items",
+          "form": "$.nodes.form.output"
+        },
+        "ui": {
+          "x": 2120,
+          "y": 160
+        }
+      }
+    ],
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "form": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "project",
+        "images",
+        "form"
+      ],
+      "additionalProperties": false
+    },
+    "schema_version": "2.0"
+  },
+  "dependencies": {
+    "engine": {
+      "version_range": ">=2.5.0 <3.0.0"
+    },
+    "node_types": [
+      {
+        "type": "connector.query",
+        "type_version": 2,
+        "contract_digest": "3517b623c6104d7242dd092286aafb571e2027b26432fdd9c9f7f9455f414980"
+      },
+      {
+        "type": "core.end",
+        "type_version": 2,
+        "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018"
+      },
+      {
+        "type": "core.start",
+        "type_version": 2,
+        "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187"
+      },
+      {
+        "type": "data.python",
+        "type_version": 1,
+        "contract_digest": "ea15ca177631463bf20a910521902626d15308660774498a561206202ef16111"
+      },
+      {
+        "type": "file.query",
+        "type_version": 2,
+        "contract_digest": "efebfc61cac6386d5640d1f9928b579ea7883f131847c2a18e903746b44297e9"
+      },
+      {
+        "type": "human.form",
+        "type_version": 2,
+        "contract_digest": "442c1301e7b43b56aff91ea07abc57b822adb9a3192354744dde79765b29aa48"
+      },
+      {
+        "type": "human.select",
+        "type_version": 2,
+        "contract_digest": "e7c6b60b9587207efc068e6b1b161608c80b5b102f95120297471bd9b9e36fb2"
+      }
+    ],
+    "packs": [
+      {
+        "pack_id": "legacy_fibrecheck.v1-compat",
+        "version_range": ">=2.0.1 <3.0.0",
+        "required_on": [
+          "api",
+          "worker",
+          "bridge"
+        ]
+      },
+      {
+        "pack_id": "textile.execution-data",
+        "version_range": ">=1.0.2 <2.0.0",
+        "required_on": [
+          "api",
+          "worker"
+        ]
+      },
+      {
+        "pack_id": "textile.execution-files",
+        "version_range": ">=1.2.0 <2.0.0",
+        "required_on": [
+          "api",
+          "worker"
+        ]
+      },
+      {
+        "pack_id": "textile.execution-kernel",
+        "version_range": ">=2.11.0 <3.0.0",
+        "required_on": [
+          "api",
+          "worker"
+        ]
+      }
+    ],
+    "connectors": [
+      {
+        "connector_id": "legacy_fibrecheck",
+        "version_range": ">=2.0.0 <3.0.0",
+        "operations": [],
+        "queries": [
+          {
+            "query": "task_snapshot.get",
+            "contract_version": 1
+          }
+        ]
+      }
+    ]
+  },
+  "fixtures": [],
+  "format": "textile-workflow-release",
+  "format_version": "2.0",
+  "release": {
+    "category_key": "other",
+    "description": "GB/T 36422-2018；选图、记录生成、共享图片及检务登记；规则可在 Python 节点编辑。",
+    "name": "纤维微观形貌",
+    "release_note": "",
+    "release_version": 1,
+    "slug": "fiber-microscopy-v2"
+  },
+  "resources": {
+    "root_slots": [
+      {
+        "slot_id": "electron_microscopy_records",
+        "name": "显微图片目录",
+        "access": "read",
+        "required": true
+      }
+    ],
+    "credential_slots": [],
+    "rule_slots": [],
+    "role_slots": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "RFC8785",
+    "scope": "document_without_integrity",
+    "digest": "8657e42c40be708a3c566b6ca248f9c932426294fe7bfe5fb6fca67aedb0812f",
+    "signatures": []
+  }
+}

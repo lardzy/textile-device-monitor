@@ -611,12 +611,15 @@ def _native_human_submission(
         selected_ids = list(dict.fromkeys(str(value) for value in selected_values))
         minimum = int(config.get("min_selected") or 0)
         maximum = int(config.get("max_selected") or 1)
-        if not minimum <= len(selected_ids) <= maximum:
+        allowed_counts = (node_run.input_data or {}).get("allowed_selected_counts")
+        if not minimum <= len(selected_ids) <= maximum or (
+            allowed_counts is not None and len(selected_ids) not in allowed_counts
+        ):
             raise ExecutionApiError(
                 422,
                 "human_select_count_invalid",
                 "选择数量不符合节点契约",
-                details={"minimum": minimum, "maximum": maximum},
+                details={"minimum": minimum, "maximum": maximum, "allowed_counts": allowed_counts},
             )
         offered = {
             str(item.get("id")): item
@@ -633,12 +636,10 @@ def _native_human_submission(
         selected_items: list[dict[str, Any]] = []
         for candidate_id in selected_ids:
             candidate = offered[candidate_id]
-            _validate_index_candidate(
-                db,
-                run=run,
-                candidate=candidate,
-                gateway=gateway,
-            )
+            if candidate.get("kind") != "option":
+                _validate_index_candidate(
+                    db, run=run, candidate=candidate, gateway=gateway,
+                )
             selected_items.append(deepcopy(candidate))
         primary_id = data.get("primary_id")
         primary_id = str(primary_id) if primary_id not in (None, "") else None
@@ -4127,6 +4128,11 @@ def _create_human_task(
                 "required": ["selected_ids"],
                 "additionalProperties": False,
             }
+            allowed_counts = (context.input_data or {}).get("allowed_selected_counts")
+            if allowed_counts is not None:
+                form_schema["properties"]["selected_ids"]["anyOf"] = [
+                    {"minItems": count, "maxItems": count} for count in allowed_counts
+                ]
         elif resume_protocol == "native.approval.v1":
             form_schema = {
                 "type": "object",
@@ -4486,6 +4492,8 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                     and len(candidates) == 1
                     and int(config.get("min_selected") or 0) <= 1
                     and int(config.get("max_selected") or 1) >= 1
+                    and (input_data.get("allowed_selected_counts") is None
+                         or 1 in input_data["allowed_selected_counts"])
                 ):
                     candidate_id = str(candidates[0].get("id") or "")
                     auto_output = _native_human_submission(

@@ -13,17 +13,32 @@ const item = id => ({
   },
 });
 
-function Selection({ onFinish, items = [item('a'), item('b')] }) {
+function Selection({ onFinish, items = [item('a'), item('b')], allowedCounts, maximum = 2 }) {
   const [form] = Form.useForm();
   return <Form form={form} onFinish={onFinish}>
     <NativeHumanTaskRenderer renderer={{ capability: 'human.select' }} form={form}
-      schema={{ properties: { selected_ids: { minItems: 1, maxItems: 2 }, primary_id: { type: 'string' } } }}
-      inputData={{ items }} />
+      schema={{ properties: { selected_ids: { minItems: 1, maxItems: maximum }, primary_id: { type: 'string' } } }}
+      inputData={{ items, allowed_selected_counts: allowedCounts }} />
     <Button htmlType="submit">提交选择</Button>
   </Form>;
 }
 
 describe('native result-file selection', () => {
+  it('validates template counts and preserves user image order without embedded URLs', async () => {
+    const submit = vi.fn();
+    const user = userEvent.setup();
+    const images = ['a', 'b', 'c'].map(id => ({ id, kind: 'image', label: `${id}.png`, relative_path: `folder/${id}.png`, metadata: {} }));
+    render(<Selection onFinish={submit} items={images} allowedCounts={[1, 3]} maximum={3} />);
+    await user.click(screen.getByRole('button', { name: '选择 a.png' }));
+    await user.click(screen.getByRole('button', { name: '选择 b.png' }));
+    await user.click(screen.getByRole('button', { name: '提交选择' }));
+    expect(await screen.findByText('请选择 1、3 项')).toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '选择 c.png' }));
+    await user.click(screen.getAllByRole('button', { name: /前\s*移/ })[2]);
+    await user.click(screen.getByRole('button', { name: '提交选择' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ selected_ids: ['a', 'c', 'b'], primary_id: 'a' }));
+  });
   it('uses result cards and sends only IDs and the selected primary', async () => {
     const submit = vi.fn();
     const user = userEvent.setup();

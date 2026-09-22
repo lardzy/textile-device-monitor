@@ -247,6 +247,9 @@ const executionApiBase = () => (
   import.meta.env.VITE_EXECUTION_API_URL || '/api/execution/v1'
 ).replace(/\/+$/, '');
 
+export const executionIndexedImagePreviewUrl = entryId =>
+  `/api/execution/v1/files/index/${encodeURIComponent(entryId)}/preview`;
+
 export const executionArtifactPreviewUrl = artifactId =>
   `${executionApiBase()}/artifacts/${encodeURIComponent(artifactId)}/preview`;
 

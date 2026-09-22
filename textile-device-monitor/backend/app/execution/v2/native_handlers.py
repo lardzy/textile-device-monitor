@@ -280,6 +280,12 @@ def _file_query(context: Any) -> dict[str, Any]:
         ExecutionFileIndexEntry.storage_root_id == root.id,
         ExecutionFileIndexEntry.missing_since.is_(None),
     )
+    directory = str(input_data.get("relative_directory") or "").replace("\\", "/").strip("/")
+    if directory:
+        if ".." in PurePosixPath(directory).parts:
+            raise ExecutionApiError(422, "file_query_directory_invalid", "查询目录必须为根目录内的相对路径")
+        prefix = directory.replace("%", "\\%").replace("_", "\\_") + "/"
+        statement = statement.filter(ExecutionFileIndexEntry.relative_path.like(prefix + "%", escape="\\"))
     if query_text:
         escaped = (
             query_text.replace("\\", "\\\\")
@@ -330,7 +336,8 @@ def _file_query(context: Any) -> dict[str, Any]:
     }.get(sort)
     if order is None:
         raise ExecutionApiError(422, "file_query_sort_invalid", "file.query sort 无效")
-    limit = min(max(int(config.get("limit") or 20), 1), 100)
+    maximum = 1000 if int(context.node.get("type_version") or 1) >= 2 else 100
+    limit = min(max(int(config.get("limit") or 20), 1), maximum)
     rows = statement.order_by(*order).limit(limit + 1).all()
     truncated = len(rows) > limit
     items = []
@@ -856,6 +863,7 @@ _NATIVE_HANDLERS: dict[tuple[str, int], NativeHandler] = {
     ("data.aggregate", 1): _data_aggregate,
     ("data.assign", 1): _data_assign,
     ("file.query", 1): _file_query,
+    ("file.query", 2): _file_query,
     ("file.group", 1): _file_group,
     ("file.batch_place", 1): _batch_place,
     ("artifact.publish", 2): _artifact_publish_v2,

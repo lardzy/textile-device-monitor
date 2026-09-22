@@ -5,7 +5,7 @@
     "config": {
       "runtime_version": 1,
       "timeout_seconds": 5,
-      "code": "import re\nimport unicodedata\ndef main(inputs):\n    number = unicodedata.normalize('NFKC', inputs['inspection_number']).strip().upper()\n    rules = inputs['rules']\n    expression = r'(?<![A-Z0-9])' + re.escape(number) + r'(?![A-Z0-9])'\n    items = []\n    for item in inputs['items']:\n        path = unicodedata.normalize('NFKC', item['relative_path']).replace('\\\\', '/').upper()\n        if not re.search(expression, path):\n            continue\n        if any(word.upper() in path for word in rules['exclude_words']):\n            continue\n        items.append(item)\n    if not items:\n        raise ValueError('目录中没有匹配该编号的 Excel；请核对目录与文件索引')\n    return {'sources': items, 'inspection_number': number}\n",
+      "code": "import re\nimport unicodedata\ndef main(inputs):\n    if inputs['truncated']:\n        raise ValueError('文件超过查询上限，请缩小目录范围后重新查询')\n    number = unicodedata.normalize('NFKC', inputs['inspection_number']).strip().upper()\n    rules = inputs['rules']\n    expression = r'(?<![A-Z0-9])' + re.escape(number) + r'(?![A-Z0-9])'\n    items = []\n    for item in inputs['items']:\n        path = unicodedata.normalize('NFKC', item['relative_path']).replace('\\\\', '/').upper()\n        if not re.search(expression, path):\n            continue\n        if any(word.upper() in path for word in rules['exclude_words']):\n            continue\n        items.append(item)\n    if not items:\n        raise ValueError('目录中没有匹配该编号的 Excel；请核对目录与文件索引')\n    return {'sources': items, 'inspection_number': number}\n",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -18,6 +18,9 @@
               "type": "object",
               "additionalProperties": true
             }
+          },
+          "truncated": {
+            "type": "boolean"
           },
           "rules": {
             "type": "object",
@@ -38,6 +41,7 @@
         "required": [
           "inspection_number",
           "items",
+          "truncated",
           "rules"
         ],
         "additionalProperties": false
@@ -139,7 +143,8 @@
                   "type": "string",
                   "enum": [
                     "artifact",
-                    "image"
+                    "image",
+                    "option"
                   ]
                 },
                 "label": {
@@ -172,7 +177,8 @@
                         "type": "string",
                         "enum": [
                           "artifact",
-                          "image"
+                          "image",
+                          "option"
                         ]
                       },
                       "label": {

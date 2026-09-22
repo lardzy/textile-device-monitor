@@ -38,11 +38,13 @@ def build():
     document['release'].update(slug='paper-fiber-v2',name='纸浆纤维鉴别',category_key='other',description='原始 Excel 读取、必要选择、上传复核及登记；全部业务规则可编辑。')
     document['resources']={'root_slots':[{'slot_id':'paper_fiber_records','name':'纸浆原始记录目录','access':'read','required':True}], 'credential_slots':[{'slot_id':'inspection','name':'检务账号','connector_id':'legacy_fibrecheck','credential_kind':'password','required':True}], 'rule_slots':[], 'role_slots':[]}
     query=node('task','查询检务任务','connector.query',{'query_ref':'legacy_fibrecheck.task_snapshot.get@1','wait_until_ready':True,'wait_timeout_seconds':120,'retry_interval_seconds':2},{'inspection_number':'$.inputs.inspection_number','refresh':True},2)
-    files=node('files','查询文件索引','file.query',{'root_slot':'paper_fiber_records','extensions':['.xls','.xlsx'],'recent_days':None,'limit':100,'sort':'modified_desc','projection':['id','root_id','relative_path','name','suffix','size','modified_at','fingerprint','metadata']},{'inspection_number':'$.inputs.inspection_number'})
+    files=node('files','查询文件索引','file.query',{'root_slot':'paper_fiber_records','extensions':['.xls','.xlsx'],'recent_days':None,'limit':1000,'sort':'modified_desc','projection':['id','root_id','relative_path','name','suffix','size','modified_at','fingerprint','metadata']},{'inspection_number':'$.inputs.inspection_number'},2)
     filtered=python_node('filter_files','纸浆 · 筛选文件',r'''
         import re
         import unicodedata
         def main(inputs):
+            if inputs['truncated']:
+                raise ValueError('文件超过查询上限，请缩小目录范围后重新查询')
             number = unicodedata.normalize('NFKC', inputs['inspection_number']).strip().upper()
             rules = inputs['rules']
             expression = r'(?<![A-Z0-9])' + re.escape(number) + r'(?![A-Z0-9])'
@@ -57,9 +59,9 @@ def build():
             if not items:
                 raise ValueError('目录中没有匹配该编号的 Excel；请核对目录与文件索引')
             return {'sources': items, 'inspection_number': number}
-    ''',{'inspection_number':S,'items':A,'rules':obj({'exclude_words':{'type':'array','items':S}})}, {'sources':A,'inspection_number':S}, {'inspection_number':'$.inputs.inspection_number','items':output('files','items'),'rules':{'exclude_words':['~$']}})
+    ''',{'inspection_number':S,'items':A,'truncated':{'type':'boolean'},'rules':obj({'exclude_words':{'type':'array','items':S}})}, {'sources':A,'inspection_number':S}, {'inspection_number':'$.inputs.inspection_number','items':output('files','items'),'truncated':output('files','truncated'),'rules':{'exclude_words':['~$']}})
     read=node('read','批量读取原始 Excel','workbook.extract_fields',{'data_only':True,'fields':[{'name':'result','sheet':'Sheet1','cell':'W32','required':True},{'name':'standard','sheet':'Sheet1','cell':'M32','required':False}]},{'sources':output('filter_files','sources')},2)
-    candidate_schema=deepcopy(registry.resolve_node_spec('human.select',1).public_dict()['input_schema']['properties']['items'])
+    candidate_schema=deepcopy(registry.resolve_node_spec('human.select',2).public_dict()['input_schema']['properties']['items'])
     candidates=python_node('candidates','纸浆 · 整理候选',r'''
         import re
         import unicodedata
@@ -94,7 +96,7 @@ def build():
                 raise ValueError('没有可用的非空工作簿结果；读取错误：' + str(errors))
             return {'items':items,'read_errors':errors}
     ''', {'snapshot':O,'rows':A,'rules':obj({'project_names':{'type':'array','items':S},'methods':{'type':'array','items':S},'percent_pattern':S,'percent_unit':S})}, {'items':candidate_schema,'read_errors':A}, {'snapshot':output('task','snapshot'),'rows':output('read','items'),'rules':{'project_names':['纸、纸板和纸浆纤维鉴别分析'],'methods':['GB/T 4688-2020'],'percent_pattern':r'(?<![\w.])100(?:\.0+)?(?![\w.])','percent_unit':'%'}})
-    select=node('select','选择原始记录与项目','human.select',{'title':'选择原始记录与项目','item_kind':'artifact','min_selected':1,'max_selected':1,'require_primary':True,'auto_submit_single_candidate':True},{'items':output('candidates','items'),'context':{'读取错误':output('candidates','read_errors')}})
+    select=node('select','选择原始记录与项目','human.select',{'title':'选择原始记录与项目','item_kind':'artifact','min_selected':1,'max_selected':1,'require_primary':True,'auto_submit_single_candidate':True},{'items':output('candidates','items'),'context':{'读取错误':output('candidates','read_errors')}},2)
     form_properties={key:{**S,'title':title} for key,title in [('sample_identity','样品标识'),('judge_basis','判定依据'),('judgement','判定结果'),('standard_value','标准值')]}
     form_schema=obj(form_properties)
     prepare=python_node('prepare_form','纸浆 · 准备必要输入',r'''

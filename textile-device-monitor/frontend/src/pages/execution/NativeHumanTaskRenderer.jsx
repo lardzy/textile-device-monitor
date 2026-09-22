@@ -1,5 +1,7 @@
+import { useMemo, useState } from 'react';
 import {
   Alert,
+  Button,
   Checkbox,
   Descriptions,
   Form,
@@ -12,6 +14,7 @@ import {
 import SchemaFields from './SchemaFields';
 import ExecutionResultFiles from './ExecutionResultFiles';
 import ExecutionImageSelector from './ExecutionImageSelector';
+import { executionIndexedImagePreviewUrl } from '../../api/execution';
 
 const { Text } = Typography;
 
@@ -41,15 +44,51 @@ function ResultFileSelection({ value = [], onChange, items, form, disabled, maxi
 }
 
 function ImageSelection({ value = [], onChange, items, form, disabled, maximum }) {
+  const [directory, setDirectory] = useState(null);
+  const images = useMemo(() => items.map(item => ({
+    ...item.metadata,
+    id: item.id,
+    relative_path: item.relative_path,
+    name: item.label || item.metadata?.name,
+    preview_url: executionIndexedImagePreviewUrl(item.id),
+  })), [items]);
+  const parentOf = image => String(image.relative_path || '').split('/').slice(0, -1).join('/');
+  const directories = [...new Set(images.map(parentOf))];
+  const move = (index, direction) => {
+    const next = [...value];
+    [next[index], next[index + direction]] = [next[index + direction], next[index]];
+    onChange?.(next);
+    form.setFieldValue('primary_id', next[0] || null);
+  };
   return (
+    <Space direction="vertical" style={{ width: '100%' }}>
+      <Select
+        aria-label="筛选图片目录"
+        placeholder="全部图片目录"
+        allowClear
+        showSearch
+        disabled={disabled}
+        value={directory}
+        onChange={setDirectory}
+        style={{ width: '100%' }}
+        options={directories.map(path => ({ value: path, label: path || '根目录' }))}
+      />
     <ExecutionImageSelector
-      images={items.map(item => ({ ...item.metadata, id: item.id }))}
+      images={images.filter(image => !directory || parentOf(image) === directory)}
       selectedImageIds={value}
       onSelectedImageIdsChange={onChange}
       onPrimaryImageIdChange={id => form.setFieldValue('primary_id', id)}
       disabled={disabled}
       maxImages={maximum}
     />
+      {value.map((id, index) => (
+        <Space key={id}>
+          <Text>{index + 1}. {items.find(item => item.id === id)?.label || id}</Text>
+          <Button size="small" disabled={disabled || index === 0} onClick={() => move(index, -1)}>前移</Button>
+          <Button size="small" disabled={disabled || index === value.length - 1} onClick={() => move(index, 1)}>后移</Button>
+        </Space>
+      ))}
+    </Space>
   );
 }
 
@@ -68,10 +107,12 @@ export default function NativeHumanTaskRenderer({
   if (renderer.capability === 'human.select') {
     const items = Array.isArray(inputData?.items) ? inputData.items : [];
     const selectedSchema = schema?.properties?.selected_ids || {};
+    const allowedCounts = inputData?.allowed_selected_counts;
     const showResults = items.length > 0 && items.every(item => item?.metadata?.presentation === 'result_file');
     const showImages = items.length > 0 && items.every(item => item.kind === 'image');
     return (
       <>
+        {Array.isArray(allowedCounts) && <Alert type="info" showIcon message={`可选择 ${allowedCounts.join('、')} 项；顺序决定图片排版和文件编号`} style={{ marginBottom: 12 }} />}
         <Form.Item
           name="selected_ids"
           label={`候选项（${items.length}）`}
@@ -80,6 +121,9 @@ export default function NativeHumanTaskRenderer({
               const count = Array.isArray(value) ? value.length : 0;
               const minimum = Number(selectedSchema.minItems || 0);
               const maximum = Number(selectedSchema.maxItems || items.length || 1);
+              if (Array.isArray(allowedCounts) && !allowedCounts.includes(count)) {
+                return Promise.reject(new Error(`请选择 ${allowedCounts.join('、')} 项`));
+              }
               return count >= minimum && count <= maximum
                 ? Promise.resolve()
                 : Promise.reject(new Error(`请选择 ${minimum} 至 ${maximum} 项`));

@@ -4620,7 +4620,7 @@ def search_files(
 
 
 @router.get("/files/index/{entry_id}/preview")
-def preview_indexed_electron_image(
+def preview_indexed_image(
     entry_id: str,
     _auth: AuthContext = Depends(permission("file.read")),
     db: Session = Depends(get_db),
@@ -4639,14 +4639,15 @@ def preview_indexed_electron_image(
         raise not_found("索引图片", entry_id)
     entry, root = row
     if (
-        root.root_id != ELECTRON_ROOT_ID
+        not root.is_active
+        or root.access_mode != "read"
         or entry.missing_since is not None
         or entry.extension.casefold() not in ELECTRON_IMAGE_SUFFIXES
     ):
         raise ExecutionApiError(
             415,
             "indexed_image_preview_unsupported",
-            "该索引文件不是可预览的电镜图片",
+            "该索引文件不是可预览的图片",
         )
     gateway = build_file_gateway(db)
     try:
