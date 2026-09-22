@@ -1,9 +1,4 @@
-"""默认项目匹配规则种子。
-
-代码常量是唯一种子事实源；``ensure_default_project_rules`` 只补缺、
-不覆盖管理员修改。本模块的构建函数使用函数级导入以避免与匹配器模块
-（其自身依赖 ``project_rules``）产生循环导入。
-"""
+"""Explicit sample rules for shared algorithm tests; never installed at runtime."""
 
 from __future__ import annotations
 
@@ -156,3 +151,14 @@ def default_project_rule_seeds() -> list[dict[str, Any]]:
         )
 
     return seeds
+
+
+def install_rule_fixtures(db):
+    from app.execution.models import ExecutionProjectRule
+    added = False
+    for seed in default_project_rule_seeds():
+        if db.query(ExecutionProjectRule).filter_by(rule_key=seed['rule_key']).first() is None:
+            db.add(ExecutionProjectRule(**seed, enabled=True, revision=1))
+            added = True
+    db.flush()
+    return added

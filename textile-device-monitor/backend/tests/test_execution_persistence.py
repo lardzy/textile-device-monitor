@@ -9,13 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.database import Base
-from app.execution.catalog import (
-    bind_user_role,
-    create_workflow,
-    ensure_default_catalog,
-    ensure_default_rbac,
-    publish_workflow,
-)
+from app.execution.catalog import bind_user_role, create_workflow, ensure_default_catalog, ensure_default_rbac, publish_workflow
 from app.execution.engine import (
     claim_human_task,
     claim_next_node,
@@ -38,7 +32,6 @@ from app.execution.persistence import (
     ensure_storage_roots,
     process_index_job,
     queue_refresh,
-    register_persistence_executors,
     search_index,
 )
 from app.execution.security import hash_password
@@ -46,7 +39,6 @@ from app.execution.security import hash_password
 
 class ExecutionPersistentIndexTests(unittest.TestCase):
     def setUp(self):
-        register_persistence_executors()
         self.tempdir = tempfile.TemporaryDirectory()
         root = Path(self.tempdir.name)
         self.source = root / "source"
@@ -138,27 +130,6 @@ class ExecutionPersistentIndexTests(unittest.TestCase):
         execute_claimed_node(self.db, node_id, token)
         self.db.commit()
 
-    def test_workflow_availability_includes_required_write_roots(self):
-        ensure_default_catalog(self.db)
-        settings.EXECUTION_REPORT_IMAGE_ROOT = str(
-            Path(self.tempdir.name) / "missing-report-images"
-        )
-
-        ensure_storage_roots(self.db)
-
-        report_root = (
-            self.db.query(ExecutionStorageRoot)
-            .filter_by(root_id="report_upload_images")
-            .one()
-        )
-        workflow = (
-            self.db.query(ExecutionWorkflow)
-            .filter_by(slug="electron-microscopy-gbt36422")
-            .one()
-        )
-        self.assertFalse(report_root.is_available)
-        self.assertEqual(workflow.availability_code, "root_not_configured")
-        self.assertIn("report_upload_images", workflow.availability_message)
 
     def test_scan_is_persisted_and_search_never_rescans(self):
         job = self._refresh("special_wool_records")
@@ -265,164 +236,6 @@ class ExecutionPersistentIndexTests(unittest.TestCase):
             )
         )
 
-    def test_electron_human_selection_is_rebuilt_from_server_candidates(self):
-        self._refresh("electron_microscopy_records")
-        category = ExecutionCategory(
-            key="electron-selection-test",
-            name="电镜选择测试",
-        )
-        self.db.add(category)
-        self.db.flush()
-        definition = {
-            "schema_version": "1.0",
-            "metadata": {"name": "电镜选择"},
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "inspection_number": {"type": "string"},
-                },
-                "required": ["inspection_number"],
-            },
-            "global_schema": {"type": "object", "properties": {}},
-            "root_slots": [
-                {
-                    "name": "source",
-                    "root_id": "electron_microscopy_records",
-                    "access": "read",
-                }
-            ],
-            "credential_slots": [],
-            "nodes": [
-                {
-                    "id": "start",
-                    "type": "core.start",
-                    "name": "开始",
-                    "config": {},
-                },
-                {
-                    "id": "group",
-                    "type": "electron.group",
-                    "name": "采集分组",
-                    "config": {
-                        "root_id": "electron_microscopy_records",
-                        "recent_days": 7,
-                        "limit": 6,
-                    },
-                    "input_mapping": {
-                        "inspection_number":
-                            "$.inputs.inspection_number"
-                    },
-                },
-                {
-                    "id": "select",
-                    "type": "human.file_selection",
-                    "name": "人工选择",
-                    "config": {"allow_multiple": True},
-                    "input_mapping": {
-                        "groups": "$.nodes.group.output.groups"
-                    },
-                },
-                {
-                    "id": "end",
-                    "type": "core.end",
-                    "name": "结束",
-                    "config": {},
-                    "input_mapping": {
-                        "selection": "$.nodes.select.output"
-                    },
-                },
-            ],
-            "edges": [
-                {"source": "start", "target": "group"},
-                {"source": "group", "target": "select"},
-                {"source": "select", "target": "end"},
-            ],
-        }
-        workflow = create_workflow(
-            self.db,
-            actor=self.user,
-            slug="electron-selection-test",
-            category_id=category.id,
-            name="电镜选择测试",
-            description=None,
-            definition=definition,
-            capabilities={"read": True},
-            is_enabled=True,
-        )
-        publish_workflow(
-            self.db,
-            workflow_id=workflow.id,
-            expected_revision=1,
-            actor=self.user,
-            release_note="test",
-        )
-        run, _ = create_run(
-            self.db,
-            workflow=workflow,
-            actor=self.user,
-            inspection_number="260001",
-            input_data={},
-            global_data={},
-            idempotency_key="electron-selection-run",
-        )
-        self.db.commit()
-        self._execute_one()
-        self._execute_one()
-        self._execute_one()
-        task = (
-            self.db.query(ExecutionHumanTask)
-            .filter_by(run_id=run.id)
-            .one()
-        )
-        group = task.node_run.input_data["groups"][0]
-        task = claim_human_task(
-            self.db,
-            task_id=task.id,
-            expected_revision=task.revision,
-            actor=self.user,
-        )
-        self.db.commit()
-
-        with self.assertRaises(ExecutionApiError) as captured:
-            submit_human_task(
-                self.db,
-                task_id=task.id,
-                expected_revision=task.revision,
-                data={"selected_files": ["electron:not-offered"]},
-                actor=self.user,
-            )
-        self.assertEqual(
-            captured.exception.code,
-            "file_candidate_not_offered",
-        )
-
-        submit_human_task(
-            self.db,
-            task_id=task.id,
-            expected_revision=task.revision,
-            data={
-                "selected_files": [
-                    {
-                        "id": group["id"],
-                        "root_id": "forged-root",
-                        "relative_path": "../../forged",
-                    }
-                ]
-            },
-            actor=self.user,
-        )
-        self.db.commit()
-        self.assertEqual(
-            task.result_data["selected_files"][0]["id"],
-            group["id"],
-        )
-        self.assertEqual(
-            {
-                item["root_id"]
-                for item in task.result_data["selected_files"][0]["files"]
-            },
-            {"electron_microscopy_records"},
-        )
 
 
 if __name__ == "__main__":

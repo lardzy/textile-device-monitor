@@ -49,7 +49,7 @@
         },
         "name": "开始",
         "type": "core.start",
-        "type_version": 1,
+        "type_version": 2,
         "ui": {
           "x": 40,
           "y": 180
@@ -86,7 +86,7 @@
         },
         "name": "结束",
         "type": "core.end",
-        "type_version": 1,
+        "type_version": 2,
         "ui": {
           "x": 560,
           "y": 180
@@ -249,16 +249,16 @@
     "connectors": [
       {
         "connector_id": "legacy_fibrecheck",
-        "distribution_digest": "60ae3b9b88a3f0914e7ed78de0816dcba357999257add91866b141aa0d8398b8",
+        "distribution_digest": "48c282ddebdf0818bdc723e21d6f5ad07177c9cee61d7d273898d2838959c8e8",
         "operations": [],
         "queries": [
           {
-            "contract_digest": "2d5618e7996a89db8d92551160ca3a7459c7864bb03934bcfa01892fccc3a63f",
+            "contract_digest": "799aa03954421faa98282e116b5dd58d8f08669dd71d466be40ffbaba7e07667",
             "contract_version": 1,
             "query": "task_snapshot.get"
           }
         ],
-        "version_range": "1.7.1"
+        "version_range": "2.0.0"
       }
     ],
     "engine": {
@@ -266,42 +266,42 @@
     },
     "node_types": [
       {
-        "contract_digest": "324b17406cd1c97df81840b17d200e66f7e50fb13b396b15e6c235f1a9be562c",
-        "implementation_digest": "04fc0478e3d3ef21449bf1bc33b3af6fd0e95143fa6cfb9dbdcf07819f1d7bc7",
+        "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
+        "implementation_digest": "4573a4d14f8736f3bfcfae7f6352baaf65f7bc30314b021b3ca1607d0ab5dee8",
         "type": "core.start",
-        "type_version": 1
+        "type_version": 2
       },
       {
         "contract_digest": "a6bbc7df93553aa4206567ec3734629d97644ea6fd8d1df099305b492f6e1c48",
-        "implementation_digest": "50bddf0a77d94ddfbc7c6fbb699ef879f43ccdfed0eea1c8bf550f0e60de2e36",
+        "implementation_digest": "1a5c996cdf57411cdbef5d6d45437376aa6fc1a7d138be5cda9585ac97b3691b",
         "type": "connector.query",
         "type_version": 1
       },
       {
-        "contract_digest": "a54b92db9917ff688ae8acf5b9cfc81e492d06a9cd80110ced8a01b4f5aeac96",
-        "implementation_digest": "f610833a6fc109fd92e98d3631c07a4fa23195dace7d1ca426f8ac40c1f72566",
+        "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
+        "implementation_digest": "5c8b4a34059c7156bde5d3f62defd567281078976b993c29fdb9749e765f00df",
         "type": "core.end",
-        "type_version": 1
+        "type_version": 2
       }
     ],
     "packs": [
       {
-        "distribution_digest": "96d0b7e9702013f02b1a51d53a1b5ade9925d67d3c3ff0c61c1b9bc79fff1d93",
+        "distribution_digest": "24e4e1c3e302cf41423dc291a743184c43ab1dfe11b1cdc70f4a584c4fd75285",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.9.1"
+        "version_range": "2.10.0"
       },
       {
-        "distribution_digest": "60ae3b9b88a3f0914e7ed78de0816dcba357999257add91866b141aa0d8398b8",
+        "distribution_digest": "48c282ddebdf0818bdc723e21d6f5ad07177c9cee61d7d273898d2838959c8e8",
         "pack_id": "legacy_fibrecheck.v1-compat",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.7.1"
+        "version_range": "2.0.1"
       }
     ]
   },
@@ -311,7 +311,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "58521d1ee7f288fe3924bda406aca922f13b3462e39053ec5dccb49a5d75424d",
+    "digest": "162b5d7dfc7455ad39c48a8682f00094cc4156e58968c3e6b939aa1ce039c883",
     "scope": "document_without_integrity",
     "signatures": []
   },

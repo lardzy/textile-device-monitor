@@ -9,6 +9,7 @@ from app.execution.v2.data_handlers import python_test
 from app.execution.v2.designer import compile_document
 from workflow_native_helpers import environment, stage, publish, run, drain
 from native_io_helpers import NUMBER, task_snapshot, paper_file
+from tests.test_execution_connector_operations import operation_env, receipt
 
 DOCUMENT_PATH = Path(__file__).parents[1] / 'app/execution/v2/resources/workflows/paper-fiber-v2.json'
 
@@ -93,3 +94,65 @@ def test_clean_environment_runs_portable_json_without_rules_or_legacy_nodes(envi
     assert registration['record']['header']['unit']=='%'
     assert registration['record']['details'][0]['real_value']=='100'
     assert not env.db.query(ExecutionHumanTask).filter_by(run_id=record['id'],status='open').count()
+
+
+@pytest.mark.parametrize('portable_path', [
+    DOCUMENT_PATH,
+    Path(__file__).parents[2] / 'docs/execution-v2/examples/paper-fiber-v2.json',
+])
+def test_complete_portable_document_only_needs_root_and_credential(operation_env, monkeypatch, portable_path):
+    from datetime import timedelta
+    from app.config import settings
+    from app.execution.connector_original_records import UPLOAD, REVIEW, ENTRY
+    from app.execution.external_operations import (
+        claim_approved_external_operation, complete_external_attempt,
+        record_external_attempt_stage, _operation_stage_profile,
+    )
+    from app.execution.models import ExecutionExternalOperation, ExecutionProjectRule, utcnow
+    from bridge_test_helpers import upload_receipt, review_receipt
+    from workflow_native_helpers import publish_native_document
+
+    env = operation_env
+    monkeypatch.setattr(settings, 'EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED', True)
+    cache = env.db.get(ExecutionTaskSnapshotCache, NUMBER)
+    snapshot = deepcopy(cache.snapshot)
+    snapshot['projects'][0]['sample_identify'] = None
+    cache.snapshot = snapshot
+    env.db.commit()
+    paper_file(env, suffix='.xls', value='木浆、竹浆')
+    original = json.loads(portable_path.read_text())
+    workflow = publish_native_document(env.db, env.admin, original, {
+        'root_slots': {'paper_fiber_records': {'root_id': 'paper_fiber_records', 'revision': 1}},
+        'credential_slots': {original['resources']['credential_slots'][0]['slot_id']: {'credential_id': env.credential.id, 'revision': 1}},
+    })
+    record = run(env, workflow.id, inputs={'inspection_number': NUMBER})
+    drain(env)
+    env.db.expire_all()
+    query = env.db.query(ExecutionNodeRun).filter_by(run_id=record['id'], node_id='task').one()
+    assert query.output_data['_query_wait_started']
+    cache = env.db.get(ExecutionTaskSnapshotCache, NUMBER)
+    cache.status, cache.fetched_at = 'ready', utcnow()
+    cache.snapshot = snapshot
+    cache.expires_at = utcnow() + timedelta(minutes=15)
+    query.ready_at = utcnow() - timedelta(seconds=1)
+    env.db.commit()
+    drain(env)
+    for ref, builder in [(UPLOAD, upload_receipt), (REVIEW, review_receipt), (ENTRY, receipt)]:
+        env.db.expire_all()
+        pending = env.db.query(ExecutionExternalOperation).filter_by(status='approved').one()
+        claim = claim_approved_external_operation(env.db, bridge_id='portable-acceptance', account_name='test-operator',
+            supported_operation_types={ref, pending.request_summary['operation_type']})
+        assert claim is not None
+        operation, attempt, _ = claim
+        record_external_attempt_stage(env.db, attempt_id=attempt.id, bridge_id='portable-acceptance', stage=_operation_stage_profile(operation)[2])
+        env.db.commit()
+        complete_external_attempt(env.db, attempt_id=attempt.id, bridge_id='portable-acceptance', receipt=builder(operation))
+        env.db.commit()
+        drain(env)
+    env.db.expire_all()
+    nodes = env.db.query(ExecutionNodeRun).filter_by(run_id=record['id']).all()
+    assert env.db.get(ExecutionRun, record['id']).status == 'completed', [(n.node_id,n.status,n.error_message) for n in nodes]
+    assert len(nodes) == 14 and all(n.status == 'succeeded' for n in nodes)
+    assert env.db.query(ExecutionExternalOperation).count() == 3
+    assert env.db.query(ExecutionProjectRule).count() == env.db.query(ExecutionHumanTask).count() == 0
+    assert json.loads(portable_path.read_text()) == original

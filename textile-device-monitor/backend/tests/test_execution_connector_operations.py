@@ -90,7 +90,7 @@ def test_direct_submit_claim_complete_and_repeated_request_without_run(operation
     bridge = bridge_external_operation(operation, credential=credential)
     assert bridge["machine_payload"]["generic_record"]["details"][0]["real_value"] == "木浆、竹浆"
     # Retain the existing Bridge package validator, rather than a second Writer.
-    from tests.test_execution_paper_external_operations import _BRIDGE_MODULE as bridge_module
+    from bridge_test_helpers import _BRIDGE_MODULE as bridge_module
     bridge_module.validate_generic_final_entry_machine_payload(bridge, bridge["request_summary"])
     heartbeat_external_attempt(env.db, attempt_id=attempt.id, bridge_id="p4-writer")
     env.db.commit()

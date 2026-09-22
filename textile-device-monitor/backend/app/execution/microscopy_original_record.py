@@ -1552,16 +1552,3 @@ def create_original_record_artifact(
         },
         "reused": False,
     }
-
-
-def register_microscopy_original_record_executor() -> None:
-    node_registry.set_executor(
-        MICROSCOPY_RECORD_CONTEXT_NODE_TYPE,
-        1,
-        _microscopy_record_context_executor,
-    )
-    node_registry.set_executor(
-        MICROSCOPY_ORIGINAL_RECORD_NODE_TYPE,
-        1,
-        _microscopy_original_record_executor,
-    )

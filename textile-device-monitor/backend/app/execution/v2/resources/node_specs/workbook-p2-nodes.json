@@ -534,7 +534,7 @@
         "kind": "automatic",
         "owner": {
           "kind": "capability_pack",
-          "pack_id": "textile.execution-v1-compat"
+          "pack_id": "textile.execution-workbook"
         },
         "result_mode": "object"
       },

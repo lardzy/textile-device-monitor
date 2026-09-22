@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check or explicitly update the isolated Execution v2 P0 snapshot."""
+"""Check or explicitly update the installed Execution v2 contract snapshot."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ SNAPSHOT_PATH = (
     / "v2"
     / "resources"
     / "snapshots"
-    / "execution-v1-contracts.json"
+    / "execution-v2-contracts.json"
 )
 sys.path.insert(0, str(BACKEND_ROOT))
 
@@ -26,8 +26,8 @@ from app.execution.v2.snapshots import render_contract_snapshot
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Check the deterministic P0 snapshot. Generation uses only an "
-            "in-memory database and installed package resources."
+            "Check the installed native contract snapshot. Generation uses only "
+            "installed package resources."
         )
     )
     mode = parser.add_mutually_exclusive_group()

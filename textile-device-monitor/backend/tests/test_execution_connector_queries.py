@@ -16,8 +16,8 @@ from app.execution.models import (
 from app.execution.v2.examples import build_connector_query_smoke_release, _seal
 from app.execution.v2.registry import get_installed_registry, resolve_connector_reference
 from app.execution.worker_state import record_worker_heartbeat
-from tests.test_execution_domain_services import NUMBER, task_snapshot
-from tests.test_execution_workflow_replacement import environment, drain, publish, request, stage
+from native_io_helpers import NUMBER, task_snapshot
+from workflow_native_helpers import environment, drain, publish, request, stage
 
 
 QUERY = "legacy_fibrecheck.task_snapshot.get@1"
@@ -35,7 +35,7 @@ def test_api_reads_existing_cache_without_a_run_or_refresh(environment):
     capabilities = request(env, "GET", "v1/connectors/legacy_fibrecheck/capabilities")
     spec = capabilities["queries"][0]
     assert spec["query_ref"] == QUERY and spec["direct_api_available"]
-    assert len(capabilities["operations"]) == 9
+    assert len(capabilities["operations"]) == 4
     assert all(operation["direct_api_available"] for operation in capabilities["operations"])
     result = query(env, connector_version=spec["connector_version"], contract_digest=spec["contract_digest"])
     assert result["result"]["snapshot"] == snapshot

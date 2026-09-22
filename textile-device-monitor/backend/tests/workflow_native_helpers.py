@@ -227,3 +227,26 @@ def drain(env):
             execute_claimed_node(db, node_id, lease_token)
             db.commit()
     raise AssertionError("DAG did not quiesce")
+
+
+def publish_native_document(db, actor, document, bindings=None):
+    """Publish test graphs through the same compiler and freezer as the UI."""
+    from unittest.mock import patch
+    from app.execution.release_v2 import apply_release, preflight_release, publish_release, put_deployment_binding
+    from app.execution.v2.designer import compile_document
+
+    ensure_default_catalog(db)
+    with patch.object(settings, 'EXECUTION_CONTRACT_MODE', 'enforced'), patch.object(settings, 'EXECUTION_V2_ROLLOUT_PROFILE', 'p2_publish'):
+        compiled = compile_document(document)
+        assert compiled['content_valid'], compiled['issues']
+        document = compiled['document']
+        report = preflight_release(db, document=document, actor=actor)
+        assert report['content_valid'], report['issues']
+        release = apply_release(db, document=None, preflight_token=report['preflight_token'], actor=actor)
+        put_deployment_binding(db, release_id=release.id, environment=settings.EXECUTION_ENVIRONMENT_ID,
+            expected_revision=0, bindings=bindings or {'root_slots': {}, 'credential_slots': {}, 'role_slots': {}, 'rule_slots': {}}, actor=actor)
+        report = preflight_release(db, document=document, release=release, scope='publish', actor=actor)
+        assert report['publish_ready'], report['issues']
+        _, version, _ = publish_release(db, release_id=release.id, preflight_token=report['preflight_token'], actor=actor, reason='native test fixture')
+        db.commit()
+        return db.get(ExecutionWorkflow, version.workflow_id)

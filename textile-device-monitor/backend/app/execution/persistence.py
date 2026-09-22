@@ -836,28 +836,3 @@ def _electron_group_executor(context) -> dict[str, Any]:
         limit=min(int(config.get("limit", 6)), 100),
     )
     return {"groups": groups, "count": len(groups)}
-
-
-_EXECUTORS_REGISTERED = False
-
-
-def register_persistence_executors() -> None:
-    global _EXECUTORS_REGISTERED
-    if _EXECUTORS_REGISTERED:
-        return
-    node_registry.set_executor("file.index_query", 1, _file_query_executor)
-    node_registry.set_executor("electron.group", 1, _electron_group_executor)
-    from app.execution.regenerated_fiber import (
-        register_regenerated_fiber_executors,
-    )
-    from app.execution.electron_microscopy import (
-        register_electron_microscopy_executors,
-    )
-    from app.execution.paper_fiber import register_paper_fiber_executors
-    from app.execution.project_rules import register_project_rule_executors
-
-    register_regenerated_fiber_executors()
-    register_electron_microscopy_executors()
-    register_paper_fiber_executors()
-    register_project_rule_executors()
-    _EXECUTORS_REGISTERED = True

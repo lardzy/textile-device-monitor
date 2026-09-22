@@ -2,7 +2,7 @@ from copy import deepcopy
 
 from app.execution.v2.designer import compile_document, starter_document
 from app.execution.v2.examples import build_connector_operation_smoke_release
-from tests.test_execution_workflow_replacement import environment, request
+from workflow_native_helpers import environment, request
 
 
 def test_compile_rebuilds_native_dependencies_and_digest_without_mutating_input():
@@ -38,7 +38,7 @@ def test_compile_connector_keeps_exact_operation_bindings():
 
 def test_catalog_and_compilation_api(environment):
     catalog = request(environment, "GET", "v2/designer/catalog")
-    assert len(catalog["templates"]) == 9
+    assert len(catalog["templates"]) == 1
     assert all(n["source"] == "resource" for n in catalog["node_specs"])
     result = request(environment, "POST", "v2/designer/compile", {"document": catalog["starter"]})
     assert result["content_valid"], result["issues"]
@@ -50,7 +50,7 @@ def test_catalog_and_compilation_api(environment):
 
 def test_designed_native_graph_publishes_runs_and_survives_version_rollback(environment):
     from app.execution.models import ExecutionHumanTask
-    from tests.test_execution_workflow_replacement import stage, publish, run, drain
+    from workflow_native_helpers import stage, publish, run, drain
 
     env = environment
     document = starter_document()
@@ -88,18 +88,12 @@ def test_designed_native_graph_publishes_runs_and_survives_version_rollback(envi
 
 
 def test_templates_remain_available_when_a_suggested_slug_is_occupied(environment):
-    from app.execution.models import ExecutionWorkflow
-    from tests.test_execution_workflow_replacement import source_workflow
-
-    env = environment
-    source = source_workflow(env, 'hemp-cotton-source-selection')
-    env.db.add(ExecutionWorkflow(slug=source.slug+'-v2', category_id=source.category_id, name='独立流程',
-                                 draft_definition=deepcopy(source.draft_definition), capabilities={}))
-    env.db.commit()
-    catalog = request(env, 'GET', 'v2/designer/catalog')
-    assert len(catalog['templates']) == 9
-    template = next(item for item in catalog['templates'] if item['workflow_id'] == source.id)
-    assert template['candidate']['release']['slug'] == source.slug+'-v2-2'
+    doc = starter_document()
+    doc['release']['slug'] = 'paper-fiber-v2'
+    request(environment, 'POST', 'v2/designer/drafts', {'document': doc, 'bindings': {}}, status=201)
+    catalog = request(environment, 'GET', 'v2/designer/catalog')
+    assert len(catalog['templates']) == 1
+    assert catalog['templates'][0]['candidate']['release']['slug'] == 'paper-fiber-v2-2'
 
 
 def test_catalog_does_not_depend_on_legacy_workflow_rows(environment):
@@ -110,7 +104,7 @@ def test_catalog_does_not_depend_on_legacy_workflow_rows(environment):
         workflow.management_mode = "release_v2"
     environment.db.commit()
     catalog = request(environment, "GET", "v2/designer/catalog")
-    assert len(catalog["templates"]) == 9
+    assert len(catalog["templates"]) == 1
     assert all(item["workflow_id"] is None and item["replacement_source"] is None for item in catalog["templates"])
     for item in catalog["templates"]:
         assert compile_document(item["candidate"])["content_valid"]

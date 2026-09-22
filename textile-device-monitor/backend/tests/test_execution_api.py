@@ -20,14 +20,13 @@ from app.api.execution import (
     workflow_detail,
     workflows,
 )
+from app.config import settings
 from app.database import Base
-from app.execution.catalog import (
-    bind_user_role,
-    create_workflow,
-    ensure_default_catalog,
-    ensure_default_rbac,
-    publish_workflow,
-)
+from app.execution.v2.designer import starter_document
+from workflow_native_helpers import publish_native_document
+from app.execution.worker import ExecutionWorker
+from app.execution.worker_state import record_worker_heartbeat
+from app.execution.catalog import bind_user_role, create_workflow, ensure_default_catalog, ensure_default_rbac, publish_workflow
 from app.execution.engine import claim_next_node, create_run, execute_claimed_node
 from app.execution.errors import ExecutionApiError
 from app.execution.events import append_run_event
@@ -55,6 +54,9 @@ from app.execution.security import (
 
 class ExecutionApiContractTests(unittest.TestCase):
     def setUp(self):
+        profile = patch.object(settings, "EXECUTION_V2_ROLLOUT_PROFILE", "p2_publish")
+        profile.start()
+        self.addCleanup(profile.stop)
         self.engine = create_engine("sqlite:///:memory:")
         self.Session = sessionmaker(bind=self.engine, autoflush=False)
         Base.metadata.create_all(self.engine)
@@ -95,48 +97,9 @@ class ExecutionApiContractTests(unittest.TestCase):
         self.engine.dispose()
 
     def _create_owned_run(self, actor: ExecutionUser, *, suffix: str):
-        category = self.db.query(ExecutionCategory).first()
-        definition = {
-            "schema_version": "1.0",
-            "metadata": {"name": f"事件分页-{suffix}"},
-            "input_schema": {"type": "object", "properties": {}},
-            "global_schema": {"type": "object", "properties": {}},
-            "root_slots": [],
-            "credential_slots": [],
-            "nodes": [
-                {
-                    "id": "start",
-                    "type": "core.start",
-                    "name": "开始",
-                    "config": {},
-                },
-                {
-                    "id": "end",
-                    "type": "core.end",
-                    "name": "结束",
-                    "config": {},
-                },
-            ],
-            "edges": [{"source": "start", "target": "end"}],
-        }
-        workflow = create_workflow(
-            self.db,
-            actor=self.admin,
-            slug=f"event-history-{suffix}",
-            category_id=category.id,
-            name=f"事件分页-{suffix}",
-            description=None,
-            definition=definition,
-            capabilities={"read": True},
-            is_enabled=True,
-        )
-        publish_workflow(
-            self.db,
-            workflow_id=workflow.id,
-            expected_revision=1,
-            actor=self.admin,
-            release_note="test",
-        )
+        document = starter_document()
+        document['release'].update(slug=f'event-history-{suffix}', name=f'事件分页-{suffix}')
+        workflow = publish_native_document(self.db, self.admin, document)
         run, _ = create_run(
             self.db,
             workflow=workflow,
@@ -534,63 +497,19 @@ class ExecutionApiContractTests(unittest.TestCase):
         self.assertEqual(captured.exception.code, "permission_denied")
 
     def test_candidate_role_user_can_open_minimal_human_task_detail(self):
-        category = self.db.query(ExecutionCategory).first()
-        definition = {
-            "schema_version": "1.0",
-            "metadata": {"name": "跨用户复核"},
-            "input_schema": {"type": "object", "properties": {}},
-            "global_schema": {"type": "object", "properties": {}},
-            "root_slots": [],
-            "credential_slots": [],
-            "nodes": [
-                {
-                    "id": "start",
-                    "type": "core.start",
-                    "name": "开始",
-                    "config": {},
-                },
-                {
-                    "id": "review",
-                    "type": "human.input",
-                    "name": "复核",
-                    "config": {
-                        "candidate_role": "user",
-                        "title": "请复核检测结果",
-                    },
-                    "input_mapping": {
-                        "summary": "$.inputs.inspection_number"
-                    },
-                },
-                {
-                    "id": "end",
-                    "type": "core.end",
-                    "name": "结束",
-                    "config": {},
-                },
-            ],
-            "edges": [
-                {"source": "start", "target": "review"},
-                {"source": "review", "target": "end"},
-            ],
-        }
-        workflow = create_workflow(
-            self.db,
-            actor=self.admin,
-            slug="cross-user-review",
-            category_id=category.id,
-            name="跨用户复核",
-            description=None,
-            definition=definition,
-            capabilities={"read": True},
-            is_enabled=True,
-        )
-        publish_workflow(
-            self.db,
-            workflow_id=workflow.id,
-            expected_revision=1,
-            actor=self.admin,
-            release_note="test",
-        )
+        document = starter_document()
+        document['release'].update(slug='cross-user-review', name='跨用户复核')
+        document['definition']['nodes'].insert(1, {'id': 'review', 'type': 'human.form', 'type_version': 1,
+            'name': '复核', 'config': {'title': '请复核检测结果', 'candidate_role_slot': 'reviewer',
+                'form_schema': {'type': 'object', 'properties': {}, 'additionalProperties': False}},
+            'input_mapping': {'context': {'summary': '$.inputs.inspection_number'}}})
+        document['definition']['edges'] = [{'id': 'a', 'source': 'start', 'target': 'review', 'join_policy': 'all'},
+            {'id': 'b', 'source': 'review', 'target': 'end', 'join_policy': 'all'}]
+        document['resources']['role_slots'] = [{'slot_id': 'reviewer', 'name': '复核员', 'required': True, 'required_permissions': []}]
+        workflow = publish_native_document(self.db, self.admin, document, {'root_slots': {}, 'credential_slots': {},
+            'rule_slots': {}, 'role_slots': {'reviewer': {'role_key': 'user'}}})
+        worker = ExecutionWorker(worker_id='api-test-worker')
+        record_worker_heartbeat(self.db, worker_id=worker.worker_id, capability_document=worker.capability_document)
         run, _ = create_run(
             self.db,
             workflow=workflow,
@@ -617,10 +536,10 @@ class ExecutionApiContractTests(unittest.TestCase):
         )
         self.assertEqual(detail["task"]["id"], task.id)
         self.assertEqual(detail["run"]["inspection_number"], "26X-REVIEW")
-        self.assertEqual(detail["node_run"]["input_data"]["summary"], "26X-REVIEW")
+        self.assertEqual(detail["node_run"]["input_data"]["context"]["summary"], "26X-REVIEW")
         self.assertNotIn("definition_snapshot", detail["run"])
 
-    def test_system_write_acceptance_workflow_is_hidden_from_normal_users(self):
+    def test_no_business_workflows_are_automatically_created(self):
         normal = workflows(
             categories=[],
             query=None,
@@ -639,10 +558,7 @@ class ExecutionApiContractTests(unittest.TestCase):
             "system-controlled-xlsx-write-test",
             normal_slugs,
         )
-        self.assertIn(
-            "system-controlled-xlsx-write-test",
-            admin_slugs,
-        )
+        self.assertEqual(admin_slugs, set())
 
     def test_login_failures_are_rate_limited_and_can_be_cleared(self):
         key = login_throttle_key("operator", "127.0.0.1")

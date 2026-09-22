@@ -1,43 +1,44 @@
+"""Neutral original upload/review/entry APIs share the real operation queue."""
+from copy import deepcopy
+import hashlib
+from pathlib import Path
+
 import pytest
-
 from app.config import settings
-from app.execution.connector_operations import submit_operation
+from app.execution.connector_original_records import UPLOAD, REVIEW, ENTRY
 from app.execution.external_operations import claim_approved_external_operation, complete_external_attempt, record_external_attempt_stage, _operation_stage_profile
-from app.execution.models import ExecutionRun
-from app.execution.schemas import ConnectorOperationRequest
-from tests import test_execution_paper_external_operations as paper_tests
+from app.execution.models import ExecutionRun, ExecutionProjectRule, ExecutionExternalOperation
+from bridge_test_helpers import upload_receipt, review_receipt
+from native_io_helpers import paper_file, NUMBER
+from tests.test_execution_connector_operations import operation_env, receipt
+from workflow_native_helpers import environment, request
 
 
-def test_paper_upload_review_entry_service_has_no_run_dependency(monkeypatch):
-    monkeypatch.setattr(settings, "EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED", True)
-    monkeypatch.setattr(settings, "EXECUTION_LEGACY_MICROSCOPY_FINAL_ENTRY_ENABLED", True)
-    fixture = paper_tests.PaperExternalOperationTests()
-    fixture.setUp()
-    try:
-        before = fixture.db.query(ExecutionRun).count()
-        def submit(name, data):
-            return submit_operation(fixture.db, actor=fixture.user, request=ConnectorOperationRequest(
-                operation_ref=f"legacy_fibrecheck.{name}@1", credential_id=fixture.credential.id,
-                inspection_number=fixture.run.inspection_number, idempotency_key=name, input=data,
-            ))[0]
-        def complete(operation, receipt):
-            fixture.db.commit()
-            current, attempt, _ = claim_approved_external_operation(fixture.db, bridge_id="service-test", account_name="legacy-user",
-                supported_operation_types={operation.request_summary["operation_type"]})
-            assert current.id == operation.id
-            record_external_attempt_stage(fixture.db, attempt_id=attempt.id, bridge_id="service-test", stage=_operation_stage_profile(operation)[2])
-            fixture.db.commit()
-            complete_external_attempt(fixture.db, attempt_id=attempt.id, bridge_id="service-test", receipt=receipt)
-            fixture.db.commit()
-        upload = submit("paper_fiber.qualitative_upload", fixture._input())
-        assert upload.run_id is None and upload.node_run_id is None
-        complete(upload, fixture._upload_receipt(upload))
-        review = submit("paper_fiber.qualitative_review", {"upload_result": {"operation_id": upload.id}})
-        complete(review, fixture._review_receipt(review))
-        project = fixture._project()
-        entry = submit("paper_fiber.check_record_entry", {"selected_project_key": project["project_key"], "selected_project": project,
-            "review_result": {"operation_id": review.id}, "registration_decision": fixture._registration_decision(project)})
-        assert entry.run_id is None and entry.status == "approved"
-        assert fixture.db.query(ExecutionRun).count() == before
-    finally:
-        fixture.tearDown()
+def test_upload_review_entry_without_run_or_database_rule(operation_env, monkeypatch):
+    env=operation_env
+    monkeypatch.setattr(settings,'EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED',True)
+    file=paper_file(env,suffix='.xls')
+    path=Path(env.roots['paper_fiber_records'].local_path)/file.relative_path
+    project=env.payload['input']['project']
+    def submit(ref,data,key):
+        return request(env,'POST','v1/connector-operations',{'operation_ref':ref,'credential_id':env.credential.id,
+            'inspection_number':NUMBER,'input':data,'idempotency_key':key},status=202)['operation']
+    def complete(result,ref,builder):
+        current=env.db.get(ExecutionExternalOperation,result['id'])
+        claim=claim_approved_external_operation(env.db,bridge_id='neutral',account_name='test-operator',
+            supported_operation_types={ref,current.request_summary['operation_type']})
+        assert claim is not None
+        operation,attempt,_=claim
+        record_external_attempt_stage(env.db,attempt_id=attempt.id,bridge_id='neutral',stage=_operation_stage_profile(operation)[2])
+        env.db.commit()
+        complete_external_attempt(env.db,attempt_id=attempt.id,bridge_id='neutral',receipt=builder(operation));env.db.commit()
+        return {'operation_id':operation.id,'receipt':deepcopy(operation.receipt)}
+    data={'inspection_number':NUMBER,'project':project,'source':{'root_id':'paper_fiber_records','relative_path':file.relative_path},
+        'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'business_fields':{'fiber_category':'其他纤维','inspection_item':'自定义项目',
+        'review_item':'自定义项目','review_copies':1,'inspection_method':'定量','inspection_copies':1,'file_type':'定量试验'},'inspector':''}
+    uploaded=complete(submit(UPLOAD,data,'upload'),UPLOAD,upload_receipt)
+    reviewed=complete(submit(REVIEW,{'upload_result':uploaded},'review'),REVIEW,review_receipt)
+    entry=submit(ENTRY,{**env.payload['input'],'review_result':reviewed},'entry')
+    complete(entry,ENTRY,receipt)
+    assert env.db.query(ExecutionExternalOperation).count()==3
+    assert env.db.query(ExecutionRun).count()==env.db.query(ExecutionProjectRule).count()==0

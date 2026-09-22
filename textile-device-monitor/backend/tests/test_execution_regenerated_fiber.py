@@ -1,4 +1,5 @@
 from __future__ import annotations
+from project_rule_fixtures import install_rule_fixtures
 
 import tempfile
 import unittest
@@ -20,13 +21,7 @@ from app.api.execution import (
 )
 from app.config import settings
 from app.database import Base
-from app.execution.catalog import (
-    _default_definition,
-    _regenerated_method_definition,
-    bind_user_role,
-    ensure_default_catalog,
-    ensure_default_rbac,
-)
+from app.execution.catalog import bind_user_role, ensure_default_catalog, ensure_default_rbac
 from app.execution.engine import (
     claim_human_task,
     claim_next_node,
@@ -51,7 +46,6 @@ from app.execution.persistence import (
     enqueue_due_index_jobs,
     persist_scan,
     queue_refresh,
-    register_persistence_executors,
 )
 from app.execution.regenerated_fiber import (
     REGENERATED_FIBER_RULES,
@@ -75,7 +69,6 @@ AREA_NODE = "file.regenerated_fiber_area_method"
 
 class RegeneratedFiberBackendTests(unittest.TestCase):
     def setUp(self):
-        register_persistence_executors()
         self.tempdir = tempfile.TemporaryDirectory()
         self.root_path = Path(self.tempdir.name) / "2026-再生纤"
         self.root_path.mkdir(parents=True)
@@ -83,6 +76,7 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
         self.Session = sessionmaker(bind=self.engine, autoflush=False)
         Base.metadata.create_all(self.engine)
         self.db = self.Session()
+        install_rule_fixtures(self.db)
         ensure_default_rbac(self.db)
         ensure_default_catalog(self.db)
         self.user = ExecutionUser(
@@ -509,167 +503,8 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
         self.assertEqual(result["worksheet_match_count"], 0)
         self.assertEqual(result["full_match_count"], 0)
 
-    def test_specialized_executor_reports_match_counts_when_empty(self):
-        path = self._xlsx(
-            "260006.xlsx",
-            sheet_name="根数法报告1",
-            values=[""],
-        )
-        self._index(path)
-        self.db.commit()
-        workflow = (
-            self.db.query(ExecutionWorkflow)
-            .filter_by(slug="regenerated-fiber-count-method")
-            .one()
-        )
-        run, _ = create_run(
-            self.db,
-            workflow=workflow,
-            actor=self.user,
-            inspection_number="260006",
-            input_data={},
-            global_data={},
-            idempotency_key="regenerated-no-match",
-        )
-        self.db.commit()
-        self._execute_one()
-        query_node = self._execute_one()
-        self.db.refresh(query_node)
-        self.assertEqual(query_node.status, "failed")
-        self.assertEqual(query_node.error_code, "matching_workbook_not_found")
-        self.assertIn("文件名命中 1", query_node.error_message)
-        self.assertIn("工作表命中 1", query_node.error_message)
-        self.assertIn("完整命中 0", query_node.error_message)
 
-    def test_area_default_workflow_runs_through_human_selection(self):
-        path = self._xlsx(
-            "260144785-面积法.xlsx",
-            sheet_name="截面统计报告1",
-            values=[10],
-        )
-        workbook = load_workbook(path)
-        worksheet = workbook["截面统计报告1"]
-        worksheet["B27"] = "棉"
-        worksheet["B28"] = 100
-        workbook.save(path)
-        workbook.close()
-        entry = self._index(path)
-        self.db.commit()
-        workflow = (
-            self.db.query(ExecutionWorkflow)
-            .filter_by(slug="regenerated-fiber-area-method")
-            .one()
-        )
-        run, duplicate = create_run(
-            self.db,
-            workflow=workflow,
-            actor=self.user,
-            inspection_number="260144785",
-            input_data={},
-            global_data={},
-            idempotency_key="regenerated-area-run",
-        )
-        self.db.commit()
-        self.assertFalse(duplicate)
 
-        self._execute_one()  # start
-        self._execute_one()  # matcher
-        self._execute_one()  # result reader
-        self._execute_one()  # create human task
-        task = (
-            self.db.query(ExecutionHumanTask)
-            .filter_by(run_id=run.id)
-            .one()
-        )
-        offered = task.node_run.input_data["files"]
-        self.assertEqual([item["id"] for item in offered], [entry.id])
-        self.assertEqual(
-            offered[0]["result"]["parts"][0]["components"][0]["name"],
-            "棉",
-        )
-        task = claim_human_task(
-            self.db,
-            task_id=task.id,
-            expected_revision=task.revision,
-            actor=self.user,
-        )
-        self.db.commit()
-        submit_human_task(
-            self.db,
-            task_id=task.id,
-            expected_revision=task.revision,
-            data={"selected_files": [entry.id]},
-            actor=self.user,
-        )
-        self.db.commit()
-        self._execute_one()  # end
-        self.db.refresh(run)
-        self.assertEqual(run.status, "completed")
-        self.assertEqual(
-            run.output_data["selected_files"][0]["id"],
-            entry.id,
-        )
-        self.assertEqual(run.output_data["primary_file_id"], entry.id)
-
-    def test_recommendations_rank_full_match_and_apply_category_soft_score(self):
-        area = self._xlsx(
-            "7月/260144785.xlsx",
-            sheet_name="截面统计报告1",
-            values=[1],
-        )
-        self._index(area)
-        self.db.commit()
-        items, cache_updated = catalog_recommendations(
-            self.db,
-            inspection_number="260144785",
-            preferred_categories=["regenerated_fiber"],
-            include_hidden=False,
-        )
-        self.assertTrue(cache_updated)
-        area_workflow = (
-            self.db.query(ExecutionWorkflow)
-            .filter_by(slug="regenerated-fiber-area-method")
-            .one()
-        )
-        self.assertEqual(items[0]["workflow_id"], area_workflow.id)
-        self.assertEqual(items[0]["state"], "full_match")
-        self.assertEqual(items[0]["score"], 5)
-        self.assertEqual(
-            items[0]["matched_conditions"],
-            [
-                "category",
-                "source_root",
-                "filename",
-                "worksheet",
-                "content_range",
-            ],
-        )
-        self.assertEqual(items[0]["candidate_count"], 1)
-        self.assertEqual(
-            items[0]["candidate_preview"],
-            {
-                "name": "260144785.xlsx",
-                "relative_path": "7月/260144785.xlsx",
-                "suffix": ".xlsx",
-            },
-        )
-        self.assertNotIn(
-            str(self.root_path),
-            items[0]["candidate_preview"]["relative_path"],
-        )
-
-        no_number, _ = catalog_recommendations(
-            self.db,
-            inspection_number="",
-            preferred_categories=["regenerated_fiber"],
-            include_hidden=False,
-        )
-        first_workflow = self.db.get(
-            ExecutionWorkflow,
-            no_number[0]["workflow_id"],
-        )
-        self.assertEqual(first_workflow.category.key, "regenerated_fiber")
-        self.assertIsNone(no_number[0]["candidate_preview"])
 
     def test_generic_preview_is_stable_and_absolute_paths_are_not_exposed(self):
         older = self._xlsx(
@@ -731,43 +566,6 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
             "260177-new.xlsm",
         )
 
-    def test_recommendation_reports_unavailable_and_api_repeats_categories(self):
-        self.root.is_available = False
-        self.db.commit()
-        auth = AuthContext(session=None, user=self.user)
-        response = workflow_recommendations(
-            inspection_number="260000",
-            preferred_categories=["regenerated_fiber", "regenerated_fiber"],
-            auth=auth,
-            db=self.db,
-        )
-        self.assertEqual(
-            response["preferred_categories"],
-            ["regenerated_fiber"],
-        )
-        self.assertEqual(response["query_state"], "complete")
-        specialized = [
-            item
-            for item in response["items"]
-            if self.db.get(ExecutionWorkflow, item["workflow_id"]).slug
-            in {
-                "regenerated-fiber-count-method",
-                "regenerated-fiber-area-method",
-            }
-        ]
-        self.assertTrue(specialized)
-        self.assertTrue(
-            all(item["state"] == "index_unavailable" for item in specialized)
-        )
-        paths = {
-            (method, route.path)
-            for route in router.routes
-            for method in route.methods
-        }
-        self.assertIn(
-            ("GET", "/execution/v1/catalog/recommendations"),
-            paths,
-        )
 
     def test_failed_and_partial_index_jobs_are_not_reported_ready(self):
         failed = ExecutionIndexJob(
@@ -831,50 +629,6 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
         finally:
             settings.EXECUTION_AUTO_INDEX_ROOT_IDS = original
 
-    def test_system_deprecated_workflows_are_hidden_even_from_admin(self):
-        admin_auth = AuthContext(session=None, user=self.user)
-        before = workflows(
-            categories=[],
-            query=None,
-            auth=admin_auth,
-            db=self.db,
-        )
-        test_workflow = (
-            self.db.query(ExecutionWorkflow)
-            .filter_by(slug="system-controlled-xlsx-write-test")
-            .one()
-        )
-        self.assertIn(
-            test_workflow.id,
-            {item["id"] for item in before["items"]},
-        )
-        published = test_workflow.versions[-1]
-        published.capabilities = {
-            **(published.capabilities or {}),
-            "system_deprecated": True,
-        }
-        self.db.commit()
-
-        after = workflows(
-            categories=[],
-            query=None,
-            auth=admin_auth,
-            db=self.db,
-        )
-        recommendations, _ = catalog_recommendations(
-            self.db,
-            inspection_number="260012",
-            preferred_categories=[],
-            include_hidden=True,
-        )
-        self.assertNotIn(
-            test_workflow.id,
-            {item["id"] for item in after["items"]},
-        )
-        self.assertNotIn(
-            test_workflow.id,
-            {item["workflow_id"] for item in recommendations},
-        )
 
     def test_regenerated_background_index_never_opens_workbook(self):
         path = self._xlsx(
@@ -923,197 +677,6 @@ class RegeneratedFiberBackendTests(unittest.TestCase):
         self.assertEqual(entry.metadata_json["parse_status"], "deferred")
 
 
-class RegeneratedFiberCatalogMigrationTests(unittest.TestCase):
-    def setUp(self):
-        self.engine = create_engine("sqlite:///:memory:")
-        self.Session = sessionmaker(bind=self.engine, autoflush=False)
-        Base.metadata.create_all(self.engine)
-        self.db = self.Session()
-        ensure_default_catalog(self.db)
-        self.db.commit()
-
-    def tearDown(self):
-        self.db.close()
-        Base.metadata.drop_all(self.engine)
-        self.engine.dispose()
-
-    def _insert_legacy(self, *, edited: bool) -> ExecutionWorkflow:
-        category = next(
-            item
-            for item in self.db.query(ExecutionWorkflow).all()
-            if item.category.key == "regenerated_fiber"
-        ).category
-        definition = _default_definition(
-            slug="regenerated-fiber-source-selection",
-            name="再生纤原始资料发现与选择",
-            category_key="regenerated_fiber",
-            root_id="regenerated_fiber_records",
-        )
-        workflow = ExecutionWorkflow(
-            slug="regenerated-fiber-source-selection",
-            category_id=category.id,
-            name="再生纤原始资料发现与选择",
-            description="legacy",
-            draft_definition=deepcopy(definition),
-            draft_revision=2 if edited else 1,
-            published_version_number=1,
-            capabilities={"read": True, "write": False},
-            required_input_count=1,
-            is_enabled=True,
-        )
-        capabilities = {"read": True, "write": False}
-        self.db.add(workflow)
-        self.db.flush()
-        self.db.add(
-            ExecutionWorkflowVersion(
-                workflow_id=workflow.id,
-                version_number=1,
-                schema_version="1.0",
-                definition=deepcopy(definition),
-                checksum=definition_checksum(definition),
-                capabilities=capabilities,
-                contract_checksum=workflow_contract_checksum(
-                    definition,
-                    capabilities,
-                ),
-                release_note="legacy",
-            )
-        )
-        self.db.commit()
-        return workflow
-
-    def test_default_methods_seed_idempotently(self):
-        ensure_default_catalog(self.db)
-        ensure_default_catalog(self.db)
-        self.db.commit()
-        for slug in (
-            "regenerated-fiber-count-method",
-            "regenerated-fiber-area-method",
-        ):
-            workflows = (
-                self.db.query(ExecutionWorkflow)
-                .filter_by(slug=slug)
-                .all()
-            )
-            self.assertEqual(len(workflows), 1)
-            self.assertEqual(len(workflows[0].versions), 1)
-
-    def test_untouched_method_workflow_is_upgraded_to_result_reader(self):
-        workflow = (
-            self.db.query(ExecutionWorkflow)
-            .filter_by(slug="regenerated-fiber-count-method")
-            .one()
-        )
-        legacy_definition = _regenerated_method_definition(
-            slug=workflow.slug,
-            name=workflow.name,
-            node_type="file.regenerated_fiber_count_method",
-        )
-        version_one = workflow.versions[0]
-        workflow.draft_definition = deepcopy(legacy_definition)
-        workflow.draft_revision = 1
-        workflow.published_version_number = 1
-        version_one.definition = deepcopy(legacy_definition)
-        version_one.checksum = definition_checksum(legacy_definition)
-        version_one.contract_checksum = workflow_contract_checksum(
-            legacy_definition,
-            version_one.capabilities,
-        )
-        self.db.commit()
-
-        ensure_default_catalog(self.db)
-        ensure_default_catalog(self.db)
-        self.db.commit()
-        self.db.refresh(workflow)
-
-        self.assertEqual(workflow.draft_revision, 2)
-        self.assertEqual(workflow.published_version_number, 2)
-        self.assertEqual(len(workflow.versions), 2)
-        node_types = {
-            node["type"] for node in workflow.draft_definition["nodes"]
-        }
-        self.assertIn(
-            "result.regenerated_fiber_count_method",
-            node_types,
-        )
-        self.assertNotIn("result.aggregate", node_types)
-        select = next(
-            node
-            for node in workflow.draft_definition["nodes"]
-            if node["id"] == "select"
-        )
-        self.assertTrue(select["config"]["require_primary"])
-
-    def test_untouched_legacy_default_is_hidden_but_edited_copy_is_preserved(self):
-        legacy = self._insert_legacy(edited=False)
-        ensure_default_catalog(self.db)
-        self.db.commit()
-        self.db.refresh(legacy)
-        self.assertFalse(legacy.is_enabled)
-        self.assertEqual(legacy.availability_code, "system_replaced")
-        self.assertEqual(legacy.published_version_number, 2)
-        self.assertTrue(legacy.versions[-1].capabilities["hidden"])
-
-        # A separate database verifies the opposite branch without reusing the
-        # unique legacy slug.
-        other_engine = create_engine("sqlite:///:memory:")
-        Base.metadata.create_all(other_engine)
-        OtherSession = sessionmaker(bind=other_engine, autoflush=False)
-        other = OtherSession()
-        try:
-            ensure_default_catalog(other)
-            other.commit()
-            category = (
-                other.query(ExecutionWorkflow)
-                .filter_by(slug="regenerated-fiber-count-method")
-                .one()
-                .category
-            )
-            definition = _default_definition(
-                slug="regenerated-fiber-source-selection",
-                name="再生纤原始资料发现与选择",
-                category_key="regenerated_fiber",
-                root_id="regenerated_fiber_records",
-            )
-            edited = ExecutionWorkflow(
-                slug="regenerated-fiber-source-selection",
-                category_id=category.id,
-                name="管理员修改过的再生纤流程",
-                draft_definition=deepcopy(definition),
-                draft_revision=2,
-                published_version_number=1,
-                capabilities={"read": True},
-                required_input_count=1,
-                is_enabled=True,
-            )
-            other.add(edited)
-            other.flush()
-            capabilities = {"read": True}
-            other.add(
-                ExecutionWorkflowVersion(
-                    workflow_id=edited.id,
-                    version_number=1,
-                    schema_version="1.0",
-                    definition=deepcopy(definition),
-                    checksum=definition_checksum(definition),
-                    capabilities=capabilities,
-                    contract_checksum=workflow_contract_checksum(
-                        definition,
-                        capabilities,
-                    ),
-                )
-            )
-            other.commit()
-            ensure_default_catalog(other)
-            other.commit()
-            other.refresh(edited)
-            self.assertTrue(edited.is_enabled)
-            self.assertEqual(edited.draft_revision, 2)
-            self.assertEqual(edited.published_version_number, 1)
-        finally:
-            other.close()
-            Base.metadata.drop_all(other_engine)
-            other_engine.dispose()
 
 
 if __name__ == "__main__":

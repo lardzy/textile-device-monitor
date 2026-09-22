@@ -1,4 +1,5 @@
-"""Direct domain APIs and legacy nodes share the same files and business results."""
+"""Shared workbook and readonly domain services with explicit rule fixtures."""
+from project_rule_fixtures import install_rule_fixtures
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -25,7 +26,7 @@ from app.execution.models import (
 )
 from app.execution.project_rules import resolve_rule
 from tests.test_execution_microscopy_original_record import _fake_uno_writer
-from tests.test_execution_workflow_replacement import environment, request
+from workflow_native_helpers import environment, request
 
 NUMBER = "26W006701"
 
@@ -33,15 +34,8 @@ NUMBER = "26W006701"
 @pytest.fixture
 def domain_env(environment):
     env = environment
-    path = env.path / "paper_fiber_records"
-    path.mkdir()
-    root = ExecutionStorageRoot(
-        root_id="paper_fiber_records", name="纸类", local_path=str(path),
-        access_mode="read", is_active=True, is_available=True, scan_generation=1,
-    )
-    env.db.add(root)
+    install_rule_fixtures(env.db)
     env.db.commit()
-    env.roots[root.root_id] = root
     return env
 
 
@@ -204,69 +198,8 @@ COUNTS = [(family.key, count) for family in MICROSCOPY_RECORD_FAMILIES.values()
           for count in family.template_bindings]
 
 
-@pytest.mark.parametrize("family,count", COUNTS)
-def test_check_record_download_matches_node_bytes(domain_env, family, count):
-    env = domain_env
-    payload = {
-        "inspection_number": NUMBER, "record_family": family, "image_count": count,
-        "judgement_required": True, "sample_identification": "正面",
-        "judgement_basis": "GB/T 36422-2018", "indicator_requirement": "清晰",
-        "test_result": "符合指标要求", "judgement": "符合", "remark": "同批对比",
-    }
-    response = env.client.post("/api/execution/v1/microscopy/render/check-record", json=payload)
-    assert response.status_code == 200, response.text
-    assert "filename*=UTF-8''" in response.headers["content-disposition"]
-    no_execution_records(env)
-    output = microscopy_check_record_executor(SimpleNamespace(
-        db=env.db, run=SimpleNamespace(id="test-run", inspection_number=NUMBER),
-        node_run=SimpleNamespace(id="test-node"), node={"config": {"record_family": family}},
-        input_data={**payload, "check_item_name": MICROSCOPY_RECORD_FAMILIES[family].check_item_name},
-    ))
-    artifact = env.db.get(ExecutionArtifact, output["artifact_id"])
-    path = Path(env.roots["execution_staging"].local_path) / artifact.relative_path
-    assert response.content == path.read_bytes()
-    sheet = xlrd.open_workbook(file_contents=response.content).sheet_by_name("Sheet1")
-    assert sheet.cell_value(6, 60) == MICROSCOPY_RECORD_FAMILIES[family].check_item_name
-    assert sheet.cell_value(6, 62) == "正面"
 
 
-@pytest.mark.parametrize("family,count", [("microscopy", 2), ("cross_section", 3)])
-def test_original_download_matches_node_and_releases_database(domain_env, family, count):
-    env = domain_env
-    image_files(env, count)
-    snapshot = task_snapshot(env, family)
-    images = request(env, "POST", "v1/microscopy/query", {
-        "inspection_number": NUMBER, "record_family": family,
-    })["images"]
-    payload = {
-        "inspection_number": NUMBER, "record_family": family, "images": images,
-        "sample_name": "棉布", "sample_identification": "正面", "judgement_required": False,
-    }
-    original_render = api.render_original_record_workbook
-    pool = env.Session.kw["bind"].pool
-    checked_out = pool.checkedout()
-
-    def render_without_transaction(target, **kwargs):
-        assert pool.checkedout() == checked_out
-        assert all(isinstance(image_id, str) for image_id, _ in kwargs["selected"])
-        return original_render(target, **kwargs)
-
-    with (
-        patch("app.execution.microscopy_original_record._run_uno_writer", side_effect=_fake_uno_writer),
-        patch.object(api, "render_original_record_workbook", side_effect=render_without_transaction),
-    ):
-        response = env.client.post("/api/execution/v1/microscopy/render/original-record", json=payload)
-        assert response.status_code == 200, response.text
-        no_execution_records(env)
-        output = _microscopy_original_record_executor(SimpleNamespace(
-            db=env.db, run=SimpleNamespace(id="test-run", inspection_number=NUMBER),
-            node_run=SimpleNamespace(id="test-node"), node={"config": {"record_family": family}},
-            input_data={**payload, "task": snapshot, "selected_images": images,
-                        "selected_image_ids": [image["id"] for image in images]},
-        ))
-    artifact = env.db.get(ExecutionArtifact, output["artifact_id"])
-    path = Path(env.roots["execution_staging"].local_path) / artifact.relative_path
-    assert response.content == path.read_bytes()
 
 
 def test_download_failure_cleans_partial_file_and_keeps_domain_errors(domain_env):
@@ -287,30 +220,3 @@ def test_download_failure_cleans_partial_file_and_keeps_domain_errors(domain_env
     assert bad.status_code == 422
     assert bad.json()["code"] == "microscopy_template_image_count_unsupported"
     no_execution_records(env)
-
-
-def test_image_selection_reports_template_counts_before_completing_task(domain_env):
-    from uuid import uuid4
-    from app.execution.models import ExecutionWorkflow
-    from tests.test_execution_workflow_replacement import drain
-
-    env = domain_env
-    image_files(env, 4)
-    task_snapshot(env, "microscopy")
-    workflow = env.db.query(ExecutionWorkflow).filter_by(slug="electron-microscopy-gbt36422").one()
-    run = request(env, "POST", "v1/runs", {
-        "workflow_id": workflow.id, "inspection_number": NUMBER,
-        "input_data": {"inspection_number": NUMBER}, "idempotency_key": str(uuid4()),
-    }, status=201)["run"]
-    drain(env)
-    detail = request(env, "GET", f"v1/runs/{run['id']}")
-    task = next(t for t in detail["human_tasks"] if t["node_id"] == "select-images")
-    task_detail = request(env, "GET", f"v1/human-tasks/{task['id']}")
-    assert task_detail["node_run"]["supported_image_counts"] == [1, 2, 3, 5, 6, 7, 10]
-    task = request(env, "POST", f"v1/human-tasks/{task['id']}/claim", {"revision": task["revision"]})
-    images = task_detail["node_run"]["input_data"]["images"]
-    invalid = request(env, "POST", f"v1/human-tasks/{task['id']}/submit", {
-        "revision": task["revision"], "data": {"selected_image_ids": [i["id"] for i in images]},
-    }, status=422)
-    assert invalid["code"] == "microscopy_template_image_count_unsupported"
-    assert request(env, "GET", f"v1/human-tasks/{task['id']}")["task"]["status"] == "claimed"

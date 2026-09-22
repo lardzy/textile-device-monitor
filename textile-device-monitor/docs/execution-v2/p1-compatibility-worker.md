@@ -1,5 +1,7 @@
 # P1 compatibility Worker image gate
 
+> 2026-09-22 更新：旧业务流程、节点目录、迁移入口及兼容 Worker 工具已退役。本页保留历史规划/验收事实；当前实现与部署以[执行系统重置与纸浆交付](./paper-rebuild-delivery.md)为准。通用 JSON 分发、模板目录、独立适配器机制继续使用。
+
 P2 does not reinterpret an existing P1 execution binding with current code.
 The compatibility pool must be built from commit
 `d1fb01bbd12e3b020f1e27a2ecbeab20bf039ac4`; the only additions to

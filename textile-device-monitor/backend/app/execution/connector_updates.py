@@ -25,8 +25,7 @@ def business_values(record):
 
 
 def update_summary(db, data):
-    from app.execution.external_operations import _validated_paper_project_binding
-    from app.execution.project_rules import PAPER_FIBER_RULE_KEY, resolve_rule
+    from app.execution.connector_original_records import project_binding
 
     number = data["inspection_number"].strip().upper()
     cached = db.get(ExecutionTaskSnapshotCache, number)
@@ -35,10 +34,13 @@ def update_summary(db, data):
                      if p.get("project_key") == data["project_key"]), None)
     if selected is None:
         raise conflict("connector_task_project_missing", "请先读取任务信息并选择项目")
-    project = _validated_paper_project_binding(
-        {"selected_project": selected, "selected_project_key": data["project_key"]},
-        rule=resolve_rule(db, PAPER_FIBER_RULE_KEY),
-    )
+    project, _ = project_binding(db, number, selected)
+    # The existing v1 correction Writer has this explicitly versioned scope.
+    # Do not depend on a seeded workflow rule to validate its wire contract.
+    if (project["check_item_no"] != "51.113K"
+            or project["check_item_name"] != "纸、纸板和纸浆纤维鉴别分析"
+            or project["check_method"] != "GB/T 4688-2020"):
+        raise conflict("connector_record_update_unsupported", "v1 更正接口只支持纸纤维单行通用记录")
     record = next((r for r in (cached.check_records or {}).get("records", [])
                    if r.get("record_ref") == data["record_ref"]
                    and r.get("register", {}).get("CheckItemID") == project["check_item_id"]), None)

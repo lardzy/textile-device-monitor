@@ -13,7 +13,7 @@ from app.execution.external_operations import (
 from app.execution.models import ExecutionExternalOperation, ExecutionTaskSnapshotCache, utcnow
 from tests.test_execution_connector_operations import operation_env, submit
 from tests.test_execution_domain_services import NUMBER
-from tests.test_execution_workflow_replacement import environment, request
+from workflow_native_helpers import environment, request
 
 
 def example_record(project, number):
@@ -87,7 +87,7 @@ def test_update_submit_claim_readback_keeps_ids_and_does_not_add_run(update_env)
     # An old Bridge cannot receive an update package.
     assert claim_approved_external_operation(env.db, bridge_id="old", account_name="test-operator") is None
     operation, attempt, credential = claim_update(env)
-    from tests.test_execution_paper_external_operations import _BRIDGE_MODULE as bridge_module
+    from bridge_test_helpers import _BRIDGE_MODULE as bridge_module
     view = bridge_external_operation(operation, credential=credential)
     package = bridge_module.validate_generic_update_package(view, view["request_summary"])
     assert package["before"] == env.before

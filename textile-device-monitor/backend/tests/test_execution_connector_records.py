@@ -14,8 +14,8 @@ from app.execution.models import ExecutionExternalOperation, ExecutionHumanTask,
 from app.execution.v2.examples import build_connector_query_smoke_release
 from app.execution.v2.registry import get_installed_registry
 from app.execution.worker_state import record_worker_heartbeat
-from tests.test_execution_domain_services import NUMBER, task_snapshot
-from tests.test_execution_workflow_replacement import environment, request, stage, publish, drain
+from native_io_helpers import NUMBER, task_snapshot
+from workflow_native_helpers import environment, request, stage, publish, drain
 
 
 @pytest.fixture

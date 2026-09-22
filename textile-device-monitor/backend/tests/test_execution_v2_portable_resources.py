@@ -1,4 +1,5 @@
 from copy import deepcopy
+from project_rule_fixtures import install_rule_fixtures
 from types import SimpleNamespace
 
 import pytest
@@ -7,11 +8,12 @@ from app.execution.models import ExecutionProjectRule, ExecutionStorageRoot
 from app.execution.errors import ExecutionApiError
 from app.execution.v2.portable_rules import export_rule, bind_rule, bound_rule, definition_issues
 from app.execution.v2.templates import install_templates, list_templates, resolve_template
-from tests.test_execution_workflow_replacement import environment
+from workflow_native_helpers import environment
 
 
 def test_rule_is_portable_and_runtime_ignores_later_database_edits(environment):
     env = environment
+    install_rule_fixtures(env.db)
     row = env.db.query(ExecutionProjectRule).filter_by(rule_key="paper_gbt4688_qualitative").one()
     definition = export_rule(row, "documents")
     assert "root_id" not in definition["config"]["source"]
@@ -34,6 +36,7 @@ def test_rule_is_portable_and_runtime_ignores_later_database_edits(environment):
 
 
 def test_invalid_rule_fails_before_import(environment):
+    install_rule_fixtures(environment.db)
     row = environment.db.query(ExecutionProjectRule).first()
     definition = export_rule(row, "missing")
     issues = definition_issues({"resources": {"root_slots": [], "rule_slots": [{"slot_id": "rule", "definition": definition}]}})

@@ -1639,14 +1639,3 @@ def _publish_executor(context) -> dict[str, Any]:
 
 
 _REGISTERED = False
-
-
-def register_mutation_executors() -> None:
-    global _REGISTERED
-    if _REGISTERED:
-        return
-    node_registry.set_executor("workbook.copy", 1, _copy_executor)
-    node_registry.set_executor("workbook.write_cells", 1, _write_executor)
-    node_registry.set_executor("workbook.verify", 1, _verify_executor)
-    node_registry.set_executor("artifact.publish", 1, _publish_executor)
-    _REGISTERED = True

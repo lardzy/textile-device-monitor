@@ -212,16 +212,6 @@ def packs(_auth: AuthContext = Depends(permission("workflow.design"))):
     }
 
 
-@router.get("/compatibility/audit")
-def compatibility_references(
-    db: Session = Depends(get_db),
-    _auth: AuthContext = Depends(permission("workflow.design")),
-):
-    from app.execution.compatibility import compatibility_audit
-
-    return compatibility_audit(db)
-
-
 @router.get("/assets")
 def assets(_auth: AuthContext = Depends(permission("workflow.design"))):
     return {

@@ -8,7 +8,7 @@ from app.execution import adapter_packages
 from app.execution.external_operations import claim_approved_external_operation, complete_external_attempt, record_external_attempt_stage, bridge_external_operation
 from app.execution.models import ExecutionCredential, ExecutionRun
 from app.execution.v2.registry import reset_installed_registry_cache
-from tests.test_execution_workflow_replacement import environment, request
+from workflow_native_helpers import environment, request
 
 
 @pytest.fixture
@@ -69,7 +69,7 @@ def test_package_workflow_uses_same_operation_and_resumes_after_receipt(adapter)
     from app.execution.v2.registry import get_installed_registry
     from app.execution.worker import ExecutionWorker
     from app.execution.worker_state import record_worker_heartbeat
-    from tests.test_execution_workflow_replacement import publish, run, drain
+    from workflow_native_helpers import publish, run, drain
 
     env = adapter
     credential = ExecutionCredential(user_id=env.admin.id, system_key="lab.example", account_name="example", encrypted_secret="unused", revision=1)

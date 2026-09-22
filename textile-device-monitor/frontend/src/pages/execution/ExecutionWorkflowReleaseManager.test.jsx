@@ -304,43 +304,6 @@ describe('ExecutionWorkflowReleaseManager', () => {
     expect(screen.getByRole('combobox', { name: /inspection_files/ }).closest('.ant-select').querySelector('.ant-select-selection-item')).toHaveTextContent('只读检测目录');
   });
 
-  it('shows v1 migration output as preview-only data', async () => {
-    server.use(
-      http.get('/api/execution/v1/workflows', () => HttpResponse.json({
-        items: [{ id: 'workflow-v1', slug: 'old-workflow', name: '旧流程', management_mode: 'draft_v1' }],
-      })),
-      http.post('/api/execution/v2/migrations/v1/preview', async ({ request }) => {
-        expect(await request.json()).toEqual({
-          workflow_id: 'workflow-v1',
-          source: 'published',
-          target_profile: 'native_p4',
-          target_slug: 'old-workflow-v2',
-        });
-        return HttpResponse.json({
-          candidate: releaseDocument,
-          content_valid: true,
-          migration_status: 'compatibility_preview',
-          native_node_count: 0,
-          compatibility_node_count: 0,
-          blockers: [],
-          diff: [{ path: '$.definition.schema_version', before: '1.0', after: '2.0' }],
-        });
-      }),
-    );
-
-    const user = userEvent.setup();
-    renderManager();
-    await user.click(await screen.findByRole('button', { name: /v1 候选预览$/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'v1 → v2 候选迁移预览' });
-    await user.click(within(dialog).getByRole('combobox', { name: 'v1 草稿流程' }));
-    await user.click(await screen.findByText('旧流程'));
-    await user.click(within(dialog).getByRole('button', { name: '生成候选与差异' }));
-
-    expect(await within(dialog).findByText(/schema_version/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/候选不会修改来源流程/)).toBeInTheDocument();
-    expect(within(dialog).queryByRole('button', { name: /发布|激活/ })).not.toBeInTheDocument();
-  });
-
   it('hydrates a published release and its immutable binding without the v1 canvas shape', async () => {
     const exported = [];
     const rollbacks = [];
@@ -429,7 +392,7 @@ describe('ExecutionWorkflowReleaseManager', () => {
     );
     const user = userEvent.setup();
     renderManager('/execution/admin/releases/replacement-staged');
-    expect(await screen.findByText('首次发布保持停用')).toBeInTheDocument();
+    expect(await screen.findByText('已冻结本地来源')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '仅检查' }));
     await waitFor(() => expect(calls).toEqual([{ replacement_source: replacementSource }]));
     expect(screen.getByRole('button', { name: /检查并发布$/ })).toBeEnabled();

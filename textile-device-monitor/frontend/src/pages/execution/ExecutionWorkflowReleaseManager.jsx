@@ -12,9 +12,7 @@ import {
   Input,
   InputNumber,
   List,
-  Modal,
   Row,
-  Radio,
   Select,
   Space,
   Spin,
@@ -26,7 +24,6 @@ import {
 import {
   CheckCircleOutlined,
   DownloadOutlined,
-  EyeOutlined,
   FileTextOutlined,
   ReloadOutlined,
   RollbackOutlined,
@@ -36,7 +33,6 @@ import {
 import {
   getExecutionFileRoots,
   getExecutionCredentials,
-  getExecutionWorkflows,
   getProjectRules,
 } from '../../api/execution';
 import {
@@ -49,7 +45,6 @@ import {
   getExecutionV2RendererCapabilities,
   preflightStagedWorkflowReleaseV2,
   preflightWorkflowReleaseV2,
-  previewWorkflowV1Migration,
   publishWorkflowReleaseV2,
   rollbackWorkflowReleaseV2,
   updateWorkflowReleaseBindingV2,
@@ -57,7 +52,6 @@ import {
 import { isWorkflowReleaseV2Document } from '../../utils/executionWorkflow';
 import ExecutionChrome from './ExecutionChrome';
 import WorkflowReplacementPanel from './WorkflowReplacementPanel';
-import WorkflowCompatibilityAudit from './WorkflowCompatibilityAudit';
 import './execution.css';
 
 const { Paragraph, Text } = Typography;
@@ -175,10 +169,8 @@ export default function ExecutionWorkflowReleaseManager() {
   const location = useLocation();
   const navigate = useNavigate();
   const uploadRef = useRef(null);
-  const replacementSourceRequest = useRef(0);
   const [bindingForm] = Form.useForm();
   const [rollbackForm] = Form.useForm();
-  const [migrationForm] = Form.useForm();
   const importedDocument = location.state?.releaseDocument;
   const [documentText, setDocumentText] = useState(
     importedDocument ? JSON.stringify(importedDocument, null, 2) : '',
@@ -192,12 +184,6 @@ export default function ExecutionWorkflowReleaseManager() {
   const [loading, setLoading] = useState(Boolean(routeReleaseId));
   const [busy, setBusy] = useState('');
   const [loadError, setLoadError] = useState(null);
-  const [migrationOpen, setMigrationOpen] = useState(false);
-  const [migrationWorkflows, setMigrationWorkflows] = useState([]);
-  const [migrationPreview, setMigrationPreview] = useState(null);
-  const [replacementSource, setReplacementSource] = useState(location.state?.replacementSource || null);
-  const [replacementMode, setReplacementMode] = useState(importedDocument?.migration ? 'replacement' : 'standalone');
-  const [migrationLoading, setMigrationLoading] = useState(false);
   const [releaseList, setReleaseList] = useState([]);
   const [registryHealth, setRegistryHealth] = useState(null);
   const currentReleaseId = routeReleaseId || releaseIdOf(release);
@@ -217,13 +203,6 @@ export default function ExecutionWorkflowReleaseManager() {
         || next?.document
         || next?.portable_document;
       setRelease(next);
-      if (next.migration_source) {
-        setReplacementSource(next.migration_source);
-        setReplacementMode('replacement');
-      } else {
-        setReplacementSource(location.state?.replacementSource || null);
-        setReplacementMode(portableDocument?.migration || location.state?.replacementSource ? 'replacement' : 'standalone');
-      }
       if (portableDocument) {
         setDocumentText(JSON.stringify(portableDocument, null, 2));
       }
@@ -253,7 +232,7 @@ export default function ExecutionWorkflowReleaseManager() {
     } finally {
       setLoading(false);
     }
-  }, [bindingForm, routeReleaseId, location.state?.replacementSource]);
+  }, [bindingForm, routeReleaseId]);
 
   useEffect(() => {
     loadRelease();
@@ -384,7 +363,7 @@ export default function ExecutionWorkflowReleaseManager() {
       const nextId = releaseIdOf(next);
       message.success('已导入，可配置并发布');
       if (nextId) {
-        navigate(`/execution/admin/releases/${nextId}`, { replace: true, state: { replacementSource: replacementMode === 'replacement' ? replacementSource : null } });
+        navigate(`/execution/admin/releases/${nextId}`, { replace: true });
       }
     } catch (requestError) {
       message.error(requestError.message || '应用 Release 失败');
@@ -448,15 +427,11 @@ export default function ExecutionWorkflowReleaseManager() {
 
   const runPublishPreflight = async () => {
     if (busy) return;
-    if (replacementMode === 'replacement' && !replacementSource) {
-      message.error('请先选择已发布的来源流程，冻结本地接替来源');
-      return;
-    }
     setBusy('publish-preflight');
     try {
       await saveBinding();
       const payload = await preflightStagedWorkflowReleaseV2(currentReleaseId,
-        replacementMode === 'replacement' ? { replacement_source: replacementSource } : {});
+        release?.migration_source ? { replacement_source: release.migration_source } : {});
       const report = reportOf(payload);
       setPublishReport(report);
       message.success(report.publish_ready ? '发布预检通过' : '发布预检已完成');
@@ -469,15 +444,11 @@ export default function ExecutionWorkflowReleaseManager() {
 
   const publishRelease = async () => {
     if (busy) return;
-    if (replacementMode === 'replacement' && !replacementSource) {
-      message.error('请选择需要接替的来源流程');
-      return;
-    }
     setBusy('publish');
     try {
       await saveBinding();
       const report = reportOf(await preflightStagedWorkflowReleaseV2(currentReleaseId,
-        replacementMode === 'replacement' ? { replacement_source: replacementSource } : {}));
+        release?.migration_source ? { replacement_source: release.migration_source } : {}));
       setPublishReport(report);
       if (!report.publish_ready || !tokenOf(report)) {
         message.error('暂不能发布，请查看检查结果');
@@ -534,48 +505,6 @@ export default function ExecutionWorkflowReleaseManager() {
     }
   };
 
-  const openMigrationPreview = async () => {
-    setMigrationOpen(true);
-    setMigrationPreview(null);
-    try {
-      const rows = await getExecutionWorkflows({ include_archived: true });
-      setMigrationWorkflows(rows.filter(item => item.management_mode !== 'release_v2'));
-      const initialWorkflowId = searchParams.get('workflow_id');
-      if (initialWorkflowId) {
-        const source = rows.find(item => item.id === initialWorkflowId);
-        migrationForm.setFieldsValue({ workflow_id: initialWorkflowId, target_slug: source ? `${source.slug.slice(0, 97)}-v2` : '' });
-      }
-    } catch (requestError) {
-      message.error(requestError.message || 'v1 流程列表加载失败');
-    }
-  };
-
-  const previewMigration = async () => {
-    setMigrationLoading(true);
-    try {
-      const {
-        workflow_id: workflowId,
-        source,
-        target_profile: targetProfile,
-        target_slug: targetSlug,
-      } = await migrationForm.validateFields();
-      const payload = await previewWorkflowV1Migration(
-        workflowId,
-        source,
-        targetProfile,
-        targetSlug,
-      );
-      setMigrationPreview(payload);
-      message.success('候选与差异已生成；当前流程未发生改变');
-    } catch (requestError) {
-      if (!requestError?.errorFields) {
-        message.error(requestError.message || '生成迁移候选失败');
-      }
-    } finally {
-      setMigrationLoading(false);
-    }
-  };
-
   const handleFile = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -589,34 +518,11 @@ export default function ExecutionWorkflowReleaseManager() {
         throw new Error('不是 Workflow Release v2 文件');
       }
       setDocumentText(JSON.stringify(value, null, 2));
-      setReplacementSource(null);
-      setReplacementMode(value.migration ? 'replacement' : 'standalone');
       setContentReport(null);
       setPublishReport(null);
       message.success(`已读取 ${file.name}`);
     } catch (error) {
       message.error(error.message || '文件读取失败');
-    }
-  };
-
-  const loadSourceChoices = async () => {
-    try {
-      const rows = await getExecutionWorkflows({ include_archived: true });
-      setMigrationWorkflows(rows.filter(item => item.management_mode !== 'release_v2'));
-    } catch (requestError) {
-      message.error(requestError.message || '来源流程加载失败');
-    }
-  };
-
-  const selectReplacementSource = async workflowId => {
-    const requestRevision = ++replacementSourceRequest.current;
-    setPublishReport(null);
-    setReplacementSource(null);
-    try {
-      const preview = await previewWorkflowV1Migration(workflowId, 'published');
-      if (requestRevision === replacementSourceRequest.current) setReplacementSource(preview.replacement_source);
-    } catch (requestError) {
-      if (requestRevision === replacementSourceRequest.current) message.error(requestError.message || '来源版本读取失败');
     }
   };
 
@@ -635,18 +541,17 @@ export default function ExecutionWorkflowReleaseManager() {
     <div className="execution-page execution-release-page">
       <ExecutionChrome
         title="工作流发布"
-        subtitle="绑定资源、发布新版本，管理接替与回退"
+        subtitle="绑定资源、发布新版本与回退"
         backTo={{ path: '/execution/admin', label: '流程管理' }}
         actions={(
           <Space>
             <Button onClick={() => {
               if (routeReleaseId) navigate(`/execution/admin/designer/${routeReleaseId}`);
               else {
-                try { navigate('/execution/admin/designer', { state: { releaseDocument: JSON.parse(documentText), replacementSource } }); }
+                try { navigate('/execution/admin/designer', { state: { releaseDocument: JSON.parse(documentText) } }); }
                 catch { navigate('/execution/admin/designer'); }
               }
             }}>{routeReleaseId ? '设计下一版本' : '打开设计器'}</Button>
-            <Button icon={<EyeOutlined />} onClick={openMigrationPreview}>v1 候选预览</Button>
             {routeReleaseId && (
               <Button icon={<ReloadOutlined />} onClick={loadRelease}>刷新</Button>
             )}
@@ -658,11 +563,10 @@ export default function ExecutionWorkflowReleaseManager() {
           showIcon
           type="info"
           message="发布新版本"
-          description="确认资源绑定后发布。已运行的任务继续使用原版本；旧流程由接替操作切换。"
+          description="确认资源绑定后发布，已运行的任务继续使用原版本。"
         />
         <details>
-          <summary>运行环境与历史兼容</summary>
-          <WorkflowCompatibilityAudit />
+          <summary>运行环境</summary>
         {registryHealth && (
           <Card title="Registry / Pack / Renderer / Rollout 状态" size="small">
             <Descriptions size="small" column={{ xs: 1, md: 2, xl: 4 }}>
@@ -711,7 +615,6 @@ export default function ExecutionWorkflowReleaseManager() {
                     description={(
                       <Space wrap>
                         <Tag color="purple">native {item.native_node_type_count ?? 0}</Tag>
-                        <Tag>compat {item.compatibility_node_type_count ?? 0}</Tag>
                         <Text type="secondary">{item.release_digest}</Text>
                       </Space>
                     )}
@@ -775,7 +678,6 @@ export default function ExecutionWorkflowReleaseManager() {
                 onChange={(event) => {
                   setDocumentText(event.target.value);
                   setContentReport(null);
-                  setReplacementSource(null);
                   setPublishReport(null);
                 }}
                 readOnly={Boolean(release)}
@@ -822,40 +724,7 @@ export default function ExecutionWorkflowReleaseManager() {
               </Descriptions>
             </Card>
 
-            <Card title="本地接替来源">
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <Radio.Group
-                  value={replacementMode}
-                  disabled={Boolean(busy || release.migration_source || currentWorkflowId)}
-                  onChange={event => { setReplacementMode(event.target.value); setPublishReport(null); }}
-                  options={[{ value: 'replacement', label: '归档旧流程，由新 v2 接替' }, { value: 'standalone', label: '作为独立流程发布' }]}
-                />
-                {replacementMode === 'replacement' && (
-                  <>
-                    <Alert type="info" showIcon message="首次发布保持停用" description="发布预检冻结来源版本和摘要；验收完成后，再操作新旧流程接替。本地来源信息不写入 portable JSON。" />
-                    {!release.migration_source && (
-                      <Select
-                        aria-label="接替来源流程"
-                        disabled={Boolean(busy)}
-                        placeholder="选择当前已发布的 v1 来源流程"
-                        style={{ minWidth: 320 }}
-                        value={replacementSource?.workflow_id}
-                        onDropdownVisibleChange={open => { if (open) loadSourceChoices(); }}
-                        onChange={selectReplacementSource}
-                        options={migrationWorkflows.map(item => ({ value: item.id, label: `${item.name} · ${item.slug}` }))}
-                      />
-                    )}
-                    {replacementSource && (
-                      <Descriptions size="small" column={2}>
-                        <Descriptions.Item label="来源 Workflow ID">{replacementSource.workflow_id}</Descriptions.Item>
-                        <Descriptions.Item label="来源版本">v{replacementSource.version_number} · rev {replacementSource.draft_revision}</Descriptions.Item>
-                        <Descriptions.Item label="来源摘要" span={2}><Text code copyable>{replacementSource.definition_checksum}</Text></Descriptions.Item>
-                      </Descriptions>
-                    )}
-                  </>
-                )}
-              </Space>
-            </Card>
+            {release.migration_source && <Alert type="info" message="已冻结本地来源" description="此版本保留发布时的来源记录。" />}
 
             <Row gutter={[20, 20]}>
               <Col xs={24} xl={10}>
@@ -981,128 +850,7 @@ export default function ExecutionWorkflowReleaseManager() {
         )}
       </div>
 
-      <Modal
-        title="v1 → v2 候选迁移预览"
-        open={migrationOpen}
-        width={920}
-        okText="生成候选与差异"
-        cancelText="关闭"
-        confirmLoading={migrationLoading}
-        onOk={previewMigration}
-        onCancel={() => setMigrationOpen(false)}
-      >
-        <Alert
-          showIcon
-          type="info"
-          message="只读预览"
-          description="此操作不会 apply、发布或改变任何流程的 active pointer。"
-          style={{ marginBottom: 16 }}
-        />
-        <Form
-          form={migrationForm}
-          layout="vertical"
-          initialValues={{ source: 'published', target_profile: 'native_p4' }}
-          onValuesChange={changed => {
-            setMigrationPreview(null);
-            if (changed.workflow_id) {
-              const source = migrationWorkflows.find(item => item.id === changed.workflow_id);
-              if (source?.slug) migrationForm.setFieldValue('target_slug', `${source.slug.slice(0, 97)}-v2`);
-            }
-          }}
-        >
-          <Form.Item
-            name="workflow_id"
-            label="v1 草稿流程"
-            rules={[{ required: true, message: '请选择流程' }]}
-          >
-            <Select
-              showSearch
-              optionFilterProp="label"
-              options={migrationWorkflows.map(item => ({
-                value: item.id || item.workflow_id,
-                label: item.name || item.title || item.slug,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item name="target_slug" label="新流程 slug" rules={[{ required: true, message: '请填写新流程 slug' }, { pattern: /^[a-z][a-z0-9_-]{0,99}$/, message: '使用小写字母、数字、下划线或连字符，以字母开头，最多 100 字符' }]}>
-            <Input placeholder="原 slug-v2" />
-          </Form.Item>
-          <Form.Item name="source" label="候选来源" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'published', label: '当前已发布版本（推荐）' },
-                { value: 'draft', label: '当前 v1 草稿' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="target_profile" label="迁移目标" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'compat_v1', label: 'compat_v1（保持 P1 行为）' },
-                { value: 'native_p2', label: 'native_p2（基础节点迁移）' },
-                { value: 'native_p4', label: '完整原生流程（含检务提交）' },
-                { value: 'native_p3', label: 'native_p3（基础节点与领域服务）' },
-              ]}
-            />
-          </Form.Item>
-        </Form>
-        {migrationPreview && (
-          <>
-            <Divider>确定性 candidate / diff</Divider>
-            <Paragraph type="secondary">
-              候选不会修改来源流程。载入并完成发布后，可在新旧流程接替区执行切换。
-            </Paragraph>
-            <Space wrap style={{ marginBottom: 12 }}>
-              <Tag color={migrationPreview.content_valid ? 'success' : 'error'}>
-                {migrationPreview.content_valid ? 'candidate 有效' : 'candidate 无效'}
-              </Tag>
-              <Tag color={['p2_complete', 'p3_complete', 'p4_complete'].includes(migrationPreview.migration_status) ? 'success' : 'warning'}>
-                {migrationPreview.migration_status}
-              </Tag>
-              <Tag color="purple">native {migrationPreview.native_node_count ?? 0}</Tag>
-              <Tag>compat {migrationPreview.compatibility_node_count ?? 0}</Tag>
-              <Button
-                icon={<DownloadOutlined />}
-                onClick={() => downloadJson(
-                  migrationPreview.candidate,
-                  `${migrationPreview.candidate?.release?.slug || 'candidate'}-${migrationPreview.target_profile || 'migration'}.json`,
-                )}
-              >
-                下载 candidate
-              </Button>
-              <Button
-                disabled={!migrationPreview.content_valid}
-                onClick={() => {
-                  setDocumentText(JSON.stringify(migrationPreview.candidate, null, 2));
-                  setReplacementSource(migrationPreview.replacement_source || null);
-                  setReplacementMode('replacement');
-                  setRelease(null);
-                  setContentReport(null);
-                  setPublishReport(null);
-                  setMigrationOpen(false);
-                  if (routeReleaseId) navigate('/execution/admin/releases', { state: { releaseDocument: migrationPreview.candidate, replacementSource: migrationPreview.replacement_source } });
-                  message.success('candidate 已载入，可继续执行内容预检');
-                }}
-              >
-                载入预检
-              </Button>
-            </Space>
-            {(migrationPreview.blockers || []).map(blocker => (
-              <Alert
-                key={`${blocker.node_id}-${blocker.code}`}
-                showIcon
-                type="warning"
-                message={`${blocker.phase} · ${blocker.node_id}`}
-                description={`${blocker.code}：${blocker.message}`}
-                style={{ marginBottom: 8 }}
-              />
-            ))}
-            <pre className="execution-release-preview">
-              {JSON.stringify(migrationPreview, null, 2)}
-            </pre>
-          </>
-        )}
-      </Modal>
+
     </div>
   );
 }

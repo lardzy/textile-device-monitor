@@ -112,6 +112,8 @@ export default function WorkflowCanvas({
   onRedo,
   onNodeDragStop,
   onReconnect,
+  onReconnectStart,
+  onReconnectEnd,
   isValidConnection,
   defaultViewport,
   fitView = false,
@@ -162,6 +164,8 @@ export default function WorkflowCanvas({
       onEdgesChange={readonly ? undefined : onEdgesChange}
       onConnect={readonly ? undefined : onConnect}
       onReconnect={readonly ? undefined : onReconnect}
+      onReconnectStart={readonly ? undefined : onReconnectStart}
+      onReconnectEnd={readonly ? undefined : onReconnectEnd}
       isValidConnection={isValidConnection}
       onNodeDragStop={onNodeDragStop}
       onNodeClick={onNodeClick}

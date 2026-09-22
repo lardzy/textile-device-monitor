@@ -8,12 +8,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.database import Base
-from app.execution.catalog import (
-    bind_user_role,
-    create_workflow,
-    ensure_default_rbac,
-    publish_workflow,
-)
+from app.execution.v2.designer import starter_document
+from workflow_native_helpers import publish_native_document
+from app.execution.catalog import bind_user_role, create_workflow, ensure_default_rbac, publish_workflow
 from app.execution.engine import claim_next_node, create_run
 from app.execution.models import (
     ExecutionCategory,
@@ -38,14 +35,14 @@ def _definition() -> dict:
             {
                 "id": "start",
                 "type": "core.start",
-                "type_version": 1,
+                "type_version": 2,
                 "name": "start",
                 "config": {},
             },
             {
                 "id": "end",
                 "type": "core.end",
-                "type_version": 1,
+                "type_version": 2,
                 "name": "end",
                 "config": {},
             },
@@ -67,7 +64,7 @@ def _capability_document(
             {
                 "execution_binding_digest": binding_digest,
                 "type": "core.start",
-                "type_version": 1,
+                "type_version": 2,
                 "contract_digest": "c" * 64,
                 "implementation_digest": "i" * 64,
                 "pack_id": "textile.execution-kernel",
@@ -105,24 +102,9 @@ class ExecutionV2WorkerCapabilityTests(unittest.TestCase):
             "admin",
             created_by_id=self.user.id,
         )
-        self.workflow = create_workflow(
-            self.db,
-            actor=self.user,
-            slug="v2-worker-capability-test",
-            category_id=self.category.id,
-            name="v2 worker capability test",
-            description=None,
-            definition=_definition(),
-            capabilities={"read": True},
-            is_enabled=True,
-        )
-        publish_workflow(
-            self.db,
-            workflow_id=self.workflow.id,
-            expected_revision=1,
-            actor=self.user,
-            release_note="test",
-        )
+        document = starter_document()
+        document['release']['slug'] = 'v2-worker-capability-test'
+        self.workflow = publish_native_document(self.db, self.user, document)
         self.db.commit()
 
     def tearDown(self) -> None:
@@ -142,6 +124,21 @@ class ExecutionV2WorkerCapabilityTests(unittest.TestCase):
         )
         self.db.flush()
         return run
+
+    def test_native_worker_heartbeat_advertises_installed_capabilities(self):
+        from app.execution.worker import _WorkerHeartbeat
+
+        document = _capability_document(
+            capability_digest="b" * 64,
+            binding_digest="2" * 64,
+        )
+        with patch("app.execution.worker.SessionLocal", self.Session):
+            _WorkerHeartbeat("native-worker", document)._record("running")
+        rows = self.db.query(ExecutionWorkerNodeCapability).filter_by(
+            worker_id="native-worker"
+        ).all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].execution_binding_digest, "2" * 64)
 
     def test_heartbeat_rewrites_exact_rows_only_when_digest_changes(self):
         first = _capability_document(

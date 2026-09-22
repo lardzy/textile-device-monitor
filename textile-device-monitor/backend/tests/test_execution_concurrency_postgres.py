@@ -2073,12 +2073,22 @@ def test_standalone_connector_submission_concurrency(kind, mode, monkeypatch):
             owner, credential = identities[index if mode == "same_sample_other_owner" else 0]
             actor = db.get(ExecutionUser, owner)
             payload = ConnectorOperationRequest(
-                operation_ref=f"legacy_fibrecheck.check_record.generic_{kind}@1", credential_id=credential,
+                operation_ref=f"legacy_fibrecheck.check_record.generic_{kind}@{2 if kind == 'entry' else 1}", credential_id=credential,
                 idempotency_key=suffix, input={"inspection_number": number, "project_key": project["project_key"],
                     "expected_existing_register_count": 0,
                     "result_value": "竹浆" if mode == "changed_request" and index else "木浆"},
             )
-            if kind == "update":
+            if kind == "entry":
+                payload.input = {
+                    "inspection_number": number,
+                    "project": {key: project[key] for key in ('project_key', 'task_check_item_id', 'check_item_id', 'check_item_no', 'check_item_name', 'check_method', 'seq_num', 'check_count')},
+                    "expected_existing_register_count": 0,
+                    "record": {
+                        "header": {key: (project['check_method'] if key == 'test_method' else '') for key in ('grade', 'unit', 'judge_basis', 'test_method', 'sample_description', 'standard_type', 'report_check_item_name', 'attach_info', 'remark', 'total_judge')},
+                        "details": [{"standard_location": "", "standard_value": "", "real_location": "", "real_value": "竹浆" if mode == "changed_request" and index else "木浆"}],
+                    },
+                }
+            else:
                 payload.input = {"inspection_number": number, "project_key": project["project_key"],
                                  "record_ref": before["record_ref"], "expected_content_fingerprint": before["content_fingerprint"],
                                  "changes": {"result_value": "竹浆" if mode == "changed_request" and index else "木浆"}}
@@ -2096,7 +2106,8 @@ def test_standalone_connector_submission_concurrency(kind, mode, monkeypatch):
         with SessionLocal() as db:
             start.wait(timeout=10)
             result = claim_approved_external_operation(db, bridge_id=f"p4-bridge-{index}", account_name=f"p4-{suffix}",
-                supported_operation_types={UPDATE_OPERATION if kind == "update" else LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION})
+                supported_operation_types={UPDATE_OPERATION if kind == "update" else LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION,
+                    f"legacy_fibrecheck.check_record.generic_{kind}@{2 if kind == 'entry' else 1}"})
             db.commit()
             return result[0].id if result else None
 

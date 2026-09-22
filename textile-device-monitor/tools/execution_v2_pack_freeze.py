@@ -30,11 +30,9 @@ MANIFEST_ROOT = (
 )
 sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.execution.registry import node_registry  # noqa: E402
 from app.execution.v2.canonical import canonical_sha256  # noqa: E402
 from app.execution.v2.registry import (  # noqa: E402
     InstalledPack,
-    _compat_node_spec,
     _implementation_digest,
     _manifest_distribution_digest,
     _node_spec_from_resource,
@@ -60,24 +58,11 @@ def _freeze_manifest(document: dict[str, Any]) -> dict[str, Any]:
         ready=True,
         manifest=result,
     )
-    current_nodes = {
-        (item.type, item.version): item for item in node_registry.all()
-    }
     for descriptor in result["provides"]["nodes"]:
         identity = (descriptor["type"], descriptor["type_version"])
-        if descriptor["source"] == "v1_registry_adapter":
-            node_type = current_nodes.get(identity)
-            if node_type is None:
-                raise ValueError(f"unknown v1 NodeSpec adapter: {identity}")
-            spec = _compat_node_spec(
-                node_type,
-                pack=pack,
-                handler_channel=descriptor["handler_channel"],
-            )
-        else:
-            spec = _node_spec_from_resource(
-                str(descriptor["spec_resource"]), identity
-            )
+        if descriptor['source'] != 'resource':
+            raise ValueError(f'Retired descriptor source: {descriptor["source"]}')
+        spec = _node_spec_from_resource(str(descriptor['spec_resource']), identity)
         contract_digest = canonical_sha256(spec)
         descriptor["contract_digest"] = contract_digest
         descriptor["implementation_digest"] = _implementation_digest(

@@ -1102,24 +1102,3 @@ def _regenerated_fiber_executor(context) -> dict[str, Any]:
         limit=min(int(config.get("limit", 6)), 6),
         match_rule=str(config.get("match_rule") or "").strip() or None,
     )
-
-
-_EXECUTORS_REGISTERED = False
-
-
-def register_regenerated_fiber_executors() -> None:
-    global _EXECUTORS_REGISTERED
-    if _EXECUTORS_REGISTERED:
-        return
-    for node_type in REGENERATED_FIBER_RULES:
-        node_registry.set_executor(
-            node_type,
-            NODE_TYPE_VERSION,
-            _regenerated_fiber_executor,
-        )
-    from app.execution.regenerated_fiber_results import (
-        register_regenerated_fiber_result_executors,
-    )
-
-    register_regenerated_fiber_result_executors()
-    _EXECUTORS_REGISTERED = True

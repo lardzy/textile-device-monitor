@@ -1,6 +1,8 @@
 # Workflow Release v2 可评审设计
 
-状态（2026-09-20）：P0–P5 代码与本地验收已完成，完整原生候选 **9/9**。后续四批增加 JSON 内嵌规则、通用数据/Python/模板渲染节点、独立适配器 wheel、独立业务模板和顺序离线样例验证，见 [JSON 分发交付](./json-distribution-delivery.md)。生产接管、真实 Windows/Oracle 完整写入及现场文件输出等价仍需投用验收。见[P4 完整业务迁移](./p4-business-migration-acceptance.md)、[P5 设计器与退场验收](./p5-designer-retirement-acceptance.md)。以下保留完整设计；`.twr`、分支/并行与真实 IO fixture 执行器和完整绑定界面仍为独立交付。
+状态（2026-09-22）：执行系统已按新要求重置，保留通用引擎，旧业务流程与节点退役。当前只有用基础节点和内嵌 Python 重建的纸浆流程，29 份 NodeSpec、36 个精确能力绑定。画布删除/引用修复、服务端草稿、Python 试算、批量工作簿读取与中性检务写入已完成；Windows Bridge 1.1.0 已部署，`26W006824` 已真实上传、复核、登记并回读。详见[纸浆重建交付](./paper-rebuild-delivery.md)及[可编辑 JSON](./examples/paper-fiber-v2.json)。
+
+下表及旧迁移章节保留 P0–P5 的历史设计与交付背景；9/9 迁移候选、旧业务组合及 P1 兼容 Worker 已不再是当前目录/部署能力。JSON 规则分发、安装/共享模板目录、独立适配器和发布时精确冻结继续沿用。
 
 | 阶段 | 当前实现与验证边界 |
 |---|---|
@@ -21,7 +23,7 @@ Workflow Release v2 是一个**可移植、不可变、可预检**的工作流�
 
 对 Dify 的参考取舍是：借鉴“图是可序列化数据、节点元数据驱动设计器、运行能力与流程 DSL 分离”；不照搬其产品 DSL 或把插件代码塞入流程。本项目额外保留受控文件 root、不可变发布快照，以及外部写入 fence/receipt/reconciliation 等领域安全语义。
 
-它解决的是“修改工作流后无需重新构建整个应用”的问题，不试图让 JSON 变成代码容器：
+它解决的是“修改工作流后无需重新构建整个应用”的问题，允许 JSON 携带受约束的 Python 纯计算业务代码；文件与对外系统 IO 仍由适配器负责：
 
 - 节点增删、连线、条件、表单、字段映射和已支持规则的变化，通过 Workflow Release 分发；
 - Excel 模板等非代码资源，通过资产注册表或配套 release bundle 分发；

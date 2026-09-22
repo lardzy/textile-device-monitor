@@ -12,7 +12,6 @@ from app.execution.models import ExecutionProjectRule, ExecutionStorageRoot, utc
 from app.execution.project_rules import (
     PAPER_FIBER_RULE_KEY,
     evaluate_task_facts,
-    ensure_default_project_rules,
     list_rules,
     microscopy_rule_key,
     parse_task_fact,
@@ -21,7 +20,7 @@ from app.execution.project_rules import (
     rule_for_facts,
     validate_rule_config,
 )
-from app.execution.project_rule_seeds import default_project_rule_seeds
+from project_rule_fixtures import default_project_rule_seeds, install_rule_fixtures
 
 
 class ProjectRuleTests(unittest.TestCase):
@@ -30,6 +29,7 @@ class ProjectRuleTests(unittest.TestCase):
         self.Session = sessionmaker(bind=self.engine, autoflush=False)
         Base.metadata.create_all(self.engine)
         self.db = self.Session()
+        install_rule_fixtures(self.db)
         self.root = ExecutionStorageRoot(
             root_id="paper_fiber_records",
             name="纸类原始记录",
@@ -48,36 +48,7 @@ class ProjectRuleTests(unittest.TestCase):
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
 
-    def test_seeds_insert_five_rules_and_are_idempotent(self):
-        self.assertTrue(ensure_default_project_rules(self.db))
-        self.db.commit()
-        keys = {rule.key for rule in list_rules(self.db, ensure=False)}
-        self.assertEqual(
-            keys,
-            {
-                "paper_gbt4688_qualitative",
-                "microscopy_gbt36422_microscopy",
-                "microscopy_gbt36422_cross_section",
-                "regenerated_fiber_count_method",
-                "regenerated_fiber_area_method",
-            },
-        )
-        self.assertFalse(ensure_default_project_rules(self.db))
 
-    def test_ensure_never_overwrites_admin_edits(self):
-        ensure_default_project_rules(self.db)
-        row = (
-            self.db.query(ExecutionProjectRule)
-            .filter(ExecutionProjectRule.rule_key == PAPER_FIBER_RULE_KEY)
-            .one()
-        )
-        row.display_name = "管理员改名"
-        row.revision = 7
-        self.db.commit()
-        self.assertFalse(ensure_default_project_rules(self.db))
-        rule = resolve_rule(self.db, PAPER_FIBER_RULE_KEY)
-        self.assertEqual(rule.display_name, "管理员改名")
-        self.assertEqual(rule.revision, 7)
 
     def test_seed_configs_pass_validation(self):
         for seed in default_project_rule_seeds():
@@ -276,6 +247,7 @@ class ProjectRuleApiTests(unittest.TestCase):
         self.Session = sessionmaker(bind=self.engine, autoflush=False)
         Base.metadata.create_all(self.engine)
         self.db = self.Session()
+        install_rule_fixtures(self.db)
         self.root = ExecutionStorageRoot(
             root_id="paper_fiber_records",
             name="纸类原始记录",
@@ -400,7 +372,6 @@ class ProjectRuleApiTests(unittest.TestCase):
         from app.execution.schemas import ProjectRuleTestRequest
 
         auth = AuthContext(session=None, user=self.user)
-        ensure_default_project_rules(self.db)
         self.db.commit()
         before = (
             self.db.query(ExecutionProjectRule)

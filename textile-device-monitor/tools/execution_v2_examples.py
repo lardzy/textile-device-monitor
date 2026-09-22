@@ -20,7 +20,6 @@ from app.execution.v2.examples import (  # noqa: E402
     build_controlled_xlsx_write_canary_release,
     build_native_human_file_selection_smoke_release,
     build_readonly_file_query_smoke_release,
-    build_domain_records_smoke_release,
 )
 from app.execution.v2.data_examples import build_data_python_release
 
@@ -37,8 +36,6 @@ BUILDERS = {
         build_native_human_file_selection_smoke_release
     ),
     "v2-readonly-file-query-smoke.json": build_readonly_file_query_smoke_release,
-    "v2-microscopy-records-smoke.json": build_domain_records_smoke_release,
-    "v2-paper-fiber-records-smoke.json": lambda: build_domain_records_smoke_release("paper-fiber"),
 }
 
 

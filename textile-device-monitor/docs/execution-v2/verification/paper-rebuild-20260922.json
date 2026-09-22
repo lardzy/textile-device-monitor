@@ -1,0 +1,181 @@
+{
+  "date": "2026-09-22",
+  "scope": "Local Compose, Windows 11 Bridge, actual LAN inspection system",
+  "workflow": {
+    "id": "ae766b2c-f51e-40ff-baca-10608dfe4602",
+    "slug": "paper-fiber-v2",
+    "published_version": 5,
+    "portable_json": "docs/execution-v2/examples/paper-fiber-v2.json",
+    "release_digest": "57dd7f185013ecbc0a0923559c2914a7ee678fe1a588558d9d3586a3e2d98532",
+    "node_count": 14,
+    "python_node_count": 4,
+    "run_ids": {
+      "query_read": "a0177e08-9fcc-4f72-9f4d-3cfe83f3ca85",
+      "select_compute": "aace9912-97c4-4322-9141-06a068f01e15",
+      "real_submit": "d12c1f84-ddf9-4bf6-aa18-fccb71251e43"
+    },
+    "real_submit_version": 3,
+    "duration_seconds": 87.164,
+    "human_task_count": 0
+  },
+  "remote_changes": {
+    "sample": "26W006824",
+    "uploads_before": [
+      "26W006824",
+      "26W006824-1"
+    ],
+    "uploads_after": [
+      "26W006824",
+      "26W006824-1",
+      "26W006824-2"
+    ],
+    "added_upload_number": "26W006824-2",
+    "added_upload_main_id": "sha256:54fb2c75b8ac92e4",
+    "file_sha256": "1ae021113bcece3d13f35156e3fd42cb9872ba7d2da3c7e62057a035395f478c",
+    "register_count_before": 1,
+    "register_count_after": 2,
+    "new_register_id": "sha256:d4463523e5b451af",
+    "new_record_id": "sha256:1d3f31d791cacfb5",
+    "new_record_fingerprint": "3906c3f34d78fa235b9beaf4379d270b200c452fe59126e08885039e2481f9ca",
+    "previous_record_unchanged": true,
+    "result": "木浆、竹浆",
+    "intentional_duplicate": true,
+    "operations": {
+      "upload": "f82b37fa-fee3-4604-b03e-8674ec4c3e14",
+      "review": "a77921a1-7d67-40bf-9ec9-7bbd3601d856",
+      "entry": "38e7259e-04dc-4099-b422-77ba80ed93bd"
+    },
+    "readback_at": "2026-09-22T10:25:48.116219+00:00"
+  },
+  "runtime": {
+    "counts": {
+      "execution_workflows": 1,
+      "execution_workflow_versions": 5,
+      "execution_runs": 3,
+      "execution_human_tasks": 0,
+      "execution_external_operations": 3,
+      "execution_project_rules": 0,
+      "execution_users": 1,
+      "execution_credentials": 1,
+      "execution_storage_roots": 9
+    },
+    "migration": "0013_designer_drafts",
+    "worker_capability_digest": "e69471864a2fd2369e84b32679f0eaf1943753fbd2bd33e6da27977c60ed9da8",
+    "worker_binding_count": 36,
+    "engine_version": "2.5.0",
+    "workflow_slugs": [
+      "paper-fiber-v2"
+    ]
+  },
+  "catalog": {
+    "node_count": 29,
+    "workflow_template_count": 1,
+    "python_preset_count": 4,
+    "packs": [
+      {
+        "pack_id": "legacy_fibrecheck.v1-compat",
+        "pack_version": "2.0.1",
+        "distribution_digest": "48c282ddebdf0818bdc723e21d6f5ad07177c9cee61d7d273898d2838959c8e8"
+      },
+      {
+        "pack_id": "textile.execution-data",
+        "pack_version": "1.0.2",
+        "distribution_digest": "a60dfab615647f603fb422e31788494152be64062ea87212ab7c59e22ea9dda4"
+      },
+      {
+        "pack_id": "textile.execution-files",
+        "pack_version": "1.1.5",
+        "distribution_digest": "d1ba525619e09c5beb2e8a7023b4b509fbe02efe7762fc783466d03b456d6d35"
+      },
+      {
+        "pack_id": "textile.execution-kernel",
+        "pack_version": "2.10.0",
+        "distribution_digest": "24e4e1c3e302cf41423dc291a743184c43ab1dfe11b1cdc70f4a584c4fd75285"
+      },
+      {
+        "pack_id": "textile.execution-workbook",
+        "pack_version": "2.10.1",
+        "distribution_digest": "b3c7bda182c30430ec61efaa08a6f88f5690b77b9ccd6e62e11939ded51e1fed"
+      }
+    ]
+  },
+  "deployment": {
+    "containers": {
+      "textile-monitor-backend": {
+        "image": "sha256:ff5ef50c7bfacaf97ec844c0f07131c4e4c78b529663e8e5c23846bee5c05ea3",
+        "status": "running",
+        "health": "healthy"
+      },
+      "textile-execution-worker": {
+        "image": "sha256:d9e7d2c5e8505e1f78626a145a23435823b75820d0627f8a695fa63bf1b10b03",
+        "status": "running",
+        "health": "healthy"
+      },
+      "textile-monitor-frontend": {
+        "image": "sha256:9f5865fcafd9aa572c767e1e4aeadafe3d4208652c1facd34dc2bc0af6ef4abe",
+        "status": "running",
+        "health": "healthy"
+      }
+    },
+    "source_files_match": 118,
+    "frontend_index_matches": true,
+    "bridge_version": "1.1.0",
+    "bridge_tasks": "Running",
+    "installer_sha256": "9addc3827e3fa904c0262648b21fcc079920abb77097ca898dfd53b8ac2e8fc3",
+    "writer_sha256": "1cd72217e62c6d737c9f532b15736a5b7729e2a6a9008e0a39ef66347453929b",
+    "entry_writer_sha256": "e35111ef0b675739247c8ef44091009a4fc1008c483de52aad1c6c9bda3f3f60"
+  },
+  "verification": {
+    "backend_full": {
+      "passed": 591,
+      "subtests_passed": 53,
+      "skipped": 6,
+      "deselected_uno": 1
+    },
+    "uno_container_passed": 1,
+    "postgres_concurrency_passed": 29,
+    "postgres_migration_cycle": "0013 -> 0012 -> 0013",
+    "frontend_vitest_passed": 157,
+    "frontend_node_passed": 18,
+    "frontend_build": "passed",
+    "final_freeze_tests_passed": 33,
+    "portable_json_tests_passed": 11,
+    "portable_full_chain": "Bundled and exported JSON each ran all 14 nodes in clean databases, real Worker/file IO, simulated Bridge receipts, only directory and credential binding",
+    "bridge_write_tests_passed": 48,
+    "bridge_write_subtests_passed": 14,
+    "bridge_read_tests_passed": 20,
+    "writer_contract_checks_passed": 27,
+    "entry_writer_checks_passed": 69,
+    "canvas_browser": [
+      "box-select-clear-and-atomic-undo",
+      "reconnect-rechecks-upstream-and-undo",
+      "deleted-reference-preserved-reselected-and-compiles"
+    ],
+    "earlier_canvas_browser": [
+      "single-delete",
+      "undo",
+      "input-backspace",
+      "batch-clear",
+      "batch-undo",
+      "insert-edge",
+      "python-backspace",
+      "server-save-reload"
+    ],
+    "browser_page_errors": [],
+    "pack_digests": "current",
+    "contract_snapshot": "current",
+    "generic_examples": 7,
+    "git_diff_check": "passed",
+    "bridge_read_subtests_passed": 3
+  },
+  "backup": {
+    "database": ".tmp/paper-rebuild-20260922/database-before.dump",
+    "execution_files": ".tmp/paper-rebuild-20260922/execution-files-before.tar.gz"
+  },
+  "boundaries": [
+    "The feature was unused before reset. Existing data was backed up and intentionally reset.",
+    "No additional remote write was made when publishing versions 4 and 5.",
+    "Other business workflows are retired and will be rebuilt individually.",
+    "The existing generic_update@1 correction protocol retains its supported paper scope. New upload/review/generic_entry@2 accept explicit project and record data."
+  ]
+}

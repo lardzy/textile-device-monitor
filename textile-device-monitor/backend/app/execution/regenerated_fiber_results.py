@@ -1252,19 +1252,3 @@ def _result_executor(context) -> dict[str, Any]:
         files=context.input_data.get("files"),
         run_id=context.run.id, node_run_id=context.node_run.id,
     )
-
-
-_EXECUTORS_REGISTERED = False
-
-
-def register_regenerated_fiber_result_executors() -> None:
-    global _EXECUTORS_REGISTERED
-    if _EXECUTORS_REGISTERED:
-        return
-    for node_type in RESULT_RULES:
-        node_registry.set_executor(
-            node_type,
-            RESULT_NODE_TYPE_VERSION,
-            _result_executor,
-        )
-    _EXECUTORS_REGISTERED = True

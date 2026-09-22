@@ -88,8 +88,8 @@ export function referenceIssues(document, specs = [], connectors = []) {
   if (!document) return [];
   const definition = document.definition;
   return collectReferences(document).flatMap(reference => {
-    const source = [...definition.nodes].sort((a, b) => b.id.length - a.id.length).find(node => ['output', 'status'].some(kind => reference.expression === `$.nodes.${node.id}.${kind}` || reference.expression.startsWith(`$.nodes.${node.id}.${kind}.`)));
-    const match = source ? reference.expression.slice(`$.nodes.${source.id}.`.length).match(/^(output|status)(?:\.(.*))?$/) : reference.expression.match(/^\$\.nodes\.(.+?)\.(output|status)(?:\.(.*))?$/);
+    const source = [...definition.nodes].sort((a, b) => b.id.length - a.id.length).find(node => ['output', 'status', 'error_code', 'error', 'mocked'].some(kind => reference.expression === `$.nodes.${node.id}.${kind}` || reference.expression.startsWith(`$.nodes.${node.id}.${kind}.`)));
+    const match = source ? reference.expression.slice(`$.nodes.${source.id}.`.length).match(/^(output|status|error_code|error|mocked)(?:\.(.*))?$/) : reference.expression.match(/^\$\.nodes\.(.+?)\.(output|status|error_code|error|mocked)(?:\.(.*))?$/);
     if (!match) {
       const inputPath = reference.expression.startsWith('$.inputs.') ? reference.expression.slice(9).split('.') : null;
       if (!inputPath) return [];
@@ -98,6 +98,12 @@ export function referenceIssues(document, specs = [], connectors = []) {
         if (schema?.type === 'array' && /^\d+$/.test(key)) schema = schema.items;
         else if (schema?.properties?.[key]) schema = schema.properties[key];
         else return schema?.additionalProperties === false ? [{ ...reference, message: '流程输入字段不存在' }] : [];
+      }
+      if (reference.fixtureId === undefined && !reference.edgeId) {
+        const target = definition.nodes.find(node => node.id === reference.nodeId);
+        let expected = effectiveSchemas(target, specs.find(spec => target && specKey(spec) === specKey(target)), connectors, definition).input;
+        for (const key of reference.path.slice(4)) expected = expected?.type === 'array' ? expected.items : expected?.properties?.[key];
+        if (expected && !compatibleTypes(schema, expected)) return [{ ...reference, message: '流程输入字段类型不匹配' }];
       }
       return [];
     }
@@ -149,6 +155,21 @@ export function rewriteReferences(document, root, oldKey, newKey) {
   return result;
 }
 export const rewriteOutputReferences = (document, nodeId, oldKey, newKey) => rewriteReferences(document, `$.nodes.${nodeId}.output`, oldKey, newKey);
+
+export function renameMappedField(mapping, oldKey, newKey) {
+  const result = structuredClone(mapping || {});
+  const parts = oldKey.split('.');
+  const replacement = newKey.split('.').at(-1);
+  const visit = (value, index) => {
+    if (!value || typeof value !== 'object') return;
+    const key = parts[index];
+    if (key === '*') { if (Array.isArray(value)) value.forEach(item => visit(item, index + 1)); return; }
+    if (index < parts.length - 1) visit(value[key], index + 1);
+    else if (Object.hasOwn(value, key)) { value[replacement] = value[key]; delete value[key]; }
+  };
+  visit(result, 0);
+  return result;
+}
 
 export function validConnection(definition, connection, replacingId) {
   const { source, target, sourceHandle, targetHandle } = connection;

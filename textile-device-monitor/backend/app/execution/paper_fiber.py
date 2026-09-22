@@ -789,11 +789,3 @@ def paper_fiber_candidates(
         "task_cache_state": match["task_cache_state"],
         "missing_conditions": missing,
     }
-
-
-def register_paper_fiber_executors() -> None:
-    node_registry.set_executor(
-        PAPER_FIBER_NODE_TYPE,
-        1,
-        _paper_fiber_executor,
-    )

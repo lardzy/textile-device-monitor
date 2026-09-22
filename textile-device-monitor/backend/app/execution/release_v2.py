@@ -1435,12 +1435,18 @@ def _content_semantic_issues(
         for position, assertion in enumerate(fixture.get("assertions") or []):
             expression = assertion["path"]
             path = f"$.fixtures[{index}].assertions[{position}].path"
+            # Fixture observations include terminal status/errors that are not
+            # available as ordinary runtime input variables.
+            if expression in {"$.run.status", "$.run.mode", "$.run.inspection_number"}:
+                continue
             if expression == "$.outputs" or expression.startswith("$.outputs."):
                 _, rejected = _schema_at_path(document["definition"]["output_schema"], expression.split(".")[2:])
                 if rejected:
                     sample_issues.append(ValidationIssue("fixture_output_missing", "样例断言的输出字段不存在", path))
                 continue
             source = next((key for key in sorted(nodes, key=len, reverse=True) if expression.startswith(f"$.nodes.{key}.")), "")
+            if source and expression in {f"$.nodes.{source}.{key}" for key in ("status", "error_code", "error", "mocked")}:
+                continue
             _validate_mapping_reference(expression=expression, path=path, target_node_id=source,
                 target_schema=None, input_schema=projection["input_schema"], global_schema=projection["global_schema"],
                 node_by_id=nodes, node_contract_by_id=contracts, outgoing={}, issues=sample_issues, allow_self=True)
@@ -2731,92 +2737,6 @@ def rollback_workflow(
         },
     )
     return receipt
-
-
-
-
-
-
-
-
-P2_COMPLETE_WORKFLOW_SLUGS = {
-    "electron-source-selection",
-    "hemp-cotton-source-selection",
-    "special-wool-source-selection",
-    "system-controlled-xlsx-write-test",
-}
-
-
-def _installed_node_for_source(
-    node_type: str,
-    type_version: int,
-    source: str,
-):
-    matching = [
-        item
-        for item in _registry_api().get_installed_registry().list_node_specs()
-        if item.type == node_type
-        and item.type_version == type_version
-        and item.source == source
-    ]
-    if len(matching) != 1:
-        raise LookupError(
-            f"exact {source} NodeSpec unavailable: {node_type}@{type_version}"
-        )
-    return matching[0]
-
-
-def _rebuild_candidate_dependencies(candidate: dict[str, Any]) -> None:
-    dependencies: dict[tuple[str, int], dict[str, Any]] = {}
-    packs: dict[str, dict[str, Any]] = {}
-    for node in candidate["definition"]["nodes"]:
-        identity = (node["type"], int(node.get("type_version") or 1))
-        preferred_source = (
-            "resource"
-            if node.pop("__native_p2", False)
-            else "v1_registry_adapter"
-        )
-        installed = _installed_node_for_source(
-            identity[0], identity[1], preferred_source
-        )
-        dependencies[identity] = {
-            "type": identity[0],
-            "type_version": identity[1],
-            "contract_digest": installed.contract_digest,
-            "implementation_digest": installed.implementation_digest,
-        }
-        pack = _registry_api().get_installed_registry().resolve_pack(
-            installed.pack_id,
-            installed.pack_version,
-            installed.distribution_digest,
-        )
-        packs[pack.pack_id] = {
-            "pack_id": pack.pack_id,
-            "version_range": pack.pack_version,
-            "distribution_digest": pack.distribution_digest,
-            "required_on": ["api", "worker"],
-        }
-    # Connector dependencies from deferred compatibility nodes remain intact;
-    # pack ownership for them is already present in the compat candidate.
-    for existing in candidate["dependencies"].get("packs") or []:
-        if existing.get("required_on") == ["api", "bridge"]:
-            packs[existing["pack_id"]] = existing
-    candidate["dependencies"]["engine"] = {
-        "version_range": ">=2.1.0 <3.0.0"
-    }
-    candidate["dependencies"]["node_types"] = sorted(
-        dependencies.values(),
-        key=lambda item: (item["type"], item["type_version"]),
-    )
-    candidate["dependencies"]["packs"] = sorted(
-        packs.values(), key=lambda item: item["pack_id"]
-    )
-
-
-
-
-
-
 
 
 def receipt_view(receipt: ExecutionWorkflowActivationReceipt) -> dict[str, Any]:

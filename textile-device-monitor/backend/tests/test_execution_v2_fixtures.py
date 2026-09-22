@@ -2,7 +2,7 @@ from copy import deepcopy
 
 from app.execution.v2.data_examples import build_data_python_release
 from app.execution.v2.fixtures import run_fixtures
-from tests.test_execution_workflow_replacement import environment, request
+from workflow_native_helpers import environment, request
 
 
 def test_calculation_uses_actual_python_and_reports_assertion_failure():

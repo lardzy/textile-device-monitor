@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from app.execution.errors import ExecutionApiError
 from app.execution.release_v2 import (
-    _content_semantic_issues, _rebuild_candidate_dependencies, _resolve_dependencies,
+    _content_semantic_issues, _resolve_dependencies,
     _validate_document_shape,
 )
 from app.execution.v2.canonical import canonical_sha256
@@ -30,6 +30,8 @@ def compile_document(document, *, exact=False):
         return {"document": candidate, "content_valid": False, "issues": issues}
     registry = get_installed_registry()
     connectors = {}
+    node_dependencies = {}
+    pack_dependencies = {}
     try:
         for node in candidate["definition"]["nodes"]:
             if node["type"] in {"core.start", "core.end"} and node["type_version"] == 1:
@@ -37,7 +39,15 @@ def compile_document(document, *, exact=False):
             installed = registry.resolve_node_spec(node["type"], node["type_version"])
             if installed.source != "resource":
                 raise ValueError(f"{node['type']}@{node['type_version']} 是历史兼容节点，请先迁移")
-            node["__native_p2"] = True
+            node_dependencies[(installed.type, installed.type_version)] = {
+                "type": installed.type, "type_version": installed.type_version,
+                "contract_digest": installed.contract_digest,
+                "implementation_digest": installed.implementation_digest,
+            }
+            pack_dependencies[installed.pack_id] = {
+                "pack_id": installed.pack_id, "version_range": installed.pack_version,
+                "distribution_digest": installed.distribution_digest, "required_on": ["api", "worker"],
+            }
             ref_key = {"connector.query": "query_ref", "external.operation": "operation_ref"}.get(node["type"])
             if not ref_key:
                 continue
@@ -52,8 +62,8 @@ def compile_document(document, *, exact=False):
             group = "queries" if kind == "query" else "operations"
             if dependency not in item[group]:
                 item[group].append(dependency)
-        candidate["dependencies"]["packs"] = []
-        _rebuild_candidate_dependencies(candidate)
+        candidate["dependencies"]["packs"] = sorted(pack_dependencies.values(), key=lambda item: item["pack_id"])
+        candidate["dependencies"]["node_types"] = [node_dependencies[key] for key in sorted(node_dependencies)]
         candidate["dependencies"]["engine"] = {"version_range": ">=2.5.0 <3.0.0"}
         candidate["dependencies"]["connectors"] = sorted(connectors.values(), key=lambda value: value["connector_id"])
         for connector_id in sorted(connectors):

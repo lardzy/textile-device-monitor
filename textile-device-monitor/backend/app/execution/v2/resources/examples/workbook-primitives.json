@@ -287,86 +287,82 @@
     "node_types": [
       {
         "contract_digest": "f8f40977f40d7de6e34ac5ea6200f57521704fdb39e07804a18bfbd9f716ab54",
-        "implementation_digest": "063a11790fee1c1359bc017adf6de70f1b10f0545d251fbaff91d94ec5b19b4e",
         "type": "artifact.publish",
         "type_version": 2
       },
       {
         "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
-        "implementation_digest": "5c8b4a34059c7156bde5d3f62defd567281078976b993c29fdb9749e765f00df",
         "type": "core.end",
         "type_version": 2
       },
       {
         "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
-        "implementation_digest": "4573a4d14f8736f3bfcfae7f6352baaf65f7bc30314b021b3ca1607d0ab5dee8",
         "type": "core.start",
         "type_version": 2
       },
       {
         "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
-        "implementation_digest": "4069016ac89b4b86efe4449dd60d11c36d6c8aed643b1ca805cf8f9c443f797f",
         "type": "human.approval",
         "type_version": 1
       },
       {
         "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
-        "implementation_digest": "178fa8d8bd08fc1a0025a7f78e22bc13b9428b10127cacbfa600c1f86f7a65a8",
         "type": "workbook.classify",
         "type_version": 1
       },
       {
-        "contract_digest": "bcb81c7b8ae693e886410ddb66e94f5eafae2394df6e37fb7550bc60444d2cb3",
-        "implementation_digest": "4851a6c26dceeffb652707df791e9c9d8ea9f0f131693421c08f3de5c6cdc011",
+        "contract_digest": "e2c9297c270b3c2617b8f5921f8be45df413a0f5624bf71e9ec7407dca4cdca1",
         "type": "workbook.copy",
         "type_version": 1
       },
       {
         "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
-        "implementation_digest": "449bf46da8d71775d0c060b02d48aa8ceb985e9b8371654a60a9a0dc68ba9859",
         "type": "workbook.extract_fields",
         "type_version": 1
       },
       {
         "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
-        "implementation_digest": "006fcea64860e3e3c3f8126ec8f57050844191d1145d0dcbdf740accd50772e6",
         "type": "workbook.verify",
         "type_version": 2
       },
       {
         "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
-        "implementation_digest": "2102525a857ad4ad21daddfadb4219baed82f03ab6475a81b98409dcbb8b9189",
         "type": "workbook.write_cells",
         "type_version": 2
       }
     ],
     "packs": [
       {
-        "distribution_digest": "d1ba525619e09c5beb2e8a7023b4b509fbe02efe7762fc783466d03b456d6d35",
         "pack_id": "textile.execution-files",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "1.1.5"
+        "version_range": ">=1.1.3 <2.0.0"
       },
       {
-        "distribution_digest": "24e4e1c3e302cf41423dc291a743184c43ab1dfe11b1cdc70f4a584c4fd75285",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.10.0"
+        "version_range": ">=2.9.1 <3.0.0"
       },
       {
-        "distribution_digest": "b3c7bda182c30430ec61efaa08a6f88f5690b77b9ccd6e62e11939ded51e1fed",
+        "pack_id": "textile.execution-v1-compat",
+        "required_on": [
+          "api",
+          "worker"
+        ],
+        "version_range": ">=2.1.6 <3.0.0"
+      },
+      {
         "pack_id": "textile.execution-workbook",
         "required_on": [
           "api",
           "worker"
         ],
-        "version_range": "2.10.1"
+        "version_range": ">=1.1.1 <2.0.0"
       }
     ]
   },
@@ -376,7 +372,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "03c9f8db7311a99aea865f91210b6d60b7883e55882a7a8ebac3a28b393de9b8",
+    "digest": "009afa17c61ab334d266debbbe760fd60deb6b3d2aeceea258f9ae59ca2690cf",
     "scope": "document_without_integrity",
     "signatures": []
   },

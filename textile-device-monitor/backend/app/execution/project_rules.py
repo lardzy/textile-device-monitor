@@ -1,19 +1,7 @@
-"""编号 → 项目类型匹配规则（管理员可编辑）的规则表访问与求值。
+"""Explicit rule storage for shared matching APIs. No automatic business seeds.
 
-规则表只承载"发现期事实"：目录匹配策略、任务单事实条件（项目名别名、
-测试方法）与结果探针（单元格/工作表读取）。模板绑定、写门禁与登记参数
-继续钉在代码里（见 ``microscopy_families.py`` 等），规则表通过
-``binding.family_key`` 引用它们——配置提供数据，代码强制校验。
-
-规则由 ``project_rule_seeds`` 幂等播种（代码常量是唯一事实源）；管理员
-在流程管理中实时编辑，``revision`` 自增即让依赖缓存（如纸类 W32 预读
-profile）自动失效，无需清空任何表。
-
-为后续演进预留的形状：
-- 节点 config 以 ``match_rule: <rule_key>`` 引用规则（类型化参数）；
-- ``evaluate_project_rule`` 是通用匹配节点 ``core.project_match`` 与
-  规则干跑测试端点共用的求值入口；
-- 探针是命名输出，供下游节点 input_mapping 引用。
+New workflows carry editable Python rules in their portable JSON. This table
+remains available for independently installed adapters that declare rule slots.
 """
 
 from __future__ import annotations
@@ -497,11 +485,3 @@ def _project_match_executor(context) -> dict[str, Any]:
     result["rule_key"] = rule.key
     result["rule_revision"] = rule.revision
     return result
-
-
-def register_project_rule_executors() -> None:
-    from app.execution.registry import node_registry
-
-    node_registry.set_executor(
-        "core.project_match", 1, _project_match_executor
-    )

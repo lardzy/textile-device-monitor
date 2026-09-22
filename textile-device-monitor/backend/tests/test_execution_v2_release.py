@@ -24,7 +24,6 @@ from app.api.execution_v2 import (
     content_preflight,
     export_release,
     get_release,
-    migration_preview,
     monitoring,
     node_spec,
     node_specs,
@@ -37,15 +36,12 @@ from app.api.execution_v2 import (
 )
 from app.config import settings
 from app.database import Base
-from app.execution.catalog import (
-    bind_user_role,
-    ensure_default_catalog,
-    ensure_default_rbac,
-)
+from app.execution.catalog import bind_user_role, ensure_default_catalog, ensure_default_rbac
 from app.execution.engine import claim_next_node, create_run, execute_claimed_node
 from app.execution.errors import ExecutionApiError
 from app.execution.models import (
     ExecutionAuditLog,
+    ExecutionCategory,
     ExecutionFileIndexEntry,
     ExecutionReleasePreflight,
     ExecutionStorageRoot,
@@ -56,15 +52,12 @@ from app.execution.models import (
     ExecutionWorkflowVersion,
     utcnow,
 )
-from app.execution.persistence import register_persistence_executors
-from app.execution.project_rules import ensure_default_project_rules
 from app.execution.release_v2 import (
     _release_digest,
     apply_release,
     compile_runtime_projection,
     export_version_release,
     preflight_release,
-    preview_v1_migration,
     publish_release,
     put_deployment_binding,
     release_view,
@@ -77,7 +70,6 @@ from app.execution.schemas import (
     WorkflowReleasePreflightRequest,
     WorkflowReleasePublishRequest,
     WorkflowReleaseRollbackRequest,
-    WorkflowV1MigrationPreviewRequest,
 )
 from app.execution.security import hash_password
 from app.execution.v2.canonical import canonical_json_bytes
@@ -109,143 +101,16 @@ class _MissingWorkflowQuery:
         return None
 
 
-def _node_release(node_type: str) -> dict:
-    """Build a valid metadata-only release around one compatibility node."""
-
-    registry = get_installed_registry()
-    node_types = ("core.start", node_type, "core.end")
-    specs = [registry.resolve_node_spec(value, 1) for value in node_types]
-    packs = []
-    for pack_id, pack_version in sorted(
-        {(spec.pack_id, spec.pack_version) for spec in specs}
-    ):
-        pack = registry.resolve_pack(pack_id, pack_version)
-        packs.append(
-            {
-                "pack_id": pack.pack_id,
-                "version_range": pack.pack_version,
-                "distribution_digest": pack.distribution_digest,
-                "required_on": ["api", "worker"],
-            }
-        )
-    document = {
-        "format": "textile-workflow-release",
-        "format_version": "2.0",
-        "release": {
-            "slug": "placeholder-" + node_type.replace(".", "-"),
-            "release_version": 1,
-            "name": f"placeholder {node_type}",
-            "description": "publishability gate fixture",
-            "category_key": "other",
-            "release_note": "test",
-        },
-        "dependencies": {
-            "engine": {"version_range": ">=2.0.0 <3.0.0"},
-            "node_types": [
-                {
-                    "type": spec.type,
-                    "type_version": spec.type_version,
-                    "contract_digest": spec.contract_digest,
-                    "implementation_digest": spec.implementation_digest,
-                }
-                for spec in specs
-            ],
-            "packs": packs,
-            "connectors": [],
-        },
-        "resources": {
-            "root_slots": [],
-            "credential_slots": [],
-            "role_slots": [],
-            "rule_slots": [],
-        },
-        "assets": [],
-        "capabilities": {
-            "declared": [],
-            "side_effect_level": "none",
-            "requires_human_approval": False,
-        },
-        "definition": {
-            "schema_version": "2.0",
-            "input_schema": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-            "global_schema": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-            "output_schema": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": True,
-            },
-            "global_defaults": {},
-            "nodes": [
-                {
-                    "id": "start",
-                    "type": "core.start",
-                    "type_version": 1,
-                    "name": "start",
-                    "config": {},
-                    "input_mapping": {},
-                },
-                {
-                    "id": "placeholder",
-                    "type": node_type,
-                    "type_version": 1,
-                    "name": "placeholder",
-                    "config": {},
-                    "input_mapping": {},
-                },
-                {
-                    "id": "end",
-                    "type": "core.end",
-                    "type_version": 1,
-                    "name": "end",
-                    "config": {},
-                    "input_mapping": {},
-                },
-            ],
-            "edges": [
-                {
-                    "id": "start-placeholder",
-                    "source": "start",
-                    "target": "placeholder",
-                    "join_policy": "all",
-                },
-                {
-                    "id": "placeholder-end",
-                    "source": "placeholder",
-                    "target": "end",
-                    "join_policy": "all",
-                },
-            ],
-        },
-        "fixtures": [],
-    }
-    document["integrity"] = {
-        "algorithm": "sha256",
-        "canonicalization": "RFC8785",
-        "scope": "document_without_integrity",
-        "digest": _release_digest(document),
-        "signatures": [],
-    }
-    return document
 
 
 class ExecutionV2ReleaseTests(unittest.TestCase):
     def setUp(self) -> None:
-        register_persistence_executors()
         self.engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine, autoflush=False)
         self.db = self.Session()
         ensure_default_rbac(self.db)
         ensure_default_catalog(self.db)
-        ensure_default_project_rules(self.db)
         self.admin = ExecutionUser(
             username="release-v2-admin",
             display_name="Release v2 admin",
@@ -357,10 +222,10 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
     def _insert_competing_workflow(self, document, binding, management_mode):
         projection = compile_runtime_projection(document, binding)
         category_id = (
-            self.db.query(ExecutionWorkflow)
-            .order_by(ExecutionWorkflow.slug)
+            self.db.query(ExecutionCategory)
+            .order_by(ExecutionCategory.key)
             .first()
-            .category_id
+            .id
         )
         workflow = ExecutionWorkflow(
             slug=document["release"]["slug"],
@@ -759,11 +624,6 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
                 "workflow.publish",
                 True,
             ),
-            "/execution/v2/migrations/v1/preview": (
-                "POST",
-                "workflow.design",
-                True,
-            ),
         }
         routes = {
             route.path: route
@@ -792,10 +652,10 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
             )
 
         auth = AuthContext(session=None, user=self.admin)
-        self.assertEqual(len(packs(_auth=auth)["items"]), 8)
+        self.assertEqual(len(packs(_auth=auth)["items"]), len(get_installed_registry().packs.all()))
         self.assertGreaterEqual(len(assets(_auth=auth)["items"]), 1)
         specs = node_specs(node_type=None, _auth=auth)["items"]
-        self.assertEqual(len(specs), 77)
+        self.assertEqual(len(specs), len(get_installed_registry().list_node_specs()))
         selected_spec = specs[0]
         selected_detail = node_spec(
             selected_spec["type"],
@@ -809,7 +669,7 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
         )
         monitor = monitoring(_auth=auth, db=self.db)
         self.assertEqual(len(monitor["registry_revision"]), 64)
-        self.assertEqual(len(monitor["pack_readiness"]), 8)
+        self.assertEqual(len(monitor["pack_readiness"]), len(get_installed_registry().packs.all()))
 
         document = build_readonly_file_query_smoke_release()
         content = content_preflight(
@@ -918,15 +778,6 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
             .order_by(ExecutionWorkflow.slug)
             .first()
         )
-        preview = migration_preview(
-            WorkflowV1MigrationPreviewRequest(
-                workflow_id=v1_workflow.id,
-                source="published",
-            ),
-            auth=auth,
-            db=self.db,
-        )
-        self.assertTrue(preview["content_valid"], preview["issues"])
 
     def test_preflight_token_is_owner_bound_single_use_and_expires(self):
         document = build_readonly_file_query_smoke_release()
@@ -1387,107 +1238,7 @@ class ExecutionV2ReleaseTests(unittest.TestCase):
             {item["code"] for item in report["issues"]},
         )
 
-    def test_metadata_only_placeholders_are_content_valid_but_not_publishable(self):
-        for node_type in (
-            "external.legacy_inspection",
-            "external.new_inspection",
-        ):
-            with self.subTest(node_type=node_type):
-                report = preflight_release(
-                    self.db,
-                    document=_node_release(node_type),
-                    actor=self.admin,
-                    scope="content",
-                )
-                self.assertTrue(report["content_valid"], report["issues"])
-                self.assertFalse(report["publish_ready"])
-                codes = {item["code"] for item in report["issues"]}
-                self.assertIn("node_not_publishable", codes)
-                self.assertIn("p1_publish_gate_blocked", codes)
 
-    def test_all_nine_builtin_candidates_are_stable_and_content_valid(self):
-        workflows = self.db.query(ExecutionWorkflow).order_by(
-            ExecutionWorkflow.slug
-        ).all()
-        self.assertEqual(len(workflows), 9)
-        for workflow in workflows:
-            with self.subTest(slug=workflow.slug):
-                original_pointer = workflow.published_version_number
-                original_draft = deepcopy(workflow.draft_definition)
-                preview_a = preview_v1_migration(
-                    self.db,
-                    workflow_id=workflow.id,
-                    source="published",
-                    actor=self.admin,
-                )
-                preview_b = preview_v1_migration(
-                    self.db,
-                    workflow_id=workflow.id,
-                    source="published",
-                    actor=self.admin,
-                )
-                self.assertTrue(preview_a["content_valid"], preview_a["issues"])
-                self.assertEqual(
-                    canonical_json_bytes(preview_a["candidate"]),
-                    canonical_json_bytes(preview_b["candidate"]),
-                )
-                report = preflight_release(
-                    self.db,
-                    document=preview_a["candidate"],
-                    actor=self.admin,
-                    scope="content",
-                )
-                self.assertTrue(report["content_valid"], report["issues"])
-
-                suggestions = preview_a["binding_suggestions"]
-                projection_bindings = {
-                    "root_slots": {
-                        slot: {
-                            "root_id": value["root_id"],
-                            "storage_root_id": "preview",
-                            "revision": 0,
-                        }
-                        for slot, value in suggestions["root_slots"].items()
-                    },
-                    "credential_slots": {
-                        slot: {"system_key": value["system_key"]}
-                        for slot, value in suggestions[
-                            "credential_slots"
-                        ].items()
-                    },
-                    "role_slots": {
-                        slot: {"role_key": value["role_key"]}
-                        for slot, value in suggestions["role_slots"].items()
-                    },
-                    "rule_slots": {
-                        slot: {"rule_key": value["rule_key"]}
-                        for slot, value in suggestions["rule_slots"].items()
-                    },
-                }
-                projected = compile_runtime_projection(
-                    preview_a["candidate"],
-                    SimpleNamespace(binding=projection_bindings),
-                )
-                source_version = self.db.query(ExecutionWorkflowVersion).filter_by(
-                    workflow_id=workflow.id,
-                    version_number=workflow.published_version_number,
-                ).one()
-                original_configs = {
-                    node["id"]: node.get("config") or {}
-                    for node in source_version.definition["nodes"]
-                }
-                projected_configs = {
-                    node["id"]: node.get("config") or {}
-                    for node in projected["nodes"]
-                }
-                self.assertEqual(projected_configs, original_configs)
-                self.assertEqual(
-                    workflow.published_version_number, original_pointer
-                )
-                self.assertEqual(workflow.draft_definition, original_draft)
-        self.assertEqual(
-            self.db.query(ExecutionWorkflowActivationReceipt).count(), 0
-        )
 
 
 if __name__ == "__main__":

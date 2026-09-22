@@ -213,12 +213,3 @@ def _extract_executor(
 
 
 _REGISTERED = False
-
-
-def register_excel_executors() -> None:
-    global _REGISTERED
-    if _REGISTERED:
-        return
-    node_registry.set_executor("excel.classify", 1, _classify_executor)
-    node_registry.set_executor("excel.extract_summary", 1, _extract_executor)
-    _REGISTERED = True

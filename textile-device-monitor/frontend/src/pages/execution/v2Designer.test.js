@@ -91,3 +91,10 @@ describe('reliable graph editing', () => {
     expect(state.future).toEqual([]);
   });
 });
+
+import { renameMappedField } from './v2Designer';
+it('renames nested input variables without touching expressions or code', () => {
+  const value = { rows: [{ old: '$.inputs.number' }, { old: '100' }], literal: 'old' };
+  expect(renameMappedField(value, 'rows.*.old', 'rows.*.number')).toEqual({ rows: [{ number: '$.inputs.number' }, { number: '100' }], literal: 'old' });
+  expect(value.rows[0]).toEqual({ old: '$.inputs.number' });
+});

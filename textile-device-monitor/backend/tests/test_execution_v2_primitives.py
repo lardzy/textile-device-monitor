@@ -14,11 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.database import Base
-from app.execution.catalog import (
-    bind_user_role,
-    ensure_default_catalog,
-    ensure_default_rbac,
-)
+from app.execution.catalog import bind_user_role, ensure_default_catalog, ensure_default_rbac
 from app.execution.engine import (
     claim_next_node,
     complete_node,
@@ -40,7 +36,6 @@ from app.execution.models import (
     ExecutionUser,
     ExecutionWorkflow,
 )
-from app.execution.project_rules import ensure_default_project_rules
 from app.execution.release_v2 import (
     apply_release,
     preflight_release,
@@ -84,7 +79,6 @@ def _environment():
         db = Session()
         ensure_default_rbac(db)
         ensure_default_catalog(db)
-        ensure_default_project_rules(db)
         admin = ExecutionUser(
             username="p2-primitives-admin",
             display_name="P2 primitives admin",

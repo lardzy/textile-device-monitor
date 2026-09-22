@@ -16,7 +16,7 @@ from app.execution.worker_state import record_worker_heartbeat
 from tests.test_execution_connector_operations import operation_env, claim, receipt
 from tests.test_execution_connector_updates import update_env, claim_update, after_record
 from tests.test_execution_domain_services import NUMBER
-from tests.test_execution_workflow_replacement import environment, request, stage, publish, drain
+from workflow_native_helpers import environment, request, stage, publish, drain
 
 
 def start(env):
@@ -118,7 +118,7 @@ def test_preflight_requires_exact_operation_contract(operation_env, change):
 
 def test_operation_implementation_changes_binding():
     registry = get_installed_registry()
-    operation = registry.resolve_operation("legacy_fibrecheck", "*", "check_record.generic_entry", 1)
+    operation = registry.resolve_operation("legacy_fibrecheck", "*", "check_record.generic_entry", 2)
     shell = registry.executable_binding_for("external.operation", 1)
     binding = registry.operation_node_binding(shell, operation)
     changed = registry.operation_node_binding(shell, replace(operation, implementation_digest="a" * 64))

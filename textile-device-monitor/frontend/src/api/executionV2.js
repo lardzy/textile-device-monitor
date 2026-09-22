@@ -81,18 +81,6 @@ export const rollbackWorkflowReleaseV2 = (workflowId, payload) =>
     payload,
   );
 
-export const previewWorkflowV1Migration = (
-  workflowId,
-  source = 'published',
-  targetProfile = 'compat_v1',
-  targetSlug,
-) =>
-  executionV2Client.post('/migrations/v1/preview', {
-    workflow_id: workflowId,
-    source,
-    target_profile: targetProfile,
-    ...(targetSlug ? { target_slug: targetSlug } : {}),
-  });
 
 export const getWorkflowReplacementV2 = workflowId =>
   executionV2Client.get(`/workflows/${encodeURIComponent(workflowId)}/replacement`);
@@ -108,7 +96,6 @@ export { executionV2Client };
 export const getWorkflowDesignerCatalogV2 = () => executionV2Client.get('/designer/catalog');
 export const compileWorkflowDesignerV2 = document => executionV2Client.post('/designer/compile', { document });
 export const testWorkflowDesignerV2 = document => executionV2Client.post('/designer/test', { document });
-export const getExecutionCompatibilityAudit = () => executionV2Client.get('/compatibility/audit');
 export const createDesignerDraftV2 = payload => executionV2Client.post('/designer/drafts', payload);
 export const getDesignerDraftV2 = workflowId => executionV2Client.get(`/workflows/${encodeURIComponent(workflowId)}/designer-draft`);
 export const saveDesignerDraftV2 = (workflowId, payload) => executionV2Client.put(`/workflows/${encodeURIComponent(workflowId)}/designer-draft`, payload);

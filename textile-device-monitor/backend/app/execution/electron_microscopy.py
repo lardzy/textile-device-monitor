@@ -871,9 +871,3 @@ def microscopy_image_candidates(
         "rule_key": match.get("rule_key"),
         "rule_revision": match.get("rule_revision"),
     }
-
-
-def register_electron_microscopy_executors() -> None:
-    node_registry.set_executor(
-        ELECTRON_NODE_TYPE, 1, _electron_microscopy_executor
-    )
