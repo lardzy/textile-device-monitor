@@ -824,7 +824,7 @@ def _resolve_dependencies(
                     "P2 uses the fixed engine lease, retry and fail_run policy",
                 )
             )
-        if identity == ("connector.query", 1):
+        if identity in {("connector.query", 1), ("connector.query", 2)}:
             reference = str((node.get("config") or {}).get("query_ref") or "")
             try:
                 key = registry_api.resolve_connector_reference(reference, connector_dependencies)
@@ -1413,17 +1413,18 @@ def _content_semantic_issues(
             )
         semantic_registry.register(node_type)
         registered.add(identity)
+    lock, _ = _resolve_dependencies(document, [])
     result = validate_definition(
         projection,
         registry=semantic_registry,
         for_publish=False,
         compatibility_node_ids=compatibility_node_ids,
+        node_schema_bindings={item['node_id']: item for item in lock['node_instances']},
     )
     # Assertions remain visible after deletion, but a release cannot carry
     # dangling sample references. Sample data and Python source are literals.
     from app.execution.validation import _validate_mapping_reference, _schema_at_path, ValidationIssue
     sample_issues = []
-    lock, _ = _resolve_dependencies(document, [])
     contracts = {item["node_id"]: SimpleNamespace(output_schema=item["effective_output_schema"])
                  for item in lock["node_instances"]}
     nodes = {node["id"]: node for node in projection["nodes"]}
@@ -2126,6 +2127,7 @@ def _validate_v2_runtime_projection(
         registry=semantic_registry,
         for_publish=True,
         compatibility_node_ids=compatibility_node_ids,
+        node_schema_bindings={item['node_id']: item for item in _resolve_dependencies(document, [])[0]['node_instances']},
     )
 
 

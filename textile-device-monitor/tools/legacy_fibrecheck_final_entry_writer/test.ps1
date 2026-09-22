@@ -206,6 +206,15 @@ try {
         @('--offline-validate', '--package', $paperGenericPath) 0 `
         @('package_validated', 'generic_details_validated', 'offline_validation_completed')
 
+    $neutralPath = Join-Path $fixtureDir 'neutral-generic.json'
+    $neutral = $paperGeneric.Replace('"schema_version": 2', '"schema_version": 4').Replace(
+        '"expected_existing_register_count": 0', '"expected_existing_register_count": 1').Replace(
+        '纸、纸板和纸浆纤维鉴别分析', '自定义检测项目').Replace('GB/T 4688-2020', 'CUSTOM METHOD').Replace('task-project:f7dd1283727651526a49e86c', 'task-project:984e2476117b498d329aa438')
+    Write-Utf8NoBom $neutralPath $neutral
+    Assert-Case 'neutral v4 accepts custom business fields and explicit append count' `
+        @('--offline-validate', '--package', $neutralPath) 0 `
+        @('package_validated', 'generic_details_validated', 'offline_validation_completed')
+
     $paperIdentityPath = Join-Path $fixtureDir 'paper-generic-identity.json'
     Write-Utf8NoBom $paperIdentityPath ($paperGeneric.Replace(
         '"check_count": 1', '"check_count": 2').Replace(

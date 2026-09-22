@@ -5,7 +5,7 @@ import json
 import re
 from collections import defaultdict, deque
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePath
 from typing import Any
 from urllib.parse import unquote
@@ -319,8 +319,11 @@ def _inspect_declared_root_references(
     if isinstance(value, dict):
         for key, nested in value.items():
             nested_path = f"{path}.{key}"
+            if key.endswith('_schema') or key == 'code':
+                continue
             if (
                 (key == "root_id" or key.endswith("_root_id"))
+                and isinstance(nested, str)
                 and nested not in (None, "")
                 and nested not in declared_root_ids
             ):
@@ -589,6 +592,7 @@ def validate_definition(
     registry: NodeRegistry = node_registry,
     for_publish: bool = False,
     compatibility_node_ids: set[str] | None = None,
+    node_schema_bindings: dict[str, Any] | None = None,
 ) -> ValidationResult:
     raw_nodes = document.get("nodes")
     if isinstance(raw_nodes, list) and any(
@@ -601,6 +605,7 @@ def validate_definition(
             registry=registry,
             for_publish=for_publish,
             compatibility_node_ids=compatibility_node_ids,
+            node_schema_bindings=node_schema_bindings,
         )
         parked_issues: list[ValidationIssue] = []
         seen_ids: set[str] = set()
@@ -804,6 +809,9 @@ def validate_definition(
         node_type = node.get("type")
         version = node.get("type_version", 1)
         definition = registry.get(node_type, version) if isinstance(version, int) else None
+        binding = (node_schema_bindings or {}).get(node_id)
+        if definition is not None and binding is not None:
+            definition = replace(definition, input_schema=binding['effective_input_schema'], output_schema=binding['effective_output_schema'])
         if definition is None:
             issues.append(
                 ValidationIssue(

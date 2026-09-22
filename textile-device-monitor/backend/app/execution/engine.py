@@ -1766,6 +1766,7 @@ def create_run(
                 registry=v2_registry,
                 for_publish=True,
                 compatibility_node_ids=compatibility_node_ids,
+                node_schema_bindings=instances,
             )
         else:
             validation = validate_definition(definition, for_publish=True)
@@ -2474,7 +2475,7 @@ def claim_next_node(
                 ),
             ),
             or_(
-                ExecutionNodeRun.status == "ready",
+                and_(ExecutionNodeRun.status == "ready", or_(ExecutionNodeRun.ready_at.is_(None), ExecutionNodeRun.ready_at <= now)),
                 and_(
                     ExecutionNodeRun.status == "running",
                     ExecutionNodeRun.lease_expires_at < now,
@@ -2562,7 +2563,7 @@ def claim_next_node(
             ExecutionNodeRun.id == candidate.id,
             ExecutionNodeRun.run_id == run.id,
             or_(
-                ExecutionNodeRun.status == "ready",
+                and_(ExecutionNodeRun.status == "ready", or_(ExecutionNodeRun.ready_at.is_(None), ExecutionNodeRun.ready_at <= now)),
                 and_(
                     ExecutionNodeRun.status == "running",
                     ExecutionNodeRun.lease_expires_at < now,
@@ -4579,6 +4580,21 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
             from app.execution.v2.native_handlers import NodeExecutionResult
 
             if isinstance(output, NodeExecutionResult):
+                if output.retry_after_seconds is not None:
+                    # Read queries reuse durable ready_at scheduling. No sleeping
+                    # transaction, second queue or separate debug executor.
+                    run, current = _lock_run_and_node(db, node_run.id)
+                    _ensure_run_accepts_result(run)
+                    if current.status != "running" or current.lease_token != lease_token:
+                        raise conflict("node_lease_lost", "节点租约已失效")
+                    current.status = "ready"
+                    current.ready_at = utcnow() + timedelta(seconds=output.retry_after_seconds)
+                    current.output_data = output.output
+                    current.lease_owner = None
+                    current.lease_expires_at = None
+                    _finish_attempt(db, current, lease_token=lease_token, status="deferred", output_data=output.output)
+                    append_run_event(db, run_id=run.id, event_type="node.deferred", payload={"node_id": current.node_id, "ready_at": current.ready_at.isoformat()})
+                    return
                 if output.suspension is not None:
                     declared_suspension = contract.get("suspension") or {}
                     requested_suspension = output.suspension
@@ -5359,6 +5375,8 @@ def retry_failed_node(
     if node.status != "failed":
         raise conflict("node_not_retryable", "只有失败节点可以重试", status=node.status)
     node.status = "ready"
+    if node.node_type == "connector.query":
+        node.output_data = {}
     node.ready_at = utcnow()
     node.error_code = None
     node.error_message = None

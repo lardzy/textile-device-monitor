@@ -563,7 +563,7 @@ class ExternalBridgeClaimRequest(BaseModel):
             "legacy_regenerated_fiber_count_upload"
         ],
         min_length=1,
-        max_length=10,
+        max_length=32,
     )
 
     @field_validator("account_name")

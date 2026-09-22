@@ -5,6 +5,7 @@ queue; it neither creates a Run nor suspends a workflow node.
 """
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -93,8 +94,25 @@ def execute_query(db: Session, *, query: "InstalledQuery", input_data: dict[str,
 def execute_query_node(context, *, query: "InstalledQuery") -> dict[str, Any]:
     if context.node["config"]["query_ref"] != query.query_ref:
         raise ExecutionApiError(409, "connector_query_binding_mismatch", "查询与已发布的契约不一致")
-    # The engine validates the frozen input/output schemas at this boundary.
-    return query.handler(context.db, context.input_data).data
+    from app.execution.models import utcnow
+    from app.execution.v2.native_handlers import NodeExecutionResult
+    config = context.node["config"]
+    data = deepcopy(context.input_data)
+    waiting = config.get("wait_until_ready", False)
+    previous = (context.node_run.output_data or {}).get("_query_wait_started")
+    if waiting and previous:
+        data["refresh"] = False
+    result = query.handler(context.db, data)
+    if not waiting or result.refresh_request is None:
+        if waiting and result.data.get("error_code"):
+            raise ExecutionApiError(422, "connector_query_failed", "检务查询未完成", details=result.data)
+        return result.data
+    started = datetime.fromisoformat(previous) if previous else utcnow()
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    if (utcnow() - started).total_seconds() >= config.get("wait_timeout_seconds", 120):
+        raise ExecutionApiError(422, "connector_query_timeout", "等待检务查询超时，可重试此节点")
+    return NodeExecutionResult(output={**result.data, "_query_wait_started": started.isoformat()}, retry_after_seconds=config.get("retry_interval_seconds", 2))
 
 
 def connector_capabilities(connector_id: str) -> dict[str, Any]:

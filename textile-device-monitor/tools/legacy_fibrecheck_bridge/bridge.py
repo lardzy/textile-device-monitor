@@ -397,11 +397,13 @@ def convert_generic_update_receipt(operation, payload, raw):
 
 def configured_operation_types(args) -> tuple[str, ...]:
     configured = list(SUPPORTED_OPERATION_TYPES)
+    configured.extend(['legacy_fibrecheck.original_record.upload@1', 'legacy_fibrecheck.original_record.review@1'])
     if getattr(args, "final_entry_writer", None) and getattr(
         args, "final_entry_work_root", None
     ):
         configured.append(LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION)
         configured.append(LEGACY_GENERIC_FINAL_ENTRY_OPERATION)
+        configured.append('legacy_fibrecheck.check_record.generic_entry@2')
         configured.append(LEGACY_GENERIC_UPDATE_OPERATION)
     return tuple(configured)
 
@@ -671,10 +673,10 @@ def validate_special_wool_qualitative_upload_receipt(
         if source.get(key) != expected.get(key):
             raise BridgeError(f"文档型 SpecialWool source_artifact.{key} 不匹配")
     project = _validated_paper_task_project(
-        document.get("task_project"), path="receipt.task_project"
+        document.get("task_project"), path="receipt.task_project", neutral=summary.get("profile") == "original_record_upload_v1"
     )
     if project != _validated_paper_task_project(
-        summary.get("task_project"), path="request_summary.task_project"
+        summary.get("task_project"), path="request_summary.task_project", neutral=summary.get("profile") == "original_record_upload_v1"
     ):
         raise BridgeError("文档型 SpecialWool 上传任务项目绑定不一致")
     main = document.get("main_record")
@@ -912,7 +914,7 @@ def validate_final_entry_machine_payload(
     return payload, source
 
 
-def _validated_paper_task_project(value, *, path: str) -> dict:
+def _validated_paper_task_project(value, *, path: str, neutral: bool = False) -> dict:
     project = _strict_map(
         value,
         path=path,
@@ -940,8 +942,8 @@ def _validated_paper_task_project(value, *, path: str) -> dict:
         if not isinstance(project.get(key), str):
             raise BridgeError(f"{path}.{key} 必须是文本")
     if (
-        project.get("check_item_name") != "纸、纸板和纸浆纤维鉴别分析"
-        or project.get("check_method") != "GB/T 4688-2020"
+        (not neutral and (project.get("check_item_name") != "纸、纸板和纸浆纤维鉴别分析"
+        or project.get("check_method") != "GB/T 4688-2020"))
         or _required_int(project.get("check_count"), path=f"{path}.check_count")
         < 1
     ):
@@ -966,10 +968,40 @@ def _validated_paper_task_project(value, *, path: str) -> dict:
     return project
 
 
+def validate_neutral_generic_payload(operation, summary):
+    payload = _strict_map(operation.get("machine_payload"), path="machine_payload", required={
+        "schema_version", "operation_type", "sample_number", "check_item_no", "check_item_name",
+        "task_project", "expected_existing_register_count", "generic_record"})
+    project = _validated_paper_task_project(payload['task_project'], path='machine_payload.task_project', neutral=True)
+    if (summary.get('operation_ref') != 'legacy_fibrecheck.check_record.generic_entry@2'
+            or payload['operation_type'] != 'generic_item_record' or payload['sample_number'] != summary['target_sample_number']
+            or project != summary['task_project'] or payload['check_item_no'] != project['check_item_no']
+            or payload['check_item_name'] != project['check_item_name']):
+        raise BridgeError('通用登记身份不匹配')
+    expected = _required_int(payload['expected_existing_register_count'], path='machine_payload.expected_existing_register_count')
+    if expected != summary['final_entry_summary']['expected_existing_register_count']:
+        raise BridgeError('通用登记预期数量不匹配')
+    record = _strict_map(payload['generic_record'], path='generic_record', required={'header', 'details'})
+    header = _strict_map(record['header'], path='generic_record.header', required={'grade', 'unit', 'judge_basis', 'test_method', 'sample_description', 'standard_type', 'report_check_item_name', 'attach_info', 'remark', 'total_judge'})
+    if not isinstance(record['details'], list) or not 1 <= len(record['details']) <= 1000:
+        raise BridgeError('通用登记明细数量无效')
+    rows = [header]
+    for row in record['details']:
+        rows.append(_strict_map(row, path='generic_record.details', required={'standard_location', 'standard_value', 'real_location', 'real_value'}))
+    if any(not isinstance(value, str) or len(value) > 4000 for row in rows for value in row.values()):
+        raise BridgeError('通用登记字段格式无效')
+    digest = hashlib.sha256(json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    if digest != summary.get('record_digest'):
+        raise BridgeError('通用登记字段摘要不一致')
+    return payload
+
+
 def validate_generic_final_entry_machine_payload(
     operation: dict,
     summary: dict,
 ) -> dict:
+    if (operation.get("machine_payload") or {}).get("schema_version") == 4:
+        return validate_neutral_generic_payload(operation, summary)
     payload = _strict_map(
         operation.get("machine_payload"),
         path="machine_payload",
@@ -1594,6 +1626,9 @@ def convert_generic_final_entry_receipt(
     machine_payload: dict,
     raw_receipt: dict,
 ) -> dict:
+    package_version = machine_payload.get("schema_version")
+    neutral = package_version == 4
+    detail_count = len(machine_payload["generic_record"]["details"])
     override_payload = machine_payload.get("controlled_test_override")
     raw = _strict_map(
         raw_receipt,
@@ -1617,7 +1652,7 @@ def convert_generic_final_entry_receipt(
         or raw.get("mode") != "generic_item_record"
         or raw.get("exit_code") != 0
         or raw.get("reconciliation_required") is not False
-        or raw.get("package_schema_version") != 2
+        or raw.get("package_schema_version") != package_version
         or raw.get("sample_number") != machine_payload.get("sample_number")
         or raw.get("check_item_no") != machine_payload.get("check_item_no")
         or raw.get("check_item_name")
@@ -1629,11 +1664,11 @@ def convert_generic_final_entry_receipt(
         raw["stages"], expected_stages=GENERIC_FINAL_ENTRY_RAW_SUCCESS_STAGES
     )
     measured_project = _validated_paper_task_project(
-        raw.get("task_project"), path="raw_receipt.task_project"
+        raw.get("task_project"), path="raw_receipt.task_project", neutral=neutral
     )
     package_project = _validated_paper_task_project(
         machine_payload.get("task_project"),
-        path="machine_payload.task_project",
+        path="machine_payload.task_project", neutral=neutral,
     )
     if measured_project != package_project:
         raise BridgeError("Generic FinalEntry Writer 实测任务项目与私有载荷不一致")
@@ -1653,7 +1688,7 @@ def convert_generic_final_entry_receipt(
         optional={"existing_record_decision_present"},
     )
     if (
-        package_detail.get("schema_version") != 2
+        package_detail.get("schema_version") != package_version
         or package_detail.get("operation_type") != "generic_item_record"
         or package_detail.get("expected_existing_register_count") != expected_existing
     ):
@@ -1661,7 +1696,7 @@ def convert_generic_final_entry_receipt(
     detail_validation = _strict_stage_detail(
         stages, "generic_details_validated", {"row_count"}
     )
-    if detail_validation.get("row_count") != 1:
+    if detail_validation.get("row_count") != detail_count:
         raise BridgeError("Generic FinalEntry 明细预检数量不正确")
     preflight = _strict_stage_detail(
         stages,
@@ -1714,9 +1749,9 @@ def convert_generic_final_entry_receipt(
         pattern=_REDACTED_ID_RE,
     )
     if (
-        saved.get("detail_count") != 1
-        or verified.get("detail_count") != 1
-        or verified.get("key_result_count") != 1
+        saved.get("detail_count") != detail_count
+        or verified.get("detail_count") != detail_count
+        or verified.get("key_result_count") != detail_count
         or saved.get("record_fingerprint") != record_id
     ):
         raise BridgeError("Generic FinalEntry 明细或结果投影读回不一致")
@@ -1798,7 +1833,7 @@ def convert_generic_final_entry_receipt(
         if "controlled_test_override" in raw:
             raise BridgeError("普通 Generic FinalEntry 回执不得包含受控覆盖对象")
         resulting_count = expected_existing + 1
-        if expected_result_count == 1 and expected_existing > 0:
+        if not neutral and expected_result_count == 1 and expected_existing > 0:
             raise BridgeError("Generic FinalEntry 单份项目已有登记但缺少继续新增确认")
 
     inverse_stage = {
@@ -1820,11 +1855,11 @@ def convert_generic_final_entry_receipt(
         "target_sample_number": summary.get("target_sample_number"),
         "task_project": dict(measured_project),
         "final_entry": {
-            "package_schema_version": 2,
+            "package_schema_version": package_version,
             "expected_existing_register_count": expected_existing,
             "resulting_register_count": resulting_count,
-            "detail_count": 1,
-            "key_result_count": 1,
+            "detail_count": detail_count,
+            "key_result_count": detail_count,
             "record_id": record_id,
             "proofed": False,
         },

@@ -34,6 +34,7 @@ class NodeExecutionResult:
     globals_conflict: str | None = None
     selected_edge_ids: tuple[str, ...] | None = None
     suspension: dict[str, Any] | None = None
+    retry_after_seconds: int | None = None
 
 
 NativeHandler = Callable[[Any], dict[str, Any] | NodeExecutionResult]
@@ -84,6 +85,8 @@ def _flow_branch(context: Any) -> NodeExecutionResult:
         .all()
     )
     evaluation_context = _run_context(context.db, context.run)
+    # Outgoing conditions may reference the branch's own pass-through value.
+    evaluation_context['nodes'][context.node_run.node_id] = {'output': dict(context.input_data or {})}
     matching = [
         edge
         for edge in edges
@@ -446,6 +449,40 @@ def _workbook_extract_fields(context: Any) -> dict[str, Any]:
     from app.execution.excel_runtime import _extract_executor
 
     return _extract_executor(context, detached_io=True)
+
+
+def _workbook_extract_batch(context: Any) -> dict[str, Any]:
+    from app.execution.excel_runtime import _WorkbookReader, _json_value, _path, _ref
+
+    config = context.node["config"]
+    result = []
+    for source in context.input_data["sources"]:
+        row = {"file": source, "source": {}, "values": {}, "errors": [], "sha256": None,
+               "size_bytes": 0, "format": None, "read_status": "failed"}
+        try:
+            ref = _ref(source)
+            row["source"] = ref.as_dict()
+            path = _path(context, ref)
+            context.db.commit()
+            content = path.read_bytes()
+            row.update(sha256=hashlib.sha256(content).hexdigest(), size_bytes=len(content))
+            with _WorkbookReader(path, data_only=config.get("data_only", True), content=content) as reader:
+                row["format"] = "xls" if reader.kind == "xlrd" else "xlsx"
+                for field in config["fields"]:
+                    name = field["name"]
+                    try:
+                        value = _json_value(reader.value(field["sheet"], field["cell"]))
+                        row["values"][name] = value
+                        if field.get("required") and value in (None, ""):
+                            row["errors"].append({"field": name, "code": "required_value_missing"})
+                    except (KeyError, IndexError, ValueError) as exc:
+                        row["errors"].append({"field": name, "code": "cell_unavailable", "message": str(exc)[:200]})
+            if not row["errors"]:
+                row["read_status"] = "succeeded"
+        except Exception as exc:
+            row["errors"].append({"code": getattr(exc, "code", "workbook_read_failed"), "message": str(exc)[:500]})
+        result.append(row)
+    return {"items": result, "total": len(result), "failed_count": sum(item["read_status"] == "failed" for item in result)}
 
 
 def _workbook_copy(context: Any) -> dict[str, Any]:
@@ -824,6 +861,7 @@ _NATIVE_HANDLERS: dict[tuple[str, int], NativeHandler] = {
     ("artifact.publish", 2): _artifact_publish_v2,
     ("workbook.classify", 1): _workbook_classify,
     ("workbook.extract_fields", 1): _workbook_extract_fields,
+    ("workbook.extract_fields", 2): _workbook_extract_batch,
     ("workbook.copy", 1): _workbook_copy,
     ("workbook.write_cells", 2): _workbook_write_cells,
     ("workbook.verify", 2): _workbook_verify,

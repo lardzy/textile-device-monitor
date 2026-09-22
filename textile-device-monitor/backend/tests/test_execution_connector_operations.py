@@ -18,8 +18,8 @@ from app.execution.models import (
     ExecutionAuditLog, ExecutionCredential, ExecutionExternalOperation, ExecutionHumanTask,
     ExecutionRun, ExecutionTaskSnapshotCache, utcnow,
 )
-from tests.test_execution_domain_services import NUMBER, task_snapshot
-from tests.test_execution_workflow_replacement import environment, request
+from native_io_helpers import NUMBER, task_snapshot
+from workflow_native_helpers import environment, request
 
 
 @pytest.fixture
@@ -39,10 +39,12 @@ def operation_env(environment, monkeypatch):
     env.db.commit()
     env.credential = credential
     env.payload = {
-        "operation_ref": "legacy_fibrecheck.check_record.generic_entry@1",
+        "operation_ref": "legacy_fibrecheck.check_record.generic_entry@2",
         "credential_id": credential.id, "idempotency_key": "direct-submit-one",
-        "input": {"inspection_number": NUMBER, "project_key": project["project_key"],
-                  "result_value": "木浆、竹浆", "expected_existing_register_count": 0, "sample_identity": "正面"},
+        "input": {"inspection_number": NUMBER, "project": {key: project[key] for key in ('project_key','task_check_item_id','check_item_id','check_item_no','check_item_name','check_method','seq_num','check_count')},
+                  "expected_existing_register_count": 0, "record": {
+                      "header": {key: ("GB/T 4688-2020" if key == 'test_method' else '正面' if key == 'sample_description' else '') for key in ('grade','unit','judge_basis','test_method','sample_description','standard_type','report_check_item_name','attach_info','remark','total_judge')},
+                      "details": [{"standard_location":"", "standard_value":"", "real_location":"", "real_value":"木浆、竹浆"}] }},
     }
     return env
 
@@ -54,7 +56,7 @@ def submit(env, *, status=202, **changes):
 def claim(env):
     env.db.expire_all()
     result = claim_approved_external_operation(env.db, bridge_id="p4-writer", account_name="test-operator",
-                                              supported_operation_types={LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION})
+                                              supported_operation_types={LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION, "legacy_fibrecheck.check_record.generic_entry@2"})
     env.db.commit()
     assert result is not None
     return result
@@ -66,7 +68,7 @@ def receipt(operation):
         "operation_id": operation.id, "payload_checksum": operation.payload_checksum,
         "target_sample_number": NUMBER, "stages": list(GENERIC_CHECK_RECORD_ENTRY_ATTEMPT_STAGES),
         "reconciliation_required": False, "task_project": operation.request_summary["task_project"],
-        "final_entry": {"package_schema_version": 2, "expected_existing_register_count": 0,
+        "final_entry": {"package_schema_version": 4, "expected_existing_register_count": 0,
                         "resulting_register_count": 1, "detail_count": 1, "key_result_count": 1,
                         "record_id": "sha256:" + "1" * 16, "proofed": False},
     }
@@ -81,6 +83,9 @@ def test_direct_submit_claim_complete_and_repeated_request_without_run(operation
     assert submit(env, status=200)["duplicate"] is True
     assert env.db.query(ExecutionRun).count() == env.db.query(ExecutionHumanTask).count() == 0
     assert env.db.query(ExecutionExternalOperation).count() == 1
+    # An old Bridge advertises the internal queue kind but not the new contract.
+    assert claim_approved_external_operation(env.db, bridge_id='old-bridge', account_name='test-operator',
+        supported_operation_types={LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION}) is None
     operation, attempt, credential = claim(env)
     bridge = bridge_external_operation(operation, credential=credential)
     assert bridge["machine_payload"]["generic_record"]["details"][0]["real_value"] == "木浆、竹浆"
@@ -127,7 +132,7 @@ def test_standalone_lease_recovery_respects_write_boundary(operation_env, stage,
     assert operation.status == expected
     if expected == "reconciliation_required":
         assert claim_approved_external_operation(env.db, bridge_id="p4-writer", account_name="test-operator",
-            supported_operation_types={LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION}) is None
+            supported_operation_types={LEGACY_GENERIC_CHECK_RECORD_ENTRY_OPERATION, "legacy_fibrecheck.check_record.generic_entry@2"}) is None
         submit(env, idempotency_key="do-not-repeat-an-unknown-write", status=409)
 
 

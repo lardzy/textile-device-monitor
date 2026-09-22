@@ -20,40 +20,27 @@ from app.execution.external_operations import (
     ACTIVE_REMOTE_OPERATION_STATUSES, LEGACY_CONNECTOR_KEY, LEGACY_CREDENTIAL_SYSTEM,
     _account_scope_key, _canonical_checksum, _ensure_operation_execution_available,
     _credential_for_node, _create_prepared_external_operation,
-    _validated_paper_project_binding, build_generic_entry_summary,
     lock_legacy_remote_business_scope, public_external_attempt, public_external_operation,
 )
 from app.execution.models import (
     ExecutionCredential, ExecutionExternalOperation, ExecutionTaskSnapshotCache,
     ExecutionStorageRoot, ExecutionUser, utcnow,
 )
-from app.execution.project_rules import PAPER_FIBER_RULE_KEY, resolve_rule
 from app.execution.adapter_packages import binding_fields, credential_system
 
 
-GENERIC_ENTRY = "legacy_fibrecheck.check_record.generic_entry@1"
+from app.execution.connector_original_records import (ENTRY as GENERIC_ENTRY, UPLOAD, REVIEW, REFERENCES,
+    upload_summary, review_summary, entry_summary, bind_actor)
 
 
 def operation_handler(connector_id, name, version):
-    return {GENERIC_ENTRY: _generic_summary, GENERIC_UPDATE: update_summary}.get(
-        f"{connector_id}.{name}@{version}"
-    )
+    return {UPLOAD: upload_summary, REVIEW: review_summary, GENERIC_ENTRY: entry_summary,
+            GENERIC_UPDATE: update_summary}.get(f"{connector_id}.{name}@{version}")
 
 
 def workflow_operation_handler(connector_id, name, version):
-    from app.execution import external_operations as operations
-
-    if connector_id != "legacy_fibrecheck" or version != 1:
-        return None
-    return {
-        "regenerated_fiber.count_upload": operations.prepare_legacy_regenerated_count_operation,
-        "special_wool.image_upload": operations.prepare_legacy_special_wool_image_operation,
-        "special_wool.image_review": operations.prepare_legacy_special_wool_review_operation,
-        "microscopy.check_record_entry": operations.prepare_legacy_microscopy_check_record_entry_operation,
-        "paper_fiber.qualitative_upload": operations.prepare_legacy_special_wool_qualitative_upload_operation,
-        "paper_fiber.qualitative_review": operations.prepare_legacy_special_wool_qualitative_review_operation,
-        "paper_fiber.check_record_entry": operations.prepare_legacy_generic_check_record_entry_operation,
-    }.get(name)
+    # All installed operations now use the same value-based service entry.
+    return None
 
 
 def prepare_operation_node(context, *, operation):
@@ -67,6 +54,8 @@ def prepare_operation_node(context, *, operation):
         )
     data = context.input_data
     summary = operation.handler(context.db, data)
+    if operation.operation_ref in REFERENCES:
+        bind_actor(context.db, summary, context.run.created_by_id)
     remote_key = lock_legacy_remote_business_scope(context.db, sample_number=summary["target_sample_number"])
     credential = _credential_for_node(context.db, run=context.run, node=context.node, system_key=credential_system(operation.connector_id))
     summary["connector_submission"] = {
@@ -105,35 +94,6 @@ def resolve_operation(operation_ref: str, *, connector_version="*", contract_dig
     if not operation_api_available(operation):
         raise ExecutionApiError(422, "connector_operation_unavailable", "该操作尚不支持直接提交")
     return operation
-
-
-def _generic_summary(db: Session, data: dict[str, Any]) -> dict[str, Any]:
-    number = data["inspection_number"].strip().upper()
-    cached = db.get(ExecutionTaskSnapshotCache, number)
-    projects = (cached.snapshot or {}).get("projects", []) if cached else []
-    selected = next((p for p in projects if p.get("project_key") == data["project_key"]), None)
-    if selected is None:
-        raise conflict("connector_task_project_missing", "请先读取任务信息并选择登记项目")
-    project_input = {"selected_project": selected, "selected_project_key": data["project_key"]}
-    project = _validated_paper_project_binding(project_input, rule=resolve_rule(db, PAPER_FIBER_RULE_KEY))
-    expected = data["expected_existing_register_count"]
-    if selected.get("register_count") != expected:
-        raise conflict("connector_registration_changed", "已有登记数量已变化，请刷新后提交")
-    return build_generic_entry_summary(
-        source_number=number, project=project,
-        result_contract={"worksheet": "Sheet1", "cell": "W32",
-                         "value": data["result_value"].strip(), "unit": data.get("unit", "")},
-        input_data={
-            **project_input,
-            "judgement_input": {name: data.get(name, "") for name in (
-                "sample_identity", "judge_basis", "judgement", "standard_value",
-            )},
-            "registration_decision": {
-                "expected_existing_register_count": expected,
-                "existing_record_action": "append" if project["check_count"] == 1 and expected else "continue",
-            },
-        },
-    )
 
 
 def submit_operation(db: Session, *, actor: ExecutionUser, request) -> tuple[ExecutionExternalOperation, bool]:
@@ -184,6 +144,8 @@ def submit_operation(db: Session, *, actor: ExecutionUser, request) -> tuple[Exe
                                   "status": operation.status, "remote_write_performed": False})
         return operation, reused
     summary = contract.handler(db, request.input)
+    if contract.operation_ref in REFERENCES:
+        bind_actor(db, summary, actor.id)
     # Match workflow preparation's sample → credential ordering.
     remote_key = lock_legacy_remote_business_scope(db, sample_number=summary["target_sample_number"])
     credential = (db.query(ExecutionCredential).filter_by(
@@ -196,6 +158,7 @@ def submit_operation(db: Session, *, actor: ExecutionUser, request) -> tuple[Exe
         "contract_digest": contract.contract_digest, "request_checksum": request_checksum,
         **binding_fields(contract),
         "input": deepcopy(request.input),
+        "root_slots": [{"root_id": item["root_id"], "access": "read"} for item in summary.get("files", [])],
     }
     blocker = db.query(ExecutionExternalOperation).filter(
         ExecutionExternalOperation.remote_business_key == remote_key,

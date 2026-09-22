@@ -7,7 +7,7 @@ import ExecutionChrome from './ExecutionChrome';
 import WorkflowCanvas from './WorkflowCanvas';
 import TemplatePicker from './TemplatePicker';
 import { SchemaEditor, ValueEditor, BindingEditor } from './DesignerFields';
-import { upstreamNodeIds, effectiveSchemas, graphEdges, graphNodes, portableEdge, schemaDefaults, specKey, referenceIssues, deleteSelection, insertOnEdge, validConnection, variableTree, designerHistory, rewriteOutputReferences } from './v2Designer';
+import { upstreamNodeIds, effectiveSchemas, graphEdges, graphNodes, portableEdge, schemaDefaults, specKey, referenceIssues, deleteSelection, insertOnEdge, validConnection, variableTree, designerHistory, rewriteOutputReferences, rewriteReferences } from './v2Designer';
 import './execution.css';
 
 const emptyBindings = () => ({ root_slots: {}, credential_slots: {}, role_slots: {}, rule_slots: {} });
@@ -32,6 +32,7 @@ function JsonEditor({ label, value, onChange, onValidity }) {
 export default function ExecutionWorkflowV2Designer() {
   const { releaseId, workflowId } = useParams();
   const location = useLocation(), navigate = useNavigate();
+  const reconnecting = useRef(null);
   const [catalog, setCatalog] = useState(null), [roots, setRoots] = useState([]), [credentials, setCredentials] = useState([]);
   const initialHistory = { present: null, past: [], future: [] };
   const [history, setHistory] = useState(initialHistory), historyRef = useRef(initialHistory);
@@ -158,7 +159,7 @@ export default function ExecutionWorkflowV2Designer() {
     const slot = `${selected.id}_account`.replace(/[^a-z0-9_]/gi, '_').toLowerCase().slice(0, 64);
     const resources = value.document.resources; resources.credential_slots ||= [];
     resources.credential_slots = resources.credential_slots.filter(item => item.slot_id !== slot);
-    resources.credential_slots.push({ slot_id: slot, name: '检务账号', connector_id: connector?.connector_id || credential.system_key, credential_kind: 'account_password', required: true });
+    resources.credential_slots.push({ slot_id: slot, name: '检务账号', connector_id: connector?.connector_id || credential.system_key, credential_kind: 'password', required: true });
     value.document.definition.nodes.find(item => item.id === selected.id).config[key] = slot;
     value.bindings.credential_slots[slot] = { credential_id: credential.id, revision: credential.revision };
     return value;
@@ -218,9 +219,10 @@ export default function ExecutionWorkflowV2Designer() {
             if (positions.length) editDocument(value => { positions.forEach(change => { const node = value.definition.nodes.find(item => item.id === change.id); if (node) node.ui = { ...node.ui, ...change.position }; }); return value; }, 'drag');
           }}
           onEdgesChange={changes => { const selectedChanges = changes.filter(change => change.type === 'select'); if (!selectedChanges.length) return; const ids = new Set(historyRef.current.present.selection.edges); selectedChanges.forEach(change => change.selected ? ids.add(change.id) : ids.delete(change.id)); select(historyRef.current.present.selection.nodes, [...ids]); }}
-          isValidConnection={connection => validConnection(document.definition, connection)}
+          onReconnectStart={(event, item) => { reconnecting.current = item.id; }} onReconnectEnd={() => { reconnecting.current = null; }}
+          isValidConnection={connection => validConnection(document.definition, connection, reconnecting.current)}
           onConnect={connection => { if (validConnection(document.definition, connection)) editDocument(value => { value.definition.edges.push(portableEdge(connection)); return value; }); }}
-          onReconnect={(old, connection) => { if (validConnection(document.definition, connection, old.id)) editDocument(value => { const item = value.definition.edges.find(candidate => candidate.id === old.id); Object.assign(item, portableEdge(connection), { id: old.id }); return value; }); }} />
+          onReconnect={(old, connection) => { if (validConnection(document.definition, connection, old.id)) editDocument(value => { const item = value.definition.edges.find(candidate => candidate.id === old.id); const next = portableEdge(connection); delete item.source_handle; delete item.target_handle; Object.assign(item, next, { id: old.id, join_policy: item.join_policy }); return value; }); }} />
         </div>
         <Collapse ghost items={[{ key: 'list', label: '步骤列表', children: <List size="small" dataSource={nodes} renderItem={node => <List.Item actions={[<Button key="edit" type="link" onClick={() => select([node.id])}>调整</Button>]}>{node.data.label}</List.Item>} /> }]} />
       </Card>
@@ -260,7 +262,7 @@ export default function ExecutionWorkflowV2Designer() {
         {!selected && !edge && <Typography.Text type="secondary">选择步骤配置参数；选中连接后可以插入节点。</Typography.Text>}
       </Card>
     </div>
-    <Collapse items={[{ key: 'inputs', label: '流程输入与输出', children: <Space direction="vertical" style={{ width: '100%' }}><SchemaEditor label="流程输入字段" value={document.definition.input_schema} onChange={schema => editDocument(value => { value.definition.input_schema = schema; return value; })} /><SchemaEditor label="流程输出字段" value={document.definition.output_schema} onChange={schema => editDocument(value => { value.definition.output_schema = schema; return value; })} /></Space> }, { key: 'resources', label: '本地资源绑定', children: <Form layout="vertical">{(document.resources.root_slots || []).map(slot => <Form.Item key={slot.slot_id} label={slot.name}><Select value={bindings.root_slots[slot.slot_id]?.root_id} options={roots.map(root => ({ value: root.root_id, label: root.name }))} onChange={id => edit(value => { const root = roots.find(item => item.root_id === id); value.bindings.root_slots[slot.slot_id] = { root_id: id, revision: root.binding_revision || 1 }; return value; })} /></Form.Item>)}{(document.resources.credential_slots || []).map(slot => <Form.Item key={slot.slot_id} label={slot.name}><Select value={bindings.credential_slots[slot.slot_id]?.credential_id} options={credentials.map(item => ({ value: item.id, label: item.display_name || item.username || item.system_key }))} onChange={id => edit(value => { const credential = credentials.find(item => item.id === id); value.bindings.credential_slots[slot.slot_id] = { credential_id: id, revision: credential.revision }; return value; })} /></Form.Item>)}</Form> }, { key: 'advanced', label: '高级：JSON 与离线样例', children: <>
+    <Collapse items={[{ key: 'inputs', label: '流程输入与输出', children: <Space direction="vertical" style={{ width: '100%' }}><SchemaEditor label="流程输入字段" value={document.definition.input_schema} onChange={(schema, rename) => editDocument(value => { value.definition.input_schema = schema; return rename ? rewriteReferences(value, "$.inputs", rename.oldKey, rename.newKey) : value; })} /><SchemaEditor label="流程输出字段" value={document.definition.output_schema} onChange={schema => editDocument(value => { value.definition.output_schema = schema; return value; })} /></Space> }, { key: 'resources', label: '本地资源绑定', children: <Form layout="vertical">{(document.resources.root_slots || []).map(slot => <Form.Item key={slot.slot_id} label={slot.name}><Select value={bindings.root_slots[slot.slot_id]?.root_id} options={roots.map(root => ({ value: root.root_id, label: root.name }))} onChange={id => edit(value => { const root = roots.find(item => item.root_id === id); value.bindings.root_slots[slot.slot_id] = { root_id: id, revision: root.binding_revision || 1 }; return value; })} /></Form.Item>)}{(document.resources.credential_slots || []).map(slot => <Form.Item key={slot.slot_id} label={slot.name}><Select value={bindings.credential_slots[slot.slot_id]?.credential_id} options={credentials.map(item => ({ value: item.id, label: item.display_name || item.username || item.system_key }))} onChange={id => edit(value => { const credential = credentials.find(item => item.id === id); value.bindings.credential_slots[slot.slot_id] = { credential_id: id, revision: credential.revision }; return value; })} /></Form.Item>)}</Form> }, { key: 'advanced', label: '高级：JSON 与离线样例', children: <>
       <JsonEditor label="离线样例" value={document.fixtures || []} onValidity={validity} onChange={fixtures => editDocument(value => { value.fixtures = fixtures; return value; })} />
       <JsonEditor label="完整流程" value={document} onValidity={validity} onChange={value => { if (!value?.definition || !Array.isArray(value.definition.nodes) || !Array.isArray(value.definition.edges) || !value.release || !value.resources) throw new Error('流程结构不完整'); editDocument(() => value); }} />
       <Button disabled={busy || jsonInvalid || issues.length > 0} onClick={async () => { setBusy(true); try { setFixtureReport(await testWorkflowDesignerV2(document)); } catch (cause) { setError(cause.message); } finally { setBusy(false); } }}>运行离线样例</Button>

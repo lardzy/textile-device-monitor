@@ -632,8 +632,11 @@ class BridgeProtocolTests(unittest.TestCase):
                 bridge.LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
                 bridge.LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION,
                 bridge.LEGACY_SPECIAL_WOOL_QUALITATIVE_REVIEW_OPERATION,
+                'legacy_fibrecheck.original_record.upload@1',
+                'legacy_fibrecheck.original_record.review@1',
                 bridge.LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION,
                 bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+                'legacy_fibrecheck.check_record.generic_entry@2',
                 bridge.LEGACY_GENERIC_UPDATE_OPERATION,
             ],
         )
@@ -1623,6 +1626,34 @@ class BridgeProtocolTests(unittest.TestCase):
             "--allow-controlled-test-override",
             popen.call_args.args[0],
         )
+
+    def test_neutral_registration_accepts_other_projects_and_multiple_details(self):
+        payload = generic_final_entry_machine_payload('custom result')
+        payload['schema_version'] = 4
+        project = final_entry_task_project()
+        payload.update(task_project=project, check_item_no=project['check_item_no'], check_item_name=project['check_item_name'])
+        payload['generic_record']['header'].update(unit='mg', test_method=project['check_method'])
+        payload['generic_record']['details'].append(dict(payload['generic_record']['details'][0]))
+        digest = hashlib.sha256(json.dumps(payload['generic_record'], ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        summary = {'operation_type': bridge.LEGACY_GENERIC_FINAL_ENTRY_OPERATION,
+                   'operation_ref': 'legacy_fibrecheck.check_record.generic_entry@2',
+                   'target_sample_number': payload['sample_number'], 'task_project': project,
+                   'record_digest': digest, 'final_entry_summary': {'expected_existing_register_count': 0}}
+        operation = {'id': 'neutral-entry', 'payload_checksum': '7' * 64, 'machine_payload': payload}
+        self.assertEqual(bridge.validate_generic_final_entry_machine_payload(operation, summary), payload)
+        raw = generic_final_entry_raw_receipt(payload)
+        raw['package_schema_version'] = 4
+        for stage in raw['stages']:
+            detail = stage.get('detail', {})
+            if stage['stage'] == 'package_validated': detail['schema_version'] = 4
+            for key in ('row_count', 'detail_count', 'key_result_count'):
+                if key in detail: detail[key] = 2
+        result = bridge.convert_generic_final_entry_receipt(operation, summary, payload, raw)
+        self.assertEqual(result['final_entry']['package_schema_version'], 4)
+        self.assertEqual(result['final_entry']['detail_count'], 2)
+        payload['generic_record']['details'][0]['real_value'] = 'mutated'
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_generic_final_entry_machine_payload(operation, summary)
 
     def test_generic_final_entry_binds_paper_project_value_and_no_proof(self):
         payload = generic_final_entry_machine_payload("100")

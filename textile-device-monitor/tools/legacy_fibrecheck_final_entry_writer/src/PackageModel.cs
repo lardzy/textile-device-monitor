@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -159,7 +159,7 @@ namespace LegacyFibreCheckFinalEntryWriter
             {
                 return GenericRecordUpdate.Load(root);
             }
-            if (schemaVersion != 1 && schemaVersion != 2)
+            if (schemaVersion != 1 && schemaVersion != 2 && schemaVersion != 4)
             {
                 throw new PackageValidationException("schema_version_unsupported");
             }
@@ -219,15 +219,18 @@ namespace LegacyFibreCheckFinalEntryWriter
                     throw new PackageValidationException("excel_project_not_supported_in_v1");
                 }
             }
-            if (schemaVersion == 2)
+            if (schemaVersion == 2 || schemaVersion == 4)
             {
                 package.TaskProject = ParseTaskProject(
                     RequireMap(root, "task_project"), package);
-                if (package.OperationType == GenericOperation)
+                if (schemaVersion == 2 && package.OperationType == GenericOperation)
                 {
                     ValidatePaperGenericScope(package);
                 }
             }
+            if (schemaVersion == 4 && (package.OperationType != GenericOperation
+                || root.ContainsKey("controlled_test_override") || root.ContainsKey("existing_record_decision")))
+                throw new PackageValidationException("generic_v4_scope_invalid");
             if (root.ContainsKey("controlled_test_override"))
             {
                 // Schema v2 allows the single-sample controlled append for both
@@ -290,6 +293,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 : result.CheckItemNo == PaperCheckItemNo
                     && result.CheckItemName == PaperCheckItemName
                     && result.CheckMethod == PaperCheckMethod;
+            supportedProject = supportedProject || (package.SchemaVersion == 4 && package.OperationType == GenericOperation);
             if (!ProjectKeyPattern.IsMatch(result.ProjectKey)
                 || !RedactedIdPattern.IsMatch(result.TaskCheckItemId)
                 || !RedactedIdPattern.IsMatch(result.CheckItemId)
@@ -432,7 +436,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                     == ExistingRecordDecision.ExpectedExistingRegisterCount
                 && ExpectedExistingRegisterCount + 1
                     == ExistingRecordDecision.ResultingRegisterCount;
-            return controlled || confirmedExisting;
+            return controlled || confirmedExisting || (SchemaVersion == 4 && taskCheckCount == 1);
         }
 
         private static ExistingRecordDecisionPayload ParseExistingRecordDecision(

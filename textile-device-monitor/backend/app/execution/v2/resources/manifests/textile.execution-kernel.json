@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "c5a3071d27f9e336bf4423de23d52a96773f6f74baab6f78f327b871f30d4e08",
+  "distribution_digest": "cb17df3a2d196c85e662c9d4c0891d329d49926c10a46edbc33777973e90897b",
   "engine_version_range": ">=2.5.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -9,7 +9,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "textile.execution-kernel",
-  "pack_version": "2.9.2",
+  "pack_version": "2.6.0",
   "provides": {
     "capabilities": [
       {
@@ -22,7 +22,7 @@
       {
         "contract_digest": "e4cfc616a04986e159fcbdafdd5ac96c568b1cb96e7819823e0e220023c959d7",
         "handler_channel": "worker_callable",
-        "implementation_digest": "441604be2707b3e79dc388fb624458b40d5e8c52b8ad42ded0107e576a669ca9",
+        "implementation_digest": "55aa19193c32c33cc790d55c35f78a51314bdd8ae911c37b9d6dc2e231bbc157",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -32,7 +32,7 @@
       {
         "contract_digest": "7d599cc4f356bf2815bc932db965792ca41294dfb39c527e014294455a7f3c3e",
         "handler_channel": "worker_callable",
-        "implementation_digest": "8a257ff4c01ab1c15747a2bb5ef9cc13b37386a19d77aaf1b1cb0b59e4cc09be",
+        "implementation_digest": "4f5f3b0fc8425b4b56eaae9523dde18c058ab0a42124c63265ac892f955d421c",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -42,7 +42,7 @@
       {
         "contract_digest": "98c5bf40cba26e1d819c6cf23a130046dcd797fe6bec8c73b8ac735247a0782a",
         "handler_channel": "worker_callable",
-        "implementation_digest": "8d22975de87ebde8d7abda5dff12de6664e5795b3a2078b0d9302f9caee46ef4",
+        "implementation_digest": "6af6f33ba6c66053173216485b0dc3169cd1e6a6e9e519698342824f0642fa12",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -52,7 +52,7 @@
       {
         "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
         "handler_channel": "worker_callable",
-        "implementation_digest": "0b1265756ca65fbeacc02eac40d087603f41e3fb83b4e2c9d8c769fded2a7cff",
+        "implementation_digest": "41186e828ce5565a497d6ed92fc2e6790ae8229f8a5e89aec4137dbe748b2f4d",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -62,7 +62,7 @@
       {
         "contract_digest": "f8cc39428e59cbfd4b599297e2f2c6e988f83a62d40ea9c18b8b5e4ee203091c",
         "handler_channel": "worker_callable",
-        "implementation_digest": "12e4fd0f81a990b3f7557e5a1cf42e7f111a40676b9363b8ed5bcf087b5c09e9",
+        "implementation_digest": "1c77693683f47102b8b30b8eb29402f47fb45e83135e1b6e8d7f199d78f937a0",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -72,7 +72,7 @@
       {
         "contract_digest": "5f8d9306ea1e517e37a2112fce1b9b4bfde8d0000c23b559539f726f4e08c8a9",
         "handler_channel": "human",
-        "implementation_digest": "25f6426b2fcf3bc25c353c2aa9387d1f664ae68dba6cccd7f3a72fd11f1c5b09",
+        "implementation_digest": "d7e4488abd70c30c29f93f89da5f97e690bdb0ca070b9a598685d5ec1eb3e4a7",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -82,7 +82,7 @@
       {
         "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
         "handler_channel": "human",
-        "implementation_digest": "1b618ec6958d75f2596efd9036f0d60f403f6e9008e68bb7f8c894f21da193bb",
+        "implementation_digest": "3c5f42ee60af89067d8c738c3016fbf5c71ef22d7b0c1afa69e9ae0aae370406",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -92,7 +92,7 @@
       {
         "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
         "handler_channel": "human",
-        "implementation_digest": "21ddabc7e4144c5cfc1c537a3026075ebda57ea573f2fb4b4a89428957a4ef37",
+        "implementation_digest": "bfa7965583a9f4c28e6cde2ae6d19e3d41edc46ec347dd29d653ff3f7ddd7fef",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -102,7 +102,7 @@
       {
         "contract_digest": "2606c9696cda7673e737920d81f9d500521adad6a872209932721ceb5ee3be6e",
         "handler_channel": "human",
-        "implementation_digest": "950bb19626089082dff9365e69f3133b5ad19d0e0da6880e9e21b90459995bfc",
+        "implementation_digest": "46d23ead6ed9fd6a17628dda4145d99ab9c2cdb69e6cae3a6df08785c819cd4a",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -112,7 +112,7 @@
       {
         "contract_digest": "a6bbc7df93553aa4206567ec3734629d97644ea6fd8d1df099305b492f6e1c48",
         "handler_channel": "worker_callable",
-        "implementation_digest": "29cf4cceb9c62be1d293cf495c4e9e11b81ba64307afcb9ae0d5fbc8a3a8949e",
+        "implementation_digest": "b49ee8b80b5f953dbc35eabbe54190035e48ccb943cf2f82b52fb031215e495a",
         "implementation_resources": [
           "connector_queries.py",
           "v2/resources/node_specs/connector-query-node.json"
@@ -126,7 +126,7 @@
       {
         "contract_digest": "3ce699ec8e05f35a9b7a74c663ca0b61025690f18e73b0e580816fdfd6f4f97f",
         "handler_channel": "external_operation",
-        "implementation_digest": "4d77d098432f3383021820d2b8755be00376e6a75de21a38d030103e7f625468",
+        "implementation_digest": "4d6e1ad61cd192ffedb11c2b6a5f85379bd01df892f2ceb86e8899962dc8258b",
         "implementation_resources": [
           "connector_operations.py",
           "v2/resources/node_specs/external-operation-node.json"
@@ -140,7 +140,7 @@
       {
         "contract_digest": "442c1301e7b43b56aff91ea07abc57b822adb9a3192354744dde79765b29aa48",
         "handler_channel": "human",
-        "implementation_digest": "f8855f97260b602906fb9d0e852c7a3a5a78741e6dae0bb12b51e533e2dba924",
+        "implementation_digest": "6a589cc74547e6c027e9364b31d7e49c0a6abcb2a9a1d0f2813b995c1301efcf",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -150,7 +150,7 @@
       {
         "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "4537d7e181b6bdbab667d2ff38fd26b4f91a34e2c406420e50fcc5497ae27848",
+        "implementation_digest": "b968a68f4818d5518b961311947597fa2908b9be44738cbe6ff179e554fde9a3",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -160,11 +160,25 @@
       {
         "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
         "handler_channel": "kernel_builtin",
-        "implementation_digest": "c337ef6033d8550b4bb903e0386ec18e80dece4f8022b321495bc394a3641ea8",
+        "implementation_digest": "c6e990687944a2f93837d74f3acc19df145d9259ea80ca94ad3e5dcbea386643",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
         "type": "core.end",
+        "type_version": 2
+      },
+      {
+        "contract_digest": "3517b623c6104d7242dd092286aafb571e2027b26432fdd9c9f7f9455f414980",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "78ad0efccda902944f209d29bea3280200b059f04567a1a3ad7334246d402d5e",
+        "implementation_resources": [
+          "connector_queries.py",
+          "v2/resources/node_specs/connector-query-node.json"
+        ],
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/connector-query-node.json",
+        "type": "connector.query",
         "type_version": 2
       }
     ],

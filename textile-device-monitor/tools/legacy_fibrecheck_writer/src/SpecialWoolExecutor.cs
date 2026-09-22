@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Data;
@@ -738,6 +738,8 @@ namespace LegacyFibreCheckWriter
                     { "content_sha256", source.Sha256 },
                 });
 
+                Dictionary<string, object> businessValues = UploadExecutor.GetStr(summary, "profile") == "original_record_upload_v1"
+                    ? UploadExecutor.GetMap(summary, "business_fields") : null;
                 stage("main_record_save_started", null);
                 string savedId;
                 try
@@ -745,21 +747,17 @@ namespace LegacyFibreCheckWriter
                     var record = new SpecialWoolManage
                     {
                         SampleNo = actual,
-                        FibreSort = imageUpload ? "图片" : "棉再生纤",
-                        CheckWay = imageUpload ? string.Empty : "定量",
+                        FibreSort = businessValues != null ? UploadExecutor.GetStr(businessValues, "fiber_category") : imageUpload ? "图片" : "棉再生纤",
+                        CheckWay = businessValues != null ? UploadExecutor.GetStr(businessValues, "inspection_method") : imageUpload ? string.Empty : "定量",
                         CheckUser1 = inspectorId,
-                        CheckUserItem1 = imageUpload
-                            ? "图片"
-                            : "棉再生纤定性",
-                        CheckUserNumber1 = 1,
+                        CheckUserItem1 = businessValues != null ? UploadExecutor.GetStr(businessValues, "inspection_item") : imageUpload ? "图片" : "棉再生纤定性",
+                        CheckUserNumber1 = businessValues != null ? (int)UploadExecutor.GetLong(businessValues, "inspection_copies") : 1,
                         // 与官方客户端手工上传同形：图片类复核项目保持 NULL，
                         // 官方复核也只设 ReviewUser/ReviewTime。
-                        ReviewUserItem1 = imageUpload
-                            ? null
-                            : "棉再生纤定性",
-                        ReviewUserNumber1 = 1,
+                        ReviewUserItem1 = businessValues != null ? UploadExecutor.GetStr(businessValues, "review_item") : imageUpload ? null : "棉再生纤定性",
+                        ReviewUserNumber1 = businessValues != null ? (int)UploadExecutor.GetLong(businessValues, "review_copies") : 1,
                         FilePath = actualFilename,
-                        FileType = "定量试验",
+                        FileType = businessValues != null ? UploadExecutor.GetStr(businessValues, "file_type") : "定量试验",
                     };
                     // 与官方客户端手工上传同形：图片类上传不写
                     // OriginalDataPictureFile 子记录。
@@ -801,7 +799,7 @@ namespace LegacyFibreCheckWriter
                     inspectorId,
                     actualFilename,
                     staff.Id,
-                    imageUpload);
+                    imageUpload, businessValues);
                 if (mismatches.Count != 0)
                 {
                     result.Receipt["error"] = "main_record_verify_mismatch";
@@ -1257,6 +1255,8 @@ namespace LegacyFibreCheckWriter
             {
                 return "operation_type_unsupported";
             }
+            bool neutral = UploadExecutor.GetStr(summary, "profile") == "original_record_upload_v1"
+                || UploadExecutor.GetStr(summary, "profile") == "original_record_review_v1";
             string expectedProfile = imageUpload
                 ? "special_wool_image_v1"
                 : imageReview
@@ -1264,6 +1264,7 @@ namespace LegacyFibreCheckWriter
                     : qualitativeUpload
                         ? "special_wool_qualitative_upload_v1"
                         : "special_wool_qualitative_review_v1";
+            if (neutral) expectedProfile = qualitativeUpload ? "original_record_upload_v1" : "original_record_review_v1";
             if (!string.Equals(
                 UploadExecutor.GetStr(summary, "profile"),
                 expectedProfile,
@@ -1327,10 +1328,10 @@ namespace LegacyFibreCheckWriter
                 ? "图片"
                 : "棉再生纤";
             if (business == null
-                || !string.Equals(
+                || (!neutral && !string.Equals(
                     UploadExecutor.GetStr(business, "fiber_category"),
                     expectedFiberCategory,
-                    StringComparison.Ordinal))
+                    StringComparison.Ordinal)))
             {
                 return "business_contract_mismatch";
             }
@@ -1371,12 +1372,10 @@ namespace LegacyFibreCheckWriter
                 {
                     return "target_filename_mismatch";
                 }
-                string expectedMethod = imageUpload ? string.Empty : "定量";
-                string expectedItem = imageUpload ? "图片" : "棉再生纤定性";
+                string expectedMethod = neutral ? UploadExecutor.GetStr(business, "inspection_method") : imageUpload ? string.Empty : "定量";
+                string expectedItem = neutral ? UploadExecutor.GetStr(business, "inspection_item") : imageUpload ? "图片" : "棉再生纤定性";
                 // 与官方客户端手工上传同形：图片类复核项目为 NULL，后端同步发空串。
-                string expectedReviewItem = imageUpload
-                    ? string.Empty
-                    : "棉再生纤定性";
+                string expectedReviewItem = neutral ? UploadExecutor.GetStr(business, "review_item") : imageUpload ? string.Empty : "棉再生纤定性";
                 if (!string.Equals(
                         UploadExecutor.GetStr(business, "inspection_method")
                             ?? string.Empty,
@@ -1386,13 +1385,13 @@ namespace LegacyFibreCheckWriter
                         UploadExecutor.GetStr(business, "inspection_item"),
                         expectedItem,
                         StringComparison.Ordinal)
-                    || UploadExecutor.GetLong(business, "inspection_copies") != 1
+                    || (neutral ? UploadExecutor.GetLong(business, "inspection_copies") < 1 : UploadExecutor.GetLong(business, "inspection_copies") != 1)
                     || !string.Equals(
                         UploadExecutor.GetStr(business, "review_item")
                             ?? string.Empty,
                         expectedReviewItem,
                         StringComparison.Ordinal)
-                    || UploadExecutor.GetLong(business, "review_copies") != 1)
+                    || (neutral ? UploadExecutor.GetLong(business, "review_copies") < 1 : UploadExecutor.GetLong(business, "review_copies") != 1))
                 {
                     return imageUpload
                         ? "image_business_contract_mismatch"
@@ -1401,9 +1400,7 @@ namespace LegacyFibreCheckWriter
             }
             else
             {
-                string expectedReviewItem = imageReview
-                    ? string.Empty
-                    : "棉再生纤定性";
+                string expectedReviewItem = neutral ? UploadExecutor.GetStr(business, "review_item") : imageReview ? string.Empty : "棉再生纤定性";
                 if (!string.Equals(
                         UploadExecutor.GetStr(business, "review_action"),
                         "特纤复核",
@@ -1413,8 +1410,7 @@ namespace LegacyFibreCheckWriter
                             ?? string.Empty,
                         expectedReviewItem,
                         StringComparison.Ordinal)
-                    || UploadExecutor.GetLong(
-                        business, "review_copies") != 1)
+                    || (neutral ? UploadExecutor.GetLong(business, "review_copies") < 1 : UploadExecutor.GetLong(business, "review_copies") != 1))
                 {
                     return imageReview
                         ? "review_business_contract_mismatch"
@@ -1848,7 +1844,7 @@ namespace LegacyFibreCheckWriter
             string inspectorId,
             string fileName,
             string staffId,
-            bool imageUpload)
+            bool imageUpload, Dictionary<string, object> business = null)
         {
             var mismatches = new List<string>();
             Check(mismatches, "ID", Text(row, "ID"), savedId);
@@ -1857,22 +1853,20 @@ namespace LegacyFibreCheckWriter
                 mismatches,
                 "FibreSort",
                 Text(row, "FibreSort"),
-                imageUpload ? "图片" : "棉再生纤");
+                business != null ? UploadExecutor.GetStr(business, "fiber_category") : imageUpload ? "图片" : "棉再生纤");
             Check(
                 mismatches,
                 "CheckWay",
                 Text(row, "CheckWay"),
-                imageUpload ? string.Empty : "定量");
+                business != null ? UploadExecutor.GetStr(business, "inspection_method") : imageUpload ? string.Empty : "定量");
             if (!SpecialWoolContracts.MatchesBusinessText(
                 Text(row, "CheckUser1"), inspectorId))
             {
                 mismatches.Add("CheckUser1");
             }
-            string expectedCheckItem = imageUpload ? "图片" : "棉再生纤定性";
+            string expectedCheckItem = business != null ? UploadExecutor.GetStr(business, "inspection_item") : imageUpload ? "图片" : "棉再生纤定性";
             // 与官方客户端手工上传同形：图片类复核项目保持 NULL，读回为空串。
-            string expectedReviewItem = imageUpload
-                ? string.Empty
-                : "棉再生纤定性";
+            string expectedReviewItem = business != null ? UploadExecutor.GetStr(business, "review_item") : imageUpload ? string.Empty : "棉再生纤定性";
             Check(
                 mismatches,
                 "CheckUserItem1",
@@ -1888,10 +1882,10 @@ namespace LegacyFibreCheckWriter
                 mismatches,
                 "FileType",
                 Text(row, "FileType"),
-                "定量试验");
+                business != null ? UploadExecutor.GetStr(business, "file_type") : "定量试验");
             Check(mismatches, "CreateUser", Text(row, "CreateUser"), staffId);
-            CheckInt(mismatches, row, "CheckUserNumber1", 1);
-            CheckInt(mismatches, row, "ReviewUserNumber1", 1);
+            CheckInt(mismatches, row, "CheckUserNumber1", business != null ? (int)UploadExecutor.GetLong(business, "inspection_copies") : 1);
+            CheckInt(mismatches, row, "ReviewUserNumber1", business != null ? (int)UploadExecutor.GetLong(business, "review_copies") : 1);
             if (IsNull(row, "CreateTime")) mismatches.Add("CreateTime");
             return mismatches;
         }

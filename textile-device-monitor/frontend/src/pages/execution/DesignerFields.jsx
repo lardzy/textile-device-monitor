@@ -39,7 +39,7 @@ export function SchemaEditor({ value, onChange, label = '字段', prefix = '' })
       {typeOf(item) === 'object' && <Collapse ghost items={[{ key: 'children', label: '对象字段', children: <SchemaEditor value={item} onChange={(next, rename) => change(key, next, rename)} prefix={`${prefix}${key}.`} /> }]} />}
       {typeOf(item) === 'array' && <Space direction="vertical" style={{ margin: 8 }}>
         <Space>列表项目类型<Select aria-label={`列表项目类型 ${key}`} value={typeOf(item.items)} style={{ width: 100 }} options={TYPES.map(type => ({ value: type, label: LABELS[type] }))} onChange={type => change(key, { ...item, items: typedSchema(type) })} /></Space>
-        {typeOf(item.items) === 'object' && <SchemaEditor value={item.items} onChange={(next, rename) => change(key, { ...item, items: next }, rename)} prefix={`${prefix}${key}.0.`} />}
+        {typeOf(item.items) === 'object' && <SchemaEditor value={item.items} onChange={(next, rename) => change(key, { ...item, items: next }, rename)} prefix={`${prefix}${key}.*.`} />}
       </Space>}
     </div>)}
     <Button size="small" onClick={() => {
@@ -50,14 +50,15 @@ export function SchemaEditor({ value, onChange, label = '字段', prefix = '' })
   </div>;
 }
 
-export function ValueEditor({ schema = {}, value, onChange, label, depth = 0 }) {
+export function ValueEditor({ schema = {}, value, onChange, label, depth = 0, bindChildren = false, variables = [] }) {
   const type = typeOf(schema);
+  const Child = bindChildren ? BindingEditor : ValueEditor;
   if (schema.enum) return <Select aria-label={label} value={value} allowClear options={schema.enum.map(item => ({ value: item, label: String(item) }))} onChange={onChange} />;
   if (type === 'boolean') return <Switch aria-label={label} checked={Boolean(value)} onChange={onChange} />;
   if (type === 'number' || type === 'integer') return <InputNumber aria-label={label} value={value} min={schema.minimum} max={schema.maximum} precision={type === 'integer' ? 0 : undefined} onChange={onChange} />;
   if (type === 'array' && depth < 8) return <Space direction="vertical" style={{ width: '100%' }}>
     {(Array.isArray(value) ? value : []).map((item, index) => <div key={index} className="execution-designer-array-row">
-      <ValueEditor schema={schema.items || inferredSchema(item)} value={item} label={`${label} ${index + 1}`} depth={depth + 1} onChange={next => onChange(value.map((old, position) => position === index ? next : old))} />
+      <Child variables={variables} bindChildren={bindChildren} schema={schema.items || inferredSchema(item)} value={item} label={`${label} ${index + 1}`} depth={depth + 1} onChange={next => onChange(value.map((old, position) => position === index ? next : old))} />
       <Button size="small" danger aria-label={`删除 ${label} ${index + 1}`} onClick={() => onChange(value.filter((_, position) => position !== index))}>删除</Button>
     </div>)}
     <Button size="small" onClick={() => onChange([...(Array.isArray(value) ? value : []), defaultValue(schema.items || {})])}>添加项目</Button>
@@ -68,7 +69,7 @@ export function ValueEditor({ schema = {}, value, onChange, label, depth = 0 }) 
     return <div className="execution-designer-object">
       {Object.entries(fields).map(([key, field]) => <div key={key}>
         <Typography.Text type="secondary">{field.title || key}{schema.required?.includes(key) ? ' *' : ''}</Typography.Text>
-        <ValueEditor schema={field} value={value?.[key]} label={`${label} ${key}`} depth={depth + 1} onChange={next => onChange({ ...(value || {}), [key]: next })} />
+        <Child variables={variables} bindChildren={bindChildren} schema={field} value={value?.[key]} label={`${label} ${key}`} depth={depth + 1} onChange={next => onChange({ ...(value || {}), [key]: next })} />
         {!schema.properties?.[key] && <Button size="small" type="text" danger onClick={() => onChange(Object.fromEntries(Object.entries(value || {}).filter(([name]) => name !== key)))}>删除字段</Button>}
       </div>)}
       {schema.additionalProperties !== false && <Input.Search aria-label={`添加属性 ${label}`} placeholder="新字段名称" enterButton="添加" onSearch={name => { if (name.trim() && !Object.hasOwn(fields, name)) onChange({ ...(value || {}), [name]: '' }); }} />}
@@ -78,7 +79,7 @@ export function ValueEditor({ schema = {}, value, onChange, label, depth = 0 }) 
   return schema.format === 'textarea' ? <Input.TextArea {...control} autoSize={{ minRows: 8, maxRows: 24 }} spellCheck={false} style={{ fontFamily: 'monospace' }} /> : <Input {...control} />;
 }
 
-export function BindingEditor({ value, onChange, schema, label, variables = [], issue, referenceOnly = false }) {
+export function BindingEditor({ value, onChange, schema, label, variables = [], issue, referenceOnly = false, depth = 0 }) {
   const inferred = isReference(value) ? (value.startsWith('$.inputs') ? 'input' : 'upstream') : 'literal';
   const [mode, setMode] = useState(referenceOnly && inferred === 'literal' ? 'upstream' : inferred);
   useEffect(() => { if (isReference(value)) setMode(value.startsWith('$.inputs') ? 'input' : 'upstream'); }, [value]);
@@ -88,7 +89,7 @@ export function BindingEditor({ value, onChange, schema, label, variables = [], 
       <Select aria-label={`${label} 来源方式`} style={{ width: 115, flexShrink: 0 }} value={mode} options={[...(!referenceOnly ? [{ value: 'literal', label: '固定值' }] : []), { value: 'input', label: '流程输入' }, { value: 'upstream', label: '上游输出' }]} onChange={next => { setMode(next); onChange(undefined); }} />
       {mode !== 'literal' && <TreeSelect aria-label={`输入 ${label}`} style={{ width: '100%' }} allowClear showSearch treeNodeFilterProp="title" treeData={options} value={isReference(value) ? value : undefined} placeholder="展开并选择字段" status={issue ? 'error' : ''} onChange={onChange} />}
     </Space.Compact>
-    {mode === 'literal' && <ValueEditor schema={schema} value={isReference(value) ? undefined : value} label={`输入 ${label}`} onChange={onChange} />}
+    {mode === 'literal' && <ValueEditor bindChildren variables={variables} depth={depth} schema={schema} value={isReference(value) ? undefined : value} label={`输入 ${label}`} onChange={onChange} />}
     {issue && <Typography.Text type="danger">{String(value)}</Typography.Text>}
     {value !== undefined && <Button size="small" type="link" onClick={() => onChange(undefined)}>清除绑定</Button>}
   </Form.Item>;

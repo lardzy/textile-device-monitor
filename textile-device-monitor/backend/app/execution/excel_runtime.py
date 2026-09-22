@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
+from io import BytesIO
+import math
 from pathlib import Path
 from typing import Any
 
@@ -27,23 +29,25 @@ def _ref(value: Any) -> ArtifactRef:
 
 
 class _WorkbookReader:
-    def __init__(self, path: Path, *, data_only: bool = True) -> None:
+    def __init__(self, path: Path, *, data_only: bool = True, content: bytes | None = None) -> None:
         self.path = path
         self.data_only = data_only
         self.kind = "openpyxl"
         self.book = None
+        self.content = content
+        self.stream = None
 
     def __enter__(self):
-        suffix = self.path.suffix.casefold()
-        if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        content = self.content if self.content is not None else self.path.read_bytes()
+        if content.startswith(b"PK"):
+            self.stream = BytesIO(content)
             self.book = load_workbook(
-                self.path,
+                self.stream,
                 read_only=True,
                 data_only=self.data_only,
-                keep_vba=suffix in {".xlsm", ".xltm"},
-                keep_links=True,
+                keep_links=False,
             )
-        elif suffix in {".xls", ".xlt"}:
+        elif content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
             try:
                 import xlrd
             except ImportError as exc:
@@ -54,7 +58,7 @@ class _WorkbookReader:
                 ) from exc
             self.kind = "xlrd"
             self.book = xlrd.open_workbook(
-                str(self.path),
+                file_contents=content,
                 on_demand=True,
                 formatting_info=False,
             )
@@ -62,13 +66,18 @@ class _WorkbookReader:
             raise ExecutionApiError(
                 422,
                 "workbook_format_unsupported",
-                f"不支持读取 {suffix or '无扩展名'} 工作簿",
+                "文件内容不是受支持的 XLS/XLSX 工作簿",
             )
         return self
 
     def __exit__(self, *_args):
         if self.book is not None:
-            self.book.close()
+            if self.kind == "xlrd":
+                self.book.release_resources()
+            else:
+                self.book.close()
+        if self.stream is not None:
+            self.stream.close()
 
     @property
     def sheet_names(self) -> list[str]:
@@ -86,7 +95,13 @@ class _WorkbookReader:
         from openpyxl.utils.cell import coordinate_to_tuple
 
         row, column = coordinate_to_tuple(cell.replace("$", "").upper())
-        return self.book.sheet_by_name(sheet).cell_value(row - 1, column - 1)
+        import xlrd
+        value = self.book.sheet_by_name(sheet).cell(row - 1, column - 1)
+        if value.ctype == xlrd.XL_CELL_DATE:
+            return xlrd.xldate_as_datetime(value.value, self.book.datemode)
+        if value.ctype == xlrd.XL_CELL_BOOLEAN:
+            return bool(value.value)
+        return value.value
 
 
 def _path(context, ref: ArtifactRef) -> Path:
@@ -118,6 +133,8 @@ def _feature_matches(reader: _WorkbookReader, feature: dict[str, Any]) -> bool:
 
 
 def _json_value(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     if isinstance(value, (datetime, date, time)):
         return value.isoformat()
     if isinstance(value, (str, int, float, bool)) or value is None:

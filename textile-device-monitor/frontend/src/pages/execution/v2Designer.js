@@ -90,7 +90,17 @@ export function referenceIssues(document, specs = [], connectors = []) {
   return collectReferences(document).flatMap(reference => {
     const source = [...definition.nodes].sort((a, b) => b.id.length - a.id.length).find(node => ['output', 'status'].some(kind => reference.expression === `$.nodes.${node.id}.${kind}` || reference.expression.startsWith(`$.nodes.${node.id}.${kind}.`)));
     const match = source ? reference.expression.slice(`$.nodes.${source.id}.`.length).match(/^(output|status)(?:\.(.*))?$/) : reference.expression.match(/^\$\.nodes\.(.+?)\.(output|status)(?:\.(.*))?$/);
-    if (!match) return [];
+    if (!match) {
+      const inputPath = reference.expression.startsWith('$.inputs.') ? reference.expression.slice(9).split('.') : null;
+      if (!inputPath) return [];
+      let schema = definition.input_schema;
+      for (const key of inputPath) {
+        if (schema?.type === 'array' && /^\d+$/.test(key)) schema = schema.items;
+        else if (schema?.properties?.[key]) schema = schema.properties[key];
+        else return schema?.additionalProperties === false ? [{ ...reference, message: '流程输入字段不存在' }] : [];
+      }
+      return [];
+    }
     const [id, kind, suffix] = source ? [source.id, match[1], match[2]] : match.slice(1);
     let message;
     if (!source) message = '来源已删除';
@@ -125,17 +135,20 @@ export function deleteSelection(document, nodeIds, edgeIds = []) {
   return result;
 }
 
-export function rewriteOutputReferences(document, nodeId, oldKey, newKey) {
+export function rewriteReferences(document, root, oldKey, newKey) {
   const result = structuredClone(document);
-  const prefix = `$.nodes.${nodeId}.output.${oldKey}`;
+  const before = `${root}.${oldKey}`.split('.'), after = `${root}.${newKey}`.split('.');
   collectReferences(result).forEach(reference => {
-    if (reference.expression !== prefix && !reference.expression.startsWith(`${prefix}.`)) return;
+    const parts = reference.expression.split('.');
+    if (!before.every((key, index) => key === '*' ? /^\d+$/.test(parts[index] || '') : key === parts[index])) return;
+    const rewritten = [...after.map((key, index) => key === '*' ? parts[index] : key), ...parts.slice(before.length)].join('.');
     let parent = result;
     reference.path.slice(0, -1).forEach(key => { parent = parent[key]; });
-    parent[reference.path.at(-1)] = `$.nodes.${nodeId}.output.${newKey}${reference.expression.slice(prefix.length)}`;
+    parent[reference.path.at(-1)] = rewritten;
   });
   return result;
 }
+export const rewriteOutputReferences = (document, nodeId, oldKey, newKey) => rewriteReferences(document, `$.nodes.${nodeId}.output`, oldKey, newKey);
 
 export function validConnection(definition, connection, replacingId) {
   const { source, target, sourceHandle, targetHandle } = connection;

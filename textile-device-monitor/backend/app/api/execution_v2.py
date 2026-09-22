@@ -105,10 +105,13 @@ def designer_catalog(
 ):
     from app.execution.v2.designer import starter_document
     from app.execution.v2.workflow_templates import list_workflow_templates
+    import json
+    from pathlib import Path
 
     registry = get_installed_registry()
     templates = list_workflow_templates(db)
     return {"starter": starter_document(), "templates": templates,
+            "python_presets": json.loads((Path(__file__).parents[1] / 'execution/v2/resources/python-presets.json').read_text(encoding='utf-8')),
             "node_specs": [item.public_dict() for item in registry.list_node_specs() if item.source == "resource" and item.publishable],
             "connectors": registry.list_connectors()}
 

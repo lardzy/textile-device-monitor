@@ -30,7 +30,7 @@ describe('v2 designer document transformations', () => {
   });
 });
 
-import { deleteSelection, referenceIssues, rewriteOutputReferences, insertOnEdge, validConnection, designerHistory } from './v2Designer';
+import { deleteSelection, referenceIssues, rewriteOutputReferences, rewriteReferences, insertOnEdge, validConnection, designerHistory } from './v2Designer';
 const graph = () => ({ definition: {
   nodes: [
     { id: 'a', type: 'data.python', type_version: 1, config: { output_schema: { type: 'object', properties: { result: { type: 'object', properties: { value: { type: 'string' } }, additionalProperties: false } }, additionalProperties: false } }, input_mapping: {} },
@@ -39,6 +39,12 @@ const graph = () => ({ definition: {
 }, fixtures: [{ fixture_id: 'test', mocks: [{ node_id: 'a' }], assertions: [{ path: '$.nodes.a.output.result.value', operator: 'eq', value: 'example' }] }] });
 const specs = [{ type: 'data.python', type_version: 1, schema_bindings: { input: { source: 'node_config', pointer: '/input_schema' }, output: { source: 'node_config', pointer: '/output_schema' } } }];
 describe('reliable graph editing', () => {
+  it('renames workflow inputs and array fields at every referenced index', () => {
+    const document = graph();
+    document.definition.nodes[1].input_mapping = { first: '$.nodes.a.output.rows.0.value', second: '$.nodes.a.output.rows.12.value', input: '$.inputs.number' };
+    const renamed = rewriteReferences(rewriteOutputReferences(document, 'a', 'rows.*.value', 'rows.*.result'), '$.inputs', 'number', 'inspection_number');
+    expect(renamed.definition.nodes[1].input_mapping).toEqual({ first: '$.nodes.a.output.rows.0.result', second: '$.nodes.a.output.rows.12.result', input: '$.inputs.inspection_number' });
+  });
   it('deletes nodes and mocks together, retains broken references and assertions, restores atomically', () => {
     const initial = { document: graph(), selection: { nodes: ['a'], edges: [] } };
     const state = designerHistory({ present: initial, past: [], future: [] }, { type: 'edit', update: value => ({ ...value, document: deleteSelection(value.document, ['a']) }) });

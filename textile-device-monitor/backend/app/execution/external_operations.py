@@ -1318,13 +1318,13 @@ def validate_external_receipt(
             },
         )
         if (
-            final_entry.get("package_schema_version") != 2
+            final_entry.get("package_schema_version") != package.get("schema_version")
             or final_entry.get("expected_existing_register_count")
             != expected_existing
             or final_entry.get("resulting_register_count")
             != expected_existing + 1
-            or final_entry.get("detail_count") != 1
-            or final_entry.get("key_result_count") != 1
+            or final_entry.get("detail_count") != len((package.get("generic_record") or {}).get("details") or [])
+            or final_entry.get("key_result_count") != len((package.get("generic_record") or {}).get("details") or [])
             or final_entry.get("proofed") is not False
         ):
             raise _machine_document_error(
@@ -3249,6 +3249,10 @@ def _reverify_operation_sources(
         return
     operation_type = _operation_type(operation)
     submission = (operation.request_summary or {}).get("connector_submission") or {}
+    from app.execution.connector_original_records import REFERENCES, reverify_sources
+    if submission.get("operation_ref") in REFERENCES:
+        reverify_sources(db, operation)
+        return
     if submission.get("operation_ref") in {
         "legacy_fibrecheck.check_record.generic_entry@1", "legacy_fibrecheck.check_record.generic_update@1",
     }:
@@ -5541,6 +5545,8 @@ def public_external_operation(
     public_summary = {
         "schema_version": summary.get("schema_version"),
         "operation_type": summary.get("operation_type"),
+        "operation_ref": (summary.get("connector_submission") or {}).get("operation_ref"),
+        "record_digest": summary.get("record_digest"),
         "profile": summary.get("profile"),
         "source_inspection_number": (
             summary.get("source_inspection_number")
@@ -7063,6 +7069,10 @@ def claim_approved_external_operation(
             or _operation_execution_capability(operation).get("available")
             is False
         ):
+            continue
+        from app.execution.connector_original_records import REFERENCES
+        exact_reference = (operation.request_summary.get("connector_submission") or {}).get("operation_ref")
+        if exact_reference in REFERENCES and exact_reference not in supported_types:
             continue
         if node_run is not None and node_run.status != "waiting_external":
             raise conflict(
