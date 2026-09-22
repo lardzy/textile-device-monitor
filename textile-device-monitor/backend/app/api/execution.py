@@ -147,7 +147,6 @@ from app.execution.regenerated_fiber import (
 from app.execution.regenerated_fiber_results import read_regenerated_fiber_records
 from app.execution.project_rules import (
     default_rule_key_for_node_type,
-    ensure_default_project_rules,
     evaluate_project_rule,
     list_rules,
     resolve_rule,
@@ -1857,8 +1856,6 @@ def project_rules(
     _auth: AuthContext = Depends(permission("workflow.read")),
     db: Session = Depends(get_db),
 ):
-    if ensure_default_project_rules(db):
-        db.commit()
     rows = (
         db.query(ExecutionProjectRule)
         .order_by(
@@ -1876,8 +1873,6 @@ def project_rule_detail(
     _auth: AuthContext = Depends(permission("workflow.read")),
     db: Session = Depends(get_db),
 ):
-    if ensure_default_project_rules(db):
-        db.commit()
     row = (
         db.query(ExecutionProjectRule)
         .filter(ExecutionProjectRule.rule_key == rule_key.strip())
@@ -1895,7 +1890,6 @@ def update_project_rule(
     auth: AuthContext = Depends(permission("workflow.design", csrf=True)),
     db: Session = Depends(get_db),
 ):
-    ensure_default_project_rules(db)
     row = (
         db.query(ExecutionProjectRule)
         .filter(ExecutionProjectRule.rule_key == rule_key.strip())
@@ -1957,7 +1951,6 @@ def test_project_rule(
 ):
     """Dry-run a rule against a number without persisting anything."""
 
-    ensure_default_project_rules(db)
     if payload.config is not None:
         issues = validate_rule_config(payload.config)
         if issues:
@@ -2293,8 +2286,6 @@ def workflows(
     from app.execution.workflow_replacement import is_catalog_workflow
 
     include_inactive = include_archived is True and include_draft
-    if ensure_default_project_rules(db):
-        db.commit()
     items = []
     can_access_all_runs = _may_access_all_runs(db, auth)
     for item in statement.order_by(
@@ -2371,8 +2362,6 @@ def workflow_detail(
 ):
     workflow = get_workflow(db, workflow_id)
     _ensure_workflow_visible(db, workflow=workflow, auth=auth)
-    if ensure_default_project_rules(db):
-        db.commit()
     return _workflow_dict(
         workflow,
         include_definition=has_permission(db, auth.user, "workflow.design"),

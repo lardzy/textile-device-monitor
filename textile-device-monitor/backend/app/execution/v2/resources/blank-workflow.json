@@ -1,0 +1,88 @@
+{
+  "assets": [],
+  "capabilities": {
+    "declared": [],
+    "requires_human_approval": false,
+    "side_effect_level": "none"
+  },
+  "definition": {
+    "edges": [
+      {
+        "id": "start-end",
+        "source": "start",
+        "target": "end",
+        "join_policy": "all"
+      }
+    ],
+    "global_defaults": {},
+    "global_schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_number": {
+          "minLength": 1,
+          "title": "检验编号",
+          "type": "string"
+        }
+      },
+      "required": [
+        "inspection_number"
+      ],
+      "type": "object"
+    },
+    "nodes": [
+      {
+        "config": {},
+        "id": "start",
+        "input_mapping": {},
+        "name": "开始",
+        "type": "core.start",
+        "type_version": 2,
+        "ui": {
+          "x": 40,
+          "y": 160
+        }
+      },
+      {
+        "config": {},
+        "id": "end",
+        "input_mapping": {},
+        "name": "完成",
+        "type": "core.end",
+        "type_version": 2,
+        "ui": {
+          "x": 520,
+          "y": 160
+        }
+      }
+    ],
+    "output_schema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "schema_version": "2.0"
+  },
+  "dependencies": {},
+  "fixtures": [],
+  "format": "textile-workflow-release",
+  "format_version": "2.0",
+  "release": {
+    "category_key": "other",
+    "description": "",
+    "name": "新工作流",
+    "release_note": "",
+    "release_version": 1,
+    "slug": "new-workflow-v2"
+  },
+  "resources": {
+    "credential_slots": [],
+    "role_slots": [],
+    "root_slots": [],
+    "rule_slots": []
+  }
+}

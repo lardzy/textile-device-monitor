@@ -17,24 +17,13 @@ from app.execution.persistence import (
     claim_index_job,
     enqueue_due_index_jobs,
     process_index_job,
-    register_persistence_executors,
     renew_index_job_lease,
 )
-from app.execution.mutation_runtime import register_mutation_executors
-from app.execution.registry import node_registry
 from app.execution.outbox import (
     claim_outbox_record,
     cleanup_outbox,
     dispatch_outbox_record,
     fail_outbox_record,
-)
-from app.execution.excel_runtime import register_excel_executors
-from app.execution.microscopy_original_record import (
-    register_microscopy_original_record_executor,
-)
-from app.execution.microscopy_check_record import (
-    MICROSCOPY_CHECK_RECORD_NODE_TYPE,
-    microscopy_check_record_executor,
 )
 from app.execution.worker_state import (
     default_worker_id,
@@ -148,18 +137,6 @@ class _WorkerHeartbeat:
 
 class ExecutionWorker:
     def __init__(self, worker_id: str | None = None) -> None:
-        register_persistence_executors()
-        register_mutation_executors()
-        register_excel_executors()
-        register_microscopy_original_record_executor()
-        node_registry.set_executor(
-            MICROSCOPY_CHECK_RECORD_NODE_TYPE,
-            1,
-            microscopy_check_record_executor,
-        )
-        # Build the immutable v2 capability set only after every execution
-        # channel has registered and the Pack registry has verified its
-        # manifests, resources and handlers.
         from app.execution.v2.registry import worker_capability_document
 
         self.capability_document = worker_capability_document()
@@ -273,15 +250,6 @@ class ExecutionWorker:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings.validate_execution_security()
-    register_persistence_executors()
-    register_mutation_executors()
-    register_excel_executors()
-    register_microscopy_original_record_executor()
-    node_registry.set_executor(
-        MICROSCOPY_CHECK_RECORD_NODE_TYPE,
-        1,
-        microscopy_check_record_executor,
-    )
     ExecutionWorker().run_forever()
 
 

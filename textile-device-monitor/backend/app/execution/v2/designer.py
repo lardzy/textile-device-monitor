@@ -28,9 +28,6 @@ def compile_document(document, *, exact=False):
     issues = _validate_document_shape(seal(candidate))
     if issues:
         return {"document": candidate, "content_valid": False, "issues": issues}
-    from app.execution.v2.domain_profiles import expand_domain_profiles
-
-    expand_domain_profiles(candidate)
     registry = get_installed_registry()
     connectors = {}
     try:
@@ -90,13 +87,10 @@ def compile_document(document, *, exact=False):
 
 
 def starter_document():
-    from app.execution.v2.examples import build_readonly_file_query_smoke_release
+    import json
+    from pathlib import Path
+    from app.execution.v2.examples import _dependencies_for
 
-    document = build_readonly_file_query_smoke_release()
-    document["release"].update(slug="new-workflow-v2", name="新工作流", description="", release_note="")
-    document["resources"]["root_slots"] = []
-    document["definition"]["nodes"] = [n for n in document["definition"]["nodes"] if n["type"] in {"core.start", "core.end"}]
-    document["definition"]["nodes"][-1]["input_mapping"] = {}
-    document["definition"]["output_schema"] = {"type": "object", "properties": {}, "additionalProperties": False}
-    document["definition"]["edges"] = [{"id": "start-end", "source": "start", "target": "end", "join_policy": "all"}]
+    document = json.loads((Path(__file__).parent / "resources" / "blank-workflow.json").read_text())
+    _, document["dependencies"] = _dependencies_for([("core.start", 2), ("core.end", 2)])
     return compile_document(document)["document"]

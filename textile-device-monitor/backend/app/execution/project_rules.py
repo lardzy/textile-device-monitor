@@ -273,38 +273,6 @@ def validate_rule_config(config: object) -> list[str]:
     return issues
 
 
-def ensure_default_project_rules(db: Session) -> bool:
-    """Idempotently insert missing seed rules; never overwrite edits."""
-
-    from app.execution.project_rule_seeds import default_project_rule_seeds
-
-    seeds = default_project_rule_seeds()
-    existing = {
-        row.rule_key
-        for row in db.query(ExecutionProjectRule.rule_key).filter(
-            ExecutionProjectRule.rule_key.in_([item["rule_key"] for item in seeds])
-        )
-    }
-    changed = False
-    for seed in seeds:
-        if seed["rule_key"] in existing:
-            continue
-        db.add(
-            ExecutionProjectRule(
-                rule_key=seed["rule_key"],
-                display_name=seed["display_name"],
-                category_key=seed.get("category_key"),
-                enabled=True,
-                revision=1,
-                config=seed["config"],
-            )
-        )
-        changed = True
-    if changed:
-        db.flush()
-    return changed
-
-
 def resolve_rule(
     db: Session,
     rule_key: object,
@@ -318,8 +286,6 @@ def resolve_rule(
             "project_rule_key_missing",
             "节点缺少匹配规则引用（match_rule）",
         )
-    if ensure:
-        ensure_default_project_rules(db)
     row = (
         db.query(ExecutionProjectRule)
         .filter(ExecutionProjectRule.rule_key == key)
@@ -352,8 +318,6 @@ def list_rules(
     enabled_only: bool = False,
     ensure: bool = True,
 ) -> list[ResolvedRule]:
-    if ensure:
-        ensure_default_project_rules(db)
     query = db.query(ExecutionProjectRule)
     if enabled_only:
         query = query.filter(ExecutionProjectRule.enabled.is_(True))

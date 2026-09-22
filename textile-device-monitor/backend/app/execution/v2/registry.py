@@ -1276,91 +1276,13 @@ def _build_installed_registry() -> InstalledRegistry:
                 raise ValueError(f"node identity has multiple pack owners: {identity}")
             descriptors.append((pack, descriptor))
 
-    current_nodes = {(node.type, node.version): node for node in node_registry.all()}
-    compat_descriptors: dict[
-        tuple[str, int], tuple[InstalledPack, dict[str, Any]]
-    ] = {}
-    for pack, descriptor in descriptors:
-        if descriptor["source"] != "v1_registry_adapter":
-            continue
-        identity = (descriptor["type"], descriptor["type_version"])
-        if identity in compat_descriptors:
-            raise ValueError(f"duplicate v1 compatibility descriptor: {identity}")
-        compat_descriptors[identity] = (pack, descriptor)
-    if compat_descriptors.keys() != current_nodes.keys():
-        missing = sorted(current_nodes.keys() - compat_descriptors.keys())
-        extra = sorted(compat_descriptors.keys() - current_nodes.keys())
-        raise ValueError(
-            f"v1 compatibility owner set does not match registry; missing={missing}, extra={extra}"
-        )
-
     spec_validator = Draft202012Validator(load_schema("node-spec-v2.schema.json"))
     node_specs: list[InstalledNodeSpec] = []
     executables: list[InstalledExecutable] = []
-    for identity, node_type in current_nodes.items():
-        pack, descriptor = compat_descriptors[identity]
-        handler_channel = descriptor["handler_channel"]
-        spec_document = _compat_node_spec(
-            node_type,
-            pack=pack,
-            handler_channel=handler_channel,
-        )
-        spec_validator.validate(spec_document)
-        contract_digest = canonical_sha256(spec_document)
-        if descriptor.get("contract_digest") not in (None, contract_digest):
-            raise ValueError(f"NodeSpec digest mismatch: {identity}")
-        implementation_digest = _implementation_digest(
-            pack=pack,
-            descriptor=descriptor,
-            contract_digest=contract_digest,
-        )
-        if descriptor.get("implementation_digest") not in (
-            None,
-            implementation_digest,
-        ):
-            raise ValueError(f"implementation digest mismatch: {identity}")
-        installed_ready = handler_channel != "placeholder"
-        runtime_ready = _runtime_ready(node_type, handler_channel)
-        installed_spec = InstalledNodeSpec(
-            type=node_type.type,
-            type_version=node_type.version,
-            contract_digest=contract_digest,
-            implementation_digest=implementation_digest,
-            pack_id=pack.pack_id,
-            pack_version=pack.pack_version,
-            distribution_digest=pack.distribution_digest,
-            execution=deepcopy(spec_document["execution"]),
-            config_schema=deepcopy(spec_document["config_schema"]),
-            input_schema=deepcopy(spec_document["input_schema"]),
-            output_schema=deepcopy(spec_document["output_schema"]),
-            side_effect_class=spec_document["side_effect"]["class"],
-            publishable=node_type.publishable,
-            ready=installed_ready,
-            spec=spec_document,
-            handler_channel=handler_channel,
-            source="v1_registry_adapter",
-            preferred=bool(descriptor.get("preferred", False)),
-        )
-        node_specs.append(installed_spec)
-        executables.append(
-            InstalledExecutable(
-                node_type=node_type.type,
-                type_version=node_type.version,
-                contract_digest=contract_digest,
-                implementation_digest=implementation_digest,
-                handler_channel=handler_channel,
-                installed_ready=installed_ready,
-                runtime_ready=runtime_ready,
-                source="v1_registry_adapter",
-            )
-        )
 
     from app.execution.v2.native_handlers import native_handler
     from app.execution.v2.data_handlers import NATIVE_HANDLERS as data_handlers
     from app.execution.v2.workbook_render import render as render_workbook
-    from app.execution.v2.regenerated_fiber_handlers import NATIVE_HANDLERS as domain_handlers
-    from app.execution.v2.domain_record_handlers import NATIVE_HANDLERS as record_handlers
-    from app.execution.v2.record_input_handlers import NATIVE_HANDLERS as record_input_handlers
     from app.execution.connector_queries import execute_query_node, query_handler
     from app.execution.connector_operations import operation_handler, workflow_operation_handler
     from app.execution.adapter_packages import handler_for
@@ -1417,7 +1339,6 @@ def _build_installed_registry() -> InstalledRegistry:
             native_handler(identity[0], identity[1])
             or data_handlers.get(identity)
             or (render_workbook if identity == ("workbook.render", 1) else None)
-            or domain_handlers.get(identity) or record_handlers.get(identity) or record_input_handlers.get(identity)
             or (execute_query_node if identity == ("connector.query", 1) else None)
             if handler_channel in {"worker_callable", "kernel_builtin"}
             else None

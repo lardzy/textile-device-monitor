@@ -30,7 +30,6 @@ from app.execution.release_v2 import (
     apply_release,
     export_version_release,
     preflight_release,
-    preview_v1_migration,
     publish_release,
     receipt_view,
     release_view,
@@ -684,22 +683,6 @@ def rollback_release(
     )
     db.commit()
     return {"activation": receipt_view(receipt)}
-
-
-@router.post("/migrations/v1/preview")
-def migration_preview(
-    payload: WorkflowV1MigrationPreviewRequest,
-    auth: AuthContext = Depends(permission("workflow.design", csrf=True)),
-    db: Session = Depends(get_db),
-):
-    return preview_v1_migration(
-        db,
-        workflow_id=payload.workflow_id,
-        source=payload.source,
-        actor=auth.user,
-        target_profile=payload.target_profile,
-        target_slug=payload.target_slug,
-    )
 
 
 @router.get("/workflows/{workflow_id}/replacement")

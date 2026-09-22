@@ -1,6 +1,106 @@
 {
-  "assets": [],
-  "distribution_digest": "ae7da00ba041f6d18e74b89459e131f1be72d11775f60b114d81eeb65fd02e0e",
+  "assets": [
+    {
+      "asset_id": "gbt36422-cross-section-1-image-v1",
+      "digest": "537099b8725b76d306c453f25da27d90bb3290129db5b3f9705f0b7cd675f862",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-cross-section-1-image-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-cross-section-2-images-v1",
+      "digest": "14106cad1f5088af65dda65a4bc833549fc3a40ce7a8f16f0c3406fec3770ddc",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-cross-section-2-images-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-cross-section-3-images-v1",
+      "digest": "5c37d9e6bfa3877d495d234c5c7f87fede3882a59419f7a2452884caf517b107",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-cross-section-3-images-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-microscopy-1-image-v1",
+      "digest": "b169fb5cf236004058f0666ee28979836266168311172efc01c7ec7d5906c6fe",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-microscopy-1-image-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-microscopy-10-images-v1",
+      "digest": "85627e8ca9824274fe61f13276b390a75288a119987053e3a244157ee0f46e8c",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-microscopy-10-images-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-microscopy-2-images-v1",
+      "digest": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-microscopy-2-images-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-microscopy-3-images-v1",
+      "digest": "4a4e7b69a5dba7684fe837779929b4d093fe509cbf398ae37114cd22071b70b4",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-microscopy-3-images-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-microscopy-5-images-v1",
+      "digest": "3b148fd8ccbb28b8fe8e60ceee0e4898c144c1fbe15b8a451ed44e0d2141d38d",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-microscopy-5-images-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-microscopy-6-images-v1",
+      "digest": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-microscopy-6-images-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-microscopy-7-images-v1",
+      "digest": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-microscopy-7-images-v1.xls",
+      "size_bytes": 29184,
+      "version": "1.0.0"
+    },
+    {
+      "asset_id": "gbt36422-microscopy-original-record-v1",
+      "digest": "d2b70e114cb85c89e4961ba2acb1b0cb451656f7a12b5dd5bdbacba1d50f88ba",
+      "kind": "workbook_template",
+      "media_type": "application/vnd.ms-excel",
+      "resource_path": "templates/gbt36422-2018-microscopy-original-record-v1.xls",
+      "size_bytes": 28672,
+      "version": "1.0.0"
+    }
+  ],
+  "distribution_digest": "66c6295b3fdd7ba32294aa770f597dcad23e3eae3fe7f5ae63860758cefd0498",
   "engine_version_range": ">=2.1.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -9,7 +109,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "textile.execution-workbook",
-  "pack_version": "1.1.1",
+  "pack_version": "1.1.2",
   "provides": {
     "capabilities": [
       {
@@ -30,7 +130,7 @@
       {
         "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
         "handler_channel": "worker_callable",
-        "implementation_digest": "fcb71b184e4c3ca054dbcfd02b88032591c7e6db69be2fe565297d0c8b02448c",
+        "implementation_digest": "036a73b096cd8e7e013d9df7375ae3cdb5c4087b86ccd0ee4e802f33d959a10c",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -40,7 +140,7 @@
       {
         "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
         "handler_channel": "worker_callable",
-        "implementation_digest": "791f71140c95146e1d30ecece27ab1e0566df7f9b8c035f5bdd7fecd937cd0d3",
+        "implementation_digest": "a9e712698ecc0c3f7d7fe064656fa4242a105b0b024d7ddde823a0de8166d3ca",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -50,7 +150,7 @@
       {
         "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
         "handler_channel": "worker_callable",
-        "implementation_digest": "6d72ca6d33f16ea8f7a5db7782af0efc5161f8413611a0749e01cf548f9c0569",
+        "implementation_digest": "bfca2f4b18433c42c41b13b698e1a4b6aa2437b9795c17efbf278fda73fb8e9c",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -60,7 +160,7 @@
       {
         "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
         "handler_channel": "worker_callable",
-        "implementation_digest": "19f01fd3e577b71845786dd9b42006ce5aacb9abd5364386cb218e93a642e08d",
+        "implementation_digest": "f63f73f138f9b3cdcdb7239142c94403c2d03273ee666f2ea5a80d01f64e93d1",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -70,7 +170,7 @@
       {
         "contract_digest": "f8c9adaaec636a9653de1831f974fda298753a66d9cb769d6e65a4ec4fc17011",
         "handler_channel": "worker_callable",
-        "implementation_digest": "b095f9a626bd1cf3f99e36db676c771a10da1ef91f875fc9c43a1741030163d1",
+        "implementation_digest": "3a4daa21ffd0978434aaba531d8d865a87319d6a593bf8f48d318fe4915078b4",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-render-node.json",
@@ -90,6 +190,17 @@
     "v2/templates.py",
     "v2/data_handlers.py",
     "v2/resources/node_specs/workbook-render-node.json",
-    "biff_patch.py"
+    "biff_patch.py",
+    "templates/gbt36422-2018-cross-section-1-image-v1.xls",
+    "templates/gbt36422-2018-cross-section-2-images-v1.xls",
+    "templates/gbt36422-2018-cross-section-3-images-v1.xls",
+    "templates/gbt36422-2018-microscopy-1-image-v1.xls",
+    "templates/gbt36422-2018-microscopy-10-images-v1.xls",
+    "templates/gbt36422-2018-microscopy-2-images-v1.xls",
+    "templates/gbt36422-2018-microscopy-3-images-v1.xls",
+    "templates/gbt36422-2018-microscopy-5-images-v1.xls",
+    "templates/gbt36422-2018-microscopy-6-images-v1.xls",
+    "templates/gbt36422-2018-microscopy-7-images-v1.xls",
+    "templates/gbt36422-2018-microscopy-original-record-v1.xls"
   ]
 }
