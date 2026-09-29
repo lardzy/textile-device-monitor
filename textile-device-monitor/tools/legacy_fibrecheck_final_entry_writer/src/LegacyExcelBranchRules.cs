@@ -8,6 +8,17 @@ namespace LegacyFibreCheckFinalEntryWriter
     /// </summary>
     internal static class LegacyExcelBranchRules
     {
+        internal static bool CanSelectTemplate(
+            int schemaVersion, bool legacyProjectSupported,
+            bool legacyTemplateSupported, string inputUiClassName)
+        {
+            // The desktop offers both routes when a project has an input UI and
+            // Excel templates. Schema 5 selects the template explicitly; the
+            // resolver still verifies its unique binding and mapping digest.
+            return schemaVersion == 5 || (legacyProjectSupported
+                && legacyTemplateSupported && string.IsNullOrWhiteSpace(inputUiClassName));
+        }
+
         internal static string ResolveBranch(
             int fixedAttachmentTemplateCount,
             bool gap,

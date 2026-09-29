@@ -141,6 +141,7 @@ namespace LegacyFibreCheckFinalEntryWriter
         private const string ExcelKeyIdentitySql =
             "SELECT okd.\"OriginalRecordID\" \"OriginalRecordID\", " +
             "okd.\"SampleIdentity\" \"SampleIdentity\",okd.\"SeqNum\" \"SeqNum\", " +
+            "okd.\"ConfigGroupKey\" \"ConfigGroupKey\", " +
             "okd.\"CheckItemName\" \"CheckItemName\", " +
             "okd.\"ExcelTemplateName\" \"ExcelTemplateName\" " +
             "FROM \"OriginalKeyData_CheckItem\" okd " +
@@ -373,9 +374,10 @@ namespace LegacyFibreCheckFinalEntryWriter
                 ? package.ExcelRecord.TemplateName == "微观形貌.xls"
                 : FinalEntryPackage.SupportedMicroscopyTemplates.ContainsKey(
                     package.ExcelRecord.TemplateName);
-            if ((package.SchemaVersion != 5 && (!FinalEntryPackage.IsSupportedExcelProject(
-                    package.CheckItemNo, package.CheckItemName) || !templateSupported))
-                || !string.IsNullOrWhiteSpace(snapshot.OriginalDataInputUiClassName))
+            if (!LegacyExcelBranchRules.CanSelectTemplate(
+                package.SchemaVersion, FinalEntryPackage.IsSupportedExcelProject(
+                    package.CheckItemNo, package.CheckItemName), templateSupported,
+                snapshot.OriginalDataInputUiClassName))
             {
                 throw new PackageValidationException("excel_route_not_supported_in_v1");
             }
@@ -457,7 +459,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                         && identity != "纵面" && identity != "横截面";
                     bool identityDuplicate = package.SchemaVersion == 1
                         && !existingIdentities.Add(identity);
-                    string keyIdentity = recordId + "\0" + Text(row, "SeqNum");
+                    string keyIdentity = ExcelResultIdentity.Key(
+                        recordId, Text(row, "ConfigGroupKey"), row["SeqNum"]);
                     linkedRecordIds.Add(recordId);
                     if (!recordIds.Contains(recordId) || snapshot.ExistingKeyIdentityByRecordId.ContainsKey(keyIdentity)
                         || !snapshot.ExistingExcelRecordTemplates.TryGetValue(
@@ -476,6 +479,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                     snapshot.ExistingKeyIdentityByRecordId.Add(keyIdentity, identity);
                     AppendCanonical(identityCanonical, recordId);
                     AppendCanonical(identityCanonical, identity);
+                    AppendCanonical(identityCanonical, Text(row, "ConfigGroupKey"));
                     AppendCanonical(identityCanonical, Text(row, "SeqNum"));
                     AppendCanonical(identityCanonical, Text(row, "CheckItemName"));
                     AppendCanonical(identityCanonical, Text(row, "ExcelTemplateName"));

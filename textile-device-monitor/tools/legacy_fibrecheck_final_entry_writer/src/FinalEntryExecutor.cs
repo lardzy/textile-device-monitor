@@ -331,7 +331,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 sideEffectStarted = true;
                 OriginalKeyDataSet firstData = CollectStandard(package, snapshot, record, stagingPath);
                 RestoreAuthoritativeRegisterFields(package, staff, record);
-                ValidateCollectedData(package, snapshot, staff, record, firstData);
+                var collectedKeys = ValidateCollectedData(package, snapshot, staff, record, firstData);
 
                 emit.Stage("remote_file_copy_started", null);
                 string targetDirectory = Path.GetDirectoryName(targetPath);
@@ -350,7 +350,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 dal.SaveCheckRecordRegister(record, firstData);
                 VerifyExcel(
                     connectionString, package, snapshot, staff, record, targetPath,
-                    firstData.ListData.Count, firstData.OtherData.Count, false);
+                    firstData.ListData.Count, firstData.OtherData.Count, false, collectedKeys);
                 emit.Stage("excel_register_saved_and_verified", null);
 
                 VerifyFile(targetPath, package.ExcelRecord.Workbook.SizeBytes,
@@ -365,7 +365,10 @@ namespace LegacyFibreCheckFinalEntryWriter
                 emit.Stage("excel_proof_save_started", null);
                 OriginalKeyDataSet proofData = CollectStandard(package, snapshot, record, stagingPath);
                 RestoreAuthoritativeRegisterFields(package, staff, record);
-                ValidateCollectedData(package, snapshot, staff, record, proofData);
+                var proofKeys = ValidateCollectedData(package, snapshot, staff, record, proofData);
+                if (!ExcelResultIdentity.Same(collectedKeys, proofKeys))
+                    throw new WriterFailureException("collected_key_identity_changed",
+                        Program.ExitReconciliationRequired, true);
                 // With a detached CRR the official DAL cannot derive CheckItem.No when
                 // deleting OtherData.  The workbook is unchanged, so preserve the rows
                 // saved in the first transaction and do not add a duplicate set.
@@ -373,7 +376,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 dal.SaveCheckRecordRegister(record, proofData);
                 VerifyExcel(
                     connectionString, package, snapshot, staff, record, targetPath,
-                    firstData.ListData.Count, firstData.OtherData.Count, true);
+                    firstData.ListData.Count, firstData.OtherData.Count, true, collectedKeys);
                 emit.Stage("excel_proof_verified", new SortedDictionary<string, object>
                 {
                     { "key_result_count", package.ExcelRecord.KeyResultCount },
@@ -419,7 +422,7 @@ namespace LegacyFibreCheckFinalEntryWriter
             return service.CollectData();
         }
 
-        private static void ValidateCollectedData(
+        private static Dictionary<string, string> ValidateCollectedData(
             FinalEntryPackage package, PreflightSnapshot snapshot,
             LegacyLoginFlow.StaffContext staff, CheckRecordRegister record,
             OriginalKeyDataSet data)
@@ -451,6 +454,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                     "collected_register_fields_mismatch",
                     Program.ExitReconciliationRequired, true);
             }
+            var collectedKeys = new Dictionary<string, string>(StringComparer.Ordinal);
             bool identityFound = string.IsNullOrWhiteSpace(package.ExcelRecord.Register.SampleIdentity);
             for (int index = 0; index < data.CheckItemInfoData.Count; index++)
             {
@@ -470,7 +474,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 {
                     scopeField = "sample_no";
                 }
-                else if (item.SeqNum != (package.SchemaVersion == 5 ? index + 1 : 1))
+                else if (package.SchemaVersion != 5 && item.SeqNum != 1)
                 {
                     scopeField = "seq_num";
                 }
@@ -496,6 +500,11 @@ namespace LegacyFibreCheckFinalEntryWriter
                         "collected_key_identity_mismatch",
                         Program.ExitReconciliationRequired, true);
                 }
+                string key = ExcelResultIdentity.Key(record.ID, item.ConfigGroupKey, item.SeqNum);
+                if (collectedKeys.ContainsKey(key))
+                    throw new WriterFailureException("collected_key_identity_duplicate",
+                        Program.ExitReconciliationRequired, true);
+                collectedKeys.Add(key, package.ExcelRecord.ExpectedKeyIdentities[index]);
                 if (item.SampleIdentity == package.ExcelRecord.Register.SampleIdentity)
                 {
                     identityFound = true;
@@ -507,6 +516,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                     "collected_sample_identity_mismatch",
                     Program.ExitReconciliationRequired, true);
             }
+            return collectedKeys;
         }
 
         private static void RestoreAuthoritativeRegisterFields(
@@ -685,11 +695,11 @@ namespace LegacyFibreCheckFinalEntryWriter
         private static void VerifyExcel(
             string connectionString, FinalEntryPackage package, PreflightSnapshot snapshot,
             LegacyLoginFlow.StaffContext staff, CheckRecordRegister record, string targetPath,
-            int listCount, int otherCount, bool proofExpected)
+            int listCount, int otherCount, bool proofExpected, IDictionary<string, string> collectedKeys)
         {
             FinalEntryReadback.VerifyExcel(
                 connectionString, package, snapshot, staff, record, targetPath,
-                listCount, otherCount, proofExpected);
+                listCount, otherCount, proofExpected, collectedKeys);
         }
     }
 }

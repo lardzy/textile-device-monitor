@@ -70,8 +70,20 @@ try {
     $branchOutput = @(& $branchSelfTest 2>&1 | ForEach-Object { $_.ToString() })
     $branchExitCode = $LASTEXITCODE
     if ($branchExitCode -ne 0 `
-        -or ($branchOutput -join "`n") -notmatch 'Legacy Excel branch rules self-test: 6 passed') {
+        -or ($branchOutput -join "`n") -notmatch 'Legacy Excel branch rules self-test: 12 passed') {
         throw "Legacy Excel branch rules SelfTest failed: $branchExitCode`n$($branchOutput -join "`n")"
+    }
+    $passed++
+
+    $identitySelfTest = Join-Path $outDir 'ExcelResultIdentitySelfTest.exe'
+    & $csc -nologo -target:exe -codepage:65001 -utf8output -debug- -optimize+ `
+        -out:"$identitySelfTest" `
+        (Join-Path $PSScriptRoot 'src\ExcelResultIdentity.cs') `
+        (Join-Path $PSScriptRoot 'tests\ExcelResultIdentitySelfTest.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Excel result identity SelfTest compilation failed' }
+    $identityOutput = @(& $identitySelfTest 2>&1 | ForEach-Object { $_.ToString() })
+    if ($LASTEXITCODE -ne 0 -or ($identityOutput -join "`n") -notmatch 'Excel result identity self-test: 9 passed') {
+        throw "Excel result identity SelfTest failed: $($identityOutput -join "`n")"
     }
     $passed++
 

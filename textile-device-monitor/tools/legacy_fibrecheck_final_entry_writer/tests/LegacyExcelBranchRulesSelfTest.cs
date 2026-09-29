@@ -8,6 +8,25 @@ namespace LegacyFibreCheckFinalEntryWriter
 
         private static void Main()
         {
+            Equal(true, LegacyExcelBranchRules.CanSelectTemplate(
+                5, false, false,
+                "Toone.FibreCheck.OriRecord.CurrencyItem.CurrencyItemRecordUI"),
+                "neutral Excel route can coexist with the generic input UI");
+            Equal(true, LegacyExcelBranchRules.CanSelectTemplate(
+                5, false, false, ""),
+                "neutral Excel route does not depend on legacy business allowlists");
+            Equal(false, LegacyExcelBranchRules.CanSelectTemplate(
+                2, true, true, "ExistingUI"),
+                "older package preserves its input UI restriction");
+            Equal(false, LegacyExcelBranchRules.CanSelectTemplate(
+                2, false, true, ""),
+                "older package preserves its project restriction");
+            Equal(false, LegacyExcelBranchRules.CanSelectTemplate(
+                2, true, false, ""),
+                "older package preserves its template restriction");
+            Equal(true, LegacyExcelBranchRules.CanSelectTemplate(
+                2, true, true, ""),
+                "older supported Excel package still works");
             Equal(
                 "gap",
                 LegacyExcelBranchRules.ResolveBranch(
@@ -66,9 +85,9 @@ namespace LegacyFibreCheckFinalEntryWriter
                 "Legacy Excel branch rules self-test: " + passed + " passed");
         }
 
-        private static void Equal(string expected, string actual, string name)
+        private static void Equal<T>(T expected, T actual, string name)
         {
-            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+            if (!object.Equals(expected, actual))
             {
                 throw new InvalidOperationException(
                     name + ": expected " + expected + ", actual " + actual);

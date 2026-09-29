@@ -9,7 +9,9 @@
     #        ReviewUserItem1 留空、不再写 OriginalDataPictureFile 子记录）
     # 1.1.0：中性原始记录上传/复核及 schema 4 通用登记；新版精确能力广告。
     # 1.2.0：schema 5 中性 Excel 登记，项目/模板/字段和结果数量来自 JSON。
-    PackageVersion    = '1.2.0'
+    # 1.2.1：Excel 模板与通用录入界面共存时，按明确模板执行 schema 5 登记。
+    # 1.2.2：保留模板实际分组及可空序号，按采集身份回读；不假定序号从 1 连续。
+    PackageVersion    = '1.2.2'
 
     # 执行系统源码树（含 tools\*；writer 已编译产物在其 out\ 下）
     RepoSourceRoot    = 'C:\Users\lishuyang\Downloads\textile-device-monitor-cdde9ec\textile-device-monitor'
@@ -30,8 +32,8 @@
     # Writer 源可执行文件 SHA-256 钉值：与本次验收通过的编译产物绑定。
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
-        'FibreCheckWriter.exe'           = '60f13e956c87d19b88d337e790846ad682f923ae92a36ac4b92a53426602837f'
-        'FibreCheckFinalEntryWriter.exe' = '154683fd78f81744bd4f327cc5c91561212d7fda9a80c30b4ff587c2cf3c790a'
+        'FibreCheckWriter.exe'           = 'baa44cf2cf008d3f5c65c213e0ae7ee7327058f281a628d1ceaa7c296c3f3c99'
+        'FibreCheckFinalEntryWriter.exe' = '19a13fa49ef0c90a3d09b51667e9a581f821b83d8706ae9e256e3306a10c64d2'
     }
 
     # probe 离线依赖打包时的 pip 源（构建机需要能访问；--no-input）

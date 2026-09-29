@@ -61,6 +61,7 @@ namespace LegacyFibreCheckFinalEntryWriter
         private const string ExcelProjectKeySql =
             "SELECT \"OriginalRecordID\" \"OriginalRecordID\", " +
             "\"SampleIdentity\" \"SampleIdentity\",\"SeqNum\" \"SeqNum\", " +
+            "\"ConfigGroupKey\" \"ConfigGroupKey\", " +
             "\"CheckItemName\" \"CheckItemName\", " +
             "\"ExcelTemplateName\" \"ExcelTemplateName\" " +
             "FROM \"OriginalKeyData_CheckItem\" " +
@@ -175,7 +176,7 @@ namespace LegacyFibreCheckFinalEntryWriter
         internal static void VerifyExcel(
             string connectionString, FinalEntryPackage package, PreflightSnapshot snapshot,
             LegacyLoginFlow.StaffContext staff, CheckRecordRegister record, string targetPath,
-            int listCount, int otherCount, bool proofExpected)
+            int listCount, int otherCount, bool proofExpected, IDictionary<string, string> collectedKeys)
         {
             VerifyWorkbook(targetPath, package.ExcelRecord.Workbook);
             if (record == null || string.IsNullOrWhiteSpace(record.ID))
@@ -291,9 +292,10 @@ namespace LegacyFibreCheckFinalEntryWriter
                             StringComparer.Ordinal);
                     if (expectedIdentitiesByRecordId.Count != snapshot.ExistingKeyResultCount)
                         throw Reconciliation("excel_readback_existing_key_identity_mismatch");
-                    for (int index = 0; index < package.ExcelRecord.ExpectedKeyIdentities.Count; index++)
-                        expectedIdentitiesByRecordId.Add(record.ID + "\0" + (index + 1).ToString(),
-                            package.ExcelRecord.ExpectedKeyIdentities[index]);
+                    if (collectedKeys.Count != package.ExcelRecord.KeyResultCount)
+                        throw Reconciliation("excel_readback_collected_key_count_mismatch");
+                    foreach (var collected in collectedKeys)
+                        expectedIdentitiesByRecordId.Add(collected.Key, collected.Value);
                     var remainingKeyRecordIds = new HashSet<string>(
                         expectedIdentitiesByRecordId.Keys, StringComparer.Ordinal);
                     using (DataTable projectKeys = db.Query(
@@ -308,7 +310,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                             string keyRecordId = Text(row, "OriginalRecordID");
                             string expectedIdentity;
                             string expectedTemplate;
-                            string keyIdentity = keyRecordId + "\0" + Text(row, "SeqNum");
+                            string keyIdentity = ExcelResultIdentity.Key(
+                                keyRecordId, Text(row, "ConfigGroupKey"), row["SeqNum"]);
                             if (!remainingKeyRecordIds.Remove(keyIdentity)
                                 || !expectedIdentitiesByRecordId.TryGetValue(
                                     keyIdentity, out expectedIdentity)
