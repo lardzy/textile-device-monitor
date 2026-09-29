@@ -625,7 +625,7 @@
                   "mapping_config_sha256": "f4405667ac7b8febeaddcba78fad63df1c19cbe1821ec062ae023f0d6c800c5b"
                 }
               },
-              "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/5-按客户要求图片-特纤",
+              "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/5-按客户要求图片-特纤/{number}",
               "filename_pattern": "{number}{identity}-{sequence}.{ext}",
               "upload_fields": {
                 "fiber_category": "图片",
@@ -2632,7 +2632,7 @@
     "packs": [
       {
         "pack_id": "legacy_fibrecheck.v1-compat",
-        "version_range": ">=2.1.0 <3.0.0",
+        "version_range": ">=2.1.1 <3.0.0",
         "required_on": [
           "api",
           "worker",
@@ -2657,7 +2657,7 @@
       },
       {
         "pack_id": "textile.execution-kernel",
-        "version_range": ">=2.12.0 <3.0.0",
+        "version_range": ">=2.12.1 <3.0.0",
         "required_on": [
           "api",
           "worker"
@@ -2706,8 +2706,8 @@
     "category_key": "other",
     "description": "按业务方案匹配项目和方法；选图、记录生成、共享图片及检务登记；规则完整随 JSON 分发。",
     "name": "微观形貌",
-    "release_note": "",
-    "release_version": 1,
+    "release_note": "filetype-number-folder",
+    "release_version": 5,
     "slug": "fiber-microscopy-v2"
   },
   "resources": {
@@ -2753,7 +2753,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "6bbd4cd5d14d035e135b7deff6bcddd8117168ff7fde5ed91171cf5b46c2954a",
+    "digest": "c4b23d9e22b1cd48a9f9a1ec64b40dbed95882a4db3eb4c7a539fbf155cffe40",
     "signatures": []
   }
 }

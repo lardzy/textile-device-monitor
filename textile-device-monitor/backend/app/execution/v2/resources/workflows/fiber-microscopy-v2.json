@@ -625,7 +625,7 @@
                   "mapping_config_sha256": "f4405667ac7b8febeaddcba78fad63df1c19cbe1821ec062ae023f0d6c800c5b"
                 }
               },
-              "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/5-按客户要求图片-特纤",
+              "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/5-按客户要求图片-特纤/{number}",
               "filename_pattern": "{number}{identity}-{sequence}.{ext}",
               "upload_fields": {
                 "fiber_category": "图片",
@@ -2632,7 +2632,7 @@
     "packs": [
       {
         "pack_id": "legacy_fibrecheck.v1-compat",
-        "version_range": ">=2.1.0 <3.0.0",
+        "version_range": ">=2.1.1 <3.0.0",
         "required_on": [
           "api",
           "worker",
@@ -2657,7 +2657,7 @@
       },
       {
         "pack_id": "textile.execution-kernel",
-        "version_range": ">=2.12.0 <3.0.0",
+        "version_range": ">=2.12.1 <3.0.0",
         "required_on": [
           "api",
           "worker"
@@ -2753,7 +2753,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "6bbd4cd5d14d035e135b7deff6bcddd8117168ff7fde5ed91171cf5b46c2954a",
+    "digest": "975734f70ba626a5b32485431ceb0f41bb03bc612719e311aadb5858499e0961",
     "signatures": []
   }
 }

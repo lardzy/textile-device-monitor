@@ -99,7 +99,7 @@
         "mapping_config_sha256": "f4405667ac7b8febeaddcba78fad63df1c19cbe1821ec062ae023f0d6c800c5b"
       }
     },
-    "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/5-按客户要求图片-特纤",
+    "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/5-按客户要求图片-特纤/{number}",
     "filename_pattern": "{number}{identity}-{sequence}.{ext}",
     "upload_fields": {
       "fiber_category": "图片",

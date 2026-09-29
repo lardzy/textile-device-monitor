@@ -39,6 +39,15 @@ def test_copy_names_fields_and_template_choice_are_portable():
     assert data['target_directory'].endswith('/260191178')
 
 
+def test_customer_profile_places_images_in_the_number_folder():
+    profile = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles'][1]
+    result = trial('payload', **{**payload(), 'inspection_number': '260221991'},
+                   rules=profile, templates=profile['templates'])
+    assert result['passed'], result
+    assert result['output']['target_directory'] == '数据分析中心/3-报告上传图片/8-材料检测中心/5-按客户要求图片-特纤/260221991'
+    assert [f['target_filename'] for f in result['output']['files']] == [f'260221991-正-反面-{i}.bmp' for i in (1, 2, 3)]
+
+
 @pytest.mark.parametrize('count',[1,2,3,5,6,7,10,'customer-1','customer-2','customer-3','customer-4'])
 def test_every_registration_template_keeps_literal_feed_cells(tmp_path,count):
     node=next(n for n in document()['definition']['nodes'] if n['id']=='check')

@@ -1,6 +1,6 @@
 # Workflow Release v2 可评审设计
 
-状态（2026-09-22）：当前为基础节点和内嵌 Python 重建的纸浆 v8、纤维微观形貌 v3，共 33 份 NodeSpec、41 个精确能力绑定，由同一个当前 Worker 执行。通用图片查询/选图、XLS 图片渲染、共享文件放置和 Excel 采集登记已完成；Windows Bridge/Writer 1.2.0 已部署，`260191178` 已真实放置图片、上传、复核、登记并独立回读。纸浆升级后的完整链路通过隔离回归，本轮未再次写入纸浆检务记录。详见[微观形貌与统一升级交付](./microscopy-rebuild-delivery.md)、[微观形貌 JSON](./examples/fiber-microscopy-v2.json)及[纸浆 JSON](./examples/paper-fiber-v2.json)。此前纸浆真实验收见[纸浆重建交付](./paper-rebuild-delivery.md)。
+状态（2026-09-29）：当前为纸浆 v10、微观形貌 v5，共 35 份 NodeSpec、43 个精确能力绑定，由统一 Worker 执行。微观形貌已有可管理的业务方案、分组选图及同版本顺序执行；`260221991` 的正面、反面、横截面三组已真实放置四张图片，完成三次上传、复核和 Excel 登记并独立回读。Windows Bridge/Writer 1.2.3 已部署；本次发现的上传文件类型遗漏已修复代码，并原位补齐三条记录，旧客户端双击打开仍待用户复验。此前两条同源测试记录的补齐范围待确认。纸浆本轮仅发布统一能力版本，未重复真实提交。详见[业务方案与分组交付](./microscopy-profiles-delivery.md)、[微观形貌 JSON](./examples/fiber-microscopy-v2.json)、[纸浆 JSON](./examples/paper-fiber-v2.json)。此前验收见[微观形貌重建交付](./microscopy-rebuild-delivery.md)和[纸浆重建交付](./paper-rebuild-delivery.md)。
 
 下表及旧迁移章节保留 P0–P5 的历史设计与交付背景；9/9 迁移候选、旧业务组合及 P1 兼容 Worker 已不再是当前目录/部署能力。JSON 规则分发、安装/共享模板目录、独立适配器和发布时精确冻结继续沿用。
 

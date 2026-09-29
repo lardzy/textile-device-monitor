@@ -1,0 +1,584 @@
+{
+  "generated_at": "2026-09-29T02:39:21.919837+00:00",
+  "sample_number": "260221991",
+  "project": "5103.05",
+  "method": "按客户要求",
+  "parent_run_id": "00799ad7-d354-46ab-9a04-2fa1bc00f986",
+  "executed_workflow_version": 4,
+  "published_versions": {
+    "microscopy": 5,
+    "paper": 10
+  },
+  "packs": {
+    "textile.execution-workbook": "2.12.0",
+    "textile.execution-data": "1.0.2",
+    "textile.execution-kernel": "2.12.1",
+    "textile.execution-files": "1.4.0",
+    "legacy_fibrecheck.v1-compat": "2.1.1"
+  },
+  "windows_version": "1.2.3",
+  "upload_writer_sha256": "8f9c61daaf1f4143cbfc736bf4379671045c2adebbdf02ede3e1c57d8c4d502a",
+  "entry_writer_sha256": "19a13fa49ef0c90a3d09b51667e9a581f821b83d8706ae9e256e3306a10c64d2",
+  "built_images": {
+    "textile-device-monitor-backend": "sha256:f77b4b965ca50d5fbea8b2422b6b1c6210a15e5e932b0fcb6554391f7bb47fac",
+    "textile-device-monitor-execution-worker": "sha256:a856f121891fa9bd914321ff7925a6456b7ec6467d95d5f323c0e445a5c6ce9e",
+    "textile-device-monitor-frontend": "sha256:c117c330ca3e8b3c1d52723d74b6ba8c8129d3b28d00084c6da9c0db23a6ee75"
+  },
+  "deployment_note": "Existing containers patched in place and restarted; their original container/image references retained. Fresh images also built. No volume or business data removed.",
+  "before_counts": {
+    "uploads": 0,
+    "registers": 0,
+    "keys": 0
+  },
+  "after_counts": {
+    "uploads": 3,
+    "registers": 3,
+    "keys": 3,
+    "file_references": 3,
+    "proofed": 3
+  },
+  "duplicate_records_created": 0,
+  "groups": [
+    {
+      "label": "薄膜正面",
+      "run_id": "aaec64a6-59a2-46e4-87aa-197d11974a6e",
+      "status": "completed",
+      "upload_operation_id": "8833f1a0-c79f-45cf-8997-de8782181d8e",
+      "upload_number": "260221991",
+      "upload_record_id": "sha256:4ab4b374f38408d6",
+      "entry_operation_id": "c771cdbc-a221-4946-97c1-72d010380424",
+      "register_id": "sha256:5ee01d36f27c6681",
+      "proofed": true,
+      "files": {
+        "current_verified_directory": "\\\\192.168.105.82\\公共交换文件\\数据分析中心\\3-报告上传图片\\8-材料检测中心\\5-按客户要求图片-特纤\\260221991",
+        "relocated_by_user": true,
+        "group": "薄膜正面",
+        "run_id": "aaec64a6-59a2-46e4-87aa-197d11974a6e",
+        "placed_files": [
+          {
+            "source_id": "fb92829e-fad4-45b2-b3da-3c696af630e9",
+            "size_bytes": 1229878,
+            "content_sha256": "0640ee574a3dc4da07a41f892825ff6a2354ae308acde84a86e91aaa9c438c51",
+            "target_filename": "260221991-薄膜正面-1.bmp",
+            "source_fingerprint": "1229878:1790500597687500000",
+            "source_relative_path": "260221991/N_q01.bmp",
+            "target_sha256_verified": true
+          }
+        ],
+        "placement": {
+          "placed_count": 1,
+          "reused_count": 0,
+          "display_directory": "\\\\192.168.105.82\\公共交换文件\\数据分析中心\\3-报告上传图片\\8-材料检测中心\\5-按客户要求图片-特纤"
+        },
+        "workbooks": [
+          {
+            "id": "6e9c69ea-4e00-498e-b541-d14abd1b76d6",
+            "filename": "微观形貌-原始记录.xls",
+            "sha256": "00107d62da5bd2156954dfa6c78081099ec334a3355e8ac18442ccc6b6cabfbb",
+            "cells": {}
+          },
+          {
+            "id": "b0d536c5-06f6-4e6d-b0e8-091dfff79b9a",
+            "filename": "微观形貌-检务登记.xls",
+            "sha256": "b4671ba49a1bbe44ea499ec5e12c516740fbfd07c1a952468f9982720ebc115b",
+            "cells": {
+              "C7": "微观形貌",
+              "AS4": "260221991",
+              "BI7": "微观形貌",
+              "BK7": "薄膜正面",
+              "BI8": "按客户要求",
+              "BI9": "",
+              "BI10": "",
+              "BI11": "",
+              "BI12": "",
+              "BI13": ""
+            }
+          }
+        ],
+        "render_verification": {
+          "uno": {
+            "cells": {
+              "A1": "微观形貌检验原始记录",
+              "B2": "260221991",
+              "B3": "重装徒步冲锋衣 7号",
+              "L3": "薄膜正面",
+              "B33": "",
+              "B34": "",
+              "B35": "",
+              "I33": "",
+              "I34": ""
+            },
+            "canvas": {
+              "width": 21600,
+              "height": 11700,
+              "biff_excel_x_scale": 1.0
+            },
+            "images": [
+              {
+                "x": 2999,
+                "y": 0,
+                "index": 0,
+                "width": 15583,
+                "height": 11698,
+                "encoded": {
+                  "x": 2999,
+                  "y": 0,
+                  "width": 15583,
+                  "height": 11698
+                },
+                "logical": {
+                  "x": 2999,
+                  "y": 0,
+                  "width": 15583,
+                  "height": 11698
+                },
+                "source_id": "fb92829e-fad4-45b2-b3da-3c696af630e9",
+                "resize_with_cell": false
+              }
+            ],
+            "reopened": true,
+            "verified": true,
+            "print_area": "$A$1:$L$37",
+            "image_count": 1,
+            "number_formats": {
+              "K2": "YYYY/M/D"
+            },
+            "print_area_verified": true,
+            "number_format_verified": true,
+            "ordinary_print_area_removed": true
+          },
+          "geometry": {
+            "scale": 1.0,
+            "issues": [],
+            "verified": true,
+            "non_overlapping": true,
+            "geometry_tolerance": 216
+          },
+          "print_area": "$A$1:$L$37",
+          "cells_verified": 9,
+          "images_written": 1
+        }
+      }
+    },
+    {
+      "label": "薄膜反面",
+      "run_id": "93ca3f8b-ecea-47f2-9e67-1376835bbf8b",
+      "status": "completed",
+      "upload_operation_id": "abfb5cd2-a1a1-4fd5-8d44-1d90bab673d1",
+      "upload_number": "260221991-1",
+      "upload_record_id": "sha256:19e96e4b3969894e",
+      "entry_operation_id": "044c4b19-363e-4281-ada4-1af27c2a1da1",
+      "register_id": "sha256:6c6740f368cb78a4",
+      "proofed": true,
+      "files": {
+        "current_verified_directory": "\\\\192.168.105.82\\公共交换文件\\数据分析中心\\3-报告上传图片\\8-材料检测中心\\5-按客户要求图片-特纤\\260221991",
+        "relocated_by_user": true,
+        "group": "薄膜反面",
+        "run_id": "93ca3f8b-ecea-47f2-9e67-1376835bbf8b",
+        "placed_files": [
+          {
+            "source_id": "bd044693-0caa-4e81-833a-c5bad1438598",
+            "size_bytes": 1229878,
+            "content_sha256": "610f09442a5385fb061e15a9a12d9eb14c1f6231943cca91206576075b4cce24",
+            "target_filename": "260221991-薄膜反面-1.bmp",
+            "source_fingerprint": "1229878:1790499702437500000",
+            "source_relative_path": "260221991/W_q02.bmp",
+            "target_sha256_verified": true
+          }
+        ],
+        "placement": {
+          "placed_count": 1,
+          "reused_count": 0,
+          "display_directory": "\\\\192.168.105.82\\公共交换文件\\数据分析中心\\3-报告上传图片\\8-材料检测中心\\5-按客户要求图片-特纤"
+        },
+        "workbooks": [
+          {
+            "id": "a1759127-8b6d-4b2d-ae28-d97d31837c2d",
+            "filename": "微观形貌-原始记录.xls",
+            "sha256": "5b9601b3f9e8556933ead27d491382ac26b7911fe3c9153d84646f0b01d492f8",
+            "cells": {}
+          },
+          {
+            "id": "0a65247f-77f8-41e6-814e-4c63afb76342",
+            "filename": "微观形貌-检务登记.xls",
+            "sha256": "8def2c7946cd3f36a3f0a9d655cc51fe57f14f943b8dbb77107ec27be281c028",
+            "cells": {
+              "C7": "微观形貌",
+              "AS4": "260221991",
+              "BI7": "微观形貌",
+              "BK7": "薄膜反面",
+              "BI8": "按客户要求",
+              "BI9": "",
+              "BI10": "",
+              "BI11": "",
+              "BI12": "",
+              "BI13": ""
+            }
+          }
+        ],
+        "render_verification": {
+          "uno": {
+            "cells": {
+              "A1": "微观形貌检验原始记录",
+              "B2": "260221991",
+              "B3": "重装徒步冲锋衣 7号",
+              "L3": "薄膜反面",
+              "B33": "",
+              "B34": "",
+              "B35": "",
+              "I33": "",
+              "I34": ""
+            },
+            "canvas": {
+              "width": 21600,
+              "height": 11700,
+              "biff_excel_x_scale": 1.0
+            },
+            "images": [
+              {
+                "x": 2999,
+                "y": 0,
+                "index": 0,
+                "width": 15583,
+                "height": 11698,
+                "encoded": {
+                  "x": 2999,
+                  "y": 0,
+                  "width": 15583,
+                  "height": 11698
+                },
+                "logical": {
+                  "x": 2999,
+                  "y": 0,
+                  "width": 15583,
+                  "height": 11698
+                },
+                "source_id": "bd044693-0caa-4e81-833a-c5bad1438598",
+                "resize_with_cell": false
+              }
+            ],
+            "reopened": true,
+            "verified": true,
+            "print_area": "$A$1:$L$37",
+            "image_count": 1,
+            "number_formats": {
+              "K2": "YYYY/M/D"
+            },
+            "print_area_verified": true,
+            "number_format_verified": true,
+            "ordinary_print_area_removed": true
+          },
+          "geometry": {
+            "scale": 1.0,
+            "issues": [],
+            "verified": true,
+            "non_overlapping": true,
+            "geometry_tolerance": 216
+          },
+          "print_area": "$A$1:$L$37",
+          "cells_verified": 9,
+          "images_written": 1
+        }
+      }
+    },
+    {
+      "label": "薄膜横截面",
+      "run_id": "4ec4b238-fb67-436a-bed4-cb6c86e88d56",
+      "status": "completed",
+      "upload_operation_id": "f8cbe88f-3154-4426-9d20-48b3590afd18",
+      "upload_number": "260221991-2",
+      "upload_record_id": "sha256:7613caed4a312146",
+      "entry_operation_id": "79cd9d52-5a1d-44be-a551-e2bd418bc81e",
+      "register_id": "sha256:5d0c6f0e47fe5e11",
+      "proofed": true,
+      "files": {
+        "current_verified_directory": "\\\\192.168.105.82\\公共交换文件\\数据分析中心\\3-报告上传图片\\8-材料检测中心\\5-按客户要求图片-特纤\\260221991",
+        "relocated_by_user": true,
+        "group": "薄膜横截面",
+        "run_id": "4ec4b238-fb67-436a-bed4-cb6c86e88d56",
+        "placed_files": [
+          {
+            "source_id": "2dbf9a3b-90b2-43c9-a190-f1497387f668",
+            "size_bytes": 1229878,
+            "content_sha256": "3b6e09917ae31c1826a0cdab7de1db421d2c034a1866db90d1d3f697ebf50b2d",
+            "target_filename": "260221991-薄膜横截面-1.bmp",
+            "source_fingerprint": "1229878:1790501325296875000",
+            "source_relative_path": "260221991/H_q01.bmp",
+            "target_sha256_verified": true
+          },
+          {
+            "source_id": "23c34bef-e12f-4820-ab04-52ec55742c57",
+            "size_bytes": 1229878,
+            "content_sha256": "6bd5e57561f4971f9ad879bf60ccedd50e4336371457bf557151a2bb1b21148c",
+            "target_filename": "260221991-薄膜横截面-2.bmp",
+            "source_fingerprint": "1229878:1790501658281250000",
+            "source_relative_path": "260221991/H_q07.bmp",
+            "target_sha256_verified": true
+          }
+        ],
+        "placement": {
+          "placed_count": 2,
+          "reused_count": 0,
+          "display_directory": "\\\\192.168.105.82\\公共交换文件\\数据分析中心\\3-报告上传图片\\8-材料检测中心\\5-按客户要求图片-特纤"
+        },
+        "workbooks": [
+          {
+            "id": "19b3c837-a45a-4378-b4e5-63fe4c7d8b8a",
+            "filename": "微观形貌-原始记录.xls",
+            "sha256": "ad701bf461dedc5ee4c2023a41afa18b91cead4c03117d3fd1933fc59c667dd3",
+            "cells": {}
+          },
+          {
+            "id": "887e882a-b078-440f-a66e-470c5e29b9d5",
+            "filename": "微观形貌-检务登记.xls",
+            "sha256": "6fac56931b37a1617f1889b5a1a244eba4d4288faa0c39fd9f04f3a0b7c07afb",
+            "cells": {
+              "C7": "微观形貌",
+              "AS4": "260221991",
+              "BI7": "微观形貌",
+              "BK7": "薄膜横截面",
+              "BI8": "按客户要求",
+              "BI9": "",
+              "BI10": "",
+              "BI11": "",
+              "BI12": "",
+              "BI13": ""
+            }
+          }
+        ],
+        "render_verification": {
+          "uno": {
+            "cells": {
+              "A1": "微观形貌检验原始记录",
+              "B2": "260221991",
+              "B3": "重装徒步冲锋衣 7号",
+              "L3": "薄膜横截面",
+              "B33": "",
+              "B34": "",
+              "B35": "",
+              "I33": "",
+              "I34": ""
+            },
+            "canvas": {
+              "width": 21600,
+              "height": 11700,
+              "biff_excel_x_scale": 1.0
+            },
+            "images": [
+              {
+                "x": 0,
+                "y": 1799,
+                "index": 0,
+                "width": 10793,
+                "height": 8098,
+                "encoded": {
+                  "x": 0,
+                  "y": 1799,
+                  "width": 10793,
+                  "height": 8098
+                },
+                "logical": {
+                  "x": 0,
+                  "y": 1799,
+                  "width": 10793,
+                  "height": 8098
+                },
+                "source_id": "2dbf9a3b-90b2-43c9-a190-f1497387f668",
+                "resize_with_cell": false
+              },
+              {
+                "x": 10791,
+                "y": 1799,
+                "index": 1,
+                "width": 10792,
+                "height": 8098,
+                "encoded": {
+                  "x": 10791,
+                  "y": 1799,
+                  "width": 10792,
+                  "height": 8098
+                },
+                "logical": {
+                  "x": 10791,
+                  "y": 1799,
+                  "width": 10792,
+                  "height": 8098
+                },
+                "source_id": "23c34bef-e12f-4820-ab04-52ec55742c57",
+                "resize_with_cell": false
+              }
+            ],
+            "reopened": true,
+            "verified": true,
+            "print_area": "$A$1:$L$37",
+            "image_count": 2,
+            "number_formats": {
+              "K2": "YYYY/M/D"
+            },
+            "print_area_verified": true,
+            "number_format_verified": true,
+            "ordinary_print_area_removed": true
+          },
+          "geometry": {
+            "scale": 1.0,
+            "issues": [],
+            "verified": true,
+            "non_overlapping": true,
+            "geometry_tolerance": 216
+          },
+          "print_area": "$A$1:$L$37",
+          "cells_verified": 9,
+          "images_written": 2
+        }
+      }
+    }
+  ],
+  "file_type_repair": {
+    "read_only": false,
+    "deleted_rows": 0,
+    "deleted_files": 0,
+    "changed_records": [
+      "260221991",
+      "260221991-1",
+      "260221991-2"
+    ],
+    "records": [
+      {
+        "number": "260191178-2",
+        "id": "sha256:f7c51070d3cbc42b",
+        "operation_id": "115f5483-15b9-4d24-9b09-ef5cfd1e267a",
+        "before_file_type": null,
+        "after_file_type": null,
+        "expected_file_type": "定量试验",
+        "filename": "260191178-2-f39bd70c2968d08c70ac362582c351dc190187fd02a17b49a2099bf8acc44be3.xls",
+        "before_fingerprint": "d13c3b3287c78e9462979668fcbb756526da6fea03048d4328ea65e91146a0f8",
+        "after_fingerprint": "d13c3b3287c78e9462979668fcbb756526da6fea03048d4328ea65e91146a0f8",
+        "changed_columns": [],
+        "viewer_file_type_available": false
+      },
+      {
+        "number": "260221991",
+        "id": "sha256:4ab4b374f38408d6",
+        "operation_id": "8833f1a0-c79f-45cf-8997-de8782181d8e",
+        "before_file_type": null,
+        "after_file_type": "定量试验",
+        "expected_file_type": "定量试验",
+        "filename": "260221991-923156561e569f27496ea0913345518efb77f2f5afb4cf762b8e6fa6325dbf99.xls",
+        "before_fingerprint": "8a1c64bfc4e21c0d9c26709ffac93b5301cc5956722c6cfce5c7f93031752494",
+        "after_fingerprint": "6f9e30008f3bd63f3f5448be0d4339376076f975858341aa4a45474d810d8ce4",
+        "changed_columns": [
+          "FileType"
+        ],
+        "viewer_file_type_available": true
+      },
+      {
+        "number": "260221991-1",
+        "id": "sha256:19e96e4b3969894e",
+        "operation_id": "abfb5cd2-a1a1-4fd5-8d44-1d90bab673d1",
+        "before_file_type": null,
+        "after_file_type": "定量试验",
+        "expected_file_type": "定量试验",
+        "filename": "260221991-1-0d334a3a8182cf76f1a70f89cc52453bce65a1673d48f6ed185e8bfec90805f8.xls",
+        "before_fingerprint": "b2212c319f76a49051f6fa539ab986b2f26be5fe9875bda9cfb63665735d1b86",
+        "after_fingerprint": "41ddae570bd1945c2547b6709b2b6b90fc580bf6a106e91590688a990ec51e8e",
+        "changed_columns": [
+          "FileType"
+        ],
+        "viewer_file_type_available": true
+      },
+      {
+        "number": "260221991-2",
+        "id": "sha256:7613caed4a312146",
+        "operation_id": "f8cbe88f-3154-4426-9d20-48b3590afd18",
+        "before_file_type": null,
+        "after_file_type": "定量试验",
+        "expected_file_type": "定量试验",
+        "filename": "260221991-2-e311e154996dff18f5690d25d9bbf4afcfb599471cfc8a5427e763f7a6177237.xls",
+        "before_fingerprint": "14252c3407a43984d6678a413a23ef9b68c191bfbed08d6a7c5f2e52c1248238",
+        "after_fingerprint": "ad87b8cd82b5f13ef83f43f0b3ebef332d4984845a1a3e8987df7c10bccc47ff",
+        "changed_columns": [
+          "FileType"
+        ],
+        "viewer_file_type_available": true
+      },
+      {
+        "number": "26W006824-2",
+        "id": "sha256:54fb2c75b8ac92e4",
+        "operation_id": "f82b37fa-fee3-4604-b03e-8674ec4c3e14",
+        "before_file_type": null,
+        "after_file_type": null,
+        "expected_file_type": "定量试验",
+        "filename": "26W006824-2-26W006824-107-8A-（纸类）纤维组成定性分析检验原始记录GB T 4688定量试验.xls",
+        "before_fingerprint": "d5282174f50a455d6ec76ff30bd6591ad898d62d30008db6b13b6be09292d1ee",
+        "after_fingerprint": "d5282174f50a455d6ec76ff30bd6591ad898d62d30008db6b13b6be09292d1ee",
+        "changed_columns": [],
+        "viewer_file_type_available": false
+      }
+    ],
+    "checked_at": "2026-09-29T02:27:08.344768+00:00"
+  },
+  "client_open_validation": "Database field read back after repair; desktop double-click awaiting user verification.",
+  "tests": {
+    "backend_full_before_hotfix": {
+      "passed": 639,
+      "skipped": 4,
+      "subtests": 55
+    },
+    "frontend_node": 18,
+    "frontend_vitest": 163,
+    "postgresql": 30,
+    "exported_workflows_before_hotfix": 3,
+    "writer_offline_before_hotfix": 72,
+    "hotfix_backend": 5,
+    "hotfix_writer": 33
+  },
+  "installer": {
+    "filename": "textile-execution-bridge-setup-1.2.3.exe",
+    "sha256": "5652676e87bbcc1a29e9494f901464c3d6c5ec1e84efdf2d4d453b21b189874c",
+    "size_bytes": 174252800,
+    "installed_by": "In-place binary update after backing up old writer, config, and manifest; installer built but not run."
+  },
+  "fix_commit": "cc12b85",
+  "running_source_sha256": {
+    "textile-monitor-backend": {
+      "app/execution/external_operations.py": "01ebe7c5e7b43c75da9b87b6369a5a9b441b37f8880c6424ba2b8174e7de5b6f",
+      "app/execution/v2/resources/manifests/legacy_fibrecheck.v1-compat.json": "c98f076ad174c1ea2027b1679f67d86bac1916c25025c0c1824f298d16761ecc",
+      "app/execution/v2/resources/manifests/textile.execution-kernel.json": "f5bff812f07bdc1cc7f6ee2e0bae1edd013e447d196ea2e8ddca5c1788af141b",
+      "app/execution/v2/resources/snapshots/execution-v2-contracts.json": "8843ec85786829270f7fbb47ea8964e3b3121e0fd68317a9e7eefe1bbfc3f7f6",
+      "app/execution/v2/resources/workflows/fiber-microscopy-v2.json": "7ba189263d44359e5035573a518c659eab206f99ad3ea037ccb3de33f111d236",
+      "app/execution/v2/resources/workflows/paper-fiber-v2.json": "fb5693883d99caf43310236aa271f27a45dad9de9501557e59ef1414ffd1d3a3"
+    },
+    "textile-execution-worker": {
+      "app/execution/external_operations.py": "01ebe7c5e7b43c75da9b87b6369a5a9b441b37f8880c6424ba2b8174e7de5b6f",
+      "app/execution/v2/resources/manifests/legacy_fibrecheck.v1-compat.json": "c98f076ad174c1ea2027b1679f67d86bac1916c25025c0c1824f298d16761ecc",
+      "app/execution/v2/resources/manifests/textile.execution-kernel.json": "f5bff812f07bdc1cc7f6ee2e0bae1edd013e447d196ea2e8ddca5c1788af141b",
+      "app/execution/v2/resources/snapshots/execution-v2-contracts.json": "8843ec85786829270f7fbb47ea8964e3b3121e0fd68317a9e7eefe1bbfc3f7f6",
+      "app/execution/v2/resources/workflows/fiber-microscopy-v2.json": "7ba189263d44359e5035573a518c659eab206f99ad3ea037ccb3de33f111d236",
+      "app/execution/v2/resources/workflows/paper-fiber-v2.json": "fb5693883d99caf43310236aa271f27a45dad9de9501557e59ef1414ffd1d3a3"
+    }
+  },
+  "health": {
+    "status": "ready",
+    "components": {
+      "database": {
+        "ready": true
+      },
+      "migration": {
+        "ready": true,
+        "current": "0014_run_groups",
+        "expected": "0014_run_groups"
+      },
+      "execution_worker": {
+        "ready": true,
+        "last_seen_at": "2026-09-29T02:39:14.032225+00:00"
+      },
+      "execution_storage": {
+        "ready": true,
+        "staging_writable": true,
+        "publish_writable": true,
+        "report_images_writable": true
+      }
+    }
+  },
+  "installation_self_check_note": "The existing self-check created and removed its own empty .write-test marker in the local work directory. No existing business file, shared image, or database row was deleted."
+}
