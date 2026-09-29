@@ -1,6 +1,7 @@
 """Template rendering with JSON field mappings and durable artifact receipts."""
 
 import os
+import re
 import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -128,6 +129,10 @@ def render(context):
         if reference is None:
             raise ExecutionApiError(422, "render_template_unknown", "上游选择的模板不在节点模板集合中")
     template = resolve_template(context.db, reference)
+    filename = data.get("filename") or config.get("filename") or f"record{template.suffix.lower()}"
+    if (len(filename) > 200 or re.search(r'[<>:"/\\|?*\x00-\x1f]', filename)
+            or Path(filename).suffix.lower() != template.suffix.lower()):
+        raise ExecutionApiError(422, "render_filename_invalid", "工作簿文件名必须是有效名称，并与模板的 XLS/XLSX 格式一致")
     gateway = build_file_gateway(context.db)
     digest = canonical_sha256({"config": config, "input": data})
     relative = f"rendered/{context.run.id}/{context.node_run.id}/{digest}{template.suffix.lower()}"
@@ -155,7 +160,7 @@ def render(context):
             fsync_file(target)
         fingerprint = fingerprint_file(target)
         artifact = ExecutionArtifact(run_id=context.run.id, node_run_id=context.node_run.id, storage_root_id=root.id,
-            relative_path=relative, filename=config.get("filename") or f"record{target.suffix}", role="working", immutable=True,
+            relative_path=relative, filename=filename, role="working", immutable=True,
             media_type="application/vnd.ms-excel" if target.suffix == ".xls" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             size_bytes=fingerprint.size, content_sha256=fingerprint.sha256,
             metadata_json={"request_digest": digest, "verification": verification, "template": reference})

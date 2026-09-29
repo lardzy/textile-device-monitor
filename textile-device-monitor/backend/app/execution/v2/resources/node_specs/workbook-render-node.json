@@ -577,6 +577,373 @@
           "native": true
         }
       }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "workbook.render",
+      "type_version": 3,
+      "name": "按模板生成工作簿",
+      "category": "工作簿",
+      "description": "按模板生成工作簿；字段、图片和可读文件名由工作流 JSON 提供。",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "capability_pack",
+          "pack_id": "textile.execution-workbook"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "staging_root_slot": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sheet": {
+                  "type": "string"
+                },
+                "cell": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{1,3}[1-9][0-9]{0,6}$"
+                },
+                "value": {},
+                "kind": {
+                  "enum": [
+                    "text",
+                    "number",
+                    "blank",
+                    "cached_string",
+                    "cached_number"
+                  ]
+                }
+              },
+              "required": [
+                "cell",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 500,
+            "default": []
+          },
+          "templates": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 100,
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "root_slot": {
+                  "type": "string"
+                },
+                "relative_path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "root_slot",
+                "relative_path",
+                "sha256"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "filename": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^/\\\\]+\\.xlsx?$",
+            "title": "下载文件名"
+          },
+          "image_layout": {
+            "type": "object",
+            "properties": {
+              "sheet": {
+                "type": "string"
+              },
+              "print_area": {
+                "type": "string"
+              },
+              "range": {
+                "type": "string"
+              },
+              "max_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000
+              },
+              "max_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000
+              },
+              "gap": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "biff_excel_x_scale": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 10
+              },
+              "fit_to_pages": {
+                "type": "object",
+                "title": "打印缩放页数",
+                "properties": {
+                  "wide": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "title": "横向页数"
+                  },
+                  "tall": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "title": "纵向页数（0 为不限）"
+                  }
+                },
+                "required": [
+                  "wide",
+                  "tall"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "sheet",
+              "print_area",
+              "range",
+              "max_width",
+              "max_height"
+            ],
+            "additionalProperties": false
+          },
+          "number_formats": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "format": {
+                  "type": "string"
+                },
+                "display_pattern": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "format"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "templates",
+          "staging_root_slot",
+          "fields"
+        ],
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "values": {
+            "type": "object"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "artifact": {
+                  "type": "object",
+                  "properties": {
+                    "root_id": {
+                      "type": "string"
+                    },
+                    "relative_path": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "fingerprint": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "root_id",
+                    "relative_path"
+                  ],
+                  "additionalProperties": false,
+                  "anyOf": [
+                    {
+                      "required": [
+                        "sha256"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fingerprint"
+                      ]
+                    }
+                  ]
+                },
+                "sheet": {
+                  "type": "string"
+                },
+                "cell": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 4096
+                },
+                "height": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 4096
+                }
+              },
+              "required": [
+                "artifact"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 100
+          },
+          "template_key": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^/\\\\]+\\.xlsx?$",
+            "title": "生成文件名（可引用上游）",
+            "minLength": 5
+          }
+        },
+        "required": [
+          "values",
+          "template_key"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact": {
+            "type": "object"
+          },
+          "verification": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "artifact",
+          "verification"
+        ],
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "工作簿",
+          "icon": "code"
+        }
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 1,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none",
+        "graph_role": "ordinary"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [
+            {
+              "config_pointer": "/staging_root_slot",
+              "access": "write",
+              "required": true
+            }
+          ],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "reversible_local_write",
+        "idempotency": "engine_key",
+        "cancellation": "cooperative",
+        "receipt": "required",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": []
+      },
+      "extensions": {
+        "textile": {
+          "native": true
+        }
+      }
     }
   ]
 }

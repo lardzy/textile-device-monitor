@@ -100,7 +100,7 @@
       "version": "1.0.0"
     }
   ],
-  "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+  "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
   "engine_version_range": ">=2.1.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -109,7 +109,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "textile.execution-workbook",
-  "pack_version": "2.12.0",
+  "pack_version": "2.14.0",
   "provides": {
     "capabilities": [
       {
@@ -130,7 +130,7 @@
       {
         "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
         "handler_channel": "worker_callable",
-        "implementation_digest": "89fd4a6b6ce5e0e52a1e1e9fb160033dbdb3722cf546e31e05a442ea07d723f5",
+        "implementation_digest": "e07a51dce93c1718014b003a971ea71228321529e9a98c40e620f3f7e050d78d",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -140,7 +140,7 @@
       {
         "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
         "handler_channel": "worker_callable",
-        "implementation_digest": "60705c0e49134ee15a1eb0f2ef361433cd0a79c94f90de5664bc6ed2610001ad",
+        "implementation_digest": "36e4d0402534b9c9d85dfbeb9af95b31f7d36823925d83973df8231abcf8e83e",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -150,7 +150,7 @@
       {
         "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
         "handler_channel": "worker_callable",
-        "implementation_digest": "974d3e3b499350e99c7efe046d42505bb6fe0e4dcba3fa41a05279c4b65750ed",
+        "implementation_digest": "d207cdf1e7623af83239c9b0284671543c653b492424a8d1a84d2b210048e954",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -160,7 +160,7 @@
       {
         "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
         "handler_channel": "worker_callable",
-        "implementation_digest": "bebb725b3e03df0c2039e3e7b81148fd5604b73203173b67e8cca21d7ad417f1",
+        "implementation_digest": "8766d944bd88e9ea230da3ff949db20a444eb6d58ca00b7d2184a394cebcab14",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -170,7 +170,7 @@
       {
         "contract_digest": "f8c9adaaec636a9653de1831f974fda298753a66d9cb769d6e65a4ec4fc17011",
         "handler_channel": "worker_callable",
-        "implementation_digest": "3468767b3d91015d295c1e326b3af20dfabfc27a3f4a72d8b76a971df9dd7239",
+        "implementation_digest": "a348f8ec8e258aadf871e46a5d0384b775ce698e7298c19a99cf3855b99443fc",
         "preferred": false,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-render-node.json",
@@ -180,7 +180,7 @@
       {
         "contract_digest": "09de4a3b14a6a1d190416491d1aa8b72cda9378cae142bd456d91c386011a858",
         "handler_channel": "worker_callable",
-        "implementation_digest": "a26c2786ada26128ec251b8ab9b6dd3f48788123b784176dba9ca2e021f2ff1a",
+        "implementation_digest": "ced22e0832f8bfcb316f5401d795f16f856cfc4cc073fc568feaddc9b6d24e07",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -190,7 +190,7 @@
       {
         "contract_digest": "bcb81c7b8ae693e886410ddb66e94f5eafae2394df6e37fb7550bc60444d2cb3",
         "handler_channel": "worker_callable",
-        "implementation_digest": "83cc0454eb54e4503299b016bab31dd097176e4ca0e1d1c40e0a4426a7f9734f",
+        "implementation_digest": "4f67f7c4ae71c941ce53d2c86df31620887720e4ad289eb62808580c9285b315",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -200,12 +200,22 @@
       {
         "contract_digest": "594b5fb57ebc4a204d9f901ce687a5a9cf0e2139ae00e2ad6dd904fac3b36e0d",
         "handler_channel": "worker_callable",
-        "implementation_digest": "ae7614a51bb15bfb8c3af78fc82a434883718b569e9fdf6a65041eebdc526d97",
-        "preferred": true,
+        "implementation_digest": "ca1dc5d763f0414820602e4fd71f638eb20e8fd48342d74a41623a5d08f300ee",
+        "preferred": false,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/workbook-render-node.json",
         "type": "workbook.render",
         "type_version": 2
+      },
+      {
+        "contract_digest": "6ca92a6381d2dcac61198a4d29825d984ca3d9d7af42005ef3c7c0c79c86f61e",
+        "handler_channel": "worker_callable",
+        "implementation_digest": "72f70baf4034954ce195de1b11db9a5959055c5fcb302c6c09724b9701648c38",
+        "preferred": true,
+        "source": "resource",
+        "spec_resource": "v2/resources/node_specs/workbook-render-node.json",
+        "type": "workbook.render",
+        "type_version": 3
       }
     ]
   },

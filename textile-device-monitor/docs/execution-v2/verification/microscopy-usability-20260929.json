@@ -1,0 +1,169 @@
+{
+  "migration": "0014_run_groups",
+  "workflows": [
+    {
+      "id": "84abf195-e120-4f95-b81c-2b2d4a2a960c",
+      "slug": "fiber-microscopy-v2",
+      "version": 7,
+      "release_digest": "4506228357f875486da1016311070436d881d445bb0d136ce47b1f6fa4f6a348",
+      "node_count": 25,
+      "missing_worker_nodes": []
+    },
+    {
+      "id": "ae766b2c-f51e-40ff-baca-10608dfe4602",
+      "slug": "paper-fiber-v2",
+      "version": 12,
+      "release_digest": "03dfbe4e1deabf544016de59f6c04820f1777b0e5551ecb284ce5e142f81e7f3",
+      "node_count": 14,
+      "missing_worker_nodes": []
+    }
+  ],
+  "workers": [
+    {
+      "worker_id": "ecb099718a48",
+      "engine_version": "2.5.0",
+      "capability_digest": "4e0f7e457ae214d64c44d1d43af6e3d1974adb58affaace785b61cffc7f6ca0f"
+    }
+  ],
+  "binding_count": 44,
+  "counts": {
+    "execution_workflows": 2,
+    "execution_workflow_versions": 19,
+    "execution_runs": 11,
+    "execution_human_tasks": 4,
+    "execution_external_operations": 15,
+    "execution_project_rules": 0,
+    "execution_users": 1,
+    "execution_credentials": 1,
+    "execution_storage_roots": 9
+  },
+  "run_statuses": {
+    "completed": 10,
+    "failed": 1
+  },
+  "operation_statuses": {
+    "completed": 15
+  },
+  "containers": {
+    "textile-monitor-backend": {
+      "original_image": "sha256:529f89d38a7a9a243f6243f68351e8645fb4a5df28604a31e4eccce66e8b6d03",
+      "status": "running",
+      "health": "healthy"
+    },
+    "textile-execution-worker": {
+      "original_image": "sha256:ec5da9e97a0c1b7350da2fcaea6913791e01d3e2abd45f6fe524b8daa72f2823",
+      "status": "running",
+      "health": "healthy"
+    },
+    "textile-monitor-frontend": {
+      "original_image": "sha256:88654001faaaee883201d05ecd17a51d170d2aee7c2ce9db196e664c48439d91",
+      "status": "running",
+      "health": "healthy"
+    }
+  },
+  "source_files_match_per_container": 121,
+  "frontend_files_match": 180,
+  "built_images": {
+    "textile-device-monitor-backend": "sha256:47f4a7f90524d3e8615cf3bdcf912d8ed71b561dcf7e6dbca383d6cb5b8f0f74",
+    "textile-device-monitor-execution-worker": "sha256:efe325079a30e04bfe00e11a034b1f82782c983776fcca1b89dbfe8f8a488c67",
+    "textile-device-monitor-frontend": "sha256:6f3ab9189ca7d0685dcd05e7489aac768ab4f6e046245f58c7faccb6f0b01b3d"
+  },
+  "node_specs": 36,
+  "historical_run_preserved": true,
+  "parent_download_count": 6,
+  "generated_at": "2026-09-29T06:24:58.905647+00:00",
+  "packs": {
+    "textile.execution-workbook": "2.14.0",
+    "textile.execution-data": "1.0.2",
+    "textile.execution-kernel": "2.12.1",
+    "textile.execution-files": "1.4.0",
+    "legacy_fibrecheck.v1-compat": "2.1.2"
+  },
+  "tests": {
+    "backend_targeted": {
+      "passed": 50,
+      "skipped_requires_uno": 9
+    },
+    "worker_uno": {
+      "passed": 30,
+      "deselected_other_source": 4
+    },
+    "actual_published_exports": 3,
+    "frontend_node": 18,
+    "frontend_vitest": 164,
+    "windows_writer_offline": 35,
+    "browser_download_sha256_verified": true,
+    "browser_errors": 0
+  },
+  "print_previews": [
+    {
+      "file": "260221991-薄膜反面-微观形貌-原始记录.pdf",
+      "pages": 1,
+      "method_visible": true,
+      "identity_visible": true
+    },
+    {
+      "file": "260221991-薄膜正面-微观形貌-原始记录.pdf",
+      "pages": 1,
+      "method_visible": true,
+      "identity_visible": true
+    },
+    {
+      "file": "260221991-薄膜横截面-微观形貌-原始记录.pdf",
+      "pages": 1,
+      "method_visible": true,
+      "identity_visible": true
+    }
+  ],
+  "corrected_workbooks": [
+    {
+      "group": "薄膜正面",
+      "kind": "original",
+      "filename": "260221991-薄膜正面-微观形貌-原始记录.xls",
+      "method": "按客户要求",
+      "sha256": "d1eacb5d1b18716ed51119435c3f97d0f22a2ff3e2eb4e21510bef1c39be49b3"
+    },
+    {
+      "group": "薄膜正面",
+      "kind": "check",
+      "filename": "260221991-薄膜正面-微观形貌-检务登记.xls",
+      "method": "按客户要求",
+      "sha256": "b4671ba49a1bbe44ea499ec5e12c516740fbfd07c1a952468f9982720ebc115b"
+    },
+    {
+      "group": "薄膜反面",
+      "kind": "original",
+      "filename": "260221991-薄膜反面-微观形貌-原始记录.xls",
+      "method": "按客户要求",
+      "sha256": "674e2b25f0bf37601aecb15e369919a36aba801b886cecf51410f2f120bd647d"
+    },
+    {
+      "group": "薄膜反面",
+      "kind": "check",
+      "filename": "260221991-薄膜反面-微观形貌-检务登记.xls",
+      "method": "按客户要求",
+      "sha256": "8def2c7946cd3f36a3f0a9d655cc51fe57f14f943b8dbb77107ec27be281c028"
+    },
+    {
+      "group": "薄膜横截面",
+      "kind": "original",
+      "filename": "260221991-薄膜横截面-微观形貌-原始记录.xls",
+      "method": "按客户要求",
+      "sha256": "44ece33c11e3418a2929558ba41e6c6b99256463b0c8aa15a95ef33f8cfd445e"
+    },
+    {
+      "group": "薄膜横截面",
+      "kind": "check",
+      "filename": "260221991-薄膜横截面-微观形貌-检务登记.xls",
+      "method": "按客户要求",
+      "sha256": "6fac56931b37a1617f1889b5a1a244eba4d4288faa0c39fd9f04f3a0b7c07afb"
+    }
+  ],
+  "download_bundle": {
+    "path": "/Users/lishuyang/Downloads/260221991-打印工作簿-20260929.zip",
+    "sha256": "7d2cca97ca470a0e0d08f553efd0dd26c07721298fdcead313114c547e985456"
+  },
+  "new_remote_uploads": 0,
+  "new_remote_registrations": 0,
+  "deployment_note": "Existing containers updated in place after backing up changed files; backend and Worker restarted. Frontend assets added before switching index.html; previous assets preserved. Fresh images also built. No records, existing files, containers or volumes deleted. Windows 1.2.3 unchanged and tested offline."
+}

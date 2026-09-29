@@ -35,6 +35,8 @@ def test_copy_names_fields_and_template_choice_are_portable():
     assert data['template_key']=='3'
     assert [f['target_filename'] for f in data['files']]==['260191178-正-反面.bmp','260191178-正-反面-1.bmp','260191178-正-反面-2.bmp']
     assert data['values']['sample_identity']=='正/反面'
+    assert data['original_filename']=='260191178-正-反面-纤维微观形貌-原始记录.xls'
+    assert data['check_filename']=='260191178-正-反面-纤维微观形貌-检务登记.xls'
     assert data['values']['judgement']==''
     assert data['target_directory'].endswith('/260191178')
 
@@ -46,6 +48,28 @@ def test_customer_profile_places_images_in_the_number_folder():
     assert result['passed'], result
     assert result['output']['target_directory'] == '数据分析中心/3-报告上传图片/8-材料检测中心/5-按客户要求图片-特纤/260221991'
     assert [f['target_filename'] for f in result['output']['files']] == [f'260221991-正-反面-{i}.bmp' for i in (1, 2, 3)]
+
+
+@pytest.mark.skipif(os.getenv('EXECUTION_RUN_UNO_INTEGRATION_TESTS') != '1', reason='Requires Worker UNO')
+@pytest.mark.parametrize('method', ['按客户要求', 'GB/T 36422-2018'])
+def test_original_method_comes_from_selected_task_project(tmp_path, method):
+    inputs = payload()
+    inputs['project']['metadata']['project']['check_method'] = method
+    values = trial('payload', **inputs)['output']['values']
+    node = next(n for n in document()['definition']['nodes'] if n['id'] == 'original')
+    template = Path(__file__).parents[1]/'app/execution/templates'/node['config']['templates']['original']['relative_path']
+    target = tmp_path/'original.xls'
+    image = tmp_path/'image.png'
+    Image.new('RGB', (160, 100), 'white').save(image)
+    render_file(template, target, values=values, fields=node['config']['fields'],
+        images=[{'artifact': {'root_id': 'images', 'relative_path': image.name}}],
+        gateway=SimpleNamespace(resolve=lambda ref: image), layout=node['config']['image_layout'],
+        number_formats=node['config']['number_formats'])
+    book = xlrd.open_workbook(target)
+    try:
+        assert book.sheet_by_name('微观形貌').cell_value(1, 4) == method
+    finally:
+        book.release_resources()
 
 
 @pytest.mark.parametrize('count',[1,2,3,5,6,7,10,'customer-1','customer-2','customer-3','customer-4'])
@@ -81,6 +105,8 @@ def test_generic_original_record_reopens_all_image_counts(tmp_path, count):
     assert result['images_written'] == count
     assert result['geometry']['verified']
     assert result['uno']['print_area_verified']
+    assert result['uno']['print_fit_verified']
+    assert result['uno']['fit_to_pages'] == {'wide': 1, 'tall': 1}
     book = xlrd.open_workbook(tmp_path / 'original.xls')
     try:
         assert book.sheet_by_name(config['image_layout']['sheet']).cell_value(2, 1) == long_name

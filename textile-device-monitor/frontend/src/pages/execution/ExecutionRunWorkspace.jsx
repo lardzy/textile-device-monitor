@@ -24,7 +24,6 @@ import {
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
-  FileOutlined,
   LoadingOutlined,
   PauseOutlined,
   PlayCircleOutlined,
@@ -50,6 +49,7 @@ import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
 import ExecutionExternalOperationPanel from './ExecutionExternalOperationPanel';
 import ExecutionAutoApprovalCard from './ExecutionAutoApprovalCard';
+import ExecutionArtifactDownloads from './ExecutionArtifactDownloads';
 import ExecutionMutationPanel from './ExecutionMutationPanel';
 import ExecutionResultFiles, {
   extractExecutionResultFiles,
@@ -497,26 +497,9 @@ export default function ExecutionRunWorkspace() {
     },
     {
       key: 'artifacts',
-      label: `制品 ${snapshot.artifacts.length || ''}`,
+      label: `制品 ${snapshot.artifacts.length + (run.groups || []).reduce((count, group) => count + (group.artifacts?.length || 0), 0) || ''}`,
       children: (
-        <List
-          locale={{ emptyText: '暂无制品' }}
-          dataSource={snapshot.artifacts}
-          renderItem={artifact => (
-            <List.Item>
-              <List.Item.Meta
-                avatar={<FileOutlined className="execution-artifact-icon" />}
-                title={artifact.name || artifact.relative_path || artifact.id}
-                description={(
-                  <Space direction="vertical" size={0}>
-                    <span>{artifact.kind || artifact.media_type || '文件制品'}</span>
-                    <span>{artifact.status || '已生成'}</span>
-                  </Space>
-                )}
-              />
-            </List.Item>
-          )}
-        />
+        <ExecutionArtifactDownloads artifacts={snapshot.artifacts} groups={run.groups} />
       ),
     },
     {
@@ -639,6 +622,7 @@ export default function ExecutionRunWorkspace() {
 
       {run.parent_run_id && <Alert type="info" showIcon message={`当前分组：${run.batch_context?.label || ''}`}
         action={<Button onClick={() => navigate(`/execution/runs/${run.parent_run_id}`)}>返回全部分组</Button>} />}
+      <ExecutionArtifactDownloads artifacts={snapshot.artifacts} groups={run.groups} workbooksOnly />
       {run.groups?.length > 0 && <List bordered header="分组进度" dataSource={run.groups} style={{ margin: '16px 0' }}
         renderItem={group => <List.Item actions={[
           group.id && <Button key="open" onClick={() => navigate(`/execution/runs/${group.id}`)}>查看本组 / 处理待办</Button>,

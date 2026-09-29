@@ -178,6 +178,13 @@ def _write(payload):
                 raise RuntimeError("workbook_open_failed")
             sheet = document.Sheets.getByName(payload["sheet_name"])
             _set_print_area(sheet, payload["print_area"])
+            print_fit = payload.get("fit_to_pages")
+            if print_fit:
+                style = document.StyleFamilies.getByName("PageStyles").getByName(sheet.PageStyle)
+                style.PageScale = 0
+                style.ScaleToPages = 0
+                style.ScaleToPagesX = print_fit["wide"]
+                style.ScaleToPagesY = print_fit["tall"]
             for cell, value in payload["cells"].items():
                 sheet.getCellRangeByName(cell).String = str(value or "")
             # Remove the two template placeholders before adding images.
@@ -266,6 +273,11 @@ def _write(payload):
                 sheet, payload["print_area"]
             )
             ordinary_print_area_removed = _ordinary_print_area_removed(sheet)
+            actual_print_fit = None
+            if print_fit:
+                style = reopened.StyleFamilies.getByName("PageStyles").getByName(sheet.PageStyle)
+                actual_print_fit = {"wide": int(style.ScaleToPagesX), "tall": int(style.ScaleToPagesY)}
+            print_fit_verified = not print_fit or actual_print_fit == print_fit
             actual_cells = {
                 cell: sheet.getCellRangeByName(cell).String
                 for cell in payload["cells"]
@@ -351,6 +363,7 @@ def _write(payload):
                 and len(images) == len(payload["images"])
                 and print_area_verified
                 and ordinary_print_area_removed
+                and print_fit_verified
                 and number_format_verified
                 and all(image["index"] in expected_images for image in images)
                 and len({image["index"] for image in images}) == len(images)
@@ -368,6 +381,8 @@ def _write(payload):
                 "print_area": payload["print_area"],
                 "print_area_verified": print_area_verified,
                 "ordinary_print_area_removed": ordinary_print_area_removed,
+                "fit_to_pages": actual_print_fit,
+                "print_fit_verified": print_fit_verified,
                 "number_formats": number_format_strings,
                 "number_format_verified": number_format_verified,
                 "reopened": True,

@@ -10,7 +10,7 @@ import re
 
 from app.config import settings
 from app.execution.errors import ExecutionApiError, conflict
-from app.execution.models import ExecutionExternalOperation, ExecutionTaskSnapshotCache, ExecutionUser
+from app.execution.models import ExecutionArtifact, ExecutionStorageRoot, ExecutionExternalOperation, ExecutionTaskSnapshotCache, ExecutionUser
 from app.execution.persistence import build_file_gateway
 from app.execution.storage import ArtifactRef
 from app.execution.workbook_format import WorkbookFormat, detect_workbook_format
@@ -54,11 +54,21 @@ def upload_summary(db, data):
         raise conflict('connector_source_changed', '原始工作簿已变化，请重新读取')
     if detect_workbook_format(path) != WorkbookFormat.OLE or path.suffix.lower() != '.xls':
         raise ExecutionApiError(422, 'connector_upload_format_unsupported', '当前检务原始记录接口接收真实 XLS；XLSX 可以读取，但不能改后缀后上传')
-    file = {**ref.as_dict(), 'id': fingerprint.sha256, 'artifact_id': fingerprint.sha256, 'filename': path.name,
+    artifact = (db.query(ExecutionArtifact).join(ExecutionStorageRoot)
+        .filter(ExecutionStorageRoot.root_id == ref.root_id, ExecutionArtifact.relative_path == ref.relative_path,
+                ExecutionArtifact.content_sha256 == fingerprint.sha256)
+        .order_by(ExecutionArtifact.created_at.desc()).first())
+    filename = artifact.filename if artifact else path.name
+    # Generated artifacts keep an immutable storage path and a readable name.
+    # The Writer prefixes its allocated sample number, so avoid duplicating the
+    # source number already present in a generated artifact's download name.
+    if artifact and filename.startswith(number + '-'):
+        filename = filename[len(number) + 1:]
+    file = {**ref.as_dict(), 'id': fingerprint.sha256, 'artifact_id': fingerprint.sha256, 'filename': filename,
             'fingerprint': fingerprint.sha256, 'content_sha256': fingerprint.sha256, 'size_bytes': fingerprint.size, 'is_primary': True}
     return {'schema_version': 1, 'operation_type': 'legacy_special_wool_qualitative_upload', 'profile': 'original_record_upload_v1',
         'source_inspection_number': number, 'target_sample_number': number,
-        'target_filename': _paper_special_wool_target_filename(number, path.name),
+        'target_filename': _paper_special_wool_target_filename(number, filename),
         'target_allocation': {'base_number': number, 'candidate_number': number, 'suffix_policy': 'base_then_numeric_suffix',
                               'occupancy_scope': 'legacy_task_snapshot_and_execution_operation_fences', 'legacy_readonly_verification_required': True},
         'business_fields': deepcopy(data['business_fields']), 'task_project': project, 'inspector': data.get('inspector', ''),

@@ -25,6 +25,8 @@ def main(inputs):
     if template is None:
         raise ValueError('当前图片数量没有配置登记模板')
     safe_identity = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', identity).rstrip('. ').strip()
+    safe_item = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', fields['item_name']).rstrip('. ').strip()
+    workbook_name = '-'.join(part for part in (number, safe_identity, safe_item) if part)
     files, images = [], []
     for index, image in enumerate(inputs['images']):
         source = {k: image[k] for k in ('id', 'root_id', 'relative_path', 'fingerprint')}
@@ -37,6 +39,7 @@ def main(inputs):
         images.append({'artifact': source})
     keys = ('project_key', 'task_check_item_id', 'check_item_id', 'check_item_no', 'check_item_name', 'check_method', 'seq_num', 'check_count')
     return {'inspection_number': number, 'project': {k: project[k] for k in keys}, 'values': fields,
+            'original_filename': workbook_name + '-原始记录.xls', 'check_filename': workbook_name + '-检务登记.xls',
             'images': images, 'files': files, 'target_directory': rules['target_directory'].format(number=number).rstrip('/'),
             'template_key': template['template_key'], 'template_binding': template,
             'original_template_key': rules['original_template_key'], 'profile': rules,

@@ -500,6 +500,7 @@ def render_image_workbook(template, target, *, cells, selected, layout, number_f
                   for item, placement in zip(prepared, placements)]
         payload = {'workbook_path': str(working), 'sheet_name': layout['sheet'],
                    'print_area': layout['print_area'], 'cells': cells,
+                   'fit_to_pages': layout.get('fit_to_pages'),
                    'number_formats': number_formats or {}, 'images': images,
                    'canvas': {'range': layout['range'], 'max_width': layout['max_width'],
                               'max_height': layout['max_height'], 'biff_excel_x_scale': layout.get('biff_excel_x_scale', 1.0)}}
@@ -511,7 +512,8 @@ def render_image_workbook(template, target, *, cells, selected, layout, number_f
             canvas_width=canvas['width'], canvas_height=canvas['height'],
             planned_width=layout['max_width'], planned_height=layout['max_height'])
         if (not geometry['verified'] or result.get('image_count') != len(images)
-                or not result.get('print_area_verified') or not result.get('number_format_verified')):
+                or not result.get('print_area_verified') or not result.get('number_format_verified')
+                or (layout.get('fit_to_pages') and not result.get('print_fit_verified'))):
             raise ExecutionApiError(422, 'render_verification_failed', '图片布局、打印范围或格式重读不一致', details={'geometry': geometry})
         os.replace(working, target)
         fsync_file(target)

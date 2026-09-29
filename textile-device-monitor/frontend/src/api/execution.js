@@ -255,6 +255,9 @@ export const executionIndexedImagePreviewUrl = entryId =>
 export const executionArtifactPreviewUrl = artifactId =>
   `${executionApiBase()}/artifacts/${encodeURIComponent(artifactId)}/preview`;
 
+export const executionArtifactDownloadUrl = artifactId =>
+  `${executionApiBase()}/artifacts/${encodeURIComponent(artifactId)}/download`;
+
 export const getHumanTasks = async (params = {}) =>
   listPayload(
     await executionClient.get('/human-tasks', { params }),

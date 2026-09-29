@@ -1152,7 +1152,7 @@
     "packs": [
       {
         "pack_id": "legacy_fibrecheck.v1-compat",
-        "version_range": ">=2.1.1 <3.0.0",
+        "version_range": ">=2.1.2 <3.0.0",
         "required_on": [
           "api",
           "worker",
@@ -1185,7 +1185,7 @@
       },
       {
         "pack_id": "textile.execution-workbook",
-        "version_range": ">=2.12.0 <3.0.0",
+        "version_range": ">=2.14.0 <3.0.0",
         "required_on": [
           "api",
           "worker"
@@ -1255,7 +1255,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "2541bf43c62af5f93178d7f143f32e19846b3c86ac6b69d27727a227cb835f87",
+    "digest": "2778fb2e4b80bb6091ec4ad936d560bd4bbdc87fe5d566a7e711bd96c12cd4b1",
     "signatures": []
   }
 }

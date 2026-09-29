@@ -1,6 +1,8 @@
 """Sequential groups use ordinary immutable Runs and retries, including cancellation."""
 from copy import deepcopy
 from datetime import timedelta
+from pathlib import Path
+import hashlib
 
 import pytest
 
@@ -11,6 +13,31 @@ from app.execution.models import ExecutionRun, ExecutionNodeRun, ExecutionHumanT
 from app.execution.v2.designer import starter_document
 from app.execution.v2.group_handlers import normalize_groups, child_summaries
 from workflow_native_helpers import environment, publish_native_document, run, drain
+
+
+def test_parent_lists_child_artifacts_before_child_completion(environment):
+    from app.execution.models import ExecutionArtifact
+    from workflow_native_helpers import request
+    env = environment
+    workflow = publish_native_document(env.db, env.admin, document())
+    data = run(env, workflow.id)
+    drain(env)
+    parent = env.db.get(ExecutionRun, data['id'])
+    child = children(env, parent)[0]
+    assert child.status == 'waiting_human'
+    root = env.roots['execution_staging']
+    artifact = ExecutionArtifact(run_id=child.id, storage_root_id=root.id, relative_path='hash.xls',
+        filename='260221991-正面-原始记录.xls', role='working', size_bytes=3, immutable=True,
+        content_sha256=hashlib.sha256(b'xls').hexdigest())
+    (Path(root.local_path)/artifact.relative_path).write_bytes(b'xls')
+    env.db.add(artifact)
+    env.db.commit()
+    detail = request(env, 'GET', 'v1/runs/'+parent.id)
+    assert detail['artifacts'] == []
+    assert detail['groups'][0]['artifacts'][0]['id'] == artifact.id
+    assert detail['groups'][0]['artifacts'][0]['filename'] == artifact.filename
+    response = env.client.get('/api/execution/v1/artifacts/'+artifact.id+'/download')
+    assert response.status_code == 200 and response.content == b'xls'
 
 
 def document():

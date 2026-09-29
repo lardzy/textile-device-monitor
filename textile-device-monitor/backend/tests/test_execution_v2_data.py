@@ -87,7 +87,8 @@ def test_workbook_mapping_changes_only_json_and_preserves_template(tmp_path):
     original.close()
 
 
-def test_render_node_publishes_to_bound_directory_with_receipt(environment):
+@pytest.mark.parametrize('version', [1, 3])
+def test_render_node_publishes_to_bound_directory_with_receipt(environment, version):
     import hashlib
     from app.execution.models import ExecutionArtifact
 
@@ -104,6 +105,11 @@ def test_render_node_publishes_to_bound_directory_with_receipt(environment):
         "config": {"template": {"root_slot": "electron_microscopy_records", "relative_path": "form.xlsx", "sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
                    "staging_root_slot": "execution_staging", "fields": [{"cell": "B2", "value": {"path": "#/label"}}]},
         "input_mapping": {"values": {"label": "JSON 配置"}}})
+    if version == 3:
+        node = doc['definition']['nodes'][1]
+        node['type_version'] = 3
+        node['config']['templates'] = {'main': node['config'].pop('template')}
+        node['input_mapping'].update(template_key='main', filename='260221991-薄膜正面-原始记录.xlsx')
     doc["definition"]["edges"] = [{"id": "a", "source": "start", "target": "render", "join_policy": "all"},
         {"id": "b", "source": "render", "target": "end", "join_policy": "all"}]
     compiled = compile_document(doc)
@@ -117,3 +123,11 @@ def test_render_node_publishes_to_bound_directory_with_receipt(environment):
     book = load_workbook(env.path / "execution_staging" / artifact.relative_path)
     assert book.active["B2"].value == "JSON 配置"
     book.close()
+    if version == 3:
+        from urllib.parse import unquote
+        assert artifact.filename == '260221991-薄膜正面-原始记录.xlsx'
+        assert artifact.filename not in artifact.relative_path
+        response = env.client.get('/api/execution/v1/artifacts/'+artifact.id+'/download')
+        assert response.status_code == 200
+        assert artifact.filename in unquote(response.headers['content-disposition'])
+        assert response.content == (env.path / 'execution_staging' / artifact.relative_path).read_bytes()

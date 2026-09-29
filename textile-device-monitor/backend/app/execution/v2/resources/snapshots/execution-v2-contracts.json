@@ -3,7 +3,7 @@
   "connectors": [
     {
       "connector_id": "legacy_fibrecheck",
-      "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+      "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
       "operations": [
         {
           "completion_stage": "main_record_verified",
@@ -11,14 +11,14 @@
           "connector_version": "2.1.0",
           "contract_digest": "fe1b46393baf8e11c3dfcb71f00442bcfaf857fdc6fac25558f63b1000e7d9a5",
           "contract_version": 1,
-          "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
           "execution_kind": "external_side_effect",
           "extensions": {
             "textile": {
               "picture_count": 0
             }
           },
-          "implementation_digest": "012a36270767011b058416d47cd164099b9d38ebe8a7752b53b9823e78089b24",
+          "implementation_digest": "ef0d586de842a87f24c70cb9e7e1d74b2301a1a2a530cf307c695b26c8f512d9",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -172,7 +172,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.1",
+          "pack_version": "2.1.2",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -195,14 +195,14 @@
           "connector_version": "2.1.0",
           "contract_digest": "82639c4c088eb1d97913a89bbaea3ab744f6548ec03111dbdd295070a30f3e8f",
           "contract_version": 1,
-          "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
           "execution_kind": "external_side_effect",
           "extensions": {
             "textile": {
               "picture_count": 0
             }
           },
-          "implementation_digest": "5000e3d8303c4ae6ea48814de5c0ba0ee30f1f8df8ae5f90a60729b541f71ef0",
+          "implementation_digest": "5e46e393ea14e29f4cc673bfca9c7019595ab32cb71abdb98be997207147eb13",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -255,7 +255,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.1",
+          "pack_version": "2.1.2",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -275,9 +275,9 @@
           "connector_version": "2.1.0",
           "contract_digest": "f3402717965e0c0dae38301b3a70255b239b911a0d7de43e92ea7aaa759b4bff",
           "contract_version": 2,
-          "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
           "execution_kind": "external_side_effect",
-          "implementation_digest": "8286aa6ee9a776f7af640c1ebac2220e899d635bbc4b521dd3a9bddc81458770",
+          "implementation_digest": "1baf3dd90786c141735e4b240707ae35cbce332ba8c62c48a7c81f5548a55ad1",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -489,7 +489,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.1",
+          "pack_version": "2.1.2",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -510,9 +510,9 @@
           "connector_version": "2.1.0",
           "contract_digest": "959d3a0d3cf934fcd8eb1cf3246d893e7b63c762a189472b970d3509ff53f3f5",
           "contract_version": 1,
-          "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
           "execution_kind": "external_side_effect",
-          "implementation_digest": "5b23c267c2a5139b7ae9cafaf540567f11c93a0638e7e21eba2c3972abe6445f",
+          "implementation_digest": "de9d36799ae57df419abaaf0328a0b6ff3a483eff0ccfa835771256c2e961a55",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -610,7 +610,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.1",
+          "pack_version": "2.1.2",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -630,9 +630,9 @@
           "connector_version": "2.1.0",
           "contract_digest": "a48fd2fbd93d50c81afc13bab7f219ae8951fd0652f52687228d94334919527a",
           "contract_version": 1,
-          "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
           "execution_kind": "external_side_effect",
-          "implementation_digest": "ba3aa2202caa4a49ccf25adcdfa14a4bf1ab955498bfa6d864ea24b7649cec66",
+          "implementation_digest": "bfad6a1d45ecc15e0e818170774d1da688a35d61a3e8de19b1adbfb3f7c5cd72",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -819,7 +819,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.1",
+          "pack_version": "2.1.2",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -837,7 +837,7 @@
         }
       ],
       "pack_id": "legacy_fibrecheck.v1-compat",
-      "pack_version": "2.1.1",
+      "pack_version": "2.1.2",
       "queries": [
         {
           "connector_id": "legacy_fibrecheck",
@@ -845,9 +845,9 @@
           "consistency": "cached",
           "contract_digest": "8b6bd2f68401016465c9398812ffe7101c3efbb0ade5fddeb65579e47254c0d8",
           "contract_version": 1,
-          "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
           "execution_kind": "automatic",
-          "implementation_digest": "4ee783e069c3e8f772fe294044f022b4000122dd837541a36afa7fcd14979882",
+          "implementation_digest": "f96bb6e21e563a248bb2a730584dea44f93e1e1767780b9810d67a5a66770247",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -1018,7 +1018,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.1",
+          "pack_version": "2.1.2",
           "query": "task_snapshot.get",
           "query_ref": "legacy_fibrecheck.task_snapshot.get@1",
           "ready": true,
@@ -1030,9 +1030,9 @@
           "consistency": "cached",
           "contract_digest": "2fffd70c2172b5af0921461dbacfdd12a2411489f47a98d7746d89703352f462",
           "contract_version": 1,
-          "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
           "execution_kind": "automatic",
-          "implementation_digest": "bd6d7b0f584b1aaa10a0b09745824e41f5c405ad01014281e6dae42d44164cbd",
+          "implementation_digest": "1f3716e2e63bb3e101967ef9ccdb635c45c4d64bd75c92ec575310168235cae9",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -1220,7 +1220,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.1",
+          "pack_version": "2.1.2",
           "query": "check_record.list",
           "query_ref": "legacy_fibrecheck.check_record.list@1",
           "ready": true,
@@ -1232,9 +1232,9 @@
           "consistency": "cached",
           "contract_digest": "41f2325f5a1f2cc6023c37cfee491fbed9abb67b4f6a00289206c38534ae16f1",
           "contract_version": 1,
-          "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
           "execution_kind": "automatic",
-          "implementation_digest": "81e6b71559cd0ffdc582cc711e4117c9af07d33e2edf9bead1a87b5411ed376e",
+          "implementation_digest": "57e281e74d4dd7e5aee8f56d602f7966329582ece3b1533ef703b1b3fc02de84",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -1429,7 +1429,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.1",
+          "pack_version": "2.1.2",
           "query": "check_record.get",
           "query_ref": "legacy_fibrecheck.check_record.get@1",
           "ready": true,
@@ -6796,7 +6796,7 @@
       },
       "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
       "description": "按受限的工作表、单元格与等值特征识别工作簿类型。",
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -6810,7 +6810,7 @@
           "native": true
         }
       },
-      "implementation_digest": "89fd4a6b6ce5e0e52a1e1e9fb160033dbdb3722cf546e31e05a442ea07d723f5",
+      "implementation_digest": "e07a51dce93c1718014b003a971ea71228321529e9a98c40e620f3f7e050d78d",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -6924,7 +6924,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -7011,7 +7011,7 @@
       },
       "contract_digest": "bcb81c7b8ae693e886410ddb66e94f5eafae2394df6e37fb7550bc60444d2cb3",
       "description": "为输入工作簿建立绑定 mutation 的隔离工作副本。",
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -7025,7 +7025,7 @@
           "native": true
         }
       },
-      "implementation_digest": "83cc0454eb54e4503299b016bab31dd097176e4ca0e1d1c40e0a4426a7f9734f",
+      "implementation_digest": "4f67f7c4ae71c941ce53d2c86df31620887720e4ad289eb62808580c9285b315",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -7152,7 +7152,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -7281,7 +7281,7 @@
       },
       "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
       "description": "按封闭字段清单读取工作簿单元格并输出可审计字段值。",
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -7295,7 +7295,7 @@
           "native": true
         }
       },
-      "implementation_digest": "60705c0e49134ee15a1eb0f2ef361433cd0a79c94f90de5664bc6ed2610001ad",
+      "implementation_digest": "36e4d0402534b9c9d85dfbeb9af95b31f7d36823925d83973df8231abcf8e83e",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -7409,7 +7409,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -7535,7 +7535,7 @@
       },
       "contract_digest": "09de4a3b14a6a1d190416491d1aa8b72cda9378cae142bd456d91c386011a858",
       "description": "按配置读取每份 XLS/XLSX 的原始字段，返回内容摘要和逐文件错误。",
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -7549,7 +7549,7 @@
           "native": true
         }
       },
-      "implementation_digest": "a26c2786ada26128ec251b8ab9b6dd3f48788123b784176dba9ca2e021f2ff1a",
+      "implementation_digest": "ced22e0832f8bfcb316f5401d795f16f856cfc4cc073fc568feaddc9b6d24e07",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -7635,7 +7635,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -7784,7 +7784,7 @@
       },
       "contract_digest": "f8c9adaaec636a9653de1831f974fda298753a66d9cb769d6e65a4ec4fc17011",
       "description": "按模板生成工作簿；规则由工作流 JSON 提供。",
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -7798,7 +7798,7 @@
           "native": true
         }
       },
-      "implementation_digest": "3468767b3d91015d295c1e326b3af20dfabfc27a3f4a72d8b76a971df9dd7239",
+      "implementation_digest": "a348f8ec8e258aadf871e46a5d0384b775ce698e7298c19a99cf3855b99443fc",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -7890,7 +7890,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -8104,7 +8104,7 @@
       },
       "contract_digest": "594b5fb57ebc4a204d9f901ce687a5a9cf0e2139ae00e2ad6dd904fac3b36e0d",
       "description": "按模板生成工作簿；规则由工作流 JSON 提供。",
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -8118,7 +8118,7 @@
           "native": true
         }
       },
-      "implementation_digest": "ae7614a51bb15bfb8c3af78fc82a434883718b569e9fdf6a65041eebdc526d97",
+      "implementation_digest": "ca1dc5d763f0414820602e4fd71f638eb20e8fd48342d74a41623a5d08f300ee",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -8230,7 +8230,383 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
+      "policies": {
+        "error": {
+          "default_action": "fail_run"
+        },
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        }
+      },
+      "ports": {
+        "condition_mode": "none",
+        "graph_role": "ordinary",
+        "inputs": [
+          {
+            "default": true,
+            "id": "in",
+            "max_edges": null,
+            "min_edges": 1
+          }
+        ],
+        "outputs": [
+          {
+            "default": true,
+            "id": "out",
+            "max_edges": null,
+            "min_edges": 0
+          }
+        ]
+      },
+      "preferred": false,
+      "publishable": true,
+      "ready": true,
+      "requirements": {
+        "assets": [],
+        "capabilities": [],
+        "connectors": [],
+        "resources": {
+          "credential_slots": [],
+          "role_slots": [],
+          "root_slots": [
+            {
+              "access": "write",
+              "config_pointer": "/staging_root_slot",
+              "required": true
+            }
+          ],
+          "rule_slots": []
+        }
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "schema_version": "2.0",
+      "side_effect": {
+        "cancellation": "cooperative",
+        "class": "reversible_local_write",
+        "idempotency": "engine_key",
+        "receipt": "required",
+        "unknown_outcome": "fail"
+      },
+      "source": "resource",
+      "suspension": null,
+      "type": "workbook.render",
+      "type_version": 2,
+      "ui_schema": {
+        "palette": {
+          "group": "工作簿",
+          "icon": "code"
+        }
+      }
+    },
+    {
+      "category": "工作簿",
+      "config_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "default": [],
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "cell": {
+                  "pattern": "^[A-Z]{1,3}[1-9][0-9]{0,6}$",
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "text",
+                    "number",
+                    "blank",
+                    "cached_string",
+                    "cached_number"
+                  ]
+                },
+                "sheet": {
+                  "type": "string"
+                },
+                "value": {}
+              },
+              "required": [
+                "cell",
+                "value"
+              ],
+              "type": "object"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "filename": {
+            "maxLength": 200,
+            "pattern": "^[^/\\\\]+\\.xlsx?$",
+            "title": "下载文件名",
+            "type": "string"
+          },
+          "image_layout": {
+            "additionalProperties": false,
+            "properties": {
+              "biff_excel_x_scale": {
+                "exclusiveMinimum": 0,
+                "maximum": 10,
+                "type": "number"
+              },
+              "fit_to_pages": {
+                "additionalProperties": false,
+                "properties": {
+                  "tall": {
+                    "maximum": 100,
+                    "minimum": 0,
+                    "title": "纵向页数（0 为不限）",
+                    "type": "integer"
+                  },
+                  "wide": {
+                    "maximum": 100,
+                    "minimum": 1,
+                    "title": "横向页数",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "wide",
+                  "tall"
+                ],
+                "title": "打印缩放页数",
+                "type": "object"
+              },
+              "gap": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max_height": {
+                "maximum": 100000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_width": {
+                "maximum": 100000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "print_area": {
+                "type": "string"
+              },
+              "range": {
+                "type": "string"
+              },
+              "sheet": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sheet",
+              "print_area",
+              "range",
+              "max_width",
+              "max_height"
+            ],
+            "type": "object"
+          },
+          "number_formats": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "display_pattern": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "format"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "staging_root_slot": {
+            "type": "string"
+          },
+          "templates": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "relative_path": {
+                  "type": "string"
+                },
+                "root_slot": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "root_slot",
+                "relative_path",
+                "sha256"
+              ],
+              "type": "object"
+            },
+            "maxProperties": 100,
+            "minProperties": 1,
+            "type": "object"
+          }
+        },
+        "required": [
+          "templates",
+          "staging_root_slot",
+          "fields"
+        ],
+        "type": "object"
+      },
+      "contract_digest": "6ca92a6381d2dcac61198a4d29825d984ca3d9d7af42005ef3c7c0c79c86f61e",
+      "description": "按模板生成工作簿；字段、图片和可读文件名由工作流 JSON 提供。",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "capability_pack",
+          "pack_id": "textile.execution-workbook"
+        },
+        "result_mode": "object"
+      },
+      "extensions": {
+        "textile": {
+          "native": true
+        }
+      },
+      "implementation_digest": "72f70baf4034954ce195de1b11db9a5959055c5fcb302c6c09724b9701648c38",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "maxLength": 200,
+            "minLength": 5,
+            "pattern": "^[^/\\\\]+\\.xlsx?$",
+            "title": "生成文件名（可引用上游）",
+            "type": "string"
+          },
+          "images": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "artifact": {
+                  "additionalProperties": false,
+                  "anyOf": [
+                    {
+                      "required": [
+                        "sha256"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fingerprint"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fingerprint": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "relative_path": {
+                      "type": "string"
+                    },
+                    "root_id": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "root_id",
+                    "relative_path"
+                  ],
+                  "type": "object"
+                },
+                "cell": {
+                  "type": "string"
+                },
+                "height": {
+                  "maximum": 4096,
+                  "minimum": 1,
+                  "type": "number"
+                },
+                "sheet": {
+                  "type": "string"
+                },
+                "width": {
+                  "maximum": 4096,
+                  "minimum": 1,
+                  "type": "number"
+                }
+              },
+              "required": [
+                "artifact"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "template_key": {
+            "type": "string"
+          },
+          "values": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "values",
+          "template_key"
+        ],
+        "type": "object"
+      },
+      "lifecycle": {
+        "migration_ids": [],
+        "publish_mode": "allowed",
+        "replacement": null,
+        "state": "active"
+      },
+      "name": "按模板生成工作簿",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {
+            "type": "object"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "verification": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "artifact",
+          "verification"
+        ],
+        "type": "object"
+      },
+      "pack_id": "textile.execution-workbook",
+      "pack_version": "2.14.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -8301,7 +8677,7 @@
       "source": "resource",
       "suspension": null,
       "type": "workbook.render",
-      "type_version": 2,
+      "type_version": 3,
       "ui_schema": {
         "palette": {
           "group": "工作簿",
@@ -8318,7 +8694,7 @@
       },
       "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
       "description": "保存后重读工作副本，并生成绑定 mutation、工作摘要、期望值和目标的核验回执。",
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -8332,7 +8708,7 @@
           "native": true
         }
       },
-      "implementation_digest": "bebb725b3e03df0c2039e3e7b81148fd5604b73203173b67e8cca21d7ad417f1",
+      "implementation_digest": "8766d944bd88e9ea230da3ff949db20a444eb6d58ca00b7d2184a394cebcab14",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -8436,7 +8812,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -8569,7 +8945,7 @@
       },
       "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
       "description": "按封闭单元格写入计划修改 mutation 工作副本。",
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -8583,7 +8959,7 @@
           "native": true
         }
       },
-      "implementation_digest": "974d3e3b499350e99c7efe046d42505bb6fe0e4dcba3fa41a05279c4b65750ed",
+      "implementation_digest": "d207cdf1e7623af83239c9b0284671543c653b492424a8d1a84d2b210048e954",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -8709,7 +9085,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -8790,10 +9166,10 @@
   ],
   "packs": [
     {
-      "distribution_digest": "2dac3296ddb4f79154caf3da6a4dba6528184ef395b161757809bf9af5845745",
+      "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
       "engine_version_range": ">=2.5.0 <3.0.0",
       "pack_id": "legacy_fibrecheck.v1-compat",
-      "pack_version": "2.1.1",
+      "pack_version": "2.1.2",
       "provides": {
         "capabilities": [
           {
@@ -10555,10 +10931,10 @@
       "ready": true
     },
     {
-      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
+      "distribution_digest": "047a847d4b9abc0ac739cbc310caf7ea9e8015ebd48c6d38a768b445b7411571",
       "engine_version_range": ">=2.1.0 <3.0.0",
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.12.0",
+      "pack_version": "2.14.0",
       "provides": {
         "capabilities": [
           {
@@ -10579,7 +10955,7 @@
           {
             "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
             "handler_channel": "worker_callable",
-            "implementation_digest": "89fd4a6b6ce5e0e52a1e1e9fb160033dbdb3722cf546e31e05a442ea07d723f5",
+            "implementation_digest": "e07a51dce93c1718014b003a971ea71228321529e9a98c40e620f3f7e050d78d",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10589,7 +10965,7 @@
           {
             "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
             "handler_channel": "worker_callable",
-            "implementation_digest": "60705c0e49134ee15a1eb0f2ef361433cd0a79c94f90de5664bc6ed2610001ad",
+            "implementation_digest": "36e4d0402534b9c9d85dfbeb9af95b31f7d36823925d83973df8231abcf8e83e",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10599,7 +10975,7 @@
           {
             "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
             "handler_channel": "worker_callable",
-            "implementation_digest": "974d3e3b499350e99c7efe046d42505bb6fe0e4dcba3fa41a05279c4b65750ed",
+            "implementation_digest": "d207cdf1e7623af83239c9b0284671543c653b492424a8d1a84d2b210048e954",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10609,7 +10985,7 @@
           {
             "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
             "handler_channel": "worker_callable",
-            "implementation_digest": "bebb725b3e03df0c2039e3e7b81148fd5604b73203173b67e8cca21d7ad417f1",
+            "implementation_digest": "8766d944bd88e9ea230da3ff949db20a444eb6d58ca00b7d2184a394cebcab14",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10619,7 +10995,7 @@
           {
             "contract_digest": "f8c9adaaec636a9653de1831f974fda298753a66d9cb769d6e65a4ec4fc17011",
             "handler_channel": "worker_callable",
-            "implementation_digest": "3468767b3d91015d295c1e326b3af20dfabfc27a3f4a72d8b76a971df9dd7239",
+            "implementation_digest": "a348f8ec8e258aadf871e46a5d0384b775ce698e7298c19a99cf3855b99443fc",
             "preferred": false,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-render-node.json",
@@ -10629,7 +11005,7 @@
           {
             "contract_digest": "09de4a3b14a6a1d190416491d1aa8b72cda9378cae142bd456d91c386011a858",
             "handler_channel": "worker_callable",
-            "implementation_digest": "a26c2786ada26128ec251b8ab9b6dd3f48788123b784176dba9ca2e021f2ff1a",
+            "implementation_digest": "ced22e0832f8bfcb316f5401d795f16f856cfc4cc073fc568feaddc9b6d24e07",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10639,7 +11015,7 @@
           {
             "contract_digest": "bcb81c7b8ae693e886410ddb66e94f5eafae2394df6e37fb7550bc60444d2cb3",
             "handler_channel": "worker_callable",
-            "implementation_digest": "83cc0454eb54e4503299b016bab31dd097176e4ca0e1d1c40e0a4426a7f9734f",
+            "implementation_digest": "4f67f7c4ae71c941ce53d2c86df31620887720e4ad289eb62808580c9285b315",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10649,12 +11025,22 @@
           {
             "contract_digest": "594b5fb57ebc4a204d9f901ce687a5a9cf0e2139ae00e2ad6dd904fac3b36e0d",
             "handler_channel": "worker_callable",
-            "implementation_digest": "ae7614a51bb15bfb8c3af78fc82a434883718b569e9fdf6a65041eebdc526d97",
-            "preferred": true,
+            "implementation_digest": "ca1dc5d763f0414820602e4fd71f638eb20e8fd48342d74a41623a5d08f300ee",
+            "preferred": false,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-render-node.json",
             "type": "workbook.render",
             "type_version": 2
+          },
+          {
+            "contract_digest": "6ca92a6381d2dcac61198a4d29825d984ca3d9d7af42005ef3c7c0c79c86f61e",
+            "handler_channel": "worker_callable",
+            "implementation_digest": "72f70baf4034954ce195de1b11db9a5959055c5fcb302c6c09724b9701648c38",
+            "preferred": true,
+            "source": "resource",
+            "spec_resource": "v2/resources/node_specs/workbook-render-node.json",
+            "type": "workbook.render",
+            "type_version": 3
           }
         ]
       },

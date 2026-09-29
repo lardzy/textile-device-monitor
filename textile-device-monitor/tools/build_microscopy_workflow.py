@@ -70,13 +70,14 @@ def build():
     form = node('form', '补充必要字段', 'human.form', {'title': '补充记录字段', 'result_schema': form_schema, 'auto_submit_complete': True},
         {'form_schema': output('prepare_form', 'form_schema'), 'defaults': output('prepare_form', 'defaults'), 'context': output('prepare_form', 'context')}, 2)
     place_spec = registry.resolve_node_spec('file.batch_place', 2).public_dict()
-    render_spec = registry.resolve_node_spec('workbook.render', 2).public_dict()
+    render_spec = registry.resolve_node_spec('workbook.render', 3).public_dict()
     entry_schema = registry.connectors.resolve_operation('legacy_fibrecheck', '*', 'check_record.excel_entry', 1).spec['input_schema']['properties']
     upload_schema = registry.connectors.resolve_operation('legacy_fibrecheck', '*', 'original_record.upload', 1).spec['input_schema']['properties']
     payload = python_node('payload', '显微 · 组装字段和路径', (SOURCES/'microscopy_payload.py').read_text(),
         {'inspection_number': S, 'project': O, 'images': A, 'form': O, 'rules': O, 'templates': O},
         {'inspection_number': S, 'project': O, 'values': O, 'images': render_spec['input_schema']['properties']['images'],
          'files': place_spec['input_schema']['properties']['files'], 'target_directory': S, 'template_key': S,
+         'original_filename': S, 'check_filename': S,
          'template_binding': O, 'original_template_key': S, 'profile': O, 'registration_template': entry_schema['template'], 'register': entry_schema['register'],
          'expected_key_identities': entry_schema['expected_key_identities'], 'business_fields': upload_schema['business_fields'],
          'expected_existing_register_count': entry_schema['expected_existing_register_count']},
@@ -94,16 +95,18 @@ def build():
     original = node('original', '生成带图片的原始记录', 'workbook.render',
         {'templates':{'original':reference('gbt36422-2018-microscopy-original-record-v1.xls')}, 'staging_root_slot':'execution_staging',
          'filename':'微观形貌-原始记录.xls',
-         'fields':fields({'A1':'title','B2':'inspection_number','B3':'sample_name','L3':'sample_identity','B33':'judge_basis','I33':'indicator_requirement','B34':'test_result','I34':'judgement','B35':'remark'}, '微观形貌'),
-         'image_layout':{'sheet':'微观形貌','range':'A4:L32','print_area':'$A$1:$L$37','max_width':21600,'max_height':11700,'gap':0,'biff_excel_x_scale':1.0},
+         'fields':fields({'A1':'title','B2':'inspection_number','E2':'method','B3':'sample_name','L3':'sample_identity','B33':'judge_basis','I33':'indicator_requirement','B34':'test_result','I34':'judgement','B35':'remark'}, '微观形貌'),
+         'image_layout':{'sheet':'微观形貌','range':'A4:L32','print_area':'$A$1:$L$37','fit_to_pages':{'wide':1,'tall':1},
+                         'max_width':21600,'max_height':11700,'gap':0,'biff_excel_x_scale':1.0},
          'number_formats':{'K2':{'format':'YYYY/M/D','display_pattern':r'^\d{4}/\d{1,2}/\d{1,2}$'}}},
-        {'template_key':output('payload','original_template_key'),'values':output('payload','values'),'images':output('payload','images')},2)
+        {'template_key':output('payload','original_template_key'),'values':output('payload','values'),'images':output('payload','images'),
+         'filename':output('payload','original_filename')},3)
     check = node('check', '生成检务登记工作簿', 'workbook.render',
         {'templates':{key:reference(value['local_asset_name']) for key,value in templates.items()}, 'staging_root_slot':'execution_staging',
          'filename':'微观形貌-检务登记.xls',
          'fields':fields({'C7':'item_name','AS4':'inspection_number','Z7':'sample_identity','I8':'method','I9':'judge_basis','I10':'indicator_requirement','I11':'test_result','G12':'remark','G13':'judgement',
                           'BI7':'item_name','BK7':'sample_identity','BI8':'method','BI9':'judge_basis','BI10':'indicator_requirement','BI11':'test_result','BI12':'remark','BI13':'judgement'},'Sheet1')},
-        {'template_key':output('payload','template_key'),'values':output('payload','values')},2)
+        {'template_key':output('payload','template_key'),'values':output('payload','values'),'filename':output('payload','check_filename')},3)
     place = node('place', '放置局域网图片', 'file.batch_place', {'target_root_slot':'report_upload_images'},
         {'target_directory':output('payload','target_directory'),'files':output('payload','files')},2)
     branch = node('submit_branch', '图片放置是否取消', 'flow.branch', {'expression_version':1,'multi_match':'all'})

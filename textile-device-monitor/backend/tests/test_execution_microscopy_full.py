@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import xlrd
 
 import pytest
 from app.config import settings
@@ -94,6 +95,18 @@ def test_portable_microscopy_full_chain_or_cancel(operation_env,monkeypatch,canc
     assert current.output_data['groups'][0]['output']['submitted'] is not cancel
     assert len(current.output_data['groups']) == group_count
     assert all(g['status'] == 'completed' for g in current.output_data['groups'])
+    for group in current.output_data['groups']:
+        result = group['output']['original']['artifact']
+        book = xlrd.open_workbook(Path(env.roots[result['root_id']].local_path)/result['relative_path'])
+        try:
+            assert book.sheet_by_name('微观形貌').cell_value(1, 4) == project['check_method']
+        finally:
+            book.release_resources()
+    for operation in env.db.query(ExecutionExternalOperation):
+        if operation.request_summary['operation_type'] != 'legacy_special_wool_qualitative_upload':
+            continue
+        assert '微观形貌-原始记录.xls' in operation.request_summary['target_filename']
+        assert operation.request_summary['target_filename'].count(NUMBER) == 1
     assert env.db.query(ExecutionExternalOperation).count()==3*(group_count-int(cancel))
     assert env.db.query(ExecutionProjectRule).count()==0
     assert destination.exists()

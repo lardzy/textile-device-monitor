@@ -14,7 +14,8 @@ from tests.test_execution_connector_operations import operation_env, receipt
 from workflow_native_helpers import environment, request
 
 
-def test_upload_review_entry_without_run_or_database_rule(operation_env, monkeypatch):
+@pytest.mark.parametrize('generated', [False, True])
+def test_upload_review_entry_without_run_or_database_rule(operation_env, monkeypatch, generated):
     env=operation_env
     monkeypatch.setattr(settings,'EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED',True)
     file=paper_file(env,suffix='.xls')
@@ -44,7 +45,18 @@ def test_upload_review_entry_without_run_or_database_rule(operation_env, monkeyp
     data={'inspection_number':NUMBER,'project':project,'source':{'root_id':'paper_fiber_records','relative_path':file.relative_path},
         'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'business_fields':{'fiber_category':'其他纤维','inspection_item':'自定义项目',
         'review_item':'自定义项目','review_copies':1,'inspection_method':'定量','inspection_copies':1,'file_type':'定量试验'},'inspector':''}
-    uploaded=complete(submit(UPLOAD,data,'upload'),UPLOAD,upload_receipt)
+    if generated:
+        from app.execution.models import ExecutionArtifact
+        env.db.add(ExecutionArtifact(storage_root_id=env.roots['paper_fiber_records'].id,
+            relative_path=file.relative_path, filename=NUMBER+'-薄膜正面-微观形貌-原始记录.xls', role='working',
+            content_sha256=data['sha256'], size_bytes=path.stat().st_size, immutable=True))
+        env.db.commit()
+    result = submit(UPLOAD,data,'upload')
+    expected_name = '薄膜正面-微观形貌-原始记录.xls' if generated else path.name
+    assert result['request_summary']['target_filename'] == NUMBER+'-'+expected_name
+    assert result['request_summary']['files'][0]['filename'] == expected_name
+    assert result['request_summary']['files'][0]['relative_path'] == file.relative_path
+    uploaded=complete(result,UPLOAD,upload_receipt)
     reviewed=complete(submit(REVIEW,{'upload_result':uploaded},'review'),REVIEW,review_receipt)
     entry=submit(ENTRY,{**env.payload['input'],'review_result':reviewed},'entry')
     complete(entry,ENTRY,receipt)

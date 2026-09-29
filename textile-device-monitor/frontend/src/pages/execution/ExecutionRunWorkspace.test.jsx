@@ -54,6 +54,40 @@ const completedRun = {
 };
 
 describe('ExecutionRunWorkspace', () => {
+  it('在总运行页直接下载分组中已生成的工作簿，失败组也保留入口', async () => {
+    server.use(
+      http.get('/api/execution/v1/auth/me', () => HttpResponse.json({ user: {
+        id: 'u-1', username: 'operator', role: 'user', permissions: ['workflow.read', 'workflow.run', 'file.read'],
+      } })),
+      http.get('/api/execution/v1/runs/run-1', () => HttpResponse.json({
+        ...completedRun,
+        groups: [
+          { id: 'child-1', status: 'completed', context: { label: '正面' }, artifacts: [
+            { id: 'xls-1', filename: '260221991-正面-原始记录.xls', relative_path: 'storage/hash.xls' },
+          ] },
+          { id: 'child-2', status: 'failed', context: { label: '反面' }, artifacts: [
+            { id: 'xls-2', filename: '260221991-反面-原始记录.xls', relative_path: 'storage/hash2.xls' },
+            { id: 'image-1', filename: 'source.bmp' },
+          ] },
+        ],
+      })),
+    );
+    render(<MemoryRouter initialEntries={['/execution/runs/run-1']}>
+      <ExecutionAuthProvider><Routes>
+        <Route path="/execution/runs/:runId" element={<ExecutionRunWorkspace />} />
+      </Routes></ExecutionAuthProvider>
+    </MemoryRouter>);
+    const header = await screen.findByText('文件下载与打印');
+    const panel = within(header.closest('.execution-workbook-downloads'));
+    expect(panel.getByText(/Ctrl\+P/)).toBeInTheDocument();
+    expect(panel.getByText('260221991-正面-原始记录.xls')).toBeInTheDocument();
+    expect(panel.queryByText('storage/hash.xls')).not.toBeInTheDocument();
+    expect(panel.queryByText('source.bmp')).not.toBeInTheDocument();
+    expect(panel.getAllByRole('link', { name: /下载文件/ }).map(link => link.getAttribute('href'))).toEqual([
+      '/api/execution/v1/artifacts/xls-1/download', '/api/execution/v1/artifacts/xls-2/download',
+    ]);
+  });
+
   it('确认取消后关闭弹窗、仅提交一次并刷新终态', async () => {
     let runStatus = 'running';
     let cancelRequests = 0;

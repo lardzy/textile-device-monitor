@@ -2645,6 +2645,15 @@ def run_detail(
         .all()
     )
     payload = _run_dict(run, db=db, events=events, artifacts=artifacts)
+    # Show files as soon as a child generates them, including failed/cancelled
+    # groups. Parent/child ownership is inherited when the batch is created.
+    groups = {group["id"]: group for group in payload["groups"] if group["id"]}
+    if groups:
+        for group in groups.values():
+            group["artifacts"] = []
+        for artifact in (db.query(ExecutionArtifact).filter(ExecutionArtifact.run_id.in_(groups))
+                         .order_by(ExecutionArtifact.created_at, ExecutionArtifact.id)):
+            groups[artifact.run_id]["artifacts"].append(_artifact_dict(artifact))
     payload["event_history"] = {
         "has_more": has_earlier_events,
         "cursors": {
