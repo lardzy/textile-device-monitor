@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781",
+  "distribution_digest": "b04515b5a4f3a7e9abb112eebadc408fb0b6ca5d3bc44cbe2b8c20eff1ae1218",
   "engine_version_range": ">=2.1.0 <3.0.0",
   "extensions": {
     "textile": {
@@ -9,7 +9,7 @@
   },
   "manifest_schema_version": "1.0",
   "pack_id": "textile.execution-files",
-  "pack_version": "1.3.0",
+  "pack_version": "1.4.0",
   "provides": {
     "capabilities": [
       {
@@ -30,7 +30,7 @@
       {
         "contract_digest": "6ddaa432eedf18f96f1aeb839be0ed6a2b72c811e97587601fa00aeac16dc5b5",
         "handler_channel": "worker_callable",
-        "implementation_digest": "cb02c652229a757421d9a99c342a42d954e73a06383844df539c2088ba9fa81f",
+        "implementation_digest": "b4ca36a8ac7f1baca26146f3c3b1c8cd8c6152822dac0913ce4f291f4a5092f9",
         "preferred": false,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -40,7 +40,7 @@
       {
         "contract_digest": "8def108b6b408c7787204631c2202262a2066a60c19b5bb1bba77c311f482f96",
         "handler_channel": "worker_callable",
-        "implementation_digest": "427bc8b4bfcd208166681799742341fa179a3e12a0d2fe2c97edd4acd321b67a",
+        "implementation_digest": "f84916f00a7c01c71bc76bc751791192a2aa62f7ee342651fdf437a244178f36",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -50,7 +50,7 @@
       {
         "contract_digest": "20f607bd132981f3ac9d64b0d694958aab8da4ab44f95ca6e672638bfcdb6d16",
         "handler_channel": "worker_callable",
-        "implementation_digest": "831de9ff83679e4433b6f04b25767a0b2d3d75cb54dee31dd412a6e4617f21e5",
+        "implementation_digest": "3ff2eade54250655054d48a7c7fcbc2ba84aeed0035d371d7d86c8b5a33415a1",
         "preferred": false,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -60,7 +60,7 @@
       {
         "contract_digest": "f8f40977f40d7de6e34ac5ea6200f57521704fdb39e07804a18bfbd9f716ab54",
         "handler_channel": "worker_callable",
-        "implementation_digest": "f0dedb1dbb1c8592c52ae07ecaae6b61c9ad64a77f5c4021c06b12a4c5e93cf6",
+        "implementation_digest": "b77a4092d204c2739991686253bcfcfe148ee48d503a72f1e54c1b474c01f3c5",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -70,7 +70,7 @@
       {
         "contract_digest": "efebfc61cac6386d5640d1f9928b579ea7883f131847c2a18e903746b44297e9",
         "handler_channel": "worker_callable",
-        "implementation_digest": "aebe2f2eb6ba32392a00ded065868b0e8df0926da063d220f488cb854fd67bf1",
+        "implementation_digest": "7e947b4e38a976ab28058ba75742cbbc51200254dc9696350d1cf7e565fba5ea",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -80,7 +80,7 @@
       {
         "contract_digest": "9a550ceaac9477a10bb719e99d767c86ac852d29332dc51b6d6034d7a04ec408",
         "handler_channel": "worker_callable",
-        "implementation_digest": "69514628a5ffb78627092dce32839f5e2f80b34a2277c8f0b54084de809715cd",
+        "implementation_digest": "a75ee7893e5b102132e6dedd0da6779b3912495f5e2a2c016adb8a3e34b441a5",
         "preferred": true,
         "source": "resource",
         "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",

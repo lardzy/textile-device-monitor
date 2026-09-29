@@ -39,7 +39,7 @@ def test_copy_names_fields_and_template_choice_are_portable():
     assert data['target_directory'].endswith('/260191178')
 
 
-@pytest.mark.parametrize('count',[1,2,3,5,6,7,10])
+@pytest.mark.parametrize('count',[1,2,3,5,6,7,10,'customer-1','customer-2','customer-3','customer-4'])
 def test_every_registration_template_keeps_literal_feed_cells(tmp_path,count):
     node=next(n for n in document()['definition']['nodes'] if n['id']=='check')
     reference=node['config']['templates'][str(count)]
@@ -47,7 +47,7 @@ def test_every_registration_template_keeps_literal_feed_cells(tmp_path,count):
     values=trial('payload',**payload())['output']['values']
     target=tmp_path/'output.xls'
     result=render_file(template,target,values=values,fields=node['config']['fields'])
-    assert result['cells_verified']==16
+    assert result['cells_verified']==17
     book=xlrd.open_workbook(target)
     try:
         assert book.sheet_by_name('Sheet1').cell_value(6,60)=='纤维微观形貌' # BI7
@@ -139,9 +139,10 @@ def test_template_collection_preflight_verifies_every_bound_template(environment
     Path(root.local_path).mkdir();env.db.add(root);env.db.commit();env.roots[root.root_id]=root
     doc=document()
     # This test isolates template bindings from the final Connector credentials.
-    keep={'start','task','files','candidates','project','images','prepare_form','form','payload','original','check','place','end'}
-    doc['definition']['nodes']=[n for n in doc['definition']['nodes'] if n['id'] in keep]
-    doc['definition']['nodes'][-1]['input_mapping']={'files':'$.nodes.check.output'}
+    by_id={n['id']:n for n in doc['definition']['nodes']}
+    doc['definition']['nodes']=[by_id[k] for k in ('start','check','end')]
+    by_id['check']['input_mapping']={'template_key':'3','values':trial('payload',**payload())['output']['values']}
+    by_id['end']['input_mapping']={'files':'$.nodes.check.output'}
     doc['definition']['output_schema']={'type':'object','properties':{'files':{'type':'object'}},'required':['files'],'additionalProperties':False}
     doc['definition']['edges']=[{'id':a['id']+'-'+b['id'],'source':a['id'],'target':b['id'],'join_policy':'all'} for a,b in zip(doc['definition']['nodes'],doc['definition']['nodes'][1:])]
     doc['resources']['credential_slots']=[]

@@ -867,10 +867,16 @@ def _batch_place(context: Any) -> dict[str, Any] | NodeExecutionResult:
     return _batch_place_output(plan, receipt)
 
 
+def _flow_batch(context):
+    from app.execution.v2.group_handlers import execute_batch
+    return execute_batch(context)
+
+
 _NATIVE_HANDLERS: dict[tuple[str, int], NativeHandler] = {
     ("core.start", 2): lambda context: context.input_data,
     ("core.end", 2): lambda context: context.input_data,
     ("flow.branch", 1): _flow_branch,
+    ("flow.batch", 1): _flow_batch,
     ("flow.fork", 1): _flow_passthrough,
     ("flow.join", 1): _flow_join,
     ("data.aggregate", 1): _data_aggregate,

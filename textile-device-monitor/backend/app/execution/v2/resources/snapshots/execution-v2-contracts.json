@@ -1458,7 +1458,7 @@
       },
       "contract_digest": "f8f40977f40d7de6e34ac5ea6200f57521704fdb39e07804a18bfbd9f716ab54",
       "description": "以 verification subject 和数据库批准回执执行受控原子发布。",
-      "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781",
+      "distribution_digest": "b04515b5a4f3a7e9abb112eebadc408fb0b6ca5d3bc44cbe2b8c20eff1ae1218",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -1472,7 +1472,7 @@
           "native": true
         }
       },
-      "implementation_digest": "f0dedb1dbb1c8592c52ae07ecaae6b61c9ad64a77f5c4021c06b12a4c5e93cf6",
+      "implementation_digest": "b77a4092d204c2739991686253bcfcfe148ee48d503a72f1e54c1b474c01f3c5",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -1554,7 +1554,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-files",
-      "pack_version": "1.3.0",
+      "pack_version": "1.4.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -1665,7 +1665,7 @@
       },
       "contract_digest": "a6bbc7df93553aa4206567ec3734629d97644ea6fd8d1df099305b492f6e1c48",
       "description": "调用已注册的只读查询并立即返回缓存及刷新状态。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -1679,7 +1679,7 @@
           "native": true
         }
       },
-      "implementation_digest": "1afa8c50398f8845f813d2008d018e1777490d3aaa496db258e6d893a8cb121b",
+      "implementation_digest": "61954d3d50c8043c16237b050ce0d0911eeb6df5c868c853aea1634b49a77265",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -1700,7 +1700,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -1811,7 +1811,7 @@
       },
       "contract_digest": "3517b623c6104d7242dd092286aafb571e2027b26432fdd9c9f7f9455f414980",
       "description": "调用通用只读服务，可等待刷新完成；等待期间释放 Worker。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -1825,7 +1825,7 @@
           "native": true
         }
       },
-      "implementation_digest": "9ccaa0e99a3c4c97f34f68a7cc80dac02205b06dfd61d9d445169f361eec833a",
+      "implementation_digest": "ffc0902e7dd76e4b08eb5a6fdbc7d56718af5677f69b0a596e774b90dec8b475",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -1846,7 +1846,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -1930,7 +1930,7 @@
       },
       "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
       "description": "流程出口",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -1946,7 +1946,7 @@
           "required_config": []
         }
       },
-      "implementation_digest": "969a9b89bb8c39f3ba9a6908ce22dc71088325ab9ff4768c4a2ae15b329856ca",
+      "implementation_digest": "3fbcd95684ddc24087de3bd1880ddd9beed224a9ea63c56de1caf33604a2f9c9",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -1965,7 +1965,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -2040,7 +2040,7 @@
       },
       "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
       "description": "流程入口",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -2056,7 +2056,7 @@
           "required_config": []
         }
       },
-      "implementation_digest": "4242d025bb894cfba7c3d91bddc7ea3fe4888841ef7ecb52998359e2b857ddab",
+      "implementation_digest": "5b1e4bb4b391f9b95da717f5bbaaf43705369b951aa1e97a5b1c904ae93316d0",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -2075,7 +2075,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -2171,7 +2171,7 @@
       },
       "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
       "description": "按稳定模式汇总显式输入。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -2186,7 +2186,7 @@
           "native": true
         }
       },
-      "implementation_digest": "8507016a1b0cb4d5d523095a1d13ca8b17398eb6f6b536fe13eb2295ca40d1ee",
+      "implementation_digest": "24602f07ba4d0348de15e3246afaa0fc7acf5b3d295056d5586a0d5f1bb66147",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2226,7 +2226,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -2329,7 +2329,7 @@
       },
       "contract_digest": "f8cc39428e59cbfd4b599297e2f2c6e988f83a62d40ea9c18b8b5e4ee203091c",
       "description": "向受限 globals namespace 原子写入声明式值。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -2344,7 +2344,7 @@
           "native": true
         }
       },
-      "implementation_digest": "4e508dd8c30d00ac0737c81c30287f51056d535ed611af71db700f0b9e3a8148",
+      "implementation_digest": "9f326951f1aada80e548d35d20d8149174065ec8da4ff5d54f0dcea3b69a2a30",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2378,7 +2378,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -3031,7 +3031,7 @@
       },
       "contract_digest": "3ce699ec8e05f35a9b7a74c663ca0b61025690f18e73b0e580816fdfd6f4f97f",
       "description": "提交已注册操作，后台执行并返回写入回执。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "external_side_effect",
         "owner": {
@@ -3045,7 +3045,7 @@
           "native": true
         }
       },
-      "implementation_digest": "39f09814f9ca4208340b1924b1b2b3a38a4d30355ac39d7d53694936cde0b775",
+      "implementation_digest": "66fbab2896d58ee8ec6a85e3880126d382e9e9207f0da8d29933d4892617abaa",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -3066,7 +3066,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -3175,7 +3175,7 @@
       },
       "contract_digest": "20f607bd132981f3ac9d64b0d694958aab8da4ab44f95ca6e672638bfcdb6d16",
       "description": "按确定性计划批量放置文件；冲突时以计划摘要暂停等待人工决定。",
-      "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781",
+      "distribution_digest": "b04515b5a4f3a7e9abb112eebadc408fb0b6ca5d3bc44cbe2b8c20eff1ae1218",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -3189,7 +3189,7 @@
           "native": true
         }
       },
-      "implementation_digest": "831de9ff83679e4433b6f04b25767a0b2d3d75cb54dee31dd412a6e4617f21e5",
+      "implementation_digest": "3ff2eade54250655054d48a7c7fcbc2ba84aeed0035d371d7d86c8b5a33415a1",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3299,7 +3299,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-files",
-      "pack_version": "1.3.0",
+      "pack_version": "1.4.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -3407,7 +3407,7 @@
       },
       "contract_digest": "9a550ceaac9477a10bb719e99d767c86ac852d29332dc51b6d6034d7a04ec408",
       "description": "按上游给出的目录和文件名批量复制；相同内容复用，冲突时一次选择覆盖或取消。",
-      "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781",
+      "distribution_digest": "b04515b5a4f3a7e9abb112eebadc408fb0b6ca5d3bc44cbe2b8c20eff1ae1218",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -3421,7 +3421,7 @@
           "native": true
         }
       },
-      "implementation_digest": "69514628a5ffb78627092dce32839f5e2f80b34a2277c8f0b54084de809715cd",
+      "implementation_digest": "a75ee7893e5b102132e6dedd0da6779b3912495f5e2a2c016adb8a3e34b441a5",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3544,7 +3544,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-files",
-      "pack_version": "1.3.0",
+      "pack_version": "1.4.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -3659,7 +3659,7 @@
       },
       "contract_digest": "8def108b6b408c7787204631c2202262a2066a60c19b5bb1bba77c311f482f96",
       "description": "按同名采集基名稳定聚合索引 artifact。",
-      "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781",
+      "distribution_digest": "b04515b5a4f3a7e9abb112eebadc408fb0b6ca5d3bc44cbe2b8c20eff1ae1218",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -3673,7 +3673,7 @@
           "native": true
         }
       },
-      "implementation_digest": "427bc8b4bfcd208166681799742341fa179a3e12a0d2fe2c97edd4acd321b67a",
+      "implementation_digest": "f84916f00a7c01c71bc76bc751791192a2aa62f7ee342651fdf437a244178f36",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3792,7 +3792,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-files",
-      "pack_version": "1.3.0",
+      "pack_version": "1.4.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -3936,7 +3936,7 @@
       },
       "contract_digest": "6ddaa432eedf18f96f1aeb839be0ed6a2b72c811e97587601fa00aeac16dc5b5",
       "description": "从已持久化索引按受限过滤、排序和投影查询 artifact 候选。",
-      "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781",
+      "distribution_digest": "b04515b5a4f3a7e9abb112eebadc408fb0b6ca5d3bc44cbe2b8c20eff1ae1218",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -3950,7 +3950,7 @@
           "native": true
         }
       },
-      "implementation_digest": "cb02c652229a757421d9a99c342a42d954e73a06383844df539c2088ba9fa81f",
+      "implementation_digest": "b4ca36a8ac7f1baca26146f3c3b1c8cd8c6152822dac0913ce4f291f4a5092f9",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4034,7 +4034,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-files",
-      "pack_version": "1.3.0",
+      "pack_version": "1.4.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4199,7 +4199,7 @@
       },
       "contract_digest": "efebfc61cac6386d5640d1f9928b579ea7883f131847c2a18e903746b44297e9",
       "description": "按编号或路径查询索引，支持目录范围和最多 1000 个候选；截断须缩小查询范围。",
-      "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781",
+      "distribution_digest": "b04515b5a4f3a7e9abb112eebadc408fb0b6ca5d3bc44cbe2b8c20eff1ae1218",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -4213,7 +4213,7 @@
           "native": true
         }
       },
-      "implementation_digest": "aebe2f2eb6ba32392a00ded065868b0e8df0926da063d220f488cb854fd67bf1",
+      "implementation_digest": "7e947b4e38a976ab28058ba75742cbbc51200254dc9696350d1cf7e565fba5ea",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4302,7 +4302,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-files",
-      "pack_version": "1.3.0",
+      "pack_version": "1.4.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4400,6 +4400,200 @@
       "category": "控制",
       "config_schema": {
         "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "contract_digest": "2960be661c0e9c9cae51611a0312cc3fe6d53d009cc185d1febc9a3eb375fe20",
+      "description": "按顺序以当前发布版本创建分组运行；复用 Worker 与回执，成功组不重复执行。",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "kernel",
+          "pack_id": "textile.execution-kernel"
+        },
+        "result_mode": "object"
+      },
+      "extensions": {
+        "textile": {
+          "kernel_semantic": "flow.batch.v1",
+          "native": true
+        }
+      },
+      "implementation_digest": "bf18b619ff8648278500a78f98aff344020c3aa02587800a4b245b80abe9a76e",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "inputs": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "key": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "label": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "inputs"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "lifecycle": {
+        "migration_ids": [
+          "parallel-split-v1-to-flow-fork-v1"
+        ],
+        "publish_mode": "allowed",
+        "replacement": null,
+        "state": "active"
+      },
+      "name": "顺序处理分组",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "groups": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "key": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "label": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "output": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "run_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "status": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "run_id",
+                "status",
+                "output"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "groups",
+          "count"
+        ],
+        "type": "object"
+      },
+      "pack_id": "textile.execution-kernel",
+      "pack_version": "2.12.0",
+      "policies": {
+        "error": {
+          "default_action": "fail_run"
+        },
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        }
+      },
+      "ports": {
+        "condition_mode": "none",
+        "graph_role": "ordinary",
+        "inputs": [
+          {
+            "default": true,
+            "id": "in",
+            "max_edges": null,
+            "min_edges": 1
+          }
+        ],
+        "outputs": [
+          {
+            "default": true,
+            "id": "out",
+            "max_edges": null,
+            "min_edges": 0
+          }
+        ]
+      },
+      "preferred": true,
+      "publishable": true,
+      "ready": true,
+      "requirements": {
+        "assets": [],
+        "capabilities": [],
+        "connectors": [],
+        "resources": {
+          "credential_slots": [],
+          "role_slots": [],
+          "root_slots": [],
+          "rule_slots": []
+        }
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "schema_version": "2.0",
+      "side_effect": {
+        "cancellation": "immediate",
+        "class": "durable_write",
+        "idempotency": "engine_key",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "source": "resource",
+      "suspension": null,
+      "type": "flow.batch",
+      "type_version": 1,
+      "ui_schema": {
+        "palette": {
+          "group": "控制",
+          "icon": "fork"
+        }
+      }
+    },
+    {
+      "category": "控制",
+      "config_schema": {
+        "additionalProperties": false,
         "properties": {
           "expression_version": {
             "const": 1,
@@ -4418,7 +4612,7 @@
       },
       "contract_digest": "e4cfc616a04986e159fcbdafdd5ac96c568b1cb96e7819823e0e220023c959d7",
       "description": "按受限边条件选择全部匹配分支，否则选择唯一 default。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -4433,7 +4627,7 @@
           "native": true
         }
       },
-      "implementation_digest": "77d020967a4635da40eded24a1d044740cf5cdfe826bc9446a71ee90fc84b69b",
+      "implementation_digest": "243c39876c25f0b9fa30c74b06b808adf32736e1af0ee9e45763459d6f612043",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4464,7 +4658,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4546,7 +4740,7 @@
       },
       "contract_digest": "7d599cc4f356bf2815bc932db965792ca41294dfb39c527e014294455a7f3c3e",
       "description": "激活全部输出分支。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -4561,7 +4755,7 @@
           "native": true
         }
       },
-      "implementation_digest": "935a2160a1b5b536977939b8685f3f4fee10c2ca25fd7c9641d5334c5279e2fb",
+      "implementation_digest": "22c6801037ed4b3f4b328a31c1def43e267c0aa907959352b4bd8c147a4c7025",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4592,7 +4786,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4686,7 +4880,7 @@
       },
       "contract_digest": "98c5bf40cba26e1d819c6cf23a130046dcd797fe6bec8c73b8ac735247a0782a",
       "description": "以明确模式汇合已选择的输入分支。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -4701,7 +4895,7 @@
           "native": true
         }
       },
-      "implementation_digest": "a8816a0f56ef40d2475d1d3c346d9b3b554e62e4143649b5bd9b17033f72f790",
+      "implementation_digest": "35a5e2a65bdfe291ed49eff741d5dea50417c5484d8afad2d9b7a77e968b3356",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4735,7 +4929,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4839,7 +5033,7 @@
       },
       "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
       "description": "对带摘要的 subject 作出可审计批准或拒绝。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "human",
         "owner": {
@@ -4854,7 +5048,7 @@
           "renderer_capability": "human.approval@1.0.0"
         }
       },
-      "implementation_digest": "bd0790564a69bc59cdd671f48fd13f0dcb729c96212a6d4a85d65edd7d1c64a0",
+      "implementation_digest": "41d3f0c29ad2b522213474cc6e3c5d8f013e5507f70ffe55f7c14341d0b4cd64",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4946,7 +5140,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5083,7 +5277,7 @@
       },
       "contract_digest": "2606c9696cda7673e737920d81f9d500521adad6a872209932721ceb5ee3be6e",
       "description": "从封闭的声明式选项中作出非授权性决策。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5098,7 +5292,7 @@
           "renderer_capability": "human.decision@1.0.0"
         }
       },
-      "implementation_digest": "7eb404693524d90e9e2a73d00d1e064f1b55f485a87588811f2576f51f978c8b",
+      "implementation_digest": "c459084382cca901e05699a3cace473523c22fc489269c0c1be792fc650f419e",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -5141,7 +5335,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5256,7 +5450,7 @@
       },
       "contract_digest": "5f8d9306ea1e517e37a2112fce1b9b4bfde8d0000c23b559539f726f4e08c8a9",
       "description": "以受限 JSON Schema 收集人工输入。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5271,7 +5465,7 @@
           "renderer_capability": "human.form@1.0.0"
         }
       },
-      "implementation_digest": "41c59649a893ded34e8a49bb9eeaef2d22e85937bbed8d60ea74cccb489542e0",
+      "implementation_digest": "d0e4d621a280e81db4eef89ce7aa0e2bccd549b693f93be1741983e16ef16f68",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -5298,7 +5492,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5412,7 +5606,7 @@
       },
       "contract_digest": "442c1301e7b43b56aff91ea07abc57b822adb9a3192354744dde79765b29aa48",
       "description": "由上游提供字段与默认值，信息齐全时直接继续。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5427,7 +5621,7 @@
           "renderer_capability": "human.form@1.0.0"
         }
       },
-      "implementation_digest": "d5f07a39a0d9d6567fdc5c91466d8ed34f8f1cadfb0bf1077ca92c5de2908a1a",
+      "implementation_digest": "827b6bffbc9c840573369baf3de7e3a8776b4b2dcdee6a44cdf3edaab1070f00",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -5462,7 +5656,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5553,6 +5747,358 @@
       "config_schema": {
         "additionalProperties": false,
         "properties": {
+          "allow_item_reuse": {
+            "default": false,
+            "type": "boolean"
+          },
+          "auto_submit_single_candidate": {
+            "default": true,
+            "type": "boolean"
+          },
+          "require_all_groups": {
+            "default": true,
+            "type": "boolean"
+          },
+          "title": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "require_all_groups",
+          "allow_item_reuse",
+          "auto_submit_single_candidate"
+        ],
+        "type": "object"
+      },
+      "contract_digest": "1803879c002e75167aa239d06381aa3d521783fffef74ec3474e9d35fc68f3e3",
+      "description": "按上游分组选择并排序候选，返回每组独立的选择结果。",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
+      "execution": {
+        "kind": "human",
+        "owner": {
+          "kind": "kernel",
+          "pack_id": "textile.execution-kernel"
+        },
+        "result_mode": "object"
+      },
+      "extensions": {
+        "textile": {
+          "native": true,
+          "renderer_capability": "human.group_select@1.0.0"
+        }
+      },
+      "implementation_digest": "1b0195804fa01a4559682fdd1e4f230f1f51694a3a4a421208e4de6f51a5fde7",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "groups": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "allowed_selected_counts": {
+                  "items": {
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "label": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "metadata": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "metadata",
+                "allowed_selected_counts"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "fingerprint": {
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "items": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "fingerprint": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "artifact",
+                          "image",
+                          "option"
+                        ],
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "metadata": {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      "relative_path": {
+                        "type": "string"
+                      },
+                      "root_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "label",
+                      "fingerprint"
+                    ],
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "kind": {
+                  "enum": [
+                    "artifact",
+                    "image",
+                    "option"
+                  ],
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "relative_path": {
+                  "type": "string"
+                },
+                "root_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "label",
+                "fingerprint"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "groups",
+          "context"
+        ],
+        "type": "object"
+      },
+      "lifecycle": {
+        "migration_ids": [],
+        "publish_mode": "allowed",
+        "replacement": null,
+        "state": "active"
+      },
+      "name": "分组选图",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "allowed_selected_counts": {
+                  "items": {
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "label": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "metadata": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "selected_ids": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "selected_items": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "metadata",
+                "allowed_selected_counts",
+                "selected_ids",
+                "selected_items"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "selection_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "unselected_group_ids": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "groups",
+          "unselected_group_ids",
+          "selection_digest"
+        ],
+        "type": "object"
+      },
+      "pack_id": "textile.execution-kernel",
+      "pack_version": "2.12.0",
+      "policies": {
+        "error": {
+          "default_action": "fail_run"
+        },
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "human_task"
+        }
+      },
+      "ports": {
+        "condition_mode": "none",
+        "graph_role": "ordinary",
+        "inputs": [
+          {
+            "default": true,
+            "id": "in",
+            "max_edges": null,
+            "min_edges": 1
+          }
+        ],
+        "outputs": [
+          {
+            "default": true,
+            "id": "out",
+            "max_edges": null,
+            "min_edges": 0
+          }
+        ]
+      },
+      "preferred": true,
+      "publishable": true,
+      "ready": true,
+      "requirements": {
+        "assets": [],
+        "capabilities": [],
+        "connectors": [],
+        "resources": {
+          "credential_slots": [],
+          "role_slots": [],
+          "root_slots": [],
+          "rule_slots": []
+        }
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "schema_version": "2.0",
+      "side_effect": {
+        "cancellation": "immediate",
+        "class": "none",
+        "idempotency": "none",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "source": "resource",
+      "suspension": {
+        "kind": "human_task",
+        "resume_protocol": "native.group_select.v1"
+      },
+      "type": "human.group_select",
+      "type_version": 1,
+      "ui_schema": {
+        "palette": {
+          "group": "人工",
+          "icon": "select"
+        },
+        "renderer": {
+          "capability": "human.group_select",
+          "version": "1.0.0"
+        }
+      }
+    },
+    {
+      "category": "人工",
+      "config_schema": {
+        "additionalProperties": false,
+        "properties": {
           "auto_submit_single_candidate": {
             "type": "boolean"
           },
@@ -5602,7 +6148,7 @@
       },
       "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
       "description": "从服务端签发的 artifact 或 image 候选中选择并核对主项。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5617,7 +6163,7 @@
           "renderer_capability": "human.select@1.0.0"
         }
       },
-      "implementation_digest": "48f02afab04f8ef3c05e7ad341578f1eed8f30b866b3946ddc17df1a7f4424e6",
+      "implementation_digest": "2dac4fb5b9e4027e957199d26358d9ea27d0a56b7d27898b9d21210a70a94fbe",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -5768,7 +6314,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5908,7 +6454,7 @@
       },
       "contract_digest": "e7c6b60b9587207efc068e6b1b161608c80b5b102f95120297471bd9b9e36fb2",
       "description": "选择文件或图片，支持上游声明的数量集合，按选择顺序返回。",
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5923,7 +6469,7 @@
           "renderer_capability": "human.select@1.0.0"
         }
       },
-      "implementation_digest": "8de2a52e3547b62516725ed1b7dc380fa6303a16cb23c154b814fddb488b50bf",
+      "implementation_digest": "1e4df0c97994a42391101cadd4a692c7b18f155aa9941eb78273d5cf1f3a82e8",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -6087,7 +6633,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -6250,7 +6796,7 @@
       },
       "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
       "description": "按受限的工作表、单元格与等值特征识别工作簿类型。",
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -6264,7 +6810,7 @@
           "native": true
         }
       },
-      "implementation_digest": "64092934187bc4b7a186c3dbe73c0f1a5c3f32ae279e07fb2a87355cbc854296",
+      "implementation_digest": "89fd4a6b6ce5e0e52a1e1e9fb160033dbdb3722cf546e31e05a442ea07d723f5",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -6378,7 +6924,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -6465,7 +7011,7 @@
       },
       "contract_digest": "bcb81c7b8ae693e886410ddb66e94f5eafae2394df6e37fb7550bc60444d2cb3",
       "description": "为输入工作簿建立绑定 mutation 的隔离工作副本。",
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -6479,7 +7025,7 @@
           "native": true
         }
       },
-      "implementation_digest": "b3d439001a2de7a74e051f09f4c2bd80c738ae44a85b9476f9728d958d6cd7ec",
+      "implementation_digest": "83cc0454eb54e4503299b016bab31dd097176e4ca0e1d1c40e0a4426a7f9734f",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -6606,7 +7152,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -6735,7 +7281,7 @@
       },
       "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
       "description": "按封闭字段清单读取工作簿单元格并输出可审计字段值。",
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -6749,7 +7295,7 @@
           "native": true
         }
       },
-      "implementation_digest": "195e2ae71c7d10b1de91e32d5d2d6e75ec8ad79e58f10d5b34a2188f7bf95425",
+      "implementation_digest": "60705c0e49134ee15a1eb0f2ef361433cd0a79c94f90de5664bc6ed2610001ad",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -6863,7 +7409,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -6989,7 +7535,7 @@
       },
       "contract_digest": "09de4a3b14a6a1d190416491d1aa8b72cda9378cae142bd456d91c386011a858",
       "description": "按配置读取每份 XLS/XLSX 的原始字段，返回内容摘要和逐文件错误。",
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -7003,7 +7549,7 @@
           "native": true
         }
       },
-      "implementation_digest": "24a065bdcf0926aac0691c0e6e833c1e4757374ddd692d6b9cf32877e8200bab",
+      "implementation_digest": "a26c2786ada26128ec251b8ab9b6dd3f48788123b784176dba9ca2e021f2ff1a",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -7089,7 +7635,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -7238,7 +7784,7 @@
       },
       "contract_digest": "f8c9adaaec636a9653de1831f974fda298753a66d9cb769d6e65a4ec4fc17011",
       "description": "按模板生成工作簿；规则由工作流 JSON 提供。",
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -7252,7 +7798,7 @@
           "native": true
         }
       },
-      "implementation_digest": "f60f305dc57bb9be8a291ec4c795c472075f8612c061fa93348e1fad44ccc3bd",
+      "implementation_digest": "3468767b3d91015d295c1e326b3af20dfabfc27a3f4a72d8b76a971df9dd7239",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -7344,7 +7890,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -7558,7 +8104,7 @@
       },
       "contract_digest": "594b5fb57ebc4a204d9f901ce687a5a9cf0e2139ae00e2ad6dd904fac3b36e0d",
       "description": "按模板生成工作簿；规则由工作流 JSON 提供。",
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -7572,7 +8118,7 @@
           "native": true
         }
       },
-      "implementation_digest": "1366403a4d5998bc76f0b3bf0c7b97ca5a5ede7f8e7de4252ba2965a8d171470",
+      "implementation_digest": "ae7614a51bb15bfb8c3af78fc82a434883718b569e9fdf6a65041eebdc526d97",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -7684,7 +8230,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -7772,7 +8318,7 @@
       },
       "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
       "description": "保存后重读工作副本，并生成绑定 mutation、工作摘要、期望值和目标的核验回执。",
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -7786,7 +8332,7 @@
           "native": true
         }
       },
-      "implementation_digest": "2268acc191e533d11196cdf126a8d1aa22777dd3a49e9c6742cc10c6c8052430",
+      "implementation_digest": "bebb725b3e03df0c2039e3e7b81148fd5604b73203173b67e8cca21d7ad417f1",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -7890,7 +8436,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -8023,7 +8569,7 @@
       },
       "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
       "description": "按封闭单元格写入计划修改 mutation 工作副本。",
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -8037,7 +8583,7 @@
           "native": true
         }
       },
-      "implementation_digest": "060e9cc8fd8bbccb93e522c64290447b6565d6ecf1b165c5ef777fd2d67212ae",
+      "implementation_digest": "974d3e3b499350e99c7efe046d42505bb6fe0e4dcba3fa41a05279c4b65750ed",
       "input_schema": {
         "$defs": {
           "artifactRef": {
@@ -8163,7 +8709,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -9671,10 +10217,10 @@
       "ready": true
     },
     {
-      "distribution_digest": "a53386660b23bf43bf6c6c9fc517f4235fd2738a2dc22fd7ac4b011c97d40781",
+      "distribution_digest": "b04515b5a4f3a7e9abb112eebadc408fb0b6ca5d3bc44cbe2b8c20eff1ae1218",
       "engine_version_range": ">=2.1.0 <3.0.0",
       "pack_id": "textile.execution-files",
-      "pack_version": "1.3.0",
+      "pack_version": "1.4.0",
       "provides": {
         "capabilities": [
           {
@@ -9695,7 +10241,7 @@
           {
             "contract_digest": "6ddaa432eedf18f96f1aeb839be0ed6a2b72c811e97587601fa00aeac16dc5b5",
             "handler_channel": "worker_callable",
-            "implementation_digest": "cb02c652229a757421d9a99c342a42d954e73a06383844df539c2088ba9fa81f",
+            "implementation_digest": "b4ca36a8ac7f1baca26146f3c3b1c8cd8c6152822dac0913ce4f291f4a5092f9",
             "preferred": false,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -9705,7 +10251,7 @@
           {
             "contract_digest": "8def108b6b408c7787204631c2202262a2066a60c19b5bb1bba77c311f482f96",
             "handler_channel": "worker_callable",
-            "implementation_digest": "427bc8b4bfcd208166681799742341fa179a3e12a0d2fe2c97edd4acd321b67a",
+            "implementation_digest": "f84916f00a7c01c71bc76bc751791192a2aa62f7ee342651fdf437a244178f36",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -9715,7 +10261,7 @@
           {
             "contract_digest": "20f607bd132981f3ac9d64b0d694958aab8da4ab44f95ca6e672638bfcdb6d16",
             "handler_channel": "worker_callable",
-            "implementation_digest": "831de9ff83679e4433b6f04b25767a0b2d3d75cb54dee31dd412a6e4617f21e5",
+            "implementation_digest": "3ff2eade54250655054d48a7c7fcbc2ba84aeed0035d371d7d86c8b5a33415a1",
             "preferred": false,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -9725,7 +10271,7 @@
           {
             "contract_digest": "f8f40977f40d7de6e34ac5ea6200f57521704fdb39e07804a18bfbd9f716ab54",
             "handler_channel": "worker_callable",
-            "implementation_digest": "f0dedb1dbb1c8592c52ae07ecaae6b61c9ad64a77f5c4021c06b12a4c5e93cf6",
+            "implementation_digest": "b77a4092d204c2739991686253bcfcfe148ee48d503a72f1e54c1b474c01f3c5",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -9735,7 +10281,7 @@
           {
             "contract_digest": "efebfc61cac6386d5640d1f9928b579ea7883f131847c2a18e903746b44297e9",
             "handler_channel": "worker_callable",
-            "implementation_digest": "aebe2f2eb6ba32392a00ded065868b0e8df0926da063d220f488cb854fd67bf1",
+            "implementation_digest": "7e947b4e38a976ab28058ba75742cbbc51200254dc9696350d1cf7e565fba5ea",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -9745,7 +10291,7 @@
           {
             "contract_digest": "9a550ceaac9477a10bb719e99d767c86ac852d29332dc51b6d6034d7a04ec408",
             "handler_channel": "worker_callable",
-            "implementation_digest": "69514628a5ffb78627092dce32839f5e2f80b34a2277c8f0b54084de809715cd",
+            "implementation_digest": "a75ee7893e5b102132e6dedd0da6779b3912495f5e2a2c016adb8a3e34b441a5",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/files-p2-nodes.json",
@@ -9764,10 +10310,10 @@
       "ready": true
     },
     {
-      "distribution_digest": "76c1b375361293edbb7fda175ce57535d1e2417133b43aa117bf690480de3462",
+      "distribution_digest": "543fdfef04567fd0b3761510b364c504fdd6526ed1799cdd78a75ea3311ed2d9",
       "engine_version_range": ">=2.5.0 <3.0.0",
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "provides": {
         "capabilities": [
           {
@@ -9780,7 +10326,7 @@
           {
             "contract_digest": "e4cfc616a04986e159fcbdafdd5ac96c568b1cb96e7819823e0e220023c959d7",
             "handler_channel": "worker_callable",
-            "implementation_digest": "77d020967a4635da40eded24a1d044740cf5cdfe826bc9446a71ee90fc84b69b",
+            "implementation_digest": "243c39876c25f0b9fa30c74b06b808adf32736e1af0ee9e45763459d6f612043",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9790,7 +10336,7 @@
           {
             "contract_digest": "7d599cc4f356bf2815bc932db965792ca41294dfb39c527e014294455a7f3c3e",
             "handler_channel": "worker_callable",
-            "implementation_digest": "935a2160a1b5b536977939b8685f3f4fee10c2ca25fd7c9641d5334c5279e2fb",
+            "implementation_digest": "22c6801037ed4b3f4b328a31c1def43e267c0aa907959352b4bd8c147a4c7025",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9800,7 +10346,7 @@
           {
             "contract_digest": "98c5bf40cba26e1d819c6cf23a130046dcd797fe6bec8c73b8ac735247a0782a",
             "handler_channel": "worker_callable",
-            "implementation_digest": "a8816a0f56ef40d2475d1d3c346d9b3b554e62e4143649b5bd9b17033f72f790",
+            "implementation_digest": "35a5e2a65bdfe291ed49eff741d5dea50417c5484d8afad2d9b7a77e968b3356",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9810,7 +10356,7 @@
           {
             "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
             "handler_channel": "worker_callable",
-            "implementation_digest": "8507016a1b0cb4d5d523095a1d13ca8b17398eb6f6b536fe13eb2295ca40d1ee",
+            "implementation_digest": "24602f07ba4d0348de15e3246afaa0fc7acf5b3d295056d5586a0d5f1bb66147",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9820,7 +10366,7 @@
           {
             "contract_digest": "f8cc39428e59cbfd4b599297e2f2c6e988f83a62d40ea9c18b8b5e4ee203091c",
             "handler_channel": "worker_callable",
-            "implementation_digest": "4e508dd8c30d00ac0737c81c30287f51056d535ed611af71db700f0b9e3a8148",
+            "implementation_digest": "9f326951f1aada80e548d35d20d8149174065ec8da4ff5d54f0dcea3b69a2a30",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9830,7 +10376,7 @@
           {
             "contract_digest": "5f8d9306ea1e517e37a2112fce1b9b4bfde8d0000c23b559539f726f4e08c8a9",
             "handler_channel": "human",
-            "implementation_digest": "41c59649a893ded34e8a49bb9eeaef2d22e85937bbed8d60ea74cccb489542e0",
+            "implementation_digest": "d0e4d621a280e81db4eef89ce7aa0e2bccd549b693f93be1741983e16ef16f68",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9840,7 +10386,7 @@
           {
             "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
             "handler_channel": "human",
-            "implementation_digest": "48f02afab04f8ef3c05e7ad341578f1eed8f30b866b3946ddc17df1a7f4424e6",
+            "implementation_digest": "2dac4fb5b9e4027e957199d26358d9ea27d0a56b7d27898b9d21210a70a94fbe",
             "preferred": false,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9850,7 +10396,7 @@
           {
             "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
             "handler_channel": "human",
-            "implementation_digest": "bd0790564a69bc59cdd671f48fd13f0dcb729c96212a6d4a85d65edd7d1c64a0",
+            "implementation_digest": "41d3f0c29ad2b522213474cc6e3c5d8f013e5507f70ffe55f7c14341d0b4cd64",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9860,7 +10406,7 @@
           {
             "contract_digest": "2606c9696cda7673e737920d81f9d500521adad6a872209932721ceb5ee3be6e",
             "handler_channel": "human",
-            "implementation_digest": "7eb404693524d90e9e2a73d00d1e064f1b55f485a87588811f2576f51f978c8b",
+            "implementation_digest": "c459084382cca901e05699a3cace473523c22fc489269c0c1be792fc650f419e",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9870,7 +10416,7 @@
           {
             "contract_digest": "a6bbc7df93553aa4206567ec3734629d97644ea6fd8d1df099305b492f6e1c48",
             "handler_channel": "worker_callable",
-            "implementation_digest": "1afa8c50398f8845f813d2008d018e1777490d3aaa496db258e6d893a8cb121b",
+            "implementation_digest": "61954d3d50c8043c16237b050ce0d0911eeb6df5c868c853aea1634b49a77265",
             "implementation_resources": [
               "connector_queries.py",
               "v2/resources/node_specs/connector-query-node.json"
@@ -9884,7 +10430,7 @@
           {
             "contract_digest": "3ce699ec8e05f35a9b7a74c663ca0b61025690f18e73b0e580816fdfd6f4f97f",
             "handler_channel": "external_operation",
-            "implementation_digest": "39f09814f9ca4208340b1924b1b2b3a38a4d30355ac39d7d53694936cde0b775",
+            "implementation_digest": "66fbab2896d58ee8ec6a85e3880126d382e9e9207f0da8d29933d4892617abaa",
             "implementation_resources": [
               "connector_operations.py",
               "v2/resources/node_specs/external-operation-node.json"
@@ -9898,7 +10444,7 @@
           {
             "contract_digest": "442c1301e7b43b56aff91ea07abc57b822adb9a3192354744dde79765b29aa48",
             "handler_channel": "human",
-            "implementation_digest": "d5f07a39a0d9d6567fdc5c91466d8ed34f8f1cadfb0bf1077ca92c5de2908a1a",
+            "implementation_digest": "827b6bffbc9c840573369baf3de7e3a8776b4b2dcdee6a44cdf3edaab1070f00",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9908,7 +10454,7 @@
           {
             "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
             "handler_channel": "kernel_builtin",
-            "implementation_digest": "4242d025bb894cfba7c3d91bddc7ea3fe4888841ef7ecb52998359e2b857ddab",
+            "implementation_digest": "5b1e4bb4b391f9b95da717f5bbaaf43705369b951aa1e97a5b1c904ae93316d0",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9918,7 +10464,7 @@
           {
             "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
             "handler_channel": "kernel_builtin",
-            "implementation_digest": "969a9b89bb8c39f3ba9a6908ce22dc71088325ab9ff4768c4a2ae15b329856ca",
+            "implementation_digest": "3fbcd95684ddc24087de3bd1880ddd9beed224a9ea63c56de1caf33604a2f9c9",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -9928,7 +10474,7 @@
           {
             "contract_digest": "3517b623c6104d7242dd092286aafb571e2027b26432fdd9c9f7f9455f414980",
             "handler_channel": "worker_callable",
-            "implementation_digest": "9ccaa0e99a3c4c97f34f68a7cc80dac02205b06dfd61d9d445169f361eec833a",
+            "implementation_digest": "ffc0902e7dd76e4b08eb5a6fdbc7d56718af5677f69b0a596e774b90dec8b475",
             "implementation_resources": [
               "connector_queries.py",
               "v2/resources/node_specs/connector-query-node.json"
@@ -9942,12 +10488,40 @@
           {
             "contract_digest": "e7c6b60b9587207efc068e6b1b161608c80b5b102f95120297471bd9b9e36fb2",
             "handler_channel": "human",
-            "implementation_digest": "8de2a52e3547b62516725ed1b7dc380fa6303a16cb23c154b814fddb488b50bf",
+            "implementation_digest": "1e4df0c97994a42391101cadd4a692c7b18f155aa9941eb78273d5cf1f3a82e8",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
             "type": "human.select",
             "type_version": 2
+          },
+          {
+            "contract_digest": "1803879c002e75167aa239d06381aa3d521783fffef74ec3474e9d35fc68f3e3",
+            "handler_channel": "human",
+            "implementation_digest": "1b0195804fa01a4559682fdd1e4f230f1f51694a3a4a421208e4de6f51a5fde7",
+            "implementation_resources": [
+              "v2/group_handlers.py",
+              "v2/resources/node_specs/kernel-p2-nodes.json"
+            ],
+            "preferred": true,
+            "source": "resource",
+            "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
+            "type": "human.group_select",
+            "type_version": 1
+          },
+          {
+            "contract_digest": "2960be661c0e9c9cae51611a0312cc3fe6d53d009cc185d1febc9a3eb375fe20",
+            "handler_channel": "worker_callable",
+            "implementation_digest": "bf18b619ff8648278500a78f98aff344020c3aa02587800a4b245b80abe9a76e",
+            "implementation_resources": [
+              "v2/group_handlers.py",
+              "v2/resources/node_specs/kernel-p2-nodes.json"
+            ],
+            "preferred": true,
+            "source": "resource",
+            "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
+            "type": "flow.batch",
+            "type_version": 1
           }
         ],
         "renderers": [
@@ -9970,16 +10544,21 @@
             "capability": "human.decision",
             "contract_digest": "1d2a4c76c849ff69a44d604e96ac6ca4c17c14a2125f511d734022defb6d393d",
             "version": "1.0.0"
+          },
+          {
+            "capability": "human.group_select",
+            "contract_digest": "210399162b69955b0255e565b909952668f19356951d069408751bd4f75b2b51",
+            "version": "1.0.0"
           }
         ]
       },
       "ready": true
     },
     {
-      "distribution_digest": "3d182a5bc5abd702101a4e055b69cf5e983b28dc721c9d8f59f71d010b55aaab",
+      "distribution_digest": "bb91e59d1b9ff013d940b545139d219ec67ac0a1541e492722beb406624cb790",
       "engine_version_range": ">=2.1.0 <3.0.0",
       "pack_id": "textile.execution-workbook",
-      "pack_version": "2.11.0",
+      "pack_version": "2.12.0",
       "provides": {
         "capabilities": [
           {
@@ -10000,7 +10579,7 @@
           {
             "contract_digest": "0dd5a0a0e2f93c0ebc64b3c209bd87e3606ec8e8bd30f4af98e00e34008a8cd0",
             "handler_channel": "worker_callable",
-            "implementation_digest": "64092934187bc4b7a186c3dbe73c0f1a5c3f32ae279e07fb2a87355cbc854296",
+            "implementation_digest": "89fd4a6b6ce5e0e52a1e1e9fb160033dbdb3722cf546e31e05a442ea07d723f5",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10010,7 +10589,7 @@
           {
             "contract_digest": "cfe76aad24d0f822421ea78169434b46c82f220ea3e0d1c2b175a8bfe71a18a5",
             "handler_channel": "worker_callable",
-            "implementation_digest": "195e2ae71c7d10b1de91e32d5d2d6e75ec8ad79e58f10d5b34a2188f7bf95425",
+            "implementation_digest": "60705c0e49134ee15a1eb0f2ef361433cd0a79c94f90de5664bc6ed2610001ad",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10020,7 +10599,7 @@
           {
             "contract_digest": "d36c08cc7d49ae32fc4397da1f7c94c365ac5d1a0b8df9e3868e35c18d7ade67",
             "handler_channel": "worker_callable",
-            "implementation_digest": "060e9cc8fd8bbccb93e522c64290447b6565d6ecf1b165c5ef777fd2d67212ae",
+            "implementation_digest": "974d3e3b499350e99c7efe046d42505bb6fe0e4dcba3fa41a05279c4b65750ed",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10030,7 +10609,7 @@
           {
             "contract_digest": "a81ced6c184b1341dfaab4944f8a1bea4635fb3ce95d8037347acef2b8104145",
             "handler_channel": "worker_callable",
-            "implementation_digest": "2268acc191e533d11196cdf126a8d1aa22777dd3a49e9c6742cc10c6c8052430",
+            "implementation_digest": "bebb725b3e03df0c2039e3e7b81148fd5604b73203173b67e8cca21d7ad417f1",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10040,7 +10619,7 @@
           {
             "contract_digest": "f8c9adaaec636a9653de1831f974fda298753a66d9cb769d6e65a4ec4fc17011",
             "handler_channel": "worker_callable",
-            "implementation_digest": "f60f305dc57bb9be8a291ec4c795c472075f8612c061fa93348e1fad44ccc3bd",
+            "implementation_digest": "3468767b3d91015d295c1e326b3af20dfabfc27a3f4a72d8b76a971df9dd7239",
             "preferred": false,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-render-node.json",
@@ -10050,7 +10629,7 @@
           {
             "contract_digest": "09de4a3b14a6a1d190416491d1aa8b72cda9378cae142bd456d91c386011a858",
             "handler_channel": "worker_callable",
-            "implementation_digest": "24a065bdcf0926aac0691c0e6e833c1e4757374ddd692d6b9cf32877e8200bab",
+            "implementation_digest": "a26c2786ada26128ec251b8ab9b6dd3f48788123b784176dba9ca2e021f2ff1a",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10060,7 +10639,7 @@
           {
             "contract_digest": "bcb81c7b8ae693e886410ddb66e94f5eafae2394df6e37fb7550bc60444d2cb3",
             "handler_channel": "worker_callable",
-            "implementation_digest": "b3d439001a2de7a74e051f09f4c2bd80c738ae44a85b9476f9728d958d6cd7ec",
+            "implementation_digest": "83cc0454eb54e4503299b016bab31dd097176e4ca0e1d1c40e0a4426a7f9734f",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-p2-nodes.json",
@@ -10070,7 +10649,7 @@
           {
             "contract_digest": "594b5fb57ebc4a204d9f901ce687a5a9cf0e2139ae00e2ad6dd904fac3b36e0d",
             "handler_channel": "worker_callable",
-            "implementation_digest": "1366403a4d5998bc76f0b3bf0c7b97ca5a5ede7f8e7de4252ba2965a8d171470",
+            "implementation_digest": "ae7614a51bb15bfb8c3af78fc82a434883718b569e9fdf6a65041eebdc526d97",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/workbook-render-node.json",

@@ -41,5 +41,12 @@ def main(inputs):
         defaults['judge_basis'] = bases[0] if len(bases) == 1 else ''
         fields['judgement']['enum'] = rules['judgements']
     defaults.update({key: value for key, value in rules.get('defaults', {}).items() if key in fields})
+    if 'sample_identity' in inputs:
+        identity = inputs['sample_identity']
+        if identity not in (identities or ['']):
+            raise ValueError('样品识别不属于当前项目')
+        defaults['sample_identity'] = identity
+        fields['sample_identity']['const'] = identity
+        fields['sample_identity']['readOnly'] = True
     return {'form_schema': {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False},
             'defaults': defaults, 'context': {'项目': inputs['project']['label'], '图片数量': len(inputs['images'])}}

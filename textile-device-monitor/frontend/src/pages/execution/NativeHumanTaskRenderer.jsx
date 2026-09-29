@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   Alert,
   Button,
+  Card,
   Checkbox,
   Descriptions,
   Form,
@@ -43,8 +44,9 @@ function ResultFileSelection({ value = [], onChange, items, form, disabled, maxi
   );
 }
 
-function ImageSelection({ value = [], onChange, items, form, disabled, maximum }) {
+export function ImageSelection({ value = [], onChange, items, form, disabled, maximum }) {
   const [directory, setDirectory] = useState(null);
+  const [query, setQuery] = useState('');
   const images = useMemo(() => items.map(item => ({
     ...item.metadata,
     id: item.id,
@@ -58,10 +60,11 @@ function ImageSelection({ value = [], onChange, items, form, disabled, maximum }
     const next = [...value];
     [next[index], next[index + direction]] = [next[index + direction], next[index]];
     onChange?.(next);
-    form.setFieldValue('primary_id', next[0] || null);
+    form?.setFieldValue('primary_id', next[0] || null);
   };
   return (
     <Space direction="vertical" style={{ width: '100%' }}>
+      <Input aria-label="筛选图片文件名" placeholder="筛选文件名，例如 H_" value={query} onChange={event => setQuery(event.target.value)} disabled={disabled} />
       <Select
         aria-label="筛选图片目录"
         placeholder="全部图片目录"
@@ -74,10 +77,10 @@ function ImageSelection({ value = [], onChange, items, form, disabled, maximum }
         options={directories.map(path => ({ value: path, label: path || '根目录' }))}
       />
     <ExecutionImageSelector
-      images={images.filter(image => !directory || parentOf(image) === directory)}
+      images={images.filter(image => (!directory || parentOf(image) === directory) && String(image.name || image.relative_path).toLowerCase().includes(query.toLowerCase()))}
       selectedImageIds={value}
       onSelectedImageIdsChange={onChange}
-      onPrimaryImageIdChange={id => form.setFieldValue('primary_id', id)}
+      onPrimaryImageIdChange={id => form?.setFieldValue('primary_id', id)}
       disabled={disabled}
       maxImages={maximum}
     />
@@ -100,6 +103,9 @@ export default function NativeHumanTaskRenderer({
   inputData,
   disabled,
 }) {
+  if (renderer.capability === 'human.group_select') {
+    return <GroupSelection inputData={inputData} form={form} disabled={disabled} config={rendererContract.payload || {}} />;
+  }
   if (renderer.capability === 'human.form') {
     return <SchemaFields schema={schema} disabled={disabled} />;
   }
@@ -237,4 +243,26 @@ export default function NativeHumanTaskRenderer({
       <SchemaFields schema={schema} disabled={disabled} />
     </>
   );
+}
+
+function GroupSelection({ inputData, form, disabled, config }) {
+  const values = Form.useWatch('groups', form) || [];
+  const groups = inputData.groups || [], items = inputData.items || [];
+  return <Space direction="vertical" style={{ width: '100%' }}>
+    <Alert showIcon type="info" message="按样品识别分组选图，组内顺序决定排版和共享文件编号" description={config.require_all_groups === false ? '可留空暂不处理的组；已完成的组不会因其他组重试而重复提交。' : '请为每组选择图片；已完成的组不会因其他组重试而重复提交。'} />
+    {groups.map((group, index) => <Card size="small" title={group.label} key={group.id}>
+      <Typography.Paragraph type="secondary">可选择 {group.allowed_selected_counts.join('、')} 张；已选 {values[index]?.selected_ids?.length || 0} 张</Typography.Paragraph>
+      <Form.Item name={['groups', index, 'id']} initialValue={group.id} hidden><Input /></Form.Item>
+      <Form.Item name={['groups', index, 'selected_ids']} initialValue={[]} rules={[{ validator: async (_, value = []) => {
+        if (!value.length && config.require_all_groups === false) return;
+        if (!group.allowed_selected_counts.includes(value.length)) throw new Error(`${group.label}请选择 ${group.allowed_selected_counts.join('、')} 张`);
+        const others = form.getFieldValue('groups') || [];
+        if (!config.allow_item_reuse && others.some((other, at) => at !== index && other?.selected_ids?.some(id => value.includes(id)))) throw new Error('同一图片不能分配给多个部位');
+      } }]}>
+        {items.every(item => item.kind === 'image')
+          ? <ImageSelection items={items} disabled={disabled} maximum={Math.max(...group.allowed_selected_counts)} />
+          : <Checkbox.Group disabled={disabled}>{items.map(item => <Checkbox key={item.id} value={item.id}>{itemLabel(item)}</Checkbox>)}</Checkbox.Group>}
+      </Form.Item>
+    </Card>)}
+  </Space>;
 }

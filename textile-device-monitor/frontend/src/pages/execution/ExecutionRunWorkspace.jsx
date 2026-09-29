@@ -637,6 +637,18 @@ export default function ExecutionRunWorkspace() {
         actions={actions}
       />
 
+      {run.parent_run_id && <Alert type="info" showIcon message={`当前分组：${run.batch_context?.label || ''}`}
+        action={<Button onClick={() => navigate(`/execution/runs/${run.parent_run_id}`)}>返回全部分组</Button>} />}
+      {run.groups?.length > 0 && <List bordered header="分组进度" dataSource={run.groups} style={{ margin: '16px 0' }}
+        renderItem={group => <List.Item actions={[
+          group.id && <Button key="open" onClick={() => navigate(`/execution/runs/${group.id}`)}>查看本组 / 处理待办</Button>,
+          group.status === 'failed' && canRunWorkflow && run.status === 'failed'
+            && <Button key="retry" onClick={() => retryNode(group.context.node_id)}>重试失败组并继续</Button>,
+        ].filter(Boolean)}><List.Item.Meta title={<Space>{group.context.label}<Tag color={RUN_STATUS[group.status]?.color}>
+          {group.output_data?.submitted === false ? '未提交' : RUN_STATUS[group.status]?.label || group.status}</Tag></Space>}
+          description={group.error_message || (group.status === 'completed' ? group.output_data?.message : undefined)} />
+        </List.Item>} />}
+
       {error && (
         <Alert
           banner

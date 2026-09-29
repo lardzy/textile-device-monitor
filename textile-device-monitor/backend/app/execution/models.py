@@ -529,6 +529,8 @@ class ExecutionRun(Base):
         index=True,
     )
     idempotency_key = Column(String(100), nullable=False)
+    parent_run_id = Column(String(36), ForeignKey("execution_runs.id"), index=True)
+    batch_context = Column(JSON_VARIANT)
     inspection_number = Column(String(200), nullable=False, index=True)
     mode = Column(String(20), nullable=False, default="live")
     status = Column(String(30), nullable=False, default="queued", index=True)

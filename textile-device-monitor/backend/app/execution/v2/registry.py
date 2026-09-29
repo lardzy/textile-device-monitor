@@ -31,6 +31,7 @@ PROTOCOL_VERSION = "2.1"
 _TRUSTED_RENDERER_PROTOCOLS = {
     ("human.form", "1.0.0"): "native.form.v1",
     ("human.select", "1.0.0"): "native.select.v1",
+    ("human.group_select", "1.0.0"): "native.group_select.v1",
     ("human.approval", "1.0.0"): "native.approval.v1",
     ("human.decision", "1.0.0"): "native.decision.v1",
     ("file.batch_place.conflict", "1.0.0"): "retry_with_decision.v1",

@@ -1,4 +1,10 @@
 const TRUSTED_RENDERERS = new Map([
+  ['human.group_select@1.0.0', {
+    capability: 'human.group_select',
+    version: '1.0.0',
+    protocol: 'native.group_select.v1',
+    contractDigest: '210399162b69955b0255e565b909952668f19356951d069408751bd4f75b2b51',
+  }],
   ['human.form@1.0.0', {
     capability: 'human.form',
     version: '1.0.0',

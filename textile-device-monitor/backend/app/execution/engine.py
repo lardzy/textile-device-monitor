@@ -597,6 +597,14 @@ def _native_human_submission(
             "decision": decision,
             "plan_digest": state.get("plan_digest"),
         }
+    if resume_protocol == "native.group_select.v1":
+        from app.execution.v2.group_handlers import normalize_groups
+
+        gateway = build_file_gateway(db)
+        def validate_candidate(candidate):
+            if candidate.get("kind") != "option":
+                _validate_index_candidate(db, run=run, candidate=candidate, gateway=gateway)
+        return normalize_groups(node_run.input_data, data, config, validate_candidate)
     if resume_protocol == "native.form.v1":
         _assert_declared_root_refs(run, data)
         return dict(data)
@@ -1673,9 +1681,16 @@ def create_run(
     mode: str = "live",
     draft_definition: Optional[dict[str, Any]] = None,
     target_sample_number: Optional[str] = None,
+    inherited_run: Optional[ExecutionRun] = None,
+    batch_context: Optional[dict[str, Any]] = None,
 ) -> tuple[ExecutionRun, bool]:
     from app.execution.workflow_replacement import assert_not_archived
 
+    if inherited_run is not None and (
+        inherited_run.workflow_id != workflow.id or inherited_run.parent_run_id
+        or inherited_run.created_by_id != actor.id or not inherited_run.workflow_version_id
+    ):
+        raise conflict("batch_parent_invalid", "分组只能继承本流程已发布的父运行")
     db.flush()
     workflow = (
         db.query(ExecutionWorkflow)
@@ -1684,7 +1699,8 @@ def create_run(
         .with_for_update()
         .one()
     )
-    assert_not_archived(workflow)
+    if inherited_run is None:
+        assert_not_archived(workflow)
     if (
         mode == "test"
         and getattr(workflow, "management_mode", "draft_v1")
@@ -1699,6 +1715,7 @@ def create_run(
     if (
         (not workflow.is_enabled or workflow.availability_code is not None)
         and mode != "test"
+        and inherited_run is None
     ):
         raise ExecutionApiError(
             409,
@@ -1714,11 +1731,12 @@ def create_run(
         capabilities = deepcopy(workflow.capabilities or {})
         validation = validate_definition(definition)
     else:
-        version = _latest_published_version(db, workflow)
+        version = (db.get(ExecutionWorkflowVersion, inherited_run.workflow_version_id)
+                   if inherited_run is not None else _latest_published_version(db, workflow))
         if version is None:
             raise ExecutionApiError(409, "workflow_not_published", "流程尚未发布")
-        definition = version.definition
-        capabilities = deepcopy(version.capabilities or {})
+        definition = deepcopy(inherited_run.definition_snapshot if inherited_run is not None else version.definition)
+        capabilities = deepcopy(inherited_run.capabilities_snapshot if inherited_run is not None else version.capabilities or {})
         if version.release_id is not None:
             from app.execution.registry import NodeRegistry, NodeType
 
@@ -1909,6 +1927,8 @@ def create_run(
         workflow_version_id=version.id if version else None,
         created_by_id=actor.id,
         idempotency_key=idempotency_key,
+        parent_run_id=inherited_run.id if inherited_run is not None else None,
+        batch_context=deepcopy(batch_context),
         inspection_number=inspection_number,
         mode=mode,
         status="queued",
@@ -2301,6 +2321,9 @@ def claim_next_node(
         return None
     from app.execution.connector_recovery import recover_connector_updates
     if recover_connector_updates(db):
+        return None
+    from app.execution.v2.group_handlers import settle_cancelled_batches
+    if settle_cancelled_batches(db):
         return None
     # API 驱动的物理发布没有 Worker 心跳线程，租约至少保留五分钟，
     # 避免较大的工作簿复制期间被过期回收并产生第二个发布者。
@@ -3633,6 +3656,11 @@ def _settle_cancel_pending_run(
     )
     if remaining_external is not None:
         return
+    if db.query(ExecutionRun.id).filter(
+        ExecutionRun.parent_run_id == run.id,
+        ExecutionRun.status.notin_(RUN_TERMINAL_STATUSES),
+    ).first() is not None:
+        return
     now = utcnow()
     if side_effect_completed:
         data = dict(run.output_data or {})
@@ -4112,7 +4140,11 @@ def _create_human_task(
         else config.get("form_schema") or {}
     )
     if native_human and form_schema_override is None:
-        if resume_protocol == "native.select.v1":
+        if resume_protocol == "native.group_select.v1":
+            from app.execution.v2.group_handlers import group_form_schema
+
+            form_schema = group_form_schema(context.input_data, config)
+        elif resume_protocol == "native.select.v1":
             form_schema = {
                 "type": "object",
                 "properties": {
@@ -4238,6 +4270,9 @@ def _create_human_task(
             renderer_contract["payload"] = deepcopy(
                 suspension_payload.get("renderer_payload")
             )
+        if resume_protocol == "native.group_select.v1":
+            renderer_contract["payload"] = {"require_all_groups": config.get("require_all_groups", True),
+                                             "allow_item_reuse": config.get("allow_item_reuse", False)}
         if reopened and effective_human_task_renderer_contract(task) not in ({}, renderer_contract):
             raise ExecutionApiError(
                 409,
@@ -4486,6 +4521,11 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                     defaults = input_data.get("defaults") or {}
                     if config.get("auto_submit_complete") and validate_json_instance(dynamic_form_schema, defaults, path_prefix="$.form").valid:
                         auto_output = dict(defaults)
+                if (resume_protocol == "native.group_select.v1" and config.get("auto_submit_single_candidate")
+                    and len(input_data.get("groups", [])) == 1 and len(candidates) == 1
+                    and 1 in input_data["groups"][0]["allowed_selected_counts"]):
+                    auto_output = _native_human_submission(db, run=node_run.run, node_run=node_run, task=None,
+                        data={"groups": [{"id": input_data["groups"][0]["id"], "selected_ids": [candidates[0]["id"]]}]}, actor=None)
                 if (
                     resume_protocol == "native.select.v1"
                     and config.get("auto_submit_single_candidate") is True
@@ -5325,6 +5365,19 @@ def set_run_control_status(
             run.finished_at = now
     else:
         raise ValueError(f"unknown run action: {action}")
+    children = db.query(ExecutionRun).filter_by(parent_run_id=run.id).order_by(ExecutionRun.id).all()
+    for child in children:
+        if action == "pause" and child.status in {"queued", "running", "waiting_human", "waiting_external"}:
+            set_run_control_status(db, run_id=child.id, action="pause", actor=actor)
+            child.batch_context = {**child.batch_context, "paused_by_parent": True}
+        elif action == "resume" and child.status == "paused" and child.batch_context.get("paused_by_parent"):
+            set_run_control_status(db, run_id=child.id, action="resume", actor=actor)
+            child.batch_context = {**child.batch_context, "paused_by_parent": False}
+        elif action == "cancel" and child.status not in RUN_TERMINAL_STATUSES:
+            set_run_control_status(db, run_id=child.id, action="cancel", actor=actor)
+    if action == "cancel" and any(child.status not in RUN_TERMINAL_STATUSES for child in children):
+        run.status = "cancel_pending"
+        run.finished_at = None
     append_run_event(
         db,
         run_id=run.id,
@@ -5392,6 +5445,17 @@ def retry_failed_node(
     node.lease_owner = None
     node.lease_token = None
     node.lease_expires_at = None
+
+    if node.node_type == "flow.batch":
+        # One user retry resumes the failed group, preserving successful
+        # children and their receipts. Child operations still use normal retry.
+        children = db.query(ExecutionRun).filter_by(parent_run_id=run.id, status="failed").order_by(ExecutionRun.id).all()
+        for child in children:
+            if (child.batch_context or {}).get("node_id") != node.node_id:
+                continue
+            for failed in sorted(child.node_runs, key=lambda item: item.id):
+                if failed.status == "failed":
+                    retry_failed_node(db, run_id=child.id, node_id=failed.node_id, actor=actor, reason=reason)
 
     remaining_failed = (
         db.query(ExecutionNodeRun)

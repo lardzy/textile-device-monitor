@@ -17,6 +17,7 @@ from native_io_helpers import NUMBER, image_files
 from workflow_native_helpers import environment, publish_native_document, run, drain
 from tests.test_execution_connector_operations import operation_env
 from test_execution_microscopy_json import document
+from test_execution_run_groups import advance
 
 
 def excel_receipt(operation):
@@ -36,12 +37,15 @@ def excel_receipt(operation):
 @pytest.mark.skipif(os.getenv('EXECUTION_RUN_UNO_INTEGRATION_TESTS')!='1',reason='Run in the Worker image with UNO')
 @pytest.mark.parametrize('cancel',[False,True])
 @pytest.mark.parametrize('source', ['bundled', 'exported'])
-def test_portable_microscopy_full_chain_or_cancel(operation_env,monkeypatch,cancel,source):
+@pytest.mark.parametrize('group_count', [1,3])
+def test_portable_microscopy_full_chain_or_cancel(operation_env,monkeypatch,cancel,source,group_count):
     env=operation_env
     monkeypatch.setattr(settings,'EXECUTION_LEGACY_SPECIAL_WOOL_WRITE_ENABLED',True)
-    image_files(env,1)
+    image_files(env,1 if group_count == 1 else 4)
     cache=env.db.get(ExecutionTaskSnapshotCache,NUMBER);snapshot=deepcopy(cache.snapshot)
     project=snapshot['projects'][0];project.update(check_item_no='5103.5',check_item_name='纤维微观形貌',check_method='GB/T 36422-2018',seq_num=1,sample_identify=None,give_judgement=0)
+    if group_count == 3:
+        project.update(check_item_no='5103.05', check_item_name='微观形貌', check_method='按客户要求', sample_identify='正面，反面，横截面', check_count=3)
     project['project_key']='task-project:'+hashlib.sha256('\0'.join(str(project[k]) for k in ('task_check_item_id','check_item_id','check_item_no','check_item_name','check_method','seq_num')).encode()).hexdigest()[:24]
     cache.snapshot=snapshot
     template_dir=Path(__file__).parents[1]/'app/execution/templates'
@@ -51,28 +55,46 @@ def test_portable_microscopy_full_chain_or_cancel(operation_env,monkeypatch,canc
     doc = document() if source == 'bundled' else json.loads((Path(__file__).parents[2]/'docs/execution-v2/examples/fiber-microscopy-v2.json').read_text())
     # Source snapshots are local fixtures; refresh scheduling is independently covered.
     next(n for n in doc['definition']['nodes'] if n['id']=='task')['input_mapping']['refresh']=False
-    rules=next(n for n in doc['definition']['nodes'] if n['id']=='profiles')['input_mapping']['profiles'][0]
-    destination=Path(root.local_path)/rules['target_directory']/NUMBER/(NUMBER+'.png')
+    rules=next(n for n in doc['definition']['nodes'] if n['id']=='profiles')['input_mapping']['profiles'][0 if group_count == 1 else 1]
+    directory=Path(root.local_path)/rules['target_directory'].format(number=NUMBER)
+    destination=directory/(NUMBER+'.png' if group_count == 1 else NUMBER+'-正面-1.png')
     if cancel:
         destination.parent.mkdir(parents=True);destination.write_bytes(b'existing different content')
     workflow=publish_native_document(env.db,env.admin,doc,{
         'root_slots':{slot['slot_id']:{'root_id':slot['slot_id'],'revision':1} for slot in doc['resources']['root_slots']},
         'credential_slots':{'inspection':{'credential_id':env.credential.id,'revision':1}}})
     record=run(env,workflow.id,inputs={'inspection_number':NUMBER,'relative_directory':''});drain(env);env.db.expire_all()
-    if cancel:
+    if group_count == 3:
         task=env.db.query(ExecutionHumanTask).filter_by(run_id=record['id'],status='open').one()
-        submit_human_task(env.db,task_id=task.id,actor=env.admin,expected_revision=task.revision,data={'decision':'cancel'})
-        env.db.commit();drain(env)
-    else:
-        for ref,builder in [('legacy_fibrecheck.original_record.upload@1',upload_receipt),('legacy_fibrecheck.original_record.review@1',review_receipt),('legacy_fibrecheck.check_record.excel_entry@1',excel_receipt)]:
-            env.db.expire_all();pending=env.db.query(ExecutionExternalOperation).filter_by(status='approved').one()
-            operation,attempt,_=claim_approved_external_operation(env.db,bridge_id='test',account_name='test-operator',supported_operation_types={ref,pending.request_summary['operation_type']})
-            record_external_attempt_stage(env.db,attempt_id=attempt.id,bridge_id='test',stage=_operation_stage_profile(operation)[2]);env.db.commit()
-            complete_external_attempt(env.db,attempt_id=attempt.id,bridge_id='test',receipt=builder(operation));env.db.commit();drain(env)
+        node=env.db.get(ExecutionNodeRun,task.node_run_id)
+        ids=[item['id'] for item in node.input_data['items']]
+        groups=[{'id': str(i+1), 'selected_ids': selected} for i, selected in enumerate([ids[:1],ids[1:2],ids[2:]])]
+        submit_human_task(env.db,task_id=task.id,actor=env.admin,expected_revision=task.revision,data={'groups':groups})
+        env.db.commit();advance(env)
+    for index in range(group_count):
+        env.db.expire_all()
+        child=env.db.query(ExecutionRun).filter_by(parent_run_id=record['id']).order_by(ExecutionRun.created_at).all()[index]
+        if cancel and index == 0:
+            task=env.db.query(ExecutionHumanTask).filter_by(run_id=child.id,status='open').one()
+            submit_human_task(env.db,task_id=task.id,actor=env.admin,expected_revision=task.revision,data={'decision':'cancel'})
+            env.db.commit();advance(env)
+        else:
+            for ref,builder in [('legacy_fibrecheck.original_record.upload@1',upload_receipt),('legacy_fibrecheck.original_record.review@1',review_receipt),('legacy_fibrecheck.check_record.excel_entry@1',excel_receipt)]:
+                env.db.expire_all();pending=env.db.query(ExecutionExternalOperation).filter_by(status='approved').one()
+                operation,attempt,_=claim_approved_external_operation(env.db,bridge_id='test',account_name='test-operator',supported_operation_types={ref,pending.request_summary['operation_type']})
+                record_external_attempt_stage(env.db,attempt_id=attempt.id,bridge_id='test',stage=_operation_stage_profile(operation)[2]);env.db.commit()
+                complete_external_attempt(env.db,attempt_id=attempt.id,bridge_id='test',receipt=builder(operation))
+                if ref.endswith('excel_entry@1'):
+                    cached=env.db.get(ExecutionTaskSnapshotCache,NUMBER);updated=deepcopy(cached.snapshot)
+                    updated['projects'][0]['register_count'] += 1;cached.snapshot=updated
+                env.db.commit();advance(env)
+        advance(env)
     env.db.expire_all();current=env.db.get(ExecutionRun,record['id'])
     assert current.status=='completed',[(n.node_id,n.status,n.error_message) for n in env.db.query(ExecutionNodeRun).filter_by(run_id=current.id)]
-    assert current.output_data['submitted'] is not cancel
-    assert env.db.query(ExecutionExternalOperation).count()==(0 if cancel else 3)
+    assert current.output_data['groups'][0]['output']['submitted'] is not cancel
+    assert len(current.output_data['groups']) == group_count
+    assert all(g['status'] == 'completed' for g in current.output_data['groups'])
+    assert env.db.query(ExecutionExternalOperation).count()==3*(group_count-int(cancel))
     assert env.db.query(ExecutionProjectRule).count()==0
     assert destination.exists()
     if cancel:assert destination.read_bytes()==b'existing different content'

@@ -54,5 +54,25 @@
     "local_asset_name": "gbt36422-2018-microscopy-10-images-v1.xls",
     "local_asset_sha256": "85627e8ca9824274fe61f13276b390a75288a119987053e3a244157ee0f46e8c",
     "mapping_config_sha256": "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
+  },
+  "customer-1": {
+    "image_count": 1,
+    "local_asset_name": "microscopy-customer-1-to-3-images-v1.xls",
+    "local_asset_sha256": "f9bc1b622775cd43d4112d0eff56adc99c04c38e67da9db5f94976fefb131b09"
+  },
+  "customer-2": {
+    "image_count": 2,
+    "local_asset_name": "microscopy-customer-1-to-3-images-v1.xls",
+    "local_asset_sha256": "f9bc1b622775cd43d4112d0eff56adc99c04c38e67da9db5f94976fefb131b09"
+  },
+  "customer-3": {
+    "image_count": 3,
+    "local_asset_name": "microscopy-customer-1-to-3-images-v1.xls",
+    "local_asset_sha256": "f9bc1b622775cd43d4112d0eff56adc99c04c38e67da9db5f94976fefb131b09"
+  },
+  "customer-4": {
+    "image_count": 4,
+    "local_asset_name": "microscopy-customer-4-images-v1.xls",
+    "local_asset_sha256": "accf964221de2a5ab9ea38c3962120b8b70b3f73f49e062e2a88c7d7d743932a"
   }
 }

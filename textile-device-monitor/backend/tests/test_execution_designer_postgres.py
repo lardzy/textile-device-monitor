@@ -70,3 +70,44 @@ def test_simultaneous_identical_run_request_is_one_run(monkeypatch):
         assert db.query(ExecutionRun).filter_by(workflow_id=workflow_id).count()==1
         set_run_control_status(db, run_id=results[0][0], action='cancel', actor=db.get(ExecutionUser,user_id))
         db.commit()
+
+
+def test_duplicate_batch_dispatch_creates_one_child_and_cancel_propagates(monkeypatch):
+    from types import SimpleNamespace
+    from app.config import settings
+    from app.execution.engine import claim_next_node, execute_claimed_node, set_run_control_status
+    from app.execution.models import ExecutionNodeRun
+    from app.execution.v2.group_handlers import execute_batch
+    from app.execution.worker import ExecutionWorker
+    from app.execution.worker_state import record_worker_heartbeat
+    from test_execution_run_groups import document
+    monkeypatch.setattr(settings, 'EXECUTION_CONTRACT_MODE', 'enforced')
+    monkeypatch.setattr(settings, 'EXECUTION_V2_ROLLOUT_PROFILE', 'p2_publish')
+    user_id=owner();worker=ExecutionWorker(worker_id='groups-pg-'+uuid4().hex)
+    with SessionLocal() as db:
+        doc=document();doc['release']['slug']='groups-'+uuid4().hex
+        record_worker_heartbeat(db, worker_id=worker.worker_id, capability_document=worker.capability_document)
+        actor=db.get(ExecutionUser,user_id);workflow=publish_native_document(db,actor,doc)
+        parent,_=create_run(db,workflow=workflow,actor=actor,inspection_number='PG-GROUP',input_data={},global_data={},idempotency_key=uuid4().hex)
+        parent_id=parent.id;db.commit()
+        for _ in range(3):
+            node=claim_next_node(db,worker_id=worker.worker_id)
+            assert node is not None
+            node_id,token=node.id,node.lease_token;db.commit()
+            if node.node_type == 'flow.batch':break
+            execute_claimed_node(db,node_id,token);db.commit()
+        assert node.node_type == 'flow.batch'
+        inputs=next(n['input_mapping'] for n in parent.definition_snapshot['nodes'] if n['id']=='batch')
+    gate=Barrier(2)
+    def dispatch(_):
+        with SessionLocal() as db:
+            gate.wait(timeout=10)
+            result=execute_batch(SimpleNamespace(db=db,node_run=db.get(ExecutionNodeRun,node_id),lease_token=token,input_data=inputs))
+            db.commit();return result.output['groups'][0]['run_id']
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(dispatch,range(2)))
+    assert results[0] == results[1]
+    with SessionLocal() as db:
+        assert db.query(ExecutionRun).filter_by(parent_run_id=parent_id).count()==1
+        set_run_control_status(db,run_id=parent_id,action='cancel',actor=db.get(ExecutionUser,user_id));db.commit()
+        assert db.get(ExecutionRun,parent_id).status=='cancelled'
+        assert db.get(ExecutionRun,results[0]).status=='cancelled'

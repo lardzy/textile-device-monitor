@@ -221,6 +221,7 @@ def drain(env):
         with env.Session() as db:
             claimed = claim_next_node(db, worker_id=env.worker.worker_id)
             if claimed is None:
+                db.commit()  # Commit the same maintenance work as ExecutionWorker.
                 return
             node_id, lease_token = claimed.id, claimed.lease_token
             db.commit()

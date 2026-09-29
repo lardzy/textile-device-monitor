@@ -30,8 +30,8 @@
           }
         }
       }, "additionalProperties": false},
-      "target_directory": {"type": "string", "title": "共享目录下的子目录", "minLength": 1},
-      "filename_pattern": {"type": "string", "title": "图片文件名（number、identity、index、ext）", "minLength": 1},
+      "target_directory": {"type": "string", "title": "共享目录下的子目录（可含 {number}）", "minLength": 1},
+      "filename_pattern": {"type": "string", "title": "图片文件名（number、identity、sequence 从 1 开始、index 兼容序号、ext）", "minLength": 1},
       "upload_fields": {"type": "object", "title": "上传字段", "additionalProperties": true},
       "form_rules": {"type": "object", "title": "表单规则", "required": ["name_separator", "identity_separator", "basis_separator", "judgements"], "additionalProperties": false,
         "properties": {

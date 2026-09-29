@@ -27,6 +27,11 @@ def trial(name, **inputs):
     if name == 'prepare_form':
         profile = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles'][0]
         inputs.setdefault('rules', profile['form_rules'])
+        inputs.setdefault('sample_identity', '')
+    if name == 'payload':
+        profile = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles'][0]
+        inputs.setdefault('rules', profile)
+        inputs.setdefault('templates', profile['templates'])
     return python_test(item['config'], {**item['input_mapping'], **inputs})
 
 
@@ -79,8 +84,10 @@ def test_form_defaults_and_judgement_are_json_code():
     assert result['output']['defaults'] == {'sample_name': '完整-样品名称', 'sample_identity': '', 'remark': ''}
     assert 'judgement' not in result['output']['form_schema']['properties']
     base['project']['metadata']['project'].update(sample_identify='正面、背面', give_judgement=1)
-    result = trial('prepare_form', **base)
+    result = trial('prepare_form', **base, sample_identity='正面')
     assert result['passed'], result
+    assert result['output']['defaults']['sample_identity'] == '正面'
+    assert result['output']['form_schema']['properties']['sample_identity']['const'] == '正面'
     assert result['output']['form_schema']['properties']['sample_identity']['enum'] == ['正面', '背面']
     assert result['output']['defaults']['judge_basis'] == '依据一'
 
@@ -110,10 +117,10 @@ def test_native_selection_rejects_unsupported_counts_without_completing_task(env
     cache.snapshot = snap
     env.db.commit()
     doc = document()
-    last = next(i for i, n in enumerate(doc['definition']['nodes']) if n['id'] == 'form')
-    doc['definition']['nodes'] = doc['definition']['nodes'][:last+1] + [doc['definition']['nodes'][-1]]
-    doc['definition']['nodes'][-1]['input_mapping'] = {'form': '$.nodes.form.output'}
-    doc['definition']['output_schema'] = {'type': 'object', 'properties': {'form': {'type': 'object'}}, 'required': ['form'], 'additionalProperties': False}
+    by_id = {n['id']: n for n in doc['definition']['nodes']}
+    doc['definition']['nodes'] = [by_id[k] for k in ('start', 'task', 'profiles', 'files', 'candidates', 'project', 'selection', 'images', 'end')]
+    by_id['end']['input_mapping'] = {'groups': '$.nodes.images.output.groups'}
+    doc['definition']['output_schema'] = {'type': 'object', 'additionalProperties': True}
     doc['definition']['edges'] = [{'id':a['id']+'-'+b['id'],'source':a['id'],'target':b['id'],'join_policy':'all'} for a,b in zip(doc['definition']['nodes'],doc['definition']['nodes'][1:])]
     doc['resources']['root_slots'] = [r for r in doc['resources']['root_slots'] if r['slot_id']=='electron_microscopy_records']
     doc['resources']['credential_slots'] = []
@@ -131,15 +138,15 @@ def test_native_selection_rejects_unsupported_counts_without_completing_task(env
     env.db.commit()
     with pytest.raises(ExecutionApiError):
         submit_human_task(env.db, task_id=task.id, actor=env.admin, expected_revision=task.revision,
-                            data={'selected_ids': [i['id'] for i in images]})
+                            data={'groups': [{'id': '1', 'selected_ids': [i['id'] for i in images]}]})
     env.db.rollback()
     task = env.db.get(ExecutionHumanTask, task.id)
     order = [images[i]['id'] for i in (2, 0, 1)]
-    submit_human_task(env.db, task_id=task.id, actor=env.admin, expected_revision=task.revision, data={'selected_ids': order})
+    submit_human_task(env.db, task_id=task.id, actor=env.admin, expected_revision=task.revision, data={'groups': [{'id': '1', 'selected_ids': order}]})
     env.db.commit()
     drain(env)
     env.db.expire_all()
     current = env.db.get(ExecutionRun, record['id'])
     nodes = env.db.query(ExecutionNodeRun).filter_by(run_id=current.id).all()
     assert current.status == 'completed', [(n.node_id, n.status, n.error_message) for n in nodes]
-    assert next(n for n in nodes if n.node_id == 'images').output_data['selected_ids'] == order
+    assert next(n for n in nodes if n.node_id == 'images').output_data['groups'][0]['selected_ids'] == order

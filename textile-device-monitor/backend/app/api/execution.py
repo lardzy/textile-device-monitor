@@ -1349,6 +1349,8 @@ def _run_dict(
     value = {
         "id": run.id,
         "workflow_id": run.workflow_id,
+        "parent_run_id": run.parent_run_id,
+        "batch_context": run.batch_context,
         "workflow_name": run.workflow.name,
         "workflow_version_id": run.workflow_version_id,
         "workflow_version": run.workflow_version.version_number if run.workflow_version else None,
@@ -1392,6 +1394,9 @@ def _run_dict(
     if include_definition:
         value["definition"] = run.definition_snapshot
         value["definition_checksum"] = run.definition_checksum
+    if db is not None:
+        from app.execution.v2.group_handlers import child_summaries
+        value["groups"] = child_summaries(db, run)
     if events is not None:
         value["events"] = [_event_dict(event) for event in events]
     if artifacts is not None:

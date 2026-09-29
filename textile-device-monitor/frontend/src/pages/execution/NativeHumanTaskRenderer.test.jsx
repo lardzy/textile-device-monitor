@@ -88,3 +88,28 @@ describe('native result-file selection', () => {
     await waitFor(() => expect(submit).toHaveBeenCalledWith({ selected_ids: ['paper'], primary_id: 'paper' }));
   });
 });
+
+function Groups({ onFinish }) {
+  const [form] = Form.useForm();
+  return <Form form={form} onFinish={onFinish}>
+    <NativeHumanTaskRenderer renderer={{ capability: 'human.group_select' }} rendererContract={{ payload: {} }} form={form}
+      inputData={{ items: ['N_q01', 'W_q02', 'H_q01', 'H_q07'].map(id => ({ id, kind: 'image', label: id+'.bmp', relative_path: 'sample/'+id+'.bmp' })),
+        groups: [{ id: 'n', label: '正面', allowed_selected_counts: [1] }, { id: 'w', label: '反面', allowed_selected_counts: [1] }, { id: 'h', label: '横截面', allowed_selected_counts: [1,2] }] }} />
+    <Button htmlType="submit">提交分组</Button>
+  </Form>;
+}
+
+it('submits each group with explicit ordering', async () => {
+  const user = userEvent.setup(), submit = vi.fn();
+  render(<Groups onFinish={submit} />);
+  await user.type(screen.getAllByLabelText('筛选图片文件名')[0], 'N_');
+  await user.click(screen.getAllByRole('button', { name: '选择 N_q01.bmp' })[0]);
+  await user.click(screen.getAllByRole('button', { name: '选择 W_q02.bmp' })[0]);
+  await user.click(screen.getAllByRole('button', { name: '选择 H_q07.bmp' })[1]);
+  await user.click(screen.getAllByRole('button', { name: '选择 H_q01.bmp' })[1]);
+  await user.click(screen.getAllByRole('button', { name: /前\s*移/ }).at(-1));
+  await user.click(screen.getByRole('button', { name: '提交分组' }));
+  await waitFor(() => expect(submit).toHaveBeenCalledWith({ groups: [
+    { id: 'n', selected_ids: ['N_q01'] }, { id: 'w', selected_ids: ['W_q02'] }, { id: 'h', selected_ids: ['H_q01','H_q07'] },
+  ] }));
+});

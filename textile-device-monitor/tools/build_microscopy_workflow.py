@@ -20,6 +20,8 @@ def build():
         description='按业务方案匹配项目和方法；选图、记录生成、共享图片及检务登记；规则完整随 JSON 分发。')
     document['definition']['input_schema']['properties']['relative_directory'] = {
         'type': 'string', 'title': '图片相对目录（可选）', 'default': ''}
+    document['definition']['input_schema']['properties']['execution_group'] = {
+        'type': 'object', 'additionalProperties': True, 'default': {}, 'x-hidden': True}
     document['resources'] = {'root_slots': [{'slot_id': 'electron_microscopy_records', 'name': '显微图片目录', 'access': 'read', 'required': True}],
                              'credential_slots': [{'slot_id':'inspection','name':'检务账号','connector_id':'legacy_fibrecheck','credential_kind':'password','required':True}], 'rule_slots': [], 'role_slots': []}
     query = node('task', '查询检务任务', 'connector.query',
@@ -43,21 +45,28 @@ def build():
     project = node('project', '选择检测项目', 'human.select',
         {'title': '选择检测项目', 'item_kind': 'option', 'min_selected': 1, 'max_selected': 1,
          'require_primary': True, 'auto_submit_single_candidate': True}, {'items': output('candidates', 'projects')}, 2)
-    selection = python_node('selection', '读取方案选图配置', '''
-def main(inputs):
-    profile = inputs['project']['metadata']['profile']
-    return {'allowed_selected_counts': sorted(int(key) for key in profile['templates'])}
-''', {'project': O}, {'allowed_selected_counts': counts}, {'project': output('project', 'primary_item')})
-    select = node('images', '选择并排列图片', 'human.select',
-        {'title': '选择并排列图片', 'item_kind': 'image', 'min_selected': 1, 'max_selected': 10,
-         'require_primary': False, 'auto_submit_single_candidate': True},
-        {'items': output('candidates', 'items'), 'allowed_selected_counts': output('selection', 'allowed_selected_counts')}, 2)
+    group_spec = registry.resolve_node_spec('human.group_select', 1).public_dict()
+    selection = python_node('selection', '按样品识别准备分组', (SOURCES/'microscopy_groups.py').read_text(),
+        {'project': O}, {'groups': group_spec['input_schema']['properties']['groups'], 'allowed_selected_counts': counts},
+        {'project': output('project', 'primary_item')})
+    select = node('images', '按部位选择并排列图片', 'human.group_select',
+        {'title': '按部位选择并排列图片', 'require_all_groups': True, 'allow_item_reuse': False, 'auto_submit_single_candidate': True},
+        {'items': output('candidates', 'items'), 'groups': output('selection', 'groups'), 'context': {}})
+    plan = python_node('batch_plan', '整理分组执行输入', (SOURCES/'microscopy_batch.py').read_text(),
+        {'groups': group_spec['output_schema']['properties']['groups']},
+        {'items': registry.resolve_node_spec('flow.batch', 1).public_dict()['input_schema']['properties']['items']},
+        {'groups': output('images', 'groups')})
+    batch = node('batch', '顺序处理各部位', 'flow.batch', {}, {'items': output('batch_plan', 'items')})
+    route = node('route', '分组选图或处理当前组', 'flow.branch', {'expression_version': 1, 'multi_match': 'all'})
+    current_group = python_node('current_group', '核对当前分组', (SOURCES/'microscopy_current_group.py').read_text(),
+        {'group': O, 'projects': item_schema, 'items': item_schema}, {'project': O, 'images': item_schema, 'sample_identity': S},
+        {'group': '$.inputs.execution_group', 'projects': output('profiles', 'projects'), 'items': output('candidates', 'items')})
     form_schema = {'type': 'object', 'properties': {key: S for key in ('sample_name', 'sample_identity', 'remark', 'judge_basis', 'indicator_requirement', 'test_result', 'judgement')},
                    'required': ['sample_name', 'sample_identity', 'remark'], 'additionalProperties': False}
     prepare = python_node('prepare_form', '显微 · 准备必要输入', (SOURCES/'microscopy_form.py').read_text(),
-        {'snapshot': O, 'project': O, 'images': A, 'rules': O}, {'form_schema': O, 'defaults': O, 'context': O},
-        {'snapshot': output('task', 'snapshot'), 'project': output('project', 'primary_item'), 'images': output('images', 'selected_items'),
-         'rules': output('project', 'primary_item.metadata.profile.form_rules')})
+        {'snapshot': O, 'project': O, 'images': A, 'rules': O, 'sample_identity': S}, {'form_schema': O, 'defaults': O, 'context': O},
+        {'snapshot': output('task', 'snapshot'), 'project': output('current_group', 'project'), 'images': output('current_group', 'images'),
+         'sample_identity': output('current_group', 'sample_identity'), 'rules': output('current_group', 'project.metadata.profile.form_rules')})
     form = node('form', '补充必要字段', 'human.form', {'title': '补充记录字段', 'result_schema': form_schema, 'auto_submit_complete': True},
         {'form_schema': output('prepare_form', 'form_schema'), 'defaults': output('prepare_form', 'defaults'), 'context': output('prepare_form', 'context')}, 2)
     place_spec = registry.resolve_node_spec('file.batch_place', 2).public_dict()
@@ -71,10 +80,10 @@ def main(inputs):
          'template_binding': O, 'original_template_key': S, 'profile': O, 'registration_template': entry_schema['template'], 'register': entry_schema['register'],
          'expected_key_identities': entry_schema['expected_key_identities'], 'business_fields': upload_schema['business_fields'],
          'expected_existing_register_count': entry_schema['expected_existing_register_count']},
-        {'inspection_number': output('candidates', 'inspection_number'), 'project': output('project', 'primary_item'),
-         'images': output('images', 'selected_items'), 'form': output('form'),
-         'templates': output('project', 'primary_item.metadata.profile.templates'),
-         'rules': output('project', 'primary_item.metadata.profile')})
+        {'inspection_number': output('candidates', 'inspection_number'), 'project': output('current_group', 'project'),
+         'images': output('current_group', 'images'), 'form': output('form'),
+         'templates': output('current_group', 'project.metadata.profile.templates'),
+         'rules': output('current_group', 'project.metadata.profile')})
     for slot, name, access in [('execution_templates','工作簿模板目录','read'), ('execution_staging','生成工作簿目录','write'), ('report_upload_images','共享图片目标目录','write')]:
         document['resources']['root_slots'].append({'slot_id':slot,'name':name,'access':access,'required':True})
     def reference(filename):
@@ -92,7 +101,7 @@ def main(inputs):
     check = node('check', '生成检务登记工作簿', 'workbook.render',
         {'templates':{key:reference(value['local_asset_name']) for key,value in templates.items()}, 'staging_root_slot':'execution_staging',
          'filename':'微观形貌-检务登记.xls',
-         'fields':fields({'AS4':'inspection_number','Z7':'sample_identity','I8':'method','I9':'judge_basis','I10':'indicator_requirement','I11':'test_result','G12':'remark','G13':'judgement',
+         'fields':fields({'C7':'item_name','AS4':'inspection_number','Z7':'sample_identity','I8':'method','I9':'judge_basis','I10':'indicator_requirement','I11':'test_result','G12':'remark','G13':'judgement',
                           'BI7':'item_name','BK7':'sample_identity','BI8':'method','BI9':'judge_basis','BI10':'indicator_requirement','BI11':'test_result','BI12':'remark','BI13':'judgement'},'Sheet1')},
         {'template_key':output('payload','template_key'),'values':output('payload','values')},2)
     place = node('place', '放置局域网图片', 'file.batch_place', {'target_root_slot':'report_upload_images'},
@@ -109,20 +118,28 @@ def main(inputs):
     files_result = {'original':output('original'),'check':output('check'),'placement':output('place'),'profile':output('payload','profile')}
     cancelled = node('cancelled','未提交，保留生成文件','core.end',mapping={**files_result,'submitted':False,'message':'图片放置已取消，未提交检务',
         'upload':None,'review':None,'entry':None},version=2)
-    end = node('end', '完成', 'core.end', mapping={**files_result,'submitted':True,'message':'图片已放置，原始记录已上传复核，Excel 登记已完成',
+    end = node('group_end', '本组完成', 'core.end', mapping={**files_result,'submitted':True,'message':'本组图片已放置，原始记录已上传复核，Excel 登记已完成',
         'upload':output('upload'),'review':output('review'),'entry':output('entry')},version=2)
-    nodes = [document['definition']['nodes'][0], query, profiles, files, candidates, project, selection, select, prepare, form, payload, original, check, place, branch, upload, review, entry, end]
+    batch_end = node('end', '分组处理结果', 'core.end', mapping={'groups': output('batch', 'groups'), 'count': output('batch', 'count'),
+        'unselected_group_ids': output('images', 'unselected_group_ids'), 'message': '所选分组处理已结束，请查看各组的提交状态与回执'}, version=2)
+    prefix = [document['definition']['nodes'][0], query, profiles, files, candidates, route]
+    parent_chain = [project, selection, select, plan, batch, batch_end]
+    group_chain = [current_group, prepare, form, payload, original, check, place, branch, upload, review, entry, end]
+    nodes = prefix + parent_chain + group_chain
     for index, item in enumerate(nodes):
         item['ui'] = {'x': 40 + index * 260, 'y': 160}
-    edges = [{'id': a['id']+'-'+b['id'], 'source': a['id'], 'target': b['id'], 'join_policy':'all'} for a,b in zip(nodes,nodes[1:])]
+    edges = [{'id': a['id']+'-'+b['id'], 'source': a['id'], 'target': b['id'], 'join_policy':'all'}
+             for chain in (prefix, parent_chain, group_chain) for a,b in zip(chain, chain[1:])]
+    edges += [{'id': 'plan-groups', 'source': 'route', 'target': 'project', 'join_policy': 'all', 'condition': 'default'},
+              {'id': 'execute-group', 'source': 'route', 'target': 'current_group', 'join_policy': 'all',
+               'condition': {'path': '$.inputs.execution_group', 'operator': 'truthy'}}]
     next(edge for edge in edges if edge['source']=='submit_branch')['condition'] = 'default'
     edges.append({'id':'cancel-placement','source':'submit_branch','target':'cancelled','join_policy':'all',
                   'condition':{'path':output('place','placement_cancelled'),'operator':'truthy'}})
     cancelled['ui'] = {'x':branch['ui']['x']+260,'y':420}
     nodes.append(cancelled)
-    receipt = {'type':['object','null'],'additionalProperties':True}
     document['definition'].update(nodes=nodes, edges=edges,
-        output_schema=obj({'original':O,'check':O,'placement':O,'profile':O,'submitted':{'type':'boolean'},'message':S,'upload':receipt,'review':receipt,'entry':receipt}))
+        output_schema=O)
     result = compile_document(document)
     if not result['content_valid']:
         raise ValueError(json.dumps(result['issues'], ensure_ascii=False, indent=2))
