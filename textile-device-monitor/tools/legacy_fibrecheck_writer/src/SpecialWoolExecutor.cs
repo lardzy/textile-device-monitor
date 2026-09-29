@@ -1337,6 +1337,13 @@ namespace LegacyFibreCheckWriter
             }
             if (imageUpload || qualitativeUpload)
             {
+                // The desktop viewer calls FileType.Split(',') whenever FilePath
+                // exists. A missing type must fail before any file or DB write.
+                if (neutral && string.IsNullOrWhiteSpace(
+                    UploadExecutor.GetStr(business, "file_type")))
+                {
+                    return "original_record_file_type_missing";
+                }
                 string expectedTargetFilename;
                 try
                 {

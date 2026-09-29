@@ -5554,6 +5554,7 @@ def public_external_operation(
             key: business_fields.get(key)
             for key in (
                 "fiber_category",
+                "file_type",
                 "inspection_method",
                 "inspection_item",
                 "inspection_copies",

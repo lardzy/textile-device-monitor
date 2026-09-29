@@ -1,5 +1,9 @@
 # FibreCheck 上传写入器（Runner 写入模式）
 
+2026-09-29：现行部署为 1.2.3，中性上传/复核已用于真实纸浆和微观形貌任务。下文“禁写／待证明”描述保留早期实现背景；当前验收见 [业务方案与分组交付](../../docs/execution-v2/microscopy-profiles-delivery.md)。
+
+中性上传的 `business_fields.file_type` 必须从 API 原样传到 Bridge。旧客户端在文件路径非空时直接拆分 `FileType`，缺失会导致双击记录报空引用。1.2.3 在任何文件复制或数据库写入前拒绝缺失/空白值，后端同步修复序列化遗漏；不猜测业务文件类型。`test.ps1 -WriterPath <已编译 Writer> -FibreCheckDir <旧客户端目录> -KeepArtifacts` 可验证真实包校验器并保留测试产物。
+
 x86 .NET Framework 4.x 控制台程序，由集中式 Bridge 以“一任务一进程”方式调用，
 完成旧检务系统“特纤管理—检验”上传的受控写入。
 

@@ -25,6 +25,14 @@ def test_upload_review_entry_without_run_or_database_rule(operation_env, monkeyp
             'inspection_number':NUMBER,'input':data,'idempotency_key':key},status=202)['operation']
     def complete(result,ref,builder):
         current=env.db.get(ExecutionExternalOperation,result['id'])
+        if ref == UPLOAD:
+            from app.execution.external_operations import bridge_external_operation
+            # Exercise the actual public -> Bridge transport; the old view
+            # dropped file_type although the submitted operation retained it.
+            view = bridge_external_operation(current, credential=env.credential)
+            for fields in (result['request_summary']['business_fields'],
+                           view['request_summary']['business_fields']):
+                assert {key: fields[key] for key in data['business_fields']} == data['business_fields']
         claim=claim_approved_external_operation(env.db,bridge_id='neutral',account_name='test-operator',
             supported_operation_types={ref,current.request_summary['operation_type']})
         assert claim is not None
