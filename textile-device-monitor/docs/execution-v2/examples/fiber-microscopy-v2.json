@@ -1,60 +1,14 @@
 {
   "assets": [],
-  "format": "textile-workflow-release",
-  "release": {
-    "name": "纤维微观形貌",
-    "slug": "fiber-microscopy-v2",
-    "description": "GB/T 36422-2018；选图、记录生成、共享图片及检务登记；规则可在 Python 节点编辑。",
-    "category_key": "other",
-    "release_note": "final",
-    "release_version": 3
-  },
-  "fixtures": [],
-  "integrity": {
-    "scope": "document_without_integrity",
-    "digest": "bca3f548e0aaf2af4d516f0bb7e50c1a42c8b5669db794e2cba2cf21e02524fe",
-    "algorithm": "sha256",
-    "signatures": [],
-    "canonicalization": "RFC8785"
-  },
-  "resources": {
-    "role_slots": [],
-    "root_slots": [
-      {
-        "name": "显微图片目录",
-        "access": "read",
-        "slot_id": "electron_microscopy_records",
-        "required": true
-      },
-      {
-        "name": "工作簿模板目录",
-        "access": "read",
-        "slot_id": "execution_templates",
-        "required": true
-      },
-      {
-        "name": "生成工作簿目录",
-        "access": "write",
-        "slot_id": "execution_staging",
-        "required": true
-      },
-      {
-        "name": "共享图片目标目录",
-        "access": "write",
-        "slot_id": "report_upload_images",
-        "required": true
-      }
+  "capabilities": {
+    "declared": [
+      "file.batch.atomic-place",
+      "file.index.read",
+      "file.read",
+      "file.write"
     ],
-    "rule_slots": [],
-    "credential_slots": [
-      {
-        "name": "检务账号",
-        "slot_id": "inspection",
-        "required": true,
-        "connector_id": "legacy_fibrecheck",
-        "credential_kind": "password"
-      }
-    ]
+    "side_effect_level": "external_write",
+    "requires_human_approval": true
   },
   "definition": {
     "edges": [
@@ -65,8 +19,14 @@
         "join_policy": "all"
       },
       {
-        "id": "task-files",
+        "id": "task-profiles",
         "source": "task",
+        "target": "profiles",
+        "join_policy": "all"
+      },
+      {
+        "id": "profiles-files",
+        "source": "profiles",
         "target": "files",
         "join_policy": "all"
       },
@@ -83,8 +43,14 @@
         "join_policy": "all"
       },
       {
-        "id": "project-images",
+        "id": "project-selection",
         "source": "project",
+        "target": "selection",
+        "join_policy": "all"
+      },
+      {
+        "id": "selection-images",
+        "source": "selection",
         "target": "images",
         "join_policy": "all"
       },
@@ -134,8 +100,8 @@
         "id": "submit_branch-upload",
         "source": "submit_branch",
         "target": "upload",
-        "condition": "default",
-        "join_policy": "all"
+        "join_policy": "all",
+        "condition": "default"
       },
       {
         "id": "upload-review",
@@ -159,57 +125,527 @@
         "id": "cancel-placement",
         "source": "submit_branch",
         "target": "cancelled",
+        "join_policy": "all",
         "condition": {
           "path": "$.nodes.place.output.placement_cancelled",
           "operator": "truthy"
-        },
-        "join_policy": "all"
+        }
       }
     ],
+    "global_defaults": {},
+    "global_schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_number": {
+          "minLength": 1,
+          "title": "检验编号",
+          "type": "string"
+        },
+        "relative_directory": {
+          "type": "string",
+          "title": "图片相对目录（可选）",
+          "default": ""
+        }
+      },
+      "required": [
+        "inspection_number"
+      ],
+      "type": "object"
+    },
     "nodes": [
       {
+        "config": {},
         "id": "start",
+        "input_mapping": {},
+        "name": "开始",
+        "type": "core.start",
+        "type_version": 2,
         "ui": {
           "x": 40,
           "y": 160
-        },
-        "name": "开始",
-        "type": "core.start",
-        "config": {},
-        "type_version": 2,
-        "input_mapping": {}
+        }
       },
       {
         "id": "task",
-        "ui": {
-          "x": 300,
-          "y": 160
-        },
         "name": "查询检务任务",
         "type": "connector.query",
+        "type_version": 2,
         "config": {
           "query_ref": "legacy_fibrecheck.task_snapshot.get@1",
           "wait_until_ready": true,
           "wait_timeout_seconds": 120,
           "retry_interval_seconds": 2
         },
-        "type_version": 2,
         "input_mapping": {
-          "refresh": true,
-          "inspection_number": "$.inputs.inspection_number"
+          "inspection_number": "$.inputs.inspection_number",
+          "refresh": true
+        },
+        "ui": {
+          "x": 300,
+          "y": 160
+        }
+      },
+      {
+        "id": "profiles",
+        "name": "匹配业务方案",
+        "type": "data.python",
+        "type_version": 1,
+        "config": {
+          "runtime_version": 1,
+          "timeout_seconds": 5,
+          "code": "\"\"\"Portable business-profile matching; the Designer edits inputs.profiles.\"\"\"\nimport unicodedata\n\n\ndef clean(value):\n    return unicodedata.normalize('NFKC', str(value or '')).strip()\n\n\ndef main(inputs):\n    projects = []\n    seen = set()\n    for profile in inputs['profiles']:\n        if not profile['id'] or profile['id'] in seen:\n            raise ValueError('业务方案标识为空或重复')\n        seen.add(profile['id'])\n        if not profile['enabled']:\n            continue\n        for project in inputs['snapshot']['projects']:\n            number = clean(project.get('check_item_no'))\n            method = clean(project.get('check_method'))\n            # Codes are strings. In particular, 5103.05 is not 5103.5.\n            matches = any(number == clean(rule['project_number']) and method == clean(rule['method'])\n                          for rule in profile['matches'])\n            if not matches:\n                continue\n            projects.append({\n                'id': project['project_key'] + ':' + profile['id'], 'kind': 'option',\n                'label': project['check_item_name'] + ' · ' + method + ' · ' + profile['name'],\n                'fingerprint': project['project_key'],\n                'metadata': {'project': project, 'profile': profile},\n            })\n    return {'projects': projects}\n",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "snapshot": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "profiles": {
+                "type": "array",
+                "title": "业务方案",
+                "x-editor": "business-profiles",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "enabled",
+                    "matches",
+                    "record_title",
+                    "original_template_key",
+                    "templates",
+                    "target_directory",
+                    "filename_pattern",
+                    "upload_fields",
+                    "form_rules"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "title": "方案标识",
+                      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "title": "方案名称",
+                      "minLength": 1
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "title": "启用",
+                      "default": true
+                    },
+                    "matches": {
+                      "type": "array",
+                      "title": "项目与方法组合",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "project_number",
+                          "method"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "project_number": {
+                            "type": "string",
+                            "title": "项目编号",
+                            "minLength": 1
+                          },
+                          "method": {
+                            "type": "string",
+                            "title": "检测方法",
+                            "minLength": 1
+                          },
+                          "aliases": {
+                            "type": "array",
+                            "title": "项目名称别名（显示说明）",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "record_title": {
+                      "type": "string",
+                      "title": "原始记录标题",
+                      "minLength": 1
+                    },
+                    "original_template_key": {
+                      "type": "string",
+                      "title": "原始记录模板键",
+                      "minLength": 1,
+                      "x-template-node": "original"
+                    },
+                    "templates": {
+                      "type": "object",
+                      "title": "图片数量与登记模板",
+                      "minProperties": 1,
+                      "patternProperties": {
+                        "^[1-9][0-9]*$": {
+                          "type": "object",
+                          "required": [
+                            "template_key",
+                            "legacy_template_name",
+                            "mapping_config_sha256"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "template_key": {
+                              "type": "string",
+                              "title": "登记工作簿模板键",
+                              "minLength": 1,
+                              "x-template-node": "check"
+                            },
+                            "legacy_template_name": {
+                              "type": "string",
+                              "title": "检务采集模板名称",
+                              "minLength": 1
+                            },
+                            "mapping_config_sha256": {
+                              "type": "string",
+                              "title": "检务采集映射摘要",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "target_directory": {
+                      "type": "string",
+                      "title": "共享目录下的子目录",
+                      "minLength": 1
+                    },
+                    "filename_pattern": {
+                      "type": "string",
+                      "title": "图片文件名（number、identity、index、ext）",
+                      "minLength": 1
+                    },
+                    "upload_fields": {
+                      "type": "object",
+                      "title": "上传字段",
+                      "additionalProperties": true
+                    },
+                    "form_rules": {
+                      "type": "object",
+                      "title": "表单规则",
+                      "required": [
+                        "name_separator",
+                        "identity_separator",
+                        "basis_separator",
+                        "judgements"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "name_separator": {
+                          "type": "string",
+                          "title": "样品名称分隔表达式"
+                        },
+                        "identity_separator": {
+                          "type": "string",
+                          "title": "样品识别分隔表达式"
+                        },
+                        "basis_separator": {
+                          "type": "string",
+                          "title": "判定依据分隔表达式"
+                        },
+                        "judgements": {
+                          "type": "array",
+                          "title": "判定选项",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "defaults": {
+                          "type": "object",
+                          "title": "默认字段",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "snapshot",
+              "profiles"
+            ],
+            "additionalProperties": false
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "artifact",
+                        "image",
+                        "option"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "root_id": {
+                      "type": "string"
+                    },
+                    "relative_path": {
+                      "type": "string"
+                    },
+                    "fingerprint": {
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "items": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "artifact",
+                              "image",
+                              "option"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "root_id": {
+                            "type": "string"
+                          },
+                          "relative_path": {
+                            "type": "string"
+                          },
+                          "fingerprint": {
+                            "type": "string"
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "label",
+                          "fingerprint"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "label",
+                    "fingerprint"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "projects"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "input_mapping": {
+          "snapshot": "$.nodes.task.output.snapshot",
+          "profiles": [
+            {
+              "enabled": true,
+              "original_template_key": "original",
+              "templates": {
+                "1": {
+                  "template_key": "1",
+                  "legacy_template_name": "微观形貌.xls",
+                  "mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"
+                },
+                "2": {
+                  "template_key": "2",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-2张图.xls",
+                  "mapping_config_sha256": "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23"
+                },
+                "3": {
+                  "template_key": "3",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-3张图.xls",
+                  "mapping_config_sha256": "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268"
+                },
+                "5": {
+                  "template_key": "5",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-5张图.xls",
+                  "mapping_config_sha256": "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d"
+                },
+                "6": {
+                  "template_key": "6",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-6张图.xls",
+                  "mapping_config_sha256": "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304"
+                },
+                "7": {
+                  "template_key": "7",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-7张图.xls",
+                  "mapping_config_sha256": "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01"
+                },
+                "10": {
+                  "template_key": "10",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-10张图.xls",
+                  "mapping_config_sha256": "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
+                }
+              },
+              "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/1-微观形貌-GB T 36422",
+              "filename_pattern": "{number}{identity}{index}.{ext}",
+              "upload_fields": {
+                "fiber_category": "图片",
+                "inspection_method": "",
+                "inspection_item": "图片",
+                "review_item": "",
+                "inspection_copies": 1,
+                "review_copies": 1,
+                "file_type": "定量试验"
+              },
+              "form_rules": {
+                "name_separator": "[\\r\\n;；]+",
+                "identity_separator": "[、,，;；\\r\\n]+",
+                "basis_separator": "[;；\\r\\n]+",
+                "judgements": [
+                  "符合",
+                  "不符合"
+                ],
+                "defaults": {}
+              },
+              "id": "fiber-gbt36422",
+              "name": "纤维微观形貌 / GB/T 36422-2018",
+              "matches": [
+                {
+                  "project_number": "5103.5",
+                  "method": "GB/T 36422-2018",
+                  "aliases": [
+                    "纤维微观形貌",
+                    "膜平面形貌"
+                  ]
+                }
+              ],
+              "record_title": "纤维微观形貌检验原始记录"
+            },
+            {
+              "enabled": false,
+              "original_template_key": "original",
+              "templates": {
+                "1": {
+                  "template_key": "1",
+                  "legacy_template_name": "微观形貌.xls",
+                  "mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"
+                },
+                "2": {
+                  "template_key": "2",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-2张图.xls",
+                  "mapping_config_sha256": "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23"
+                },
+                "3": {
+                  "template_key": "3",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-3张图.xls",
+                  "mapping_config_sha256": "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268"
+                },
+                "5": {
+                  "template_key": "5",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-5张图.xls",
+                  "mapping_config_sha256": "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d"
+                },
+                "6": {
+                  "template_key": "6",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-6张图.xls",
+                  "mapping_config_sha256": "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304"
+                },
+                "7": {
+                  "template_key": "7",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-7张图.xls",
+                  "mapping_config_sha256": "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01"
+                },
+                "10": {
+                  "template_key": "10",
+                  "legacy_template_name": "纤维微观形貌-GB T 36422-2018-10张图.xls",
+                  "mapping_config_sha256": "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
+                }
+              },
+              "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/微观形貌-按客户要求",
+              "filename_pattern": "{number}{identity}{index}.{ext}",
+              "upload_fields": {
+                "fiber_category": "图片",
+                "inspection_method": "",
+                "inspection_item": "图片",
+                "review_item": "",
+                "inspection_copies": 1,
+                "review_copies": 1,
+                "file_type": "定量试验"
+              },
+              "form_rules": {
+                "name_separator": "[\\r\\n;；]+",
+                "identity_separator": "[、,，;；\\r\\n]+",
+                "basis_separator": "[;；\\r\\n]+",
+                "judgements": [
+                  "符合",
+                  "不符合"
+                ],
+                "defaults": {}
+              },
+              "id": "microscopy-customer",
+              "name": "微观形貌 / 按客户要求",
+              "matches": [
+                {
+                  "project_number": "5103.05",
+                  "method": "按客户要求",
+                  "aliases": [
+                    "微观形貌"
+                  ]
+                }
+              ],
+              "record_title": "微观形貌检验原始记录"
+            }
+          ]
+        },
+        "ui": {
+          "x": 560,
+          "y": 160
         }
       },
       {
         "id": "files",
-        "ui": {
-          "x": 560,
-          "y": 160
-        },
         "name": "查询图片索引",
         "type": "file.query",
+        "type_version": 2,
         "config": {
-          "sort": "name_asc",
-          "limit": 1000,
           "root_slot": "electron_microscopy_records",
           "extensions": [
             ".png",
@@ -219,42 +655,128 @@
             ".tif",
             ".tiff"
           ],
+          "recent_days": null,
+          "limit": 1000,
+          "sort": "name_asc",
           "projection": [
             "id",
             "root_id",
             "relative_path",
             "fingerprint",
             "metadata"
-          ],
-          "recent_days": null
+          ]
         },
-        "type_version": 2,
         "input_mapping": {
           "inspection_number": "$.inputs.inspection_number",
           "relative_directory": "$.inputs.relative_directory"
+        },
+        "ui": {
+          "x": 820,
+          "y": 160
         }
       },
       {
         "id": "candidates",
-        "ui": {
-          "x": 820,
-          "y": 160
-        },
         "name": "显微 · 匹配项目和图片",
         "type": "data.python",
+        "type_version": 1,
         "config": {
-          "code": "\"\"\"Copied verbatim into the workflow's editable Python node.\"\"\"\nimport re\nimport unicodedata\n\n\ndef clean(value):\n    return unicodedata.normalize('NFKC', str(value or '')).strip()\n\n\ndef main(inputs):\n    if inputs['truncated']:\n        raise ValueError('图片超过查询上限，请填写更具体的相对目录后重新查询')\n    number = clean(inputs['inspection_number']).upper()\n    rules = inputs['rules']\n    pattern = r'(?<![A-Z0-9])' + re.escape(number) + r'(?![A-Z0-9])'\n    items = []\n    for source in inputs['items']:\n        path = clean(source['relative_path']).replace('\\\\', '/')\n        if not re.search(pattern, path.upper()):\n            continue\n        item = dict(source)\n        item['kind'] = 'image'\n        item['metadata'] = dict(source.get('metadata') or {})\n        items.append(item)\n    items.sort(key=lambda item: [int(part) if part.isdigit() else part.casefold()\n                                for part in re.split(r'(\\d+)', item['relative_path'])])\n    if not items:\n        raise ValueError('未找到匹配编号的图片，请核对图片目录和文件索引')\n    projects = []\n    for project in inputs['snapshot']['projects']:\n        matches = (clean(project.get('check_item_no')) in rules['project_numbers']\n                   or clean(project.get('check_item_name')) in rules['project_names'])\n        if not matches or clean(project.get('check_method')) not in rules['methods']:\n            continue\n        projects.append({'id': project['project_key'], 'kind': 'option',\n                         'label': str(project.get('seq_num', '')) + ' · ' + project['check_item_name'] + ' · ' + project['check_method'],\n                         'fingerprint': project['project_key'], 'metadata': {'project': project}})\n    if not projects:\n        raise ValueError('任务没有符合项目与方法规则的检测项目')\n    counts = sorted(int(key) for key in inputs['template_counts'])\n    return {'inspection_number': number, 'items': items, 'projects': projects,\n            'allowed_selected_counts': counts}\n",
+          "runtime_version": 1,
+          "timeout_seconds": 5,
+          "code": "\"\"\"Copied verbatim into the workflow's editable Python node.\"\"\"\nimport re\nimport unicodedata\n\n\ndef clean(value):\n    return unicodedata.normalize('NFKC', str(value or '')).strip()\n\n\ndef main(inputs):\n    if inputs['truncated']:\n        raise ValueError('图片超过查询上限，请填写更具体的相对目录后重新查询')\n    number = clean(inputs['inspection_number']).upper()\n    pattern = r'(?<![A-Z0-9])' + re.escape(number) + r'(?![A-Z0-9])'\n    items = []\n    for source in inputs['items']:\n        path = clean(source['relative_path']).replace('\\\\', '/')\n        if not re.search(pattern, path.upper()):\n            continue\n        item = dict(source)\n        item['kind'] = 'image'\n        item['metadata'] = dict(source.get('metadata') or {})\n        items.append(item)\n    items.sort(key=lambda item: [int(part) if part.isdigit() else part.casefold()\n                                for part in re.split(r'(\\d+)', item['relative_path'])])\n    if not items:\n        raise ValueError('未找到匹配编号的图片，请核对图片目录和文件索引')\n    projects = inputs['projects']\n    if not projects:\n        raise ValueError('任务没有符合项目与方法规则的检测项目')\n    return {'inspection_number': number, 'items': items, 'projects': projects}\n",
           "input_schema": {
             "type": "object",
-            "required": [
-              "inspection_number",
-              "snapshot",
-              "items",
-              "truncated",
-              "rules",
-              "template_counts"
-            ],
             "properties": {
+              "inspection_number": {
+                "type": "string"
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "artifact",
+                        "image",
+                        "option"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "root_id": {
+                      "type": "string"
+                    },
+                    "relative_path": {
+                      "type": "string"
+                    },
+                    "fingerprint": {
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "items": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "artifact",
+                              "image",
+                              "option"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "root_id": {
+                            "type": "string"
+                          },
+                          "relative_path": {
+                            "type": "string"
+                          },
+                          "fingerprint": {
+                            "type": "string"
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "label",
+                          "fingerprint"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "label",
+                    "fingerprint"
+                  ],
+                  "additionalProperties": false
+                }
+              },
               "items": {
                 "type": "array",
                 "items": {
@@ -262,104 +784,40 @@
                   "additionalProperties": true
                 }
               },
-              "rules": {
-                "type": "object",
-                "additionalProperties": true
-              },
-              "snapshot": {
-                "type": "object",
-                "additionalProperties": true
-              },
               "truncated": {
                 "type": "boolean"
-              },
-              "template_counts": {
-                "type": "array",
-                "items": {
-                  "type": "integer"
-                }
-              },
-              "inspection_number": {
-                "type": "string"
               }
             },
+            "required": [
+              "inspection_number",
+              "projects",
+              "items",
+              "truncated"
+            ],
             "additionalProperties": false
           },
           "output_schema": {
             "type": "object",
-            "required": [
-              "inspection_number",
-              "items",
-              "projects",
-              "allowed_selected_counts"
-            ],
             "properties": {
+              "inspection_number": {
+                "type": "string"
+              },
               "items": {
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": [
-                    "id",
-                    "kind",
-                    "label",
-                    "fingerprint"
-                  ],
                   "properties": {
                     "id": {
                       "type": "string",
                       "minLength": 1
                     },
                     "kind": {
+                      "type": "string",
                       "enum": [
                         "artifact",
                         "image",
                         "option"
-                      ],
-                      "type": "string"
-                    },
-                    "items": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "required": [
-                          "id",
-                          "kind",
-                          "label",
-                          "fingerprint"
-                        ],
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "kind": {
-                            "enum": [
-                              "artifact",
-                              "image",
-                              "option"
-                            ],
-                            "type": "string"
-                          },
-                          "label": {
-                            "type": "string"
-                          },
-                          "root_id": {
-                            "type": "string"
-                          },
-                          "metadata": {
-                            "type": "object",
-                            "additionalProperties": true
-                          },
-                          "fingerprint": {
-                            "type": "string"
-                          },
-                          "relative_path": {
-                            "type": "string"
-                          }
-                        },
-                        "additionalProperties": false
-                      },
-                      "minItems": 1
+                      ]
                     },
                     "label": {
                       "type": "string"
@@ -367,17 +825,67 @@
                     "root_id": {
                       "type": "string"
                     },
-                    "metadata": {
-                      "type": "object",
-                      "additionalProperties": true
+                    "relative_path": {
+                      "type": "string"
                     },
                     "fingerprint": {
                       "type": "string"
                     },
-                    "relative_path": {
-                      "type": "string"
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "items": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "artifact",
+                              "image",
+                              "option"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "root_id": {
+                            "type": "string"
+                          },
+                          "relative_path": {
+                            "type": "string"
+                          },
+                          "fingerprint": {
+                            "type": "string"
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "label",
+                          "fingerprint"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
+                  "required": [
+                    "id",
+                    "kind",
+                    "label",
+                    "fingerprint"
+                  ],
                   "additionalProperties": false
                 }
               },
@@ -385,68 +893,18 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": [
-                    "id",
-                    "kind",
-                    "label",
-                    "fingerprint"
-                  ],
                   "properties": {
                     "id": {
                       "type": "string",
                       "minLength": 1
                     },
                     "kind": {
+                      "type": "string",
                       "enum": [
                         "artifact",
                         "image",
                         "option"
-                      ],
-                      "type": "string"
-                    },
-                    "items": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "required": [
-                          "id",
-                          "kind",
-                          "label",
-                          "fingerprint"
-                        ],
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "kind": {
-                            "enum": [
-                              "artifact",
-                              "image",
-                              "option"
-                            ],
-                            "type": "string"
-                          },
-                          "label": {
-                            "type": "string"
-                          },
-                          "root_id": {
-                            "type": "string"
-                          },
-                          "metadata": {
-                            "type": "object",
-                            "additionalProperties": true
-                          },
-                          "fingerprint": {
-                            "type": "string"
-                          },
-                          "relative_path": {
-                            "type": "string"
-                          }
-                        },
-                        "additionalProperties": false
-                      },
-                      "minItems": 1
+                      ]
                     },
                     "label": {
                       "type": "string"
@@ -454,23 +912,136 @@
                     "root_id": {
                       "type": "string"
                     },
-                    "metadata": {
-                      "type": "object",
-                      "additionalProperties": true
+                    "relative_path": {
+                      "type": "string"
                     },
                     "fingerprint": {
                       "type": "string"
                     },
-                    "relative_path": {
-                      "type": "string"
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "items": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "artifact",
+                              "image",
+                              "option"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "root_id": {
+                            "type": "string"
+                          },
+                          "relative_path": {
+                            "type": "string"
+                          },
+                          "fingerprint": {
+                            "type": "string"
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "label",
+                          "fingerprint"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
+                  "required": [
+                    "id",
+                    "kind",
+                    "label",
+                    "fingerprint"
+                  ],
                   "additionalProperties": false
                 }
-              },
-              "inspection_number": {
-                "type": "string"
-              },
+              }
+            },
+            "required": [
+              "inspection_number",
+              "items",
+              "projects"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "input_mapping": {
+          "inspection_number": "$.inputs.inspection_number",
+          "projects": "$.nodes.profiles.output.projects",
+          "items": "$.nodes.files.output.items",
+          "truncated": "$.nodes.files.output.truncated"
+        },
+        "ui": {
+          "x": 1080,
+          "y": 160
+        }
+      },
+      {
+        "id": "project",
+        "name": "选择检测项目",
+        "type": "human.select",
+        "type_version": 2,
+        "config": {
+          "title": "选择检测项目",
+          "item_kind": "option",
+          "min_selected": 1,
+          "max_selected": 1,
+          "require_primary": true,
+          "auto_submit_single_candidate": true
+        },
+        "input_mapping": {
+          "items": "$.nodes.candidates.output.projects"
+        },
+        "ui": {
+          "x": 1340,
+          "y": 160
+        }
+      },
+      {
+        "id": "selection",
+        "name": "读取方案选图配置",
+        "type": "data.python",
+        "type_version": 1,
+        "config": {
+          "runtime_version": 1,
+          "timeout_seconds": 5,
+          "code": "def main(inputs):\n    profile = inputs['project']['metadata']['profile']\n    return {'allowed_selected_counts': sorted(int(key) for key in profile['templates'])}\n",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "project"
+            ],
+            "additionalProperties": false
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
               "allowed_selected_counts": {
                 "type": "array",
                 "items": {
@@ -478,103 +1049,59 @@
                 }
               }
             },
+            "required": [
+              "allowed_selected_counts"
+            ],
             "additionalProperties": false
-          },
-          "runtime_version": 1,
-          "timeout_seconds": 5
+          }
         },
-        "type_version": 1,
         "input_mapping": {
-          "items": "$.nodes.files.output.items",
-          "rules": {
-            "methods": [
-              "GB/T 36422-2018"
-            ],
-            "project_names": [
-              "纤维微观形貌",
-              "膜平面形貌"
-            ],
-            "project_numbers": [
-              "5103.5"
-            ]
-          },
-          "snapshot": "$.nodes.task.output.snapshot",
-          "truncated": "$.nodes.files.output.truncated",
-          "template_counts": [
-            1,
-            2,
-            3,
-            5,
-            6,
-            7,
-            10
-          ],
-          "inspection_number": "$.inputs.inspection_number"
-        }
-      },
-      {
-        "id": "project",
+          "project": "$.nodes.project.output.primary_item"
+        },
         "ui": {
-          "x": 1080,
+          "x": 1600,
           "y": 160
-        },
-        "name": "选择检测项目",
-        "type": "human.select",
-        "config": {
-          "title": "选择检测项目",
-          "item_kind": "option",
-          "max_selected": 1,
-          "min_selected": 1,
-          "require_primary": true,
-          "auto_submit_single_candidate": true
-        },
-        "type_version": 2,
-        "input_mapping": {
-          "items": "$.nodes.candidates.output.projects"
         }
       },
       {
         "id": "images",
-        "ui": {
-          "x": 1340,
-          "y": 160
-        },
         "name": "选择并排列图片",
         "type": "human.select",
+        "type_version": 2,
         "config": {
           "title": "选择并排列图片",
           "item_kind": "image",
-          "max_selected": 10,
           "min_selected": 1,
+          "max_selected": 10,
           "require_primary": false,
           "auto_submit_single_candidate": true
         },
-        "type_version": 2,
         "input_mapping": {
           "items": "$.nodes.candidates.output.items",
-          "allowed_selected_counts": "$.nodes.candidates.output.allowed_selected_counts"
+          "allowed_selected_counts": "$.nodes.selection.output.allowed_selected_counts"
+        },
+        "ui": {
+          "x": 1860,
+          "y": 160
         }
       },
       {
         "id": "prepare_form",
-        "ui": {
-          "x": 1600,
-          "y": 160
-        },
         "name": "显微 · 准备必要输入",
         "type": "data.python",
+        "type_version": 1,
         "config": {
-          "code": "\"\"\"Copied verbatim into the workflow's editable Python node.\"\"\"\nimport re\nimport unicodedata\n\n\ndef clean(value):\n    return ' '.join(unicodedata.normalize('NFKC', str(value or '')).split())\n\n\ndef options(value, separator):\n    values = value if isinstance(value, list) else [value]\n    return list(dict.fromkeys(clean(part) for item in values\n                             for part in re.split(separator, str(item or ''))\n                             if clean(part) and clean(part) != '---'))\n\n\ndef main(inputs):\n    project = inputs['project']['metadata']['project']\n    snapshot, rules = inputs['snapshot'], inputs['rules']\n    names = options(snapshot.get('sample_names') or snapshot.get('sample_name'), rules['name_separator'])\n    identities = options(project.get('sample_identify'), rules['identity_separator'])\n    fields = {'sample_name': {'type': 'string', 'title': '样品名称', 'minLength': 1, 'maxLength': 500},\n              'sample_identity': {'type': 'string', 'title': '样品识别', 'maxLength': 500},\n              'remark': {'type': 'string', 'title': '备注', 'maxLength': 1000}}\n    defaults = {'sample_name': names[0] if len(names) == 1 else '',\n                'sample_identity': identities[0] if len(identities) == 1 else '', 'remark': ''}\n    if len(names) > 1:\n        fields['sample_name']['examples'] = names\n    if identities:\n        fields['sample_identity'].update(enum=identities, minLength=1)\n    elif not identities:\n        fields['sample_identity']['const'] = ''\n    needs_judgement = str(project.get('give_judgement') or '').strip().casefold() not in ('', '0', 'false', 'no', '否')\n    if needs_judgement:\n        for key, title in [('judge_basis', '判定依据'), ('indicator_requirement', '指标要求'),\n                           ('test_result', '测试结果'), ('judgement', '判定结果')]:\n            fields[key] = {'type': 'string', 'title': title, 'minLength': 1, 'maxLength': 1000}\n            defaults[key] = ''\n        bases = options(project.get('check_basis_options') or snapshot.get('check_basis'), rules['basis_separator'])\n        fields['judge_basis']['examples'] = bases\n        defaults['judge_basis'] = bases[0] if len(bases) == 1 else ''\n        fields['judgement']['enum'] = rules['judgements']\n    return {'form_schema': {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False},\n            'defaults': defaults, 'context': {'项目': inputs['project']['label'], '图片数量': len(inputs['images'])}}\n",
+          "runtime_version": 1,
+          "timeout_seconds": 5,
+          "code": "\"\"\"Copied verbatim into the workflow's editable Python node.\"\"\"\nimport re\nimport unicodedata\n\n\ndef clean(value):\n    return ' '.join(unicodedata.normalize('NFKC', str(value or '')).split())\n\n\ndef options(value, separator):\n    values = value if isinstance(value, list) else [value]\n    return list(dict.fromkeys(clean(part) for item in values\n                             for part in re.split(separator, str(item or ''))\n                             if clean(part) and clean(part) != '---'))\n\n\ndef main(inputs):\n    project = inputs['project']['metadata']['project']\n    snapshot, rules = inputs['snapshot'], inputs['rules']\n    names = options(snapshot.get('sample_names') or snapshot.get('sample_name'), rules['name_separator'])\n    identities = options(project.get('sample_identify'), rules['identity_separator'])\n    fields = {'sample_name': {'type': 'string', 'title': '样品名称', 'minLength': 1, 'maxLength': 500},\n              'sample_identity': {'type': 'string', 'title': '样品识别', 'maxLength': 500},\n              'remark': {'type': 'string', 'title': '备注', 'maxLength': 1000}}\n    defaults = {'sample_name': names[0] if len(names) == 1 else '',\n                'sample_identity': identities[0] if len(identities) == 1 else '', 'remark': ''}\n    if len(names) > 1:\n        fields['sample_name']['examples'] = names\n    if identities:\n        fields['sample_identity'].update(enum=identities, minLength=1)\n    elif not identities:\n        fields['sample_identity']['const'] = ''\n    needs_judgement = str(project.get('give_judgement') or '').strip().casefold() not in ('', '0', 'false', 'no', '否')\n    if needs_judgement:\n        for key, title in [('judge_basis', '判定依据'), ('indicator_requirement', '指标要求'),\n                           ('test_result', '测试结果'), ('judgement', '判定结果')]:\n            fields[key] = {'type': 'string', 'title': title, 'minLength': 1, 'maxLength': 1000}\n            defaults[key] = ''\n        bases = options(project.get('check_basis_options') or snapshot.get('check_basis'), rules['basis_separator'])\n        fields['judge_basis']['examples'] = bases\n        defaults['judge_basis'] = bases[0] if len(bases) == 1 else ''\n        fields['judgement']['enum'] = rules['judgements']\n    defaults.update({key: value for key, value in rules.get('defaults', {}).items() if key in fields})\n    return {'form_schema': {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False},\n            'defaults': defaults, 'context': {'项目': inputs['project']['label'], '图片数量': len(inputs['images'])}}\n",
           "input_schema": {
             "type": "object",
-            "required": [
-              "snapshot",
-              "project",
-              "images",
-              "rules"
-            ],
             "properties": {
-              "rules": {
+              "snapshot": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "project": {
                 "type": "object",
                 "additionalProperties": true
               },
@@ -585,26 +1112,23 @@
                   "additionalProperties": true
                 }
               },
-              "project": {
-                "type": "object",
-                "additionalProperties": true
-              },
-              "snapshot": {
+              "rules": {
                 "type": "object",
                 "additionalProperties": true
               }
             },
+            "required": [
+              "snapshot",
+              "project",
+              "images",
+              "rules"
+            ],
             "additionalProperties": false
           },
           "output_schema": {
             "type": "object",
-            "required": [
-              "form_schema",
-              "defaults",
-              "context"
-            ],
             "properties": {
-              "context": {
+              "form_schema": {
                 "type": "object",
                 "additionalProperties": true
               },
@@ -612,104 +1136,107 @@
                 "type": "object",
                 "additionalProperties": true
               },
-              "form_schema": {
+              "context": {
                 "type": "object",
                 "additionalProperties": true
               }
             },
-            "additionalProperties": false
-          },
-          "runtime_version": 1,
-          "timeout_seconds": 5
-        },
-        "type_version": 1,
-        "input_mapping": {
-          "rules": {
-            "judgements": [
-              "符合",
-              "不符合"
+            "required": [
+              "form_schema",
+              "defaults",
+              "context"
             ],
-            "name_separator": "[\\r\\n;；]+",
-            "basis_separator": "[;；\\r\\n]+",
-            "identity_separator": "[、,，;；\\r\\n]+"
-          },
-          "images": "$.nodes.images.output.selected_items",
+            "additionalProperties": false
+          }
+        },
+        "input_mapping": {
+          "snapshot": "$.nodes.task.output.snapshot",
           "project": "$.nodes.project.output.primary_item",
-          "snapshot": "$.nodes.task.output.snapshot"
+          "images": "$.nodes.images.output.selected_items",
+          "rules": "$.nodes.project.output.primary_item.metadata.profile.form_rules"
+        },
+        "ui": {
+          "x": 2120,
+          "y": 160
         }
       },
       {
         "id": "form",
-        "ui": {
-          "x": 1860,
-          "y": 160
-        },
         "name": "补充必要字段",
         "type": "human.form",
+        "type_version": 2,
         "config": {
           "title": "补充记录字段",
           "result_schema": {
             "type": "object",
-            "required": [
-              "sample_name",
-              "sample_identity",
-              "remark"
-            ],
             "properties": {
-              "remark": {
-                "type": "string"
-              },
-              "judgement": {
-                "type": "string"
-              },
-              "judge_basis": {
-                "type": "string"
-              },
               "sample_name": {
-                "type": "string"
-              },
-              "test_result": {
                 "type": "string"
               },
               "sample_identity": {
                 "type": "string"
               },
+              "remark": {
+                "type": "string"
+              },
+              "judge_basis": {
+                "type": "string"
+              },
               "indicator_requirement": {
+                "type": "string"
+              },
+              "test_result": {
+                "type": "string"
+              },
+              "judgement": {
                 "type": "string"
               }
             },
+            "required": [
+              "sample_name",
+              "sample_identity",
+              "remark"
+            ],
             "additionalProperties": false
           },
           "auto_submit_complete": true
         },
-        "type_version": 2,
         "input_mapping": {
-          "context": "$.nodes.prepare_form.output.context",
+          "form_schema": "$.nodes.prepare_form.output.form_schema",
           "defaults": "$.nodes.prepare_form.output.defaults",
-          "form_schema": "$.nodes.prepare_form.output.form_schema"
+          "context": "$.nodes.prepare_form.output.context"
+        },
+        "ui": {
+          "x": 2380,
+          "y": 160
         }
       },
       {
         "id": "payload",
-        "ui": {
-          "x": 2120,
-          "y": 160
-        },
         "name": "显微 · 组装字段和路径",
         "type": "data.python",
+        "type_version": 1,
         "config": {
-          "code": "\"\"\"Copied into JSON: fields, copy names and registration values are visible.\"\"\"\nimport re\n\n\ndef main(inputs):\n    project = inputs['project']['metadata']['project']\n    form, rules = inputs['form'], inputs['rules']\n    number = inputs['inspection_number']\n    if re.search(r'[<>:\"/\\\\|?*\\x00-\\x1f]', number):\n        raise ValueError('编号包含文件名不允许的字符')\n    if not form.get('sample_name', '').strip():\n        raise ValueError('请填写样品名称')\n    identity = form.get('sample_identity', '').strip()\n    fields = {'inspection_number': number, 'sample_name': form['sample_name'].strip(),\n              'sample_identity': identity, 'remark': form.get('remark', '').strip(),\n              'method': project['check_method'], 'item_name': project['check_item_name'],\n              'title': rules['record_title']}\n    needs_judgement = str(project.get('give_judgement') or '').strip().casefold() not in ('', '0', 'false', 'no', '否')\n    for key in ('judge_basis', 'indicator_requirement', 'test_result', 'judgement'):\n        fields[key] = form.get(key, '').strip() if needs_judgement else ''\n        if needs_judgement and not fields[key]:\n            raise ValueError('任务要求判定，请补充全部判定字段')\n    key = str(len(inputs['images']))\n    template = inputs['templates'].get(key)\n    if template is None:\n        raise ValueError('当前图片数量没有配置登记模板')\n    safe_identity = re.sub(r'[<>:\"/\\\\|?*\\x00-\\x1f]', '-', identity).rstrip('. ').strip()\n    stem = number + ('-' + safe_identity if safe_identity else '')\n    files, images = [], []\n    for index, image in enumerate(inputs['images']):\n        source = {k: image[k] for k in ('id', 'root_id', 'relative_path', 'fingerprint')}\n        suffix = '.' + source['relative_path'].rsplit('.', 1)[-1].lower()\n        name = stem + ('-' + str(index) if index else '') + suffix\n        files.append({'source': source, 'target_filename': name})\n        images.append({'artifact': source})\n    keys = ('project_key', 'task_check_item_id', 'check_item_id', 'check_item_no', 'check_item_name', 'check_method', 'seq_num', 'check_count')\n    return {'inspection_number': number, 'project': {k: project[k] for k in keys}, 'values': fields,\n            'images': images, 'files': files, 'target_directory': rules['target_directory'].rstrip('/') + '/' + number,\n            'template_key': key, 'template_binding': template,\n            'registration_template': {'template_name': template['legacy_template_name'], 'mapping_config_sha256': template['mapping_config_sha256']},\n            'register': {'level': '', 'sample_identity': identity, 'equipment_no': '', 'check_basis': ''},\n            'expected_key_identities': [identity], 'business_fields': rules['upload_fields'],\n            'expected_existing_register_count': project['register_count']}\n",
+          "runtime_version": 1,
+          "timeout_seconds": 5,
+          "code": "\"\"\"Copied into JSON: fields, copy names and registration values are visible.\"\"\"\nimport re\n\n\ndef main(inputs):\n    project = inputs['project']['metadata']['project']\n    form, rules = inputs['form'], inputs['rules']\n    number = inputs['inspection_number']\n    if re.search(r'[<>:\"/\\\\|?*\\x00-\\x1f]', number):\n        raise ValueError('编号包含文件名不允许的字符')\n    if not form.get('sample_name', '').strip():\n        raise ValueError('请填写样品名称')\n    identity = form.get('sample_identity', '').strip()\n    fields = {'inspection_number': number, 'sample_name': form['sample_name'].strip(),\n              'sample_identity': identity, 'remark': form.get('remark', '').strip(),\n              'method': project['check_method'], 'item_name': project['check_item_name'],\n              'title': rules['record_title']}\n    needs_judgement = str(project.get('give_judgement') or '').strip().casefold() not in ('', '0', 'false', 'no', '否')\n    for key in ('judge_basis', 'indicator_requirement', 'test_result', 'judgement'):\n        fields[key] = form.get(key, '').strip() if needs_judgement else ''\n        if needs_judgement and not fields[key]:\n            raise ValueError('任务要求判定，请补充全部判定字段')\n    key = str(len(inputs['images']))\n    template = inputs['templates'].get(key)\n    if template is None:\n        raise ValueError('当前图片数量没有配置登记模板')\n    safe_identity = re.sub(r'[<>:\"/\\\\|?*\\x00-\\x1f]', '-', identity).rstrip('. ').strip()\n    files, images = [], []\n    for index, image in enumerate(inputs['images']):\n        source = {k: image[k] for k in ('id', 'root_id', 'relative_path', 'fingerprint')}\n        suffix = '.' + source['relative_path'].rsplit('.', 1)[-1].lower()\n        name = rules['filename_pattern'].format(number=number, identity='-' + safe_identity if safe_identity else '',\n                                               index='-' + str(index) if index else '', ext=suffix[1:])\n        if not name or name in ('.', '..') or re.search(r'[<>:\"/\\\\|?*\\x00-\\x1f]', name) or name.endswith(('.', ' ')):\n            raise ValueError('图片文件名规则生成了无效名称')\n        files.append({'source': source, 'target_filename': name})\n        images.append({'artifact': source})\n    keys = ('project_key', 'task_check_item_id', 'check_item_id', 'check_item_no', 'check_item_name', 'check_method', 'seq_num', 'check_count')\n    return {'inspection_number': number, 'project': {k: project[k] for k in keys}, 'values': fields,\n            'images': images, 'files': files, 'target_directory': rules['target_directory'].rstrip('/') + '/' + number,\n            'template_key': template['template_key'], 'template_binding': template,\n            'original_template_key': rules['original_template_key'], 'profile': rules,\n            'registration_template': {'template_name': template['legacy_template_name'], 'mapping_config_sha256': template['mapping_config_sha256']},\n            'register': {'level': '', 'sample_identity': identity, 'equipment_no': '', 'check_basis': ''},\n            'expected_key_identities': [identity], 'business_fields': rules['upload_fields'],\n            'expected_existing_register_count': project['register_count']}\n",
           "input_schema": {
             "type": "object",
-            "required": [
-              "inspection_number",
-              "project",
-              "images",
-              "form",
-              "rules",
-              "templates"
-            ],
             "properties": {
+              "inspection_number": {
+                "type": "string"
+              },
+              "project": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "images": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
               "form": {
                 "type": "object",
                 "additionalProperties": true
@@ -718,115 +1245,65 @@
                 "type": "object",
                 "additionalProperties": true
               },
-              "images": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
+              "templates": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "inspection_number",
+              "project",
+              "images",
+              "form",
+              "rules",
+              "templates"
+            ],
+            "additionalProperties": false
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "inspection_number": {
+                "type": "string"
               },
               "project": {
                 "type": "object",
                 "additionalProperties": true
               },
-              "templates": {
+              "values": {
                 "type": "object",
                 "additionalProperties": true
-              },
-              "inspection_number": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          },
-          "output_schema": {
-            "type": "object",
-            "required": [
-              "inspection_number",
-              "project",
-              "values",
-              "images",
-              "files",
-              "target_directory",
-              "template_key",
-              "template_binding",
-              "registration_template",
-              "register",
-              "expected_key_identities",
-              "business_fields",
-              "expected_existing_register_count"
-            ],
-            "properties": {
-              "files": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": [
-                    "source",
-                    "target_filename"
-                  ],
-                  "properties": {
-                    "source": {
-                      "type": "object",
-                      "required": [
-                        "id",
-                        "root_id",
-                        "relative_path",
-                        "fingerprint"
-                      ],
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "root_id": {
-                          "type": "string"
-                        },
-                        "fingerprint": {
-                          "type": "string"
-                        },
-                        "relative_path": {
-                          "type": "string"
-                        }
-                      },
-                      "additionalProperties": false
-                    },
-                    "target_filename": {
-                      "type": "string",
-                      "maxLength": 255,
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "maxItems": 100,
-                "minItems": 1
               },
               "images": {
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": [
-                    "artifact"
-                  ],
                   "properties": {
-                    "cell": {
-                      "type": "string"
-                    },
-                    "sheet": {
-                      "type": "string"
-                    },
-                    "width": {
-                      "type": "number",
-                      "maximum": 4096,
-                      "minimum": 1
-                    },
-                    "height": {
-                      "type": "number",
-                      "maximum": 4096,
-                      "minimum": 1
-                    },
                     "artifact": {
                       "type": "object",
+                      "properties": {
+                        "root_id": {
+                          "type": "string"
+                        },
+                        "relative_path": {
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "fingerprint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "root_id",
+                        "relative_path"
+                      ],
+                      "additionalProperties": false,
                       "anyOf": [
                         {
                           "required": [
@@ -838,73 +1315,173 @@
                             "fingerprint"
                           ]
                         }
-                      ],
-                      "required": [
-                        "root_id",
-                        "relative_path"
-                      ],
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "sha256": {
-                          "type": "string",
-                          "pattern": "^[a-f0-9]{64}$"
-                        },
-                        "root_id": {
-                          "type": "string"
-                        },
-                        "fingerprint": {
-                          "type": "string"
-                        },
-                        "relative_path": {
-                          "type": "string"
-                        }
-                      },
-                      "additionalProperties": false
+                      ]
+                    },
+                    "sheet": {
+                      "type": "string"
+                    },
+                    "cell": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 4096
+                    },
+                    "height": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 4096
                     }
                   },
+                  "required": [
+                    "artifact"
+                  ],
                   "additionalProperties": false
                 },
                 "maxItems": 100
               },
-              "values": {
+              "files": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "root_id": {
+                          "type": "string"
+                        },
+                        "relative_path": {
+                          "type": "string"
+                        },
+                        "fingerprint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "root_id",
+                        "relative_path",
+                        "fingerprint"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "target_filename": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 255
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "target_filename"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "target_directory": {
+                "type": "string"
+              },
+              "template_key": {
+                "type": "string"
+              },
+              "template_binding": {
                 "type": "object",
                 "additionalProperties": true
               },
-              "project": {
+              "original_template_key": {
+                "type": "string"
+              },
+              "profile": {
                 "type": "object",
                 "additionalProperties": true
               },
-              "register": {
-                "type": "object",
-                "required": [
-                  "level",
-                  "sample_identity",
-                  "equipment_no",
-                  "check_basis"
-                ],
+              "registration_template": {
+                "additionalProperties": false,
                 "properties": {
-                  "level": {
+                  "mapping_config_sha256": {
+                    "pattern": "^[0-9a-f]{64}$",
                     "type": "string"
                   },
+                  "template_name": {
+                    "maxLength": 260,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "template_name",
+                  "mapping_config_sha256"
+                ],
+                "type": "object"
+              },
+              "register": {
+                "additionalProperties": false,
+                "properties": {
                   "check_basis": {
                     "type": "string"
                   },
                   "equipment_no": {
                     "type": "string"
                   },
+                  "level": {
+                    "type": "string"
+                  },
                   "sample_identity": {
                     "type": "string"
                   }
                 },
-                "additionalProperties": false
+                "required": [
+                  "level",
+                  "sample_identity",
+                  "equipment_no",
+                  "check_basis"
+                ],
+                "type": "object"
               },
-              "template_key": {
-                "type": "string"
+              "expected_key_identities": {
+                "items": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "maxItems": 10000,
+                "minItems": 1,
+                "type": "array"
               },
               "business_fields": {
-                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "fiber_category": {
+                    "type": "string"
+                  },
+                  "file_type": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "inspection_copies": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "inspection_item": {
+                    "type": "string"
+                  },
+                  "inspection_method": {
+                    "type": "string"
+                  },
+                  "review_copies": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "review_item": {
+                    "type": "string"
+                  }
+                },
                 "required": [
                   "fiber_category",
                   "inspection_method",
@@ -914,259 +1491,142 @@
                   "review_copies",
                   "file_type"
                 ],
-                "properties": {
-                  "file_type": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "review_item": {
-                    "type": "string"
-                  },
-                  "review_copies": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "fiber_category": {
-                    "type": "string"
-                  },
-                  "inspection_item": {
-                    "type": "string"
-                  },
-                  "inspection_copies": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "inspection_method": {
-                    "type": "string"
-                  }
-                },
-                "additionalProperties": false
-              },
-              "target_directory": {
-                "type": "string"
-              },
-              "template_binding": {
-                "type": "object",
-                "additionalProperties": true
-              },
-              "inspection_number": {
-                "type": "string"
-              },
-              "registration_template": {
-                "type": "object",
-                "required": [
-                  "template_name",
-                  "mapping_config_sha256"
-                ],
-                "properties": {
-                  "template_name": {
-                    "type": "string",
-                    "maxLength": 260,
-                    "minLength": 1
-                  },
-                  "mapping_config_sha256": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{64}$"
-                  }
-                },
-                "additionalProperties": false
-              },
-              "expected_key_identities": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "maxLength": 512
-                },
-                "maxItems": 10000,
-                "minItems": 1
+                "type": "object"
               },
               "expected_existing_register_count": {
-                "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "type": "integer"
               }
             },
+            "required": [
+              "inspection_number",
+              "project",
+              "values",
+              "images",
+              "files",
+              "target_directory",
+              "template_key",
+              "template_binding",
+              "original_template_key",
+              "profile",
+              "registration_template",
+              "register",
+              "expected_key_identities",
+              "business_fields",
+              "expected_existing_register_count"
+            ],
             "additionalProperties": false
-          },
-          "runtime_version": 1,
-          "timeout_seconds": 5
+          }
         },
-        "type_version": 1,
         "input_mapping": {
-          "form": "$.nodes.form.output",
-          "rules": {
-            "record_title": "纤维微观形貌检验原始记录",
-            "upload_fields": {
-              "file_type": "定量试验",
-              "review_item": "",
-              "review_copies": 1,
-              "fiber_category": "图片",
-              "inspection_item": "图片",
-              "inspection_copies": 1,
-              "inspection_method": ""
-            },
-            "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/1-微观形貌-GB T 36422"
-          },
-          "images": "$.nodes.images.output.selected_items",
+          "inspection_number": "$.nodes.candidates.output.inspection_number",
           "project": "$.nodes.project.output.primary_item",
-          "templates": {
-            "1": {
-              "image_count": 1,
-              "binding_version": "gbt36422-2018-legacy-template-binding-v1",
-              "local_asset_name": "gbt36422-2018-microscopy-1-image-v1.xls",
-              "local_asset_sha256": "b169fb5cf236004058f0666ee28979836266168311172efc01c7ec7d5906c6fe",
-              "legacy_template_name": "微观形貌.xls",
-              "mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"
-            },
-            "2": {
-              "image_count": 2,
-              "binding_version": "gbt36422-2018-legacy-template-binding-v1",
-              "local_asset_name": "gbt36422-2018-microscopy-2-images-v1.xls",
-              "local_asset_sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
-              "legacy_template_name": "纤维微观形貌-GB T 36422-2018-2张图.xls",
-              "mapping_config_sha256": "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23"
-            },
-            "3": {
-              "image_count": 3,
-              "binding_version": "gbt36422-2018-legacy-template-binding-v1",
-              "local_asset_name": "gbt36422-2018-microscopy-3-images-v1.xls",
-              "local_asset_sha256": "4a4e7b69a5dba7684fe837779929b4d093fe509cbf398ae37114cd22071b70b4",
-              "legacy_template_name": "纤维微观形貌-GB T 36422-2018-3张图.xls",
-              "mapping_config_sha256": "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268"
-            },
-            "5": {
-              "image_count": 5,
-              "binding_version": "gbt36422-2018-legacy-template-binding-v1",
-              "local_asset_name": "gbt36422-2018-microscopy-5-images-v1.xls",
-              "local_asset_sha256": "3b148fd8ccbb28b8fe8e60ceee0e4898c144c1fbe15b8a451ed44e0d2141d38d",
-              "legacy_template_name": "纤维微观形貌-GB T 36422-2018-5张图.xls",
-              "mapping_config_sha256": "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d"
-            },
-            "6": {
-              "image_count": 6,
-              "binding_version": "gbt36422-2018-legacy-template-binding-v1",
-              "local_asset_name": "gbt36422-2018-microscopy-6-images-v1.xls",
-              "local_asset_sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
-              "legacy_template_name": "纤维微观形貌-GB T 36422-2018-6张图.xls",
-              "mapping_config_sha256": "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304"
-            },
-            "7": {
-              "image_count": 7,
-              "binding_version": "gbt36422-2018-legacy-template-binding-v1",
-              "local_asset_name": "gbt36422-2018-microscopy-7-images-v1.xls",
-              "local_asset_sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
-              "legacy_template_name": "纤维微观形貌-GB T 36422-2018-7张图.xls",
-              "mapping_config_sha256": "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01"
-            },
-            "10": {
-              "image_count": 10,
-              "binding_version": "gbt36422-2018-legacy-template-binding-v1",
-              "local_asset_name": "gbt36422-2018-microscopy-10-images-v1.xls",
-              "local_asset_sha256": "85627e8ca9824274fe61f13276b390a75288a119987053e3a244157ee0f46e8c",
-              "legacy_template_name": "纤维微观形貌-GB T 36422-2018-10张图.xls",
-              "mapping_config_sha256": "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
-            }
-          },
-          "inspection_number": "$.nodes.candidates.output.inspection_number"
+          "images": "$.nodes.images.output.selected_items",
+          "form": "$.nodes.form.output",
+          "templates": "$.nodes.project.output.primary_item.metadata.profile.templates",
+          "rules": "$.nodes.project.output.primary_item.metadata.profile"
+        },
+        "ui": {
+          "x": 2640,
+          "y": 160
         }
       },
       {
         "id": "original",
-        "ui": {
-          "x": 2380,
-          "y": 160
-        },
         "name": "生成带图片的原始记录",
         "type": "workbook.render",
+        "type_version": 2,
         "config": {
-          "fields": [
-            {
-              "cell": "A1",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/title"
-              }
-            },
-            {
-              "cell": "B2",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/inspection_number"
-              }
-            },
-            {
-              "cell": "B3",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/sample_name"
-              }
-            },
-            {
-              "cell": "L3",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/sample_identity"
-              }
-            },
-            {
-              "cell": "B33",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/judge_basis"
-              }
-            },
-            {
-              "cell": "I33",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/indicator_requirement"
-              }
-            },
-            {
-              "cell": "B34",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/test_result"
-              }
-            },
-            {
-              "cell": "I34",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/judgement"
-              }
-            },
-            {
-              "cell": "B35",
-              "kind": "text",
-              "sheet": "微观形貌",
-              "value": {
-                "path": "#/remark"
-              }
-            }
-          ],
-          "filename": "纤维微观形貌-原始记录.xls",
           "templates": {
             "original": {
-              "sha256": "d2b70e114cb85c89e4961ba2acb1b0cb451656f7a12b5dd5bdbacba1d50f88ba",
               "root_slot": "execution_templates",
-              "relative_path": "gbt36422-2018-microscopy-original-record-v1.xls"
+              "relative_path": "gbt36422-2018-microscopy-original-record-v1.xls",
+              "sha256": "d2b70e114cb85c89e4961ba2acb1b0cb451656f7a12b5dd5bdbacba1d50f88ba"
             }
           },
+          "staging_root_slot": "execution_staging",
+          "filename": "微观形貌-原始记录.xls",
+          "fields": [
+            {
+              "sheet": "微观形貌",
+              "cell": "A1",
+              "value": {
+                "path": "#/title"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "微观形貌",
+              "cell": "B2",
+              "value": {
+                "path": "#/inspection_number"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "微观形貌",
+              "cell": "B3",
+              "value": {
+                "path": "#/sample_name"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "微观形貌",
+              "cell": "L3",
+              "value": {
+                "path": "#/sample_identity"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "微观形貌",
+              "cell": "B33",
+              "value": {
+                "path": "#/judge_basis"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "微观形貌",
+              "cell": "I33",
+              "value": {
+                "path": "#/indicator_requirement"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "微观形貌",
+              "cell": "B34",
+              "value": {
+                "path": "#/test_result"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "微观形貌",
+              "cell": "I34",
+              "value": {
+                "path": "#/judgement"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "微观形貌",
+              "cell": "B35",
+              "value": {
+                "path": "#/remark"
+              },
+              "kind": "text"
+            }
+          ],
           "image_layout": {
-            "gap": 0,
-            "range": "A4:L32",
             "sheet": "微观形貌",
+            "range": "A4:L32",
+            "print_area": "$A$1:$L$37",
             "max_width": 21600,
             "max_height": 11700,
-            "print_area": "$A$1:$L$37",
+            "gap": 0,
             "biff_excel_x_scale": 1.0
           },
           "number_formats": {
@@ -1174,386 +1634,375 @@
               "format": "YYYY/M/D",
               "display_pattern": "^\\d{4}/\\d{1,2}/\\d{1,2}$"
             }
-          },
-          "staging_root_slot": "execution_staging"
+          }
         },
-        "type_version": 2,
         "input_mapping": {
-          "images": "$.nodes.payload.output.images",
+          "template_key": "$.nodes.payload.output.original_template_key",
           "values": "$.nodes.payload.output.values",
-          "template_key": "original"
+          "images": "$.nodes.payload.output.images"
+        },
+        "ui": {
+          "x": 2900,
+          "y": 160
         }
       },
       {
         "id": "check",
-        "ui": {
-          "x": 2640,
-          "y": 160
-        },
         "name": "生成检务登记工作簿",
         "type": "workbook.render",
+        "type_version": 2,
         "config": {
-          "fields": [
-            {
-              "cell": "AS4",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/inspection_number"
-              }
-            },
-            {
-              "cell": "Z7",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/sample_identity"
-              }
-            },
-            {
-              "cell": "I8",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/method"
-              }
-            },
-            {
-              "cell": "I9",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/judge_basis"
-              }
-            },
-            {
-              "cell": "I10",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/indicator_requirement"
-              }
-            },
-            {
-              "cell": "I11",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/test_result"
-              }
-            },
-            {
-              "cell": "G12",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/remark"
-              }
-            },
-            {
-              "cell": "G13",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/judgement"
-              }
-            },
-            {
-              "cell": "BI7",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/item_name"
-              }
-            },
-            {
-              "cell": "BK7",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/sample_identity"
-              }
-            },
-            {
-              "cell": "BI8",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/method"
-              }
-            },
-            {
-              "cell": "BI9",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/judge_basis"
-              }
-            },
-            {
-              "cell": "BI10",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/indicator_requirement"
-              }
-            },
-            {
-              "cell": "BI11",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/test_result"
-              }
-            },
-            {
-              "cell": "BI12",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/remark"
-              }
-            },
-            {
-              "cell": "BI13",
-              "kind": "text",
-              "sheet": "Sheet1",
-              "value": {
-                "path": "#/judgement"
-              }
-            }
-          ],
-          "filename": "纤维微观形貌-检务登记.xls",
           "templates": {
             "1": {
-              "sha256": "b169fb5cf236004058f0666ee28979836266168311172efc01c7ec7d5906c6fe",
               "root_slot": "execution_templates",
-              "relative_path": "gbt36422-2018-microscopy-1-image-v1.xls"
+              "relative_path": "gbt36422-2018-microscopy-1-image-v1.xls",
+              "sha256": "b169fb5cf236004058f0666ee28979836266168311172efc01c7ec7d5906c6fe"
             },
             "2": {
-              "sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
               "root_slot": "execution_templates",
-              "relative_path": "gbt36422-2018-microscopy-2-images-v1.xls"
+              "relative_path": "gbt36422-2018-microscopy-2-images-v1.xls",
+              "sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
             },
             "3": {
-              "sha256": "4a4e7b69a5dba7684fe837779929b4d093fe509cbf398ae37114cd22071b70b4",
               "root_slot": "execution_templates",
-              "relative_path": "gbt36422-2018-microscopy-3-images-v1.xls"
+              "relative_path": "gbt36422-2018-microscopy-3-images-v1.xls",
+              "sha256": "4a4e7b69a5dba7684fe837779929b4d093fe509cbf398ae37114cd22071b70b4"
             },
             "5": {
-              "sha256": "3b148fd8ccbb28b8fe8e60ceee0e4898c144c1fbe15b8a451ed44e0d2141d38d",
               "root_slot": "execution_templates",
-              "relative_path": "gbt36422-2018-microscopy-5-images-v1.xls"
+              "relative_path": "gbt36422-2018-microscopy-5-images-v1.xls",
+              "sha256": "3b148fd8ccbb28b8fe8e60ceee0e4898c144c1fbe15b8a451ed44e0d2141d38d"
             },
             "6": {
-              "sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
               "root_slot": "execution_templates",
-              "relative_path": "gbt36422-2018-microscopy-6-images-v1.xls"
+              "relative_path": "gbt36422-2018-microscopy-6-images-v1.xls",
+              "sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
             },
             "7": {
-              "sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191",
               "root_slot": "execution_templates",
-              "relative_path": "gbt36422-2018-microscopy-7-images-v1.xls"
+              "relative_path": "gbt36422-2018-microscopy-7-images-v1.xls",
+              "sha256": "98145d6ea4dfafada8cbd09ad5aa8a9991ce27c3b07f248f70178d60e6cbd191"
             },
             "10": {
-              "sha256": "85627e8ca9824274fe61f13276b390a75288a119987053e3a244157ee0f46e8c",
               "root_slot": "execution_templates",
-              "relative_path": "gbt36422-2018-microscopy-10-images-v1.xls"
+              "relative_path": "gbt36422-2018-microscopy-10-images-v1.xls",
+              "sha256": "85627e8ca9824274fe61f13276b390a75288a119987053e3a244157ee0f46e8c"
             }
           },
-          "staging_root_slot": "execution_staging"
+          "staging_root_slot": "execution_staging",
+          "filename": "微观形貌-检务登记.xls",
+          "fields": [
+            {
+              "sheet": "Sheet1",
+              "cell": "AS4",
+              "value": {
+                "path": "#/inspection_number"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "Z7",
+              "value": {
+                "path": "#/sample_identity"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "I8",
+              "value": {
+                "path": "#/method"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "I9",
+              "value": {
+                "path": "#/judge_basis"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "I10",
+              "value": {
+                "path": "#/indicator_requirement"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "I11",
+              "value": {
+                "path": "#/test_result"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "G12",
+              "value": {
+                "path": "#/remark"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "G13",
+              "value": {
+                "path": "#/judgement"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "BI7",
+              "value": {
+                "path": "#/item_name"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "BK7",
+              "value": {
+                "path": "#/sample_identity"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "BI8",
+              "value": {
+                "path": "#/method"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "BI9",
+              "value": {
+                "path": "#/judge_basis"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "BI10",
+              "value": {
+                "path": "#/indicator_requirement"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "BI11",
+              "value": {
+                "path": "#/test_result"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "BI12",
+              "value": {
+                "path": "#/remark"
+              },
+              "kind": "text"
+            },
+            {
+              "sheet": "Sheet1",
+              "cell": "BI13",
+              "value": {
+                "path": "#/judgement"
+              },
+              "kind": "text"
+            }
+          ]
         },
-        "type_version": 2,
         "input_mapping": {
-          "values": "$.nodes.payload.output.values",
-          "template_key": "$.nodes.payload.output.template_key"
+          "template_key": "$.nodes.payload.output.template_key",
+          "values": "$.nodes.payload.output.values"
+        },
+        "ui": {
+          "x": 3160,
+          "y": 160
         }
       },
       {
         "id": "place",
-        "ui": {
-          "x": 2900,
-          "y": 160
-        },
         "name": "放置局域网图片",
         "type": "file.batch_place",
+        "type_version": 2,
         "config": {
           "target_root_slot": "report_upload_images"
         },
-        "type_version": 2,
         "input_mapping": {
-          "files": "$.nodes.payload.output.files",
-          "target_directory": "$.nodes.payload.output.target_directory"
+          "target_directory": "$.nodes.payload.output.target_directory",
+          "files": "$.nodes.payload.output.files"
+        },
+        "ui": {
+          "x": 3420,
+          "y": 160
         }
       },
       {
         "id": "submit_branch",
-        "ui": {
-          "x": 3160,
-          "y": 160
-        },
         "name": "图片放置是否取消",
         "type": "flow.branch",
-        "config": {
-          "multi_match": "all",
-          "expression_version": 1
-        },
         "type_version": 1,
-        "input_mapping": {}
+        "config": {
+          "expression_version": 1,
+          "multi_match": "all"
+        },
+        "input_mapping": {},
+        "ui": {
+          "x": 3680,
+          "y": 160
+        }
       },
       {
         "id": "upload",
-        "ui": {
-          "x": 3420,
-          "y": 160
-        },
         "name": "上传原始记录",
         "type": "external.operation",
+        "type_version": 1,
         "config": {
           "operation_ref": "legacy_fibrecheck.original_record.upload@1",
           "credential_slot": "inspection"
         },
-        "type_version": 1,
         "input_mapping": {
-          "sha256": "$.nodes.original.output.artifact.sha256",
+          "inspection_number": "$.nodes.payload.output.inspection_number",
+          "project": "$.nodes.payload.output.project",
+          "business_fields": "$.nodes.payload.output.business_fields",
           "source": {
             "root_id": "$.nodes.original.output.artifact.root_id",
             "relative_path": "$.nodes.original.output.artifact.relative_path"
           },
-          "project": "$.nodes.payload.output.project",
-          "business_fields": "$.nodes.payload.output.business_fields",
-          "inspection_number": "$.nodes.payload.output.inspection_number"
+          "sha256": "$.nodes.original.output.artifact.sha256"
+        },
+        "ui": {
+          "x": 3940,
+          "y": 160
         }
       },
       {
         "id": "review",
-        "ui": {
-          "x": 3680,
-          "y": 160
-        },
         "name": "复核原始记录",
         "type": "external.operation",
+        "type_version": 1,
         "config": {
           "operation_ref": "legacy_fibrecheck.original_record.review@1",
           "credential_slot": "inspection"
         },
-        "type_version": 1,
         "input_mapping": {
           "upload_result": "$.nodes.upload.output"
+        },
+        "ui": {
+          "x": 4200,
+          "y": 160
         }
       },
       {
         "id": "entry",
-        "ui": {
-          "x": 3940,
-          "y": 160
-        },
         "name": "Excel 采集登记",
         "type": "external.operation",
+        "type_version": 1,
         "config": {
           "operation_ref": "legacy_fibrecheck.check_record.excel_entry@1",
           "credential_slot": "inspection"
         },
-        "type_version": 1,
         "input_mapping": {
-          "sha256": "$.nodes.check.output.artifact.sha256",
+          "inspection_number": "$.nodes.payload.output.inspection_number",
+          "project": "$.nodes.payload.output.project",
+          "expected_existing_register_count": "$.nodes.payload.output.expected_existing_register_count",
+          "register": "$.nodes.payload.output.register",
+          "expected_key_identities": "$.nodes.payload.output.expected_key_identities",
+          "template": "$.nodes.payload.output.registration_template",
           "source": {
             "root_id": "$.nodes.check.output.artifact.root_id",
             "relative_path": "$.nodes.check.output.artifact.relative_path"
           },
-          "project": "$.nodes.payload.output.project",
-          "register": "$.nodes.payload.output.register",
-          "template": "$.nodes.payload.output.registration_template",
-          "review_result": "$.nodes.review.output",
-          "inspection_number": "$.nodes.payload.output.inspection_number",
-          "expected_key_identities": "$.nodes.payload.output.expected_key_identities",
-          "expected_existing_register_count": "$.nodes.payload.output.expected_existing_register_count"
+          "sha256": "$.nodes.check.output.artifact.sha256",
+          "review_result": "$.nodes.review.output"
+        },
+        "ui": {
+          "x": 4460,
+          "y": 160
         }
       },
       {
         "id": "end",
-        "ui": {
-          "x": 4200,
-          "y": 160
-        },
         "name": "完成",
         "type": "core.end",
-        "config": {},
         "type_version": 2,
+        "config": {},
         "input_mapping": {
-          "check": "$.nodes.check.output",
-          "entry": "$.nodes.entry.output",
-          "review": "$.nodes.review.output",
-          "upload": "$.nodes.upload.output",
-          "message": "图片已放置，原始记录已上传复核，Excel 登记已完成",
           "original": "$.nodes.original.output",
+          "check": "$.nodes.check.output",
           "placement": "$.nodes.place.output",
-          "submitted": true
+          "profile": "$.nodes.payload.output.profile",
+          "submitted": true,
+          "message": "图片已放置，原始记录已上传复核，Excel 登记已完成",
+          "upload": "$.nodes.upload.output",
+          "review": "$.nodes.review.output",
+          "entry": "$.nodes.entry.output"
+        },
+        "ui": {
+          "x": 4720,
+          "y": 160
         }
       },
       {
         "id": "cancelled",
-        "ui": {
-          "x": 3420,
-          "y": 420
-        },
         "name": "未提交，保留生成文件",
         "type": "core.end",
-        "config": {},
         "type_version": 2,
+        "config": {},
         "input_mapping": {
-          "check": "$.nodes.check.output",
-          "entry": null,
-          "review": null,
-          "upload": null,
-          "message": "图片放置已取消，未提交检务",
           "original": "$.nodes.original.output",
+          "check": "$.nodes.check.output",
           "placement": "$.nodes.place.output",
-          "submitted": false
+          "profile": "$.nodes.payload.output.profile",
+          "submitted": false,
+          "message": "图片放置已取消，未提交检务",
+          "upload": null,
+          "review": null,
+          "entry": null
+        },
+        "ui": {
+          "x": 3940,
+          "y": 420
         }
       }
     ],
-    "input_schema": {
-      "type": "object",
-      "required": [
-        "inspection_number"
-      ],
-      "properties": {
-        "inspection_number": {
-          "type": "string",
-          "title": "检验编号",
-          "minLength": 1
-        },
-        "relative_directory": {
-          "type": "string",
-          "title": "图片相对目录（可选）",
-          "default": ""
-        }
-      },
-      "additionalProperties": false
-    },
-    "global_schema": {
-      "type": "object",
-      "properties": {}
-    },
     "output_schema": {
       "type": "object",
-      "required": [
-        "original",
-        "check",
-        "placement",
-        "submitted",
-        "message",
-        "upload",
-        "review",
-        "entry"
-      ],
       "properties": {
+        "original": {
+          "type": "object",
+          "additionalProperties": true
+        },
         "check": {
           "type": "object",
           "additionalProperties": true
         },
-        "entry": {
+        "placement": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "profile": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "submitted": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "upload": {
           "type": [
             "object",
             "null"
@@ -1567,116 +2016,33 @@
           ],
           "additionalProperties": true
         },
-        "upload": {
+        "entry": {
           "type": [
             "object",
             "null"
           ],
           "additionalProperties": true
-        },
-        "message": {
-          "type": "string"
-        },
-        "original": {
-          "type": "object",
-          "additionalProperties": true
-        },
-        "placement": {
-          "type": "object",
-          "additionalProperties": true
-        },
-        "submitted": {
-          "type": "boolean"
         }
       },
+      "required": [
+        "original",
+        "check",
+        "placement",
+        "profile",
+        "submitted",
+        "message",
+        "upload",
+        "review",
+        "entry"
+      ],
       "additionalProperties": false
     },
-    "schema_version": "2.0",
-    "global_defaults": {}
-  },
-  "capabilities": {
-    "declared": [
-      "file.batch.atomic-place",
-      "file.index.read",
-      "file.read",
-      "file.write"
-    ],
-    "side_effect_level": "external_write",
-    "requires_human_approval": true
+    "schema_version": "2.0"
   },
   "dependencies": {
-    "packs": [
-      {
-        "pack_id": "legacy_fibrecheck.v1-compat",
-        "required_on": [
-          "api",
-          "worker",
-          "bridge"
-        ],
-        "version_range": ">=2.1.0 <3.0.0"
-      },
-      {
-        "pack_id": "textile.execution-data",
-        "required_on": [
-          "api",
-          "worker"
-        ],
-        "version_range": ">=1.0.2 <2.0.0"
-      },
-      {
-        "pack_id": "textile.execution-files",
-        "required_on": [
-          "api",
-          "worker"
-        ],
-        "version_range": ">=1.3.0 <2.0.0"
-      },
-      {
-        "pack_id": "textile.execution-kernel",
-        "required_on": [
-          "api",
-          "worker"
-        ],
-        "version_range": ">=2.11.0 <3.0.0"
-      },
-      {
-        "pack_id": "textile.execution-workbook",
-        "required_on": [
-          "api",
-          "worker"
-        ],
-        "version_range": ">=2.11.0 <3.0.0"
-      }
-    ],
     "engine": {
       "version_range": ">=2.5.0 <3.0.0"
     },
-    "connectors": [
-      {
-        "queries": [
-          {
-            "query": "task_snapshot.get",
-            "contract_version": 1
-          }
-        ],
-        "operations": [
-          {
-            "operation": "original_record.upload",
-            "contract_version": 1
-          },
-          {
-            "operation": "original_record.review",
-            "contract_version": 1
-          },
-          {
-            "operation": "check_record.excel_entry",
-            "contract_version": 1
-          }
-        ],
-        "connector_id": "legacy_fibrecheck",
-        "version_range": ">=2.1.0 <3.0.0"
-      }
-    ],
     "node_types": [
       {
         "type": "connector.query",
@@ -1733,7 +2099,132 @@
         "type_version": 2,
         "contract_digest": "594b5fb57ebc4a204d9f901ce687a5a9cf0e2139ae00e2ad6dd904fac3b36e0d"
       }
+    ],
+    "packs": [
+      {
+        "pack_id": "legacy_fibrecheck.v1-compat",
+        "version_range": ">=2.1.0 <3.0.0",
+        "required_on": [
+          "api",
+          "worker",
+          "bridge"
+        ]
+      },
+      {
+        "pack_id": "textile.execution-data",
+        "version_range": ">=1.0.2 <2.0.0",
+        "required_on": [
+          "api",
+          "worker"
+        ]
+      },
+      {
+        "pack_id": "textile.execution-files",
+        "version_range": ">=1.3.0 <2.0.0",
+        "required_on": [
+          "api",
+          "worker"
+        ]
+      },
+      {
+        "pack_id": "textile.execution-kernel",
+        "version_range": ">=2.11.0 <3.0.0",
+        "required_on": [
+          "api",
+          "worker"
+        ]
+      },
+      {
+        "pack_id": "textile.execution-workbook",
+        "version_range": ">=2.11.0 <3.0.0",
+        "required_on": [
+          "api",
+          "worker"
+        ]
+      }
+    ],
+    "connectors": [
+      {
+        "connector_id": "legacy_fibrecheck",
+        "version_range": ">=2.1.0 <3.0.0",
+        "operations": [
+          {
+            "operation": "original_record.upload",
+            "contract_version": 1
+          },
+          {
+            "operation": "original_record.review",
+            "contract_version": 1
+          },
+          {
+            "operation": "check_record.excel_entry",
+            "contract_version": 1
+          }
+        ],
+        "queries": [
+          {
+            "query": "task_snapshot.get",
+            "contract_version": 1
+          }
+        ]
+      }
     ]
   },
-  "format_version": "2.0"
+  "fixtures": [],
+  "format": "textile-workflow-release",
+  "format_version": "2.0",
+  "release": {
+    "category_key": "other",
+    "description": "按业务方案匹配项目和方法；选图、记录生成、共享图片及检务登记；规则完整随 JSON 分发。",
+    "name": "微观形貌",
+    "release_note": "",
+    "release_version": 1,
+    "slug": "fiber-microscopy-v2"
+  },
+  "resources": {
+    "root_slots": [
+      {
+        "slot_id": "electron_microscopy_records",
+        "name": "显微图片目录",
+        "access": "read",
+        "required": true
+      },
+      {
+        "slot_id": "execution_templates",
+        "name": "工作簿模板目录",
+        "access": "read",
+        "required": true
+      },
+      {
+        "slot_id": "execution_staging",
+        "name": "生成工作簿目录",
+        "access": "write",
+        "required": true
+      },
+      {
+        "slot_id": "report_upload_images",
+        "name": "共享图片目标目录",
+        "access": "write",
+        "required": true
+      }
+    ],
+    "credential_slots": [
+      {
+        "slot_id": "inspection",
+        "name": "检务账号",
+        "connector_id": "legacy_fibrecheck",
+        "credential_kind": "password",
+        "required": true
+      }
+    ],
+    "rule_slots": [],
+    "role_slots": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "RFC8785",
+    "scope": "document_without_integrity",
+    "digest": "c6c4529a840e1a8ee5888cb8fc6446792ea97ba6ebf45d52828671ffe3cdf5c8",
+    "signatures": []
+  }
 }

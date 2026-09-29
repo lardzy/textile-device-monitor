@@ -87,6 +87,8 @@ export const getExecutionTaskSnapshotStatus = inspectionNumber =>
     `/task-snapshots/${encodeURIComponent(String(inspectionNumber || '').trim())}/status`,
   );
 
+export const queryExecutionConnector = payload => executionClient.post('/connector-queries', payload);
+
 export const getExecutionWorkflow = workflowId =>
   executionClient.get(`/workflows/${workflowId}`);
 

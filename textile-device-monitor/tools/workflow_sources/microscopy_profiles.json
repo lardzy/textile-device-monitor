@@ -1,0 +1,151 @@
+[
+  {
+    "enabled": true,
+    "original_template_key": "original",
+    "templates": {
+      "1": {
+        "template_key": "1",
+        "legacy_template_name": "微观形貌.xls",
+        "mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"
+      },
+      "2": {
+        "template_key": "2",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-2张图.xls",
+        "mapping_config_sha256": "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23"
+      },
+      "3": {
+        "template_key": "3",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-3张图.xls",
+        "mapping_config_sha256": "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268"
+      },
+      "5": {
+        "template_key": "5",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-5张图.xls",
+        "mapping_config_sha256": "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d"
+      },
+      "6": {
+        "template_key": "6",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-6张图.xls",
+        "mapping_config_sha256": "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304"
+      },
+      "7": {
+        "template_key": "7",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-7张图.xls",
+        "mapping_config_sha256": "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01"
+      },
+      "10": {
+        "template_key": "10",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-10张图.xls",
+        "mapping_config_sha256": "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
+      }
+    },
+    "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/1-微观形貌-GB T 36422",
+    "filename_pattern": "{number}{identity}{index}.{ext}",
+    "upload_fields": {
+      "fiber_category": "图片",
+      "inspection_method": "",
+      "inspection_item": "图片",
+      "review_item": "",
+      "inspection_copies": 1,
+      "review_copies": 1,
+      "file_type": "定量试验"
+    },
+    "form_rules": {
+      "name_separator": "[\\r\\n;；]+",
+      "identity_separator": "[、,，;；\\r\\n]+",
+      "basis_separator": "[;；\\r\\n]+",
+      "judgements": [
+        "符合",
+        "不符合"
+      ],
+      "defaults": {}
+    },
+    "id": "fiber-gbt36422",
+    "name": "纤维微观形貌 / GB/T 36422-2018",
+    "matches": [
+      {
+        "project_number": "5103.5",
+        "method": "GB/T 36422-2018",
+        "aliases": [
+          "纤维微观形貌",
+          "膜平面形貌"
+        ]
+      }
+    ],
+    "record_title": "纤维微观形貌检验原始记录"
+  },
+  {
+    "enabled": false,
+    "original_template_key": "original",
+    "templates": {
+      "1": {
+        "template_key": "1",
+        "legacy_template_name": "微观形貌.xls",
+        "mapping_config_sha256": "a09399783171826d10b239bd01cb596569428bbc34a8c4636077e98f34dc690e"
+      },
+      "2": {
+        "template_key": "2",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-2张图.xls",
+        "mapping_config_sha256": "2ff546b96da9ac423613374ee28955bf7dfe3e62e5d40d8ad979c93636836f23"
+      },
+      "3": {
+        "template_key": "3",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-3张图.xls",
+        "mapping_config_sha256": "43ae3872f231c2499b98976ea63827162b4fddf7151e3e8daceee8a7591d4268"
+      },
+      "5": {
+        "template_key": "5",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-5张图.xls",
+        "mapping_config_sha256": "d21e82cd1672ada28beab35673e1d679bf3ffa1099969f02dbed466645dc9b6d"
+      },
+      "6": {
+        "template_key": "6",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-6张图.xls",
+        "mapping_config_sha256": "5f56deb633c0dd2b2dc046ba70ab012c2780dbbae9039663b4d40903804a6304"
+      },
+      "7": {
+        "template_key": "7",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-7张图.xls",
+        "mapping_config_sha256": "3aea5aa68bccb1a8e9035be8762d305bb2f0d6e4104ad29557082a3b1abada01"
+      },
+      "10": {
+        "template_key": "10",
+        "legacy_template_name": "纤维微观形貌-GB T 36422-2018-10张图.xls",
+        "mapping_config_sha256": "976a88ed86af2a3fb30df5aa830e0529ea35e15e1e2fa59244e3035578940f74"
+      }
+    },
+    "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/微观形貌-按客户要求",
+    "filename_pattern": "{number}{identity}{index}.{ext}",
+    "upload_fields": {
+      "fiber_category": "图片",
+      "inspection_method": "",
+      "inspection_item": "图片",
+      "review_item": "",
+      "inspection_copies": 1,
+      "review_copies": 1,
+      "file_type": "定量试验"
+    },
+    "form_rules": {
+      "name_separator": "[\\r\\n;；]+",
+      "identity_separator": "[、,，;；\\r\\n]+",
+      "basis_separator": "[;；\\r\\n]+",
+      "judgements": [
+        "符合",
+        "不符合"
+      ],
+      "defaults": {}
+    },
+    "id": "microscopy-customer",
+    "name": "微观形貌 / 按客户要求",
+    "matches": [
+      {
+        "project_number": "5103.05",
+        "method": "按客户要求",
+        "aliases": [
+          "微观形貌"
+        ]
+      }
+    ],
+    "record_title": "微观形貌检验原始记录"
+  }
+]

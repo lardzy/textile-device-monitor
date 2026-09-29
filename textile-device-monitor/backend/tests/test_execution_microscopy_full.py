@@ -51,7 +51,7 @@ def test_portable_microscopy_full_chain_or_cancel(operation_env,monkeypatch,canc
     doc = document() if source == 'bundled' else json.loads((Path(__file__).parents[2]/'docs/execution-v2/examples/fiber-microscopy-v2.json').read_text())
     # Source snapshots are local fixtures; refresh scheduling is independently covered.
     next(n for n in doc['definition']['nodes'] if n['id']=='task')['input_mapping']['refresh']=False
-    rules=next(n for n in doc['definition']['nodes'] if n['id']=='payload')['input_mapping']['rules']
+    rules=next(n for n in doc['definition']['nodes'] if n['id']=='profiles')['input_mapping']['profiles'][0]
     destination=Path(root.local_path)/rules['target_directory']/NUMBER/(NUMBER+'.png')
     if cancel:
         destination.parent.mkdir(parents=True);destination.write_bytes(b'existing different content')

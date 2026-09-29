@@ -25,18 +25,21 @@ def main(inputs):
     if template is None:
         raise ValueError('当前图片数量没有配置登记模板')
     safe_identity = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', identity).rstrip('. ').strip()
-    stem = number + ('-' + safe_identity if safe_identity else '')
     files, images = [], []
     for index, image in enumerate(inputs['images']):
         source = {k: image[k] for k in ('id', 'root_id', 'relative_path', 'fingerprint')}
         suffix = '.' + source['relative_path'].rsplit('.', 1)[-1].lower()
-        name = stem + ('-' + str(index) if index else '') + suffix
+        name = rules['filename_pattern'].format(number=number, identity='-' + safe_identity if safe_identity else '',
+                                               index='-' + str(index) if index else '', ext=suffix[1:])
+        if not name or name in ('.', '..') or re.search(r'[<>:"/\\|?*\x00-\x1f]', name) or name.endswith(('.', ' ')):
+            raise ValueError('图片文件名规则生成了无效名称')
         files.append({'source': source, 'target_filename': name})
         images.append({'artifact': source})
     keys = ('project_key', 'task_check_item_id', 'check_item_id', 'check_item_no', 'check_item_name', 'check_method', 'seq_num', 'check_count')
     return {'inspection_number': number, 'project': {k: project[k] for k in keys}, 'values': fields,
             'images': images, 'files': files, 'target_directory': rules['target_directory'].rstrip('/') + '/' + number,
-            'template_key': key, 'template_binding': template,
+            'template_key': template['template_key'], 'template_binding': template,
+            'original_template_key': rules['original_template_key'], 'profile': rules,
             'registration_template': {'template_name': template['legacy_template_name'], 'mapping_config_sha256': template['mapping_config_sha256']},
             'register': {'level': '', 'sample_identity': identity, 'equipment_no': '', 'check_basis': ''},
             'expected_key_identities': [identity], 'business_fields': rules['upload_fields'],

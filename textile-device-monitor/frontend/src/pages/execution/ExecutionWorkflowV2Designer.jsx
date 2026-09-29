@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Alert, Button, Card, Collapse, Form, Input, List, Select, Space, Spin, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Collapse, Form, Input, List, Select, Space, Spin, Tabs, Tag, Typography, message } from 'antd';
 import { applyWorkflowReleaseV2, preflightWorkflowReleaseV2, compileWorkflowDesignerV2, getWorkflowDesignerCatalogV2, getWorkflowReleaseV2, getWorkflowReleasesV2, testWorkflowDesignerV2, createDesignerDraftV2, getDesignerDraftV2, saveDesignerDraftV2, updateWorkflowReleaseBindingV2, preflightStagedWorkflowReleaseV2, publishWorkflowReleaseV2, testPythonNodeV2 } from '../../api/executionV2';
 import { getExecutionCredentials, getExecutionFileRoots } from '../../api/execution';
 import ExecutionChrome from './ExecutionChrome';
 import WorkflowCanvas from './WorkflowCanvas';
 import TemplatePicker from './TemplatePicker';
 import { SchemaEditor, ValueEditor, BindingEditor } from './DesignerFields';
+import BusinessProfiles, { profileSources } from './BusinessProfiles';
 import { upstreamNodeIds, effectiveSchemas, graphEdges, graphNodes, portableEdge, schemaDefaults, specKey, referenceIssues, deleteSelection, insertOnEdge, validConnection, variableTree, designerHistory, rewriteOutputReferences, rewriteReferences, renameMappedField } from './v2Designer';
 import './execution.css';
 
@@ -38,6 +39,7 @@ export default function ExecutionWorkflowV2Designer() {
   const [history, setHistory] = useState(initialHistory), historyRef = useRef(initialHistory);
   const [identity, setIdentity] = useState({}), identityRef = useRef({});
   const [busy, setBusy] = useState(false), [dirty, setDirty] = useState(false), [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('canvas');
   const [report, setReport] = useState(null), [fixtureReport, setFixtureReport] = useState(null), [pythonReport, setPythonReport] = useState(null);
   const [sampleInputs, setSampleInputs] = useState({}), [invalidEditors, setInvalidEditors] = useState({});
   const saving = useRef(null), loaded = useRef(null);
@@ -175,6 +177,16 @@ export default function ExecutionWorkflowV2Designer() {
     value.bindings.credential_slots[slot] = { credential_id: credential.id, revision: credential.revision };
     return value;
   });
+  const bindProfileTemplate = (nodeId, key, template) => edit(value => {
+    const root = roots.find(item => item.root_id === template.root_id);
+    if (!root) return value;
+    const slot = `${nodeId}_template_${key}`.replace(/[^a-z0-9_]/gi, '_').toLowerCase().slice(0, 64);
+    const resources = value.document.resources;
+    if (!resources.root_slots.some(item => item.slot_id === slot)) resources.root_slots.push({ slot_id: slot, name: '模板目录', access: 'read', required: true });
+    value.document.definition.nodes.find(item => item.id === nodeId).config.templates[key] = { root_slot: slot, relative_path: template.relative_path, sha256: template.sha256 };
+    value.bindings.root_slots[slot] = { root_id: root.root_id, revision: root.binding_revision || 1 };
+    return value;
+  });
 
   const publish = async () => {
     setBusy(true);
@@ -216,6 +228,9 @@ export default function ExecutionWorkflowV2Designer() {
       <Form.Item label="标识"><Input aria-label="流程标识" disabled={Boolean(identity.workflow_id)} value={document.release.slug} onChange={event => editDocument(value => { value.release.slug = event.target.value; return value; }, 'slug')} /></Form.Item>
       {!identity.workflow_id && catalog.templates.length > 0 && <Form.Item label="从示例开始"><Select aria-label="使用模板" style={{ width: 280 }} value={null} options={catalog.templates.map((item, index) => ({ value: index, label: item.name }))} onChange={index => edit(value => ({ ...value, document: structuredClone(catalog.templates[index].candidate), selection: noSelection() }))} /></Form.Item>}
     </Space></Card>
+    <Tabs activeKey={activeTab} onChange={setActiveTab} items={[{ key: 'canvas', label: '画布与配置' }, { key: 'profiles', label: `业务方案${profileSources(document).length ? '' : '（未配置）'}` }]} />
+    {activeTab === 'profiles' && <BusinessProfiles document={document} onChange={editDocument} onTemplateSelect={bindProfileTemplate} />}
+    <div hidden={activeTab !== 'canvas'}>
     <div className="execution-v2-designer__layout">
       <Card title="流程画布" extra={<Space><Button disabled={!history.past.length} onClick={() => action({ type: 'undo' })}>撤销</Button><Button disabled={!history.future.length} onClick={() => action({ type: 'redo' })}>重做</Button><Button danger disabled={!selection.nodes.length && !selection.edges.length} onClick={remove}>删除选中</Button></Space>}>
         <Select showSearch optionFilterProp="label" aria-label="添加节点" placeholder={edge ? '在选中的连接上插入步骤' : '添加步骤'} value={null} style={{ width: '100%', marginBottom: 12 }} options={[...specs.map(spec => ({ value: specKey(spec), label: `${spec.category} · ${spec.name}` })), ...(catalog.python_presets || []).map(item => ({ value: `preset:${item.id}`, label: `Python 预设 · ${item.name}` }))]} onChange={addNode} />
@@ -280,6 +295,7 @@ export default function ExecutionWorkflowV2Designer() {
       <Button disabled={busy || jsonInvalid || issues.length > 0} onClick={async () => { setBusy(true); try { setFixtureReport(await testWorkflowDesignerV2(document)); } catch (cause) { setError(cause.message); } finally { setBusy(false); } }}>运行离线样例</Button>
       {fixtureReport && <Alert type={fixtureReport.passed ? 'success' : 'warning'} message={fixtureReport.message || (fixtureReport.passed ? '离线样例通过' : '离线样例未通过')} description={<pre>{JSON.stringify(fixtureReport.items || fixtureReport.issues, null, 2)}</pre>} />}
     </> }]} />
+    </div>
   </div>;
 }
 

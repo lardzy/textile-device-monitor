@@ -40,5 +40,6 @@ def main(inputs):
         fields['judge_basis']['examples'] = bases
         defaults['judge_basis'] = bases[0] if len(bases) == 1 else ''
         fields['judgement']['enum'] = rules['judgements']
+    defaults.update({key: value for key, value in rules.get('defaults', {}).items() if key in fields})
     return {'form_schema': {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False},
             'defaults': defaults, 'context': {'项目': inputs['project']['label'], '图片数量': len(inputs['images'])}}

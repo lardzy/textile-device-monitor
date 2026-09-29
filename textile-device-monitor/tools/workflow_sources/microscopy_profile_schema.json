@@ -1,0 +1,47 @@
+{
+  "type": "array",
+  "title": "业务方案",
+  "x-editor": "business-profiles",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "required": ["id", "name", "enabled", "matches", "record_title", "original_template_key", "templates", "target_directory", "filename_pattern", "upload_fields", "form_rules"],
+    "additionalProperties": false,
+    "properties": {
+      "id": {"type": "string", "title": "方案标识", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+      "name": {"type": "string", "title": "方案名称", "minLength": 1},
+      "enabled": {"type": "boolean", "title": "启用", "default": true},
+      "matches": {"type": "array", "title": "项目与方法组合", "minItems": 1, "items": {
+        "type": "object", "required": ["project_number", "method"], "additionalProperties": false,
+        "properties": {
+          "project_number": {"type": "string", "title": "项目编号", "minLength": 1},
+          "method": {"type": "string", "title": "检测方法", "minLength": 1},
+          "aliases": {"type": "array", "title": "项目名称别名（显示说明）", "items": {"type": "string"}}
+        }
+      }},
+      "record_title": {"type": "string", "title": "原始记录标题", "minLength": 1},
+      "original_template_key": {"type": "string", "title": "原始记录模板键", "minLength": 1, "x-template-node": "original"},
+      "templates": {"type": "object", "title": "图片数量与登记模板", "minProperties": 1, "patternProperties": {
+        "^[1-9][0-9]*$": {"type": "object", "required": ["template_key", "legacy_template_name", "mapping_config_sha256"], "additionalProperties": false,
+          "properties": {
+            "template_key": {"type": "string", "title": "登记工作簿模板键", "minLength": 1, "x-template-node": "check"},
+            "legacy_template_name": {"type": "string", "title": "检务采集模板名称", "minLength": 1},
+            "mapping_config_sha256": {"type": "string", "title": "检务采集映射摘要", "pattern": "^[a-f0-9]{64}$"}
+          }
+        }
+      }, "additionalProperties": false},
+      "target_directory": {"type": "string", "title": "共享目录下的子目录", "minLength": 1},
+      "filename_pattern": {"type": "string", "title": "图片文件名（number、identity、index、ext）", "minLength": 1},
+      "upload_fields": {"type": "object", "title": "上传字段", "additionalProperties": true},
+      "form_rules": {"type": "object", "title": "表单规则", "required": ["name_separator", "identity_separator", "basis_separator", "judgements"], "additionalProperties": false,
+        "properties": {
+          "name_separator": {"type": "string", "title": "样品名称分隔表达式"},
+          "identity_separator": {"type": "string", "title": "样品识别分隔表达式"},
+          "basis_separator": {"type": "string", "title": "判定依据分隔表达式"},
+          "judgements": {"type": "array", "title": "判定选项", "items": {"type": "string"}},
+          "defaults": {"type": "object", "title": "默认字段", "additionalProperties": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

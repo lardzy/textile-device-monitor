@@ -24,21 +24,51 @@ def document():
 
 def trial(name, **inputs):
     item = next(n for n in document()['definition']['nodes'] if n['id'] == name)
+    if name == 'prepare_form':
+        profile = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles'][0]
+        inputs.setdefault('rules', profile['form_rules'])
     return python_test(item['config'], {**item['input_mapping'], **inputs})
 
 
 def test_portable_rules_multiple_projects_fullwidth_and_missing_candidates():
     p = {'project_key': 'project1', 'check_item_no': '5103.5', 'check_item_name': '纤维微观形貌', 'check_method': 'GB/T 36422-2018'}
     item = {'id': 'a', 'kind': 'artifact', 'label': 'a.png', 'relative_path': '260191178粘/a.png', 'fingerprint': '1:2'}
-    args = dict(inspection_number='２６０１９１１７８', snapshot={'projects': [p, {**p, 'project_key': 'project2'}]}, items=[item], truncated=False)
+    projects = trial('profiles', snapshot={'projects': [p, {**p, 'project_key': 'project2'}]})['output']['projects']
+    args = dict(inspection_number='２６０１９１１７８', projects=projects, items=[item], truncated=False)
     report = trial('candidates', **args)
     assert report['passed'], report
     assert len(report['output']['projects']) == 2
     assert report['output']['items'][0]['kind'] == 'image'
-    assert 4 not in report['output']['allowed_selected_counts']
+    assert 4 not in trial('selection', project=projects[0])['output']['allowed_selected_counts']
     assert not trial('candidates', **{**args, 'truncated': True})['passed']
     assert not trial('candidates', **{**args, 'items': []})['passed']
-    assert not trial('candidates', **{**args, 'snapshot': {'projects': [{**p, 'check_method': '其他方法'}]}})['passed']
+    assert not trial('candidates', **{**args, 'projects': []})['passed']
+
+
+def test_profiles_match_exact_pairs_and_never_equate_numeric_codes():
+    profiles = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles']
+    profiles[1]['enabled'] = True
+    rows = [{'project_key': str(i), 'check_item_no': code, 'check_item_name': '微观形貌', 'check_method': method}
+            for i, (code, method) in enumerate([('5103.5', 'GB/T 36422-2018'), ('5103.05', '按客户要求'),
+              ('5103.5', '按客户要求'), ('5103.05', 'GB/T 36422-2018'), ('5103.050', '按客户要求')])]
+    report = trial('profiles', profiles=profiles, snapshot={'projects': rows})
+    assert report['passed'], report
+    assert [p['metadata']['project']['project_key'] for p in report['output']['projects']] == ['0', '1']
+    profiles[1]['enabled'] = False
+    assert len(trial('profiles', profiles=profiles, snapshot={'projects': rows})['output']['projects']) == 1
+    profiles.append(deepcopy(profiles[0]))
+    assert not trial('profiles', profiles=profiles, snapshot={'projects': rows})['passed']
+
+
+def test_ambiguous_profiles_remain_explicit_choices_and_counts_derive_from_templates():
+    profiles = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles'][:1]
+    profiles.append({**deepcopy(profiles[0]), 'id': 'alternative', 'name': '另一个方案'})
+    report = trial('profiles', profiles=profiles, snapshot={'projects': [{'project_key': 'p', 'check_item_no': '5103.5', 'check_item_name': '膜平面形貌', 'check_method': 'GB/T 36422-2018'}]})
+    assert report['passed'], report
+    choices = report['output']['projects']
+    assert len({p['id'] for p in choices}) == 2
+    choices[0]['metadata']['profile']['templates'] = {'2': choices[0]['metadata']['profile']['templates']['2']}
+    assert trial('selection', project=choices[0])['output']['allowed_selected_counts'] == [2]
 
 
 def test_form_defaults_and_judgement_are_json_code():
