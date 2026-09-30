@@ -1161,7 +1161,7 @@
       },
       {
         "pack_id": "textile.execution-data",
-        "version_range": ">=1.0.2 <2.0.0",
+        "version_range": ">=1.1.0 <2.0.0",
         "required_on": [
           "api",
           "worker"
@@ -1226,8 +1226,8 @@
     "category_key": "other",
     "description": "原始 Excel 读取、必要选择、上传复核及登记；全部业务规则可编辑。",
     "name": "纸浆纤维鉴别",
-    "release_note": "统一执行内核 2.13.0",
-    "release_version": 13,
+    "release_note": "统一数据处理能力 1.1.0",
+    "release_version": 14,
     "slug": "paper-fiber-v2"
   },
   "resources": {
@@ -1255,7 +1255,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "4ddb5706b65f7d5d42484252adac18657e1101b74e9d2916750bfe16ca34f333",
+    "digest": "54f5985509a0fd47d39d1ecfe7c37e9f78d9b34b896efa2615e7692283def505",
     "signatures": []
   }
 }

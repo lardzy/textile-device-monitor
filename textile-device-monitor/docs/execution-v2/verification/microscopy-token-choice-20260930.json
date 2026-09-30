@@ -1,0 +1,147 @@
+{
+  "migration": "0014_run_groups",
+  "workflows": [
+    {
+      "id": "84abf195-e120-4f95-b81c-2b2d4a2a960c",
+      "slug": "fiber-microscopy-v2",
+      "version": 9,
+      "release_digest": "b89f4ff18b4e031b3e8c693cfd9205e92f1354c041605223f2a147bfed75926a",
+      "node_count": 26,
+      "missing_worker_nodes": []
+    },
+    {
+      "id": "ae766b2c-f51e-40ff-baca-10608dfe4602",
+      "slug": "paper-fiber-v2",
+      "version": 14,
+      "release_digest": "54f5985509a0fd47d39d1ecfe7c37e9f78d9b34b896efa2615e7692283def505",
+      "node_count": 14,
+      "missing_worker_nodes": []
+    }
+  ],
+  "workers": [
+    {
+      "worker_id": "ecb099718a48",
+      "engine_version": "2.5.0",
+      "capability_digest": "fd5e1efbb786aabbccc7cfd77c4b79fd5716b67e6f2f06e6b5204f56e7979bfc"
+    }
+  ],
+  "binding_count": 46,
+  "counts": {
+    "execution_workflows": 2,
+    "execution_workflow_versions": 23,
+    "execution_runs": 21,
+    "execution_human_tasks": 7,
+    "execution_external_operations": 35,
+    "execution_project_rules": 0,
+    "execution_users": 1,
+    "execution_credentials": 1,
+    "execution_storage_roots": 9
+  },
+  "run_statuses": {
+    "cancelled": 2,
+    "completed": 18,
+    "failed": 1
+  },
+  "operation_statuses": {
+    "completed": 34,
+    "cancelled": 1
+  },
+  "containers": {
+    "textile-monitor-backend": {
+      "id": "82a313290d24bcd0e00327a793785ca4dfd6e7398ae06db9d3362ae85c609f1e",
+      "original_image": "sha256:529f89d38a7a9a243f6243f68351e8645fb4a5df28604a31e4eccce66e8b6d03",
+      "status": "running",
+      "health": "healthy"
+    },
+    "textile-execution-worker": {
+      "id": "ecb099718a487235a66215f110d9f917e8338bb42176752a859ffde5ae3d097c",
+      "original_image": "sha256:ec5da9e97a0c1b7350da2fcaea6913791e01d3e2abd45f6fe524b8daa72f2823",
+      "status": "running",
+      "health": "healthy"
+    },
+    "textile-monitor-frontend": {
+      "id": "609ba40ab1ef2f7fd24bb3852e1fdf031bace9efbfeaf40bc5a160afdd3d8fb4",
+      "original_image": "sha256:88654001faaaee883201d05ecd17a51d170d2aee7c2ce9db196e664c48439d91",
+      "status": "running",
+      "health": "healthy"
+    }
+  },
+  "source_files_match_per_container": 122,
+  "frontend_files_match": 180,
+  "built_images": {
+    "textile-device-monitor-backend": "sha256:e3920970c992f1d412e1c106ec0f259de75a0a46dfec3e992ea67d3072b9851a",
+    "textile-device-monitor-execution-worker": "sha256:9e464f52e782a2d95df7cc6c2459ec7c20b546b03e4ec88895e4ec2f2c228a06",
+    "textile-device-monitor-frontend": "sha256:19f0d55db913bc72fa0ee9e4a41ffb59204d362cf11bfe29356e9a353c2aa9a5"
+  },
+  "node_specs": 38,
+  "existing_run": {
+    "id": "753ed078-c6b7-4b9d-b5ae-f7d7e76e282a",
+    "version": 7,
+    "status": "completed",
+    "artifacts": 6
+  },
+  "frontend_index_matches": true,
+  "preserved_record_counts": true,
+  "generated_at": "2026-09-30T06:47:42.134262+00:00",
+  "packs": {
+    "textile.execution-workbook": "2.14.0",
+    "textile.execution-data": "1.1.0",
+    "textile.execution-kernel": "2.13.0",
+    "textile.execution-files": "1.4.0",
+    "legacy_fibrecheck.v1-compat": "2.1.2"
+  },
+  "feature": "Chinese token suggestion buttons and editable shared sample name",
+  "tests": {
+    "backend_full": {
+      "passed": 653,
+      "skipped": 4,
+      "subtests_passed": 55
+    },
+    "frontend_node": 18,
+    "frontend_vitest": 169,
+    "published_export_full_workflows": 3,
+    "pack_digests": "current",
+    "contract_snapshot": "current",
+    "portable_examples_checked": 7,
+    "frontend_production_build": "passed"
+  },
+  "browser": {
+    "environment": "isolated SQLite and actual API/Worker, no external operations",
+    "completed_run_id": "c65d0526-9388-4a0f-9904-073e62409b59",
+    "completed_run_status": "completed",
+    "group_sample_names": [
+      "冲锋衣面料",
+      "冲锋衣面料",
+      "冲锋衣面料"
+    ],
+    "checks": [
+      "visible Chinese token suggestions",
+      "click token to fill name",
+      "manual editing and direct input",
+      "required blank value",
+      "save draft",
+      "reload restores draft",
+      "submit freezes same name for all groups"
+    ],
+    "screenshot": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/microscopy-token-choice-20260930/token-choice-browser-final.png",
+    "preview_run_id": "6d734ba4-9414-4970-a5f8-1f206abdd024"
+  },
+  "external_effects": {
+    "new_production_runs": 0,
+    "new_remote_uploads": 0,
+    "new_remote_registrations": 0,
+    "existing_record_counts_preserved": true,
+    "deleted_files_or_containers": 0
+  },
+  "deployment": {
+    "strategy": "backed up and updated existing containers in place; old frontend assets retained",
+    "backup_directory": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/microscopy-token-choice-20260930/container-backup",
+    "windows_bridge_writer_changed": false
+  },
+  "notes": [
+    "Complete workflow tests use actual Worker and workbook processing with simulated inspection receipts.",
+    "The pre-deployment counts include runs completed by the user after the previous release; this change did not create them.",
+    "Historical Run snapshots and existing uploaded files were not rewritten.",
+    "Tokenization reuses installed jieba 0.42.1. Business candidate rules and editable form schema remain in portable JSON."
+  ]
+}

@@ -45,7 +45,7 @@
       {
         "id": "project-selection",
         "source": "project",
-        "target": "selection",
+        "target": "name_tokens",
         "join_policy": "all"
       },
       {
@@ -165,6 +165,12 @@
           "path": "$.nodes.place.output.placement_cancelled",
           "operator": "truthy"
         }
+      },
+      {
+        "id": "name_tokens-selection",
+        "source": "name_tokens",
+        "target": "selection",
+        "join_policy": "all"
       }
     ],
     "global_defaults": {},
@@ -1059,6 +1065,23 @@
         }
       },
       {
+        "id": "name_tokens",
+        "name": "样品名称分词",
+        "type": "text.segment",
+        "type_version": 1,
+        "config": {
+          "max_tokens": 200
+        },
+        "input_mapping": {
+          "texts": "$.nodes.task.output.snapshot.sample_names",
+          "text": "$.nodes.task.output.snapshot.sample_name"
+        },
+        "ui": {
+          "x": 1860,
+          "y": -10
+        }
+      },
+      {
         "id": "selection",
         "name": "按样品识别准备分组",
         "type": "data.python",
@@ -1066,7 +1089,7 @@
         "config": {
           "runtime_version": 1,
           "timeout_seconds": 5,
-          "code": "\"\"\"Task sample identifiers become selection groups, never business profiles.\"\"\"\nimport re\nimport unicodedata\n\n\ndef name_candidates(snapshot, separator):\n    raw = snapshot.get('sample_names') or snapshot.get('sample_name') or []\n    values = raw if isinstance(raw, list) else [raw]\n    originals = list(dict.fromkeys(str(value).strip() for value in values if value))\n    full = [' '.join(unicodedata.normalize('NFKC', value).split()) for value in originals]\n    # Keep full names first. Suggestions only split visible punctuation/spacing;\n    # the operator can shorten or rewrite them without a hidden business model.\n    parts = [part.strip() for value in originals\n             for phrase in re.split(separator, unicodedata.normalize('NFKC', value))\n             for part in re.split(r'[\\r\\n,，、;；/\\\\|]+', phrase)]\n    words = [part.strip() for value in parts for part in re.split(r'[\\s()\\[\\]【】]+', value)]\n    candidates = list(dict.fromkeys(value for value in full + parts + words\n                                    if value and value != '---' and len(value) <= 500))[:50]\n    return '\\n'.join(originals), candidates\n\n\ndef main(inputs):\n    choice = inputs['project']\n    project, profile = choice['metadata']['project'], choice['metadata']['profile']\n    raw = project.get('sample_identify') or ''\n    values = raw if isinstance(raw, list) else [raw]\n    identities = list(dict.fromkeys(unicodedata.normalize('NFKC', part).strip()\n        for value in values for part in re.split(profile['form_rules']['identity_separator'], str(value))\n        if part.strip() and part.strip() != '---')) or ['']\n    counts = sorted(int(key) for key in profile['templates'])\n    groups = [{'id': str(index + 1), 'label': identity or '本次样品（无样品识别）',\n               'metadata': {'sample_identity': identity, 'choice_id': choice['id']},\n               'allowed_selected_counts': counts} for index, identity in enumerate(identities)]\n    original, candidates = name_candidates(inputs['snapshot'], profile['form_rules']['name_separator'])\n    schema = {'type': 'object', 'title': '各组共用的样品名称',\n              'description': '请从候选中选择或自行填写简洁、准确的名称，可继续编辑。本次所有分组使用此名称生成原始记录。',\n              'properties': {'sample_name': {'type': 'string', 'title': '写入原始记录的样品名称',\n                  'minLength': 1, 'maxLength': 500, 'pattern': r'\\S', 'default': '',\n                  'placeholder': '请选择候选或输入名称', 'x-suggestions': candidates}},\n              'required': ['sample_name'], 'additionalProperties': False}\n    return {'groups': groups, 'allowed_selected_counts': counts, 'form_schema': schema,\n            'context': {'任务单样品名称': original or '任务单未提供，请人工填写'}}\n",
+          "code": "\"\"\"Task sample identifiers become selection groups, never business profiles.\"\"\"\nimport re\nimport unicodedata\n\n\ndef name_candidates(snapshot, separator, tokens):\n    raw = snapshot.get('sample_names') or snapshot.get('sample_name') or []\n    values = raw if isinstance(raw, list) else [raw]\n    originals = list(dict.fromkeys(str(value).strip() for value in values if value))\n    full = [' '.join(unicodedata.normalize('NFKC', value).split()) for value in originals]\n    # Keep complete task names and phrases, then offer generic Chinese tokens.\n    # A suggestion is never an automatic choice; the operator can rewrite it.\n    parts = [part.strip() for value in originals\n             for phrase in re.split(separator, unicodedata.normalize('NFKC', value))\n             for part in re.split(r'[\\r\\n,，、;；/\\\\|]+', phrase)]\n    words = [part.strip() for value in parts for part in re.split(r'[\\s()\\[\\]【】]+', value)]\n    candidates = list(dict.fromkeys(value for value in full + parts + tokens + words\n                                    if value and value != '---' and len(value) <= 500))[:50]\n    return '\\n'.join(originals), candidates\n\n\ndef main(inputs):\n    choice = inputs['project']\n    project, profile = choice['metadata']['project'], choice['metadata']['profile']\n    raw = project.get('sample_identify') or ''\n    values = raw if isinstance(raw, list) else [raw]\n    identities = list(dict.fromkeys(unicodedata.normalize('NFKC', part).strip()\n        for value in values for part in re.split(profile['form_rules']['identity_separator'], str(value))\n        if part.strip() and part.strip() != '---')) or ['']\n    counts = sorted(int(key) for key in profile['templates'])\n    groups = [{'id': str(index + 1), 'label': identity or '本次样品（无样品识别）',\n               'metadata': {'sample_identity': identity, 'choice_id': choice['id']},\n               'allowed_selected_counts': counts} for index, identity in enumerate(identities)]\n    original, candidates = name_candidates(inputs['snapshot'], profile['form_rules']['name_separator'], inputs['name_tokens'])\n    schema = {'type': 'object', 'title': '各组共用的样品名称',\n              'description': '点击下方分词建议填入名称，也可直接输入或继续修改。本次所有分组使用此名称生成原始记录。',\n              'properties': {'sample_name': {'type': 'string', 'title': '写入原始记录的样品名称',\n                  'minLength': 1, 'maxLength': 500, 'pattern': r'\\S', 'default': '',\n                  'placeholder': '可点击上方分词，也可直接输入名称', 'x-suggestions': candidates,\n                  'x-suggestion-display': 'buttons', 'x-suggestion-label': '样品名称分词建议'}},\n              'required': ['sample_name'], 'additionalProperties': False}\n    return {'groups': groups, 'allowed_selected_counts': counts, 'form_schema': schema,\n            'context': {'任务单样品名称': original or '任务单未提供，请人工填写'}}\n",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -1077,11 +1100,18 @@
               "snapshot": {
                 "type": "object",
                 "additionalProperties": true
+              },
+              "name_tokens": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [
               "project",
-              "snapshot"
+              "snapshot",
+              "name_tokens"
             ],
             "additionalProperties": false
           },
@@ -1153,7 +1183,8 @@
         },
         "input_mapping": {
           "project": "$.nodes.project.output.primary_item",
-          "snapshot": "$.nodes.task.output.snapshot"
+          "snapshot": "$.nodes.task.output.snapshot",
+          "name_tokens": "$.nodes.name_tokens.output.tokens"
         },
         "ui": {
           "x": 1860,
@@ -2678,6 +2709,11 @@
         "contract_digest": "e7c6b60b9587207efc068e6b1b161608c80b5b102f95120297471bd9b9e36fb2"
       },
       {
+        "type": "text.segment",
+        "type_version": 1,
+        "contract_digest": "3f969222a8781556713aa2e47a3aaf3cb7da374e55742c2c4e0503a41c9e840c"
+      },
+      {
         "type": "workbook.render",
         "type_version": 3,
         "contract_digest": "6ca92a6381d2dcac61198a4d29825d984ca3d9d7af42005ef3c7c0c79c86f61e"
@@ -2695,7 +2731,7 @@
       },
       {
         "pack_id": "textile.execution-data",
-        "version_range": ">=1.0.2 <2.0.0",
+        "version_range": ">=1.1.0 <2.0.0",
         "required_on": [
           "api",
           "worker"
@@ -2760,8 +2796,8 @@
     "category_key": "other",
     "description": "按业务方案匹配项目和方法；选图、记录生成、共享图片及检务登记；规则完整随 JSON 分发。",
     "name": "微观形貌",
-    "release_note": "样品名称由人工候选或填写一次，所有分组共用",
-    "release_version": 8,
+    "release_note": "样品名称恢复中文分词按钮，支持手工输入并供各组共用",
+    "release_version": 9,
     "slug": "fiber-microscopy-v2"
   },
   "resources": {
@@ -2807,7 +2843,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "5f055673def2de26ba8cd56aeea6b09ce7ed746820050f3a1879e652841cb55f",
+    "digest": "b89f4ff18b4e031b3e8c693cfd9205e92f1354c041605223f2a147bfed75926a",
     "signatures": []
   }
 }

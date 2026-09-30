@@ -1009,6 +1009,7 @@ def _build_installed_registry() -> InstalledRegistry:
 
     from app.execution.v2.native_handlers import native_handler
     from app.execution.v2.data_handlers import NATIVE_HANDLERS as data_handlers
+    from app.execution.v2.text_handlers import NATIVE_HANDLERS as text_handlers
     from app.execution.v2.workbook_render import render as render_workbook
     from app.execution.connector_queries import execute_query_node, query_handler
     from app.execution.connector_operations import operation_handler, workflow_operation_handler
@@ -1065,6 +1066,7 @@ def _build_installed_registry() -> InstalledRegistry:
         handler = (
             native_handler(identity[0], identity[1])
             or data_handlers.get(identity)
+            or text_handlers.get(identity)
             or (render_workbook if identity in {("workbook.render", 1), ("workbook.render", 2), ("workbook.render", 3)} else None)
             or (execute_query_node if identity in {("connector.query", 1), ("connector.query", 2)} else None)
             if handler_channel in {"worker_callable", "kernel_builtin"}

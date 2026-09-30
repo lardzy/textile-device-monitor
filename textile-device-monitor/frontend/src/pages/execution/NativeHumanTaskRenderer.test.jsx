@@ -95,7 +95,7 @@ function Groups({ onFinish, shared = false, initialValues }) {
     <NativeHumanTaskRenderer renderer={{ capability: 'human.group_select' }} rendererContract={{ payload: {} }} form={form}
       inputData={{ ...(shared ? { context: { '任务单样品名称': '重装徒步冲锋衣 ７号（客户备注）' }, form_schema: {
           type: 'object', title: '各组共用的样品名称', required: ['sample_name'], properties: {
-            sample_name: { type: 'string', title: '写入原始记录的样品名称', default: '', pattern: '\\S', 'x-suggestions': ['重装徒步冲锋衣', '客户备注'] },
+            sample_name: { type: 'string', title: '写入原始记录的样品名称', default: '', pattern: '\\S', 'x-suggestions': ['重装徒步冲锋衣', '冲锋衣', '客户备注'], 'x-suggestion-display': 'buttons' },
           },
         } } : {}), items: ['N_q01', 'W_q02', 'H_q01', 'H_q07'].map(id => ({ id, kind: 'image', label: id+'.bmp', relative_path: 'sample/'+id+'.bmp' })),
         groups: [{ id: 'n', label: '正面', allowed_selected_counts: [1] }, { id: 'w', label: '反面', allowed_selected_counts: [1] }, { id: 'h', label: '横截面', allowed_selected_counts: [1,2] }] }} />
@@ -123,13 +123,13 @@ it('requires a shared name, offers editable candidates and preserves the answer 
   const draft = { groups: [{ id: 'n', selected_ids: ['N_q01'] }, { id: 'w', selected_ids: ['W_q02'] }, { id: 'h', selected_ids: ['H_q07'] }] };
   const view = render(<Groups shared onFinish={submit} initialValues={draft} />);
   expect(screen.getByText('重装徒步冲锋衣 ７号（客户备注）')).toBeInTheDocument();
-  const name = screen.getByRole('combobox', { name: '写入原始记录的样品名称' });
+  const name = screen.getByRole('textbox', { name: '写入原始记录的样品名称' });
   expect(name).toHaveValue('');
   await user.click(screen.getByRole('button', { name: '提交分组' }));
   expect(await screen.findByText('请填写写入原始记录的样品名称')).toBeInTheDocument();
   expect(submit).not.toHaveBeenCalled();
-  await user.click(name);
-  await user.click(screen.getByText('重装徒步冲锋衣', { selector: '.ant-select-item-option-content' }));
+  await user.click(screen.getByRole('button', { name: '冲锋衣', exact: true }));
+  expect(name).toHaveValue('冲锋衣');
   await user.clear(name);
   await user.type(name, '人工修订名称');
   view.rerender(<Groups shared onFinish={submit} initialValues={draft} />);
@@ -140,5 +140,5 @@ it('requires a shared name, offers editable candidates and preserves the answer 
 
 it('restores a saved shared name with the grouped image draft', () => {
   render(<Groups shared initialValues={{ form_data: { sample_name: '已保存的名称' } }} />);
-  expect(screen.getByRole('combobox', { name: '写入原始记录的样品名称' })).toHaveValue('已保存的名称');
+  expect(screen.getByRole('textbox', { name: '写入原始记录的样品名称' })).toHaveValue('已保存的名称');
 });

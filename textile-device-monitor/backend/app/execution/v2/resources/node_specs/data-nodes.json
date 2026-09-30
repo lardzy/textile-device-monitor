@@ -530,6 +530,164 @@
           "native": true
         }
       }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "text.segment",
+      "type_version": 1,
+      "name": "文本分词",
+      "category": "数据",
+      "description": "中文及中英文混合文本分词，返回去重词语；原文取舍和业务名称由工作流及人工决定。",
+      "execution": {
+        "kind": "automatic",
+        "owner": {
+          "kind": "capability_pack",
+          "pack_id": "textile.execution-data"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "max_tokens": {
+            "type": "integer",
+            "title": "最多返回词语数",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "texts": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "title": "文本列表",
+            "items": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "maxItems": 100
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "列表为空时使用的文本",
+            "maxLength": 100000
+          }
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "jieba",
+              "separator_fallback"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tokens",
+          "method",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "数据",
+          "icon": "code"
+        }
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 1,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none",
+        "graph_role": "ordinary"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "none",
+        "idempotency": "none",
+        "cancellation": "immediate",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "fixed_engine"
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": null,
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": []
+      },
+      "extensions": {
+        "textile": {
+          "native": true
+        }
+      }
     }
   ]
 }

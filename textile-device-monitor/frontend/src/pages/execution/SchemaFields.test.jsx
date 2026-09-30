@@ -123,4 +123,40 @@ describe('SchemaFields copy sources', () => {
     await user.type(input, '反面');
     expect(input).toHaveValue('反面');
   });
+
+  it('分词按钮直接填入嵌套字段，保留手工修改并提交单一字符串', async () => {
+    const user = userEvent.setup(), submit = vi.fn();
+    render(<Form onFinish={submit}>
+      <SchemaFields namePrefix="shared" schema={{ properties: {
+        name: { type: 'string', title: '样品名称', default: '', 'x-suggestion-display': 'buttons',
+          'x-suggestions': ['冲锋衣', '冲锋衣', '纱布'], 'x-suggestion-label': '分词建议' },
+      }, required: ['name'] }} />
+      <button type="submit">提交</button>
+    </Form>);
+    const input = screen.getByRole('textbox', { name: '样品名称' });
+    expect(screen.getAllByRole('button', { name: '冲锋衣', exact: true })).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '冲锋衣', exact: true }));
+    expect(submit).not.toHaveBeenCalled();
+    expect(input).toHaveValue('冲锋衣');
+    expect(screen.getByRole('button', { name: '冲锋衣', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await user.type(input, '面料');
+    expect(input).toHaveValue('冲锋衣面料');
+    await user.click(screen.getByRole('button', { name: '提交', exact: true }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ shared: { name: '冲锋衣面料' } }));
+  });
+
+  it('没有分词候选时仍能输入，已冻结字段的按钮和输入均不可修改', async () => {
+    const user = userEvent.setup();
+    const view = render(<Form><SchemaFields schema={{ properties: {
+      name: { type: 'string', title: '样品名称', 'x-suggestion-display': 'buttons', 'x-suggestions': [] },
+    } }} /></Form>);
+    expect(screen.getByText('暂无可用建议，请直接输入。')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: '样品名称' }), '手工样品');
+    view.rerender(<Form><SchemaFields schema={{ properties: {
+      name: { type: 'string', title: '样品名称', readOnly: true, 'x-suggestion-display': 'buttons', 'x-suggestions': ['其他'] },
+    } }} /></Form>);
+    expect(screen.getByRole('textbox', { name: '样品名称' })).toHaveValue('手工样品');
+    expect(screen.getByRole('textbox', { name: '样品名称' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '其他', exact: true })).toBeDisabled();
+  });
 });

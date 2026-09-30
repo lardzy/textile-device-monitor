@@ -46,9 +46,11 @@ def build():
         {'title': '选择检测项目', 'item_kind': 'option', 'min_selected': 1, 'max_selected': 1,
          'require_primary': True, 'auto_submit_single_candidate': True}, {'items': output('candidates', 'projects')}, 2)
     group_spec = registry.resolve_node_spec('human.group_select', 2).public_dict()
+    name_tokens = node('name_tokens', '样品名称分词', 'text.segment', {'max_tokens': 200},
+        {'texts': output('task', 'snapshot.sample_names'), 'text': output('task', 'snapshot.sample_name')})
     selection = python_node('selection', '按样品识别准备分组', (SOURCES/'microscopy_groups.py').read_text(),
-        {'project': O, 'snapshot': O}, {'groups': group_spec['input_schema']['properties']['groups'], 'allowed_selected_counts': counts, 'form_schema': O, 'context': O},
-        {'project': output('project', 'primary_item'), 'snapshot': output('task', 'snapshot')})
+        {'project': O, 'snapshot': O, 'name_tokens': {'type': 'array', 'items': S}}, {'groups': group_spec['input_schema']['properties']['groups'], 'allowed_selected_counts': counts, 'form_schema': O, 'context': O},
+        {'project': output('project', 'primary_item'), 'snapshot': output('task', 'snapshot'), 'name_tokens': output('name_tokens', 'tokens')})
     select = node('images', '填写样品名称并分组选图', 'human.group_select',
         {'title': '填写样品名称并分组选图', 'require_all_groups': True, 'allow_item_reuse': False, 'auto_submit_single_candidate': False},
         {'items': output('candidates', 'items'), 'groups': output('selection', 'groups'),
@@ -128,7 +130,7 @@ def build():
     batch_end = node('end', '分组处理结果', 'core.end', mapping={'groups': output('batch', 'groups'), 'count': output('batch', 'count'),
         'unselected_group_ids': output('images', 'unselected_group_ids'), 'message': '所选分组处理已结束，请查看各组的提交状态与回执'}, version=2)
     prefix = [document['definition']['nodes'][0], query, profiles, files, candidates, route]
-    parent_chain = [project, selection, select, plan, batch, batch_end]
+    parent_chain = [project, name_tokens, selection, select, plan, batch, batch_end]
     group_chain = [current_group, prepare, form, payload, original, check, place, branch, upload, review, entry, end]
     nodes = prefix + parent_chain + group_chain
     for index, item in enumerate(nodes):

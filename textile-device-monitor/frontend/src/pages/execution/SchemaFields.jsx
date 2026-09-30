@@ -30,6 +30,25 @@ const jsonFieldValue = value => ({
   value: value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2),
 });
 
+function SuggestedTextInput({ suggestions, suggestionLabel, value, onChange, ...props }) {
+  return <div>
+    <div role="group" aria-label={suggestionLabel} style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 160, overflowY: 'auto', marginBottom: 8 }}>
+      {suggestions.length ? suggestions.map(suggestion => <Button
+        key={suggestion}
+        htmlType="button"
+        autoInsertSpace={false}
+        size="small"
+        disabled={props.disabled}
+        aria-pressed={value === suggestion}
+        type={value === suggestion ? 'primary' : 'default'}
+        style={{ height: 'auto', maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'left' }}
+        onClick={() => onChange?.(suggestion)}
+      >{suggestion}</Button>) : <Typography.Text type="secondary">暂无可用建议，请直接输入。</Typography.Text>}
+    </div>
+    <Input {...props} value={value} onChange={onChange} />
+  </div>;
+}
+
 export const resolveConditionalFormSchema = (schema, values = {}) => {
   const properties = { ...(schema?.properties || {}) };
   const current = Object.fromEntries(Object.entries(properties).map(([name, field]) => [name, values[name] ?? field.default]));
@@ -230,7 +249,13 @@ export default function SchemaFields({
         </Form.Item>
       );
     } else if (Array.isArray(field['x-suggestions'])) {
-      control = (
+      control = field['x-suggestion-display'] === 'buttons' ? (
+        <SuggestedTextInput
+          {...common}
+          suggestions={[...new Set(field['x-suggestions'].filter(value => typeof value === 'string' && value.trim()))]}
+          suggestionLabel={field['x-suggestion-label'] || `${field.title || name}建议`}
+        />
+      ) : (
         <AutoComplete
           {...common}
           options={field['x-suggestions'].map(value => ({ value }))}

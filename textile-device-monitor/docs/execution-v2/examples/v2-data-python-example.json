@@ -155,7 +155,7 @@
           "api",
           "worker"
         ],
-        "version_range": ">=1.0.2 <2.0.0"
+        "version_range": ">=1.1.0 <2.0.0"
       },
       {
         "pack_id": "textile.execution-kernel",
@@ -199,7 +199,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "3aaa81c00c1d5d2debda50daedd25854e14980f19431221aa11a9658cae58da5",
+    "digest": "0588c1d93b76ab02dc70ea13fee800a4c7bf62482ee53a64cc9132b6282c8d40",
     "scope": "document_without_integrity",
     "signatures": []
   },

@@ -10,6 +10,7 @@ from app.execution.engine import claim_human_task, submit_human_task
 from app.execution.errors import ExecutionApiError
 from app.execution.models import ExecutionRun, ExecutionNodeRun, ExecutionHumanTask, ExecutionTaskSnapshotCache
 from app.execution.v2.data_handlers import python_test
+from app.execution.v2.text_handlers import segment
 from app.execution.v2.designer import compile_document
 from app.execution.v2.native_handlers import _file_query
 from native_io_helpers import NUMBER, image_files, task_snapshot
@@ -26,6 +27,9 @@ def trial(name, **inputs):
     item = next(n for n in document()['definition']['nodes'] if n['id'] == name)
     if name == 'selection':
         inputs.setdefault('snapshot', {})
+        snapshot = inputs['snapshot']
+        inputs.setdefault('name_tokens', segment(SimpleNamespace(node={'config': {}}, input_data={
+            'texts': snapshot.get('sample_names'), 'text': snapshot.get('sample_name')}))['tokens'])
     if name == 'prepare_form':
         profile = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles'][0]
         inputs.setdefault('rules', profile['form_rules'])
@@ -111,6 +115,9 @@ def test_shared_name_candidates_always_require_human_input(raw, expected):
     assert field['default'] == ''
     assert set(expected) <= set(field['x-suggestions'])
     assert len(field['x-suggestions']) == len(set(field['x-suggestions']))
+    assert field['x-suggestion-display'] == 'buttons'
+    if raw and raw[0].startswith('重装'):
+        assert '冲锋衣' in field['x-suggestions']
     assert selection['context']['任务单样品名称'] == ('\n'.join(raw) or '任务单未提供，请人工填写')
     groups = [{**g, 'selected_ids': ['image'], 'selected_items': []} for g in selection['groups']]
     planned = trial('batch_plan', groups=groups, form_data={'sample_name': '  人工简名  '})
@@ -155,7 +162,7 @@ def test_native_selection_rejects_unsupported_counts_without_completing_task(env
     env.db.commit()
     doc = document()
     by_id = {n['id']: n for n in doc['definition']['nodes']}
-    doc['definition']['nodes'] = [by_id[k] for k in ('start', 'task', 'profiles', 'files', 'candidates', 'project', 'selection', 'images', 'end')]
+    doc['definition']['nodes'] = [by_id[k] for k in ('start', 'task', 'profiles', 'files', 'candidates', 'project', 'name_tokens', 'selection', 'images', 'end')]
     by_id['end']['input_mapping'] = {'groups': '$.nodes.images.output.groups'}
     doc['definition']['output_schema'] = {'type': 'object', 'additionalProperties': True}
     doc['definition']['edges'] = [{'id':a['id']+'-'+b['id'],'source':a['id'],'target':b['id'],'join_policy':'all'} for a,b in zip(doc['definition']['nodes'],doc['definition']['nodes'][1:])]
