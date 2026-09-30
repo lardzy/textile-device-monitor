@@ -24,6 +24,7 @@ import {
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
+  FileExcelOutlined,
   LoadingOutlined,
   PauseOutlined,
   PlayCircleOutlined,
@@ -49,7 +50,7 @@ import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
 import ExecutionExternalOperationPanel from './ExecutionExternalOperationPanel';
 import ExecutionAutoApprovalCard from './ExecutionAutoApprovalCard';
-import ExecutionArtifactDownloads from './ExecutionArtifactDownloads';
+import ExecutionArtifactDownloads, { collectExecutionArtifacts } from './ExecutionArtifactDownloads';
 import ExecutionMutationPanel from './ExecutionMutationPanel';
 import ExecutionResultFiles, {
   extractExecutionResultFiles,
@@ -171,6 +172,7 @@ export default function ExecutionRunWorkspace() {
   const [actionLoading, setActionLoading] = useState(null);
   const [connection, setConnection] = useState('connecting');
   const [detailOpen, setDetailOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [externalOperationPresent, setExternalOperationPresent] = useState(false);
   const [eventHistory, setEventHistory] = useState({
     runId: null,
@@ -397,6 +399,7 @@ export default function ExecutionRunWorkspace() {
   const globalSchema = snapshot.definition.global_schema;
   const variables = run.input_data || run.variables || run.input_values || {};
   const globalVariables = run.global_data || {};
+  const artifactCount = collectExecutionArtifacts(snapshot.artifacts, run.groups).length;
   const resultFiles = extractExecutionResultFiles(snapshot.outputs);
   const primaryResultFileId = extractPrimaryFileId(snapshot.outputs);
   const hasExternalOperations = (snapshot.definition.nodes || []).some(node => (
@@ -410,7 +413,10 @@ export default function ExecutionRunWorkspace() {
 
   const isTerminalRun = terminalStatuses.has(run.status);
   const actions = (
-    <Space>
+    <Space wrap>
+      <Button icon={<FileExcelOutlined />} onClick={() => setFilesOpen(true)}>
+        文件与打印（{artifactCount}）
+      </Button>
       <Tooltip
         title={isTerminalRun
           ? '本次运行已结束，实时同步已关闭'
@@ -497,7 +503,7 @@ export default function ExecutionRunWorkspace() {
     },
     {
       key: 'artifacts',
-      label: `制品 ${snapshot.artifacts.length + (run.groups || []).reduce((count, group) => count + (group.artifacts?.length || 0), 0) || ''}`,
+      label: `制品 ${artifactCount || ''}`,
       children: (
         <ExecutionArtifactDownloads artifacts={snapshot.artifacts} groups={run.groups} />
       ),
@@ -622,17 +628,6 @@ export default function ExecutionRunWorkspace() {
 
       {run.parent_run_id && <Alert type="info" showIcon message={`当前分组：${run.batch_context?.label || ''}`}
         action={<Button onClick={() => navigate(`/execution/runs/${run.parent_run_id}`)}>返回全部分组</Button>} />}
-      <ExecutionArtifactDownloads artifacts={snapshot.artifacts} groups={run.groups} workbooksOnly />
-      {run.groups?.length > 0 && <List bordered header="分组进度" dataSource={run.groups} style={{ margin: '16px 0' }}
-        renderItem={group => <List.Item actions={[
-          group.id && <Button key="open" onClick={() => navigate(`/execution/runs/${group.id}`)}>查看本组 / 处理待办</Button>,
-          group.status === 'failed' && canRunWorkflow && run.status === 'failed'
-            && <Button key="retry" onClick={() => retryNode(group.context.node_id)}>重试失败组并继续</Button>,
-        ].filter(Boolean)}><List.Item.Meta title={<Space>{group.context.label}<Tag color={RUN_STATUS[group.status]?.color}>
-          {group.output_data?.submitted === false ? '未提交' : RUN_STATUS[group.status]?.label || group.status}</Tag></Space>}
-          description={group.error_message || (group.status === 'completed' ? group.output_data?.message : undefined)} />
-        </List.Item>} />}
-
       {error && (
         <Alert
           banner
@@ -661,6 +656,21 @@ export default function ExecutionRunWorkspace() {
             </div>
             <Tag color={status.color}>{status.label}</Tag>
           </div>
+          {run.groups?.length > 0 && <section aria-label="分组进度" className="execution-run-groups">
+            <Text strong>分组进度</Text>
+            <Text type="secondary"> {run.groups.filter(group => group.status === 'completed').length} / {run.groups.length} 已完成</Text>
+            <List size="small" dataSource={run.groups} rowKey={group => group.id || group.context?.label}
+              renderItem={group => <List.Item>
+                <List.Item.Meta title={<Space wrap>{group.context?.label}<Tag color={RUN_STATUS[group.status]?.color}>
+                  {group.output_data?.submitted === false ? '未提交' : RUN_STATUS[group.status]?.label || group.status}</Tag></Space>}
+                  description={group.error_message || (group.status === 'completed' ? group.output_data?.message : undefined)} />
+                <Space wrap>
+                  {group.id && <Button size="small" onClick={() => navigate(`/execution/runs/${group.id}`)}>查看本组 / 处理待办</Button>}
+                  {group.status === 'failed' && canRunWorkflow && run.status === 'failed'
+                    && <Button size="small" onClick={() => retryNode(group.context.node_id)}>重试失败组并继续</Button>}
+                </Space>
+              </List.Item>} />
+          </section>}
           <Form layout="vertical" initialValues={variables} disabled>
             <SchemaFields schema={inputSchema} disabled />
           </Form>
@@ -728,19 +738,30 @@ export default function ExecutionRunWorkspace() {
             </div>
             <Button size="small" onClick={() => setDetailOpen(true)}>查看节点明细</Button>
           </div>
-          <WorkflowCanvas
+          <div className="execution-workspace__flow"><WorkflowCanvas
             nodes={nodes}
             edges={snapshot.definition.edges}
             readonly
             fitView
             focusNodeIds={focusNodeIds}
-          />
+          /></div>
         </section>
 
         <aside className="execution-workspace__right">
           <Tabs items={rightTabs} defaultActiveKey="result" />
         </aside>
       </main>
+
+      <Drawer
+        title={`文件与打印（${artifactCount}）`}
+        open={filesOpen}
+        onClose={() => setFilesOpen(false)}
+        width={680}
+        rootClassName="execution-files-drawer"
+      >
+        <Text type="secondary">下载 XLS / XLSX 后用 Excel 打开，按 Ctrl+P（Mac：⌘P）打印。</Text>
+        <ExecutionArtifactDownloads artifacts={snapshot.artifacts} groups={run.groups} />
+      </Drawer>
 
       <Drawer
         title="节点运行明细"

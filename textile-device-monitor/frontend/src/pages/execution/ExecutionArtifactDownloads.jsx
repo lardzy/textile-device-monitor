@@ -2,18 +2,21 @@ import { Button, List, Space, Tag, Typography } from 'antd';
 import { DownloadOutlined, FileExcelOutlined } from '@ant-design/icons';
 import { executionArtifactDownloadUrl } from '../../api/execution';
 
+export const collectExecutionArtifacts = (artifacts = [], groups = []) => [
+  ...artifacts,
+  ...groups.flatMap(group => (group.artifacts || []).map(artifact => ({
+    ...artifact, groupLabel: group.context?.label,
+  }))),
+];
+
 export default function ExecutionArtifactDownloads({ artifacts = [], groups = [], workbooksOnly = false }) {
-  const files = [
-    ...artifacts,
-    ...groups.flatMap(group => (group.artifacts || []).map(artifact => ({
-      ...artifact, groupLabel: group.context?.label,
-    }))),
-  ].filter(artifact => !workbooksOnly || /\.xlsx?$/i.test(artifact.filename || ''));
+  const files = collectExecutionArtifacts(artifacts, groups)
+    .filter(artifact => !workbooksOnly || /\.xlsx?$/i.test(artifact.filename || ''));
   if (workbooksOnly && !files.length) return null;
 
   return (
     <List
-      className={workbooksOnly ? 'execution-workbook-downloads' : undefined}
+      className={`execution-artifact-downloads${workbooksOnly ? ' execution-workbook-downloads' : ''}`}
       bordered={workbooksOnly}
       header={workbooksOnly && <Space direction="vertical" size={2}>
         <Typography.Text strong>文件下载与打印</Typography.Text>

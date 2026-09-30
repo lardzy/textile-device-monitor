@@ -1,0 +1,177 @@
+{
+  "date": "2026-09-30",
+  "scope": "Run workspace layout and file download drawer; frontend only",
+  "baseline_commit": "c8f446b",
+  "tests": {
+    "node": {
+      "passed": 18
+    },
+    "vitest": {
+      "files_passed": 31,
+      "tests_passed": 165
+    },
+    "production_build": "passed",
+    "frontend_docker_build": "passed",
+    "component_coverage": [
+      "Grouped artifacts including failed groups",
+      "Drawer open and close",
+      "40 artifacts including final download link",
+      "Live artifact count and list updates"
+    ]
+  },
+  "browser": {
+    "run_id": "753ed078-c6b7-4b9d-b5ae-f7d7e76e282a",
+    "run_status_at_verification": "completed",
+    "workflow_version": 7,
+    "artifact_count": 6,
+    "viewports": [
+      [
+        1280,
+        720
+      ],
+      [
+        1280,
+        500
+      ],
+      [
+        1280,
+        400
+      ],
+      [
+        820,
+        620
+      ]
+    ],
+    "metrics": {
+      "short": {
+        "drawerHeight": 443,
+        "drawerScrollHeight": 526,
+        "drawerScrollTop": 83,
+        "lastDownloadBounds": {
+          "bottom": 455.75,
+          "height": 32,
+          "left": 1138,
+          "right": 1248,
+          "top": 423.75,
+          "width": 110,
+          "x": 1138,
+          "y": 423.75
+        },
+        "viewport": {
+          "height": 500,
+          "width": 1280
+        }
+      },
+      "lowHeight": {
+        "panels": [
+          {
+            "bottom": 400,
+            "className": "execution-workspace",
+            "height": 400,
+            "overflowY": "auto",
+            "scrollHeight": 476
+          },
+          {
+            "bottom": 476,
+            "className": "execution-workspace__left",
+            "height": 400,
+            "overflowY": "auto",
+            "scrollHeight": 910
+          },
+          {
+            "bottom": 476,
+            "className": "execution-workspace__flow",
+            "height": 352,
+            "overflowY": "visible",
+            "scrollHeight": 352
+          },
+          {
+            "bottom": 476,
+            "className": "execution-workspace__right",
+            "height": 400,
+            "overflowY": "auto",
+            "scrollHeight": 544
+          }
+        ],
+        "viewport": {
+          "height": 400,
+          "width": 1280
+        }
+      },
+      "narrow": {
+        "documentWidth": 820,
+        "pageHeight": 2177,
+        "resultBottom": 619.7578125,
+        "scrollY": 1557,
+        "viewportHeight": 620
+      },
+      "productionUrl": "http://127.0.0.1/execution/runs/753ed078-c6b7-4b9d-b5ae-f7d7e76e282a",
+      "productionDownloadCount": 6,
+      "productionConsoleErrors": [],
+      "post_deploy_low_height": {
+        "viewport_height": 400,
+        "workspace_height": 400,
+        "workspace_scroll_height": 523,
+        "canvas_height": 352,
+        "overflow_y": "auto"
+      }
+    },
+    "console_errors": [],
+    "read_only_run_verification": true
+  },
+  "deployment": {
+    "index_sha256": "f2af8eae46b5b71a72db1ea2fdcb671cc99ca33ec71447ad232218b7ed1e4e24",
+    "files_verified": 288,
+    "old_assets_missing": [],
+    "mismatched_files": [],
+    "containers_unchanged": true,
+    "containers": [
+      {
+        "name": "/textile-monitor-frontend",
+        "id": "609ba40ab1ef2f7fd24bb3852e1fdf031bace9efbfeaf40bc5a160afdd3d8fb4",
+        "started_at": "2026-09-30T00:56:44.429247584Z",
+        "image": "sha256:88654001faaaee883201d05ecd17a51d170d2aee7c2ce9db196e664c48439d91",
+        "health": "healthy"
+      },
+      {
+        "name": "/textile-monitor-backend",
+        "id": "82a313290d24bcd0e00327a793785ca4dfd6e7398ae06db9d3362ae85c609f1e",
+        "started_at": "2026-09-30T00:56:44.36938675Z",
+        "image": "sha256:529f89d38a7a9a243f6243f68351e8645fb4a5df28604a31e4eccce66e8b6d03",
+        "health": "healthy"
+      },
+      {
+        "name": "/textile-execution-worker",
+        "id": "ecb099718a487235a66215f110d9f917e8338bb42176752a859ffde5ae3d097c",
+        "started_at": "2026-09-30T00:56:44.368642459Z",
+        "image": "sha256:ec5da9e97a0c1b7350da2fcaea6913791e01d3e2abd45f6fe524b8daa72f2823",
+        "health": "healthy"
+      }
+    ],
+    "frontend_image": "sha256:c328fc4d0b7eb7c4d393c3ee5635a0e8af08bb53278c49e25fcf18bd4a7d1f33",
+    "frontend_image_created": "2026-09-30T05:15:27.79245918Z"
+  },
+  "boundaries": {
+    "database_changed": false,
+    "workflow_changed": false,
+    "runs_created_or_retried": false,
+    "external_writes": false,
+    "services_restarted": false,
+    "files_deleted": false,
+    "canvas_node_state_logic_changed": false
+  },
+  "sample_name_audit": {
+    "workflow_version": 7,
+    "name": "重装徒步冲锋衣 7号",
+    "behavior": "Complete default form auto-submits; previous editable candidate-name selection not fully migrated",
+    "schema_mismatch": "Workflow emits examples; form suggestions consume x-suggestions",
+    "implementation_changed": false
+  },
+  "local_evidence_dir": ".tmp/run-layout-20260930",
+  "screenshots": [
+    "deployed-workspace.png",
+    "deployed-files.png",
+    "drawer-short.png",
+    "narrow-bottom.png"
+  ]
+}

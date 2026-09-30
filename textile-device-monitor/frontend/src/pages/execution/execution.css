@@ -497,18 +497,43 @@
   flex: 0 0 auto;
 }
 
+.execution-workspace {
+  height: 100dvh;
+  overflow: auto;
+}
+
+.execution-workspace > .execution-page-header {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+.execution-workspace .execution-page-header__identity {
+  flex: 1 1 320px;
+  max-width: 100%;
+}
+
+.execution-workspace > .execution-page-header > .ant-space {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.execution-workspace > .execution-page-header > .ant-space > .ant-space-item {
+  max-width: 100%;
+}
+
 .execution-workspace__grid {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 0 400px;
+  min-height: 400px;
   display: grid;
-  grid-template-columns: 310px minmax(480px, 1fr) 370px;
+  grid-template-columns: 310px minmax(0, 1fr) 370px;
   overflow: hidden;
   transition: grid-template-columns 0.28s ease;
 }
 
 /* 有需要人工处理的内容时，左栏平滑加宽以容纳任务卡与批准卡 */
 .execution-workspace__grid--action {
-  grid-template-columns: clamp(430px, 32vw, 540px) minmax(420px, 1fr) 370px;
+  grid-template-columns: clamp(430px, 32vw, 540px) minmax(0, 1fr) 370px;
 }
 
 .execution-workspace__left,
@@ -569,7 +594,50 @@
 }
 
 .execution-workspace__canvas .execution-flow {
-  height: calc(100% - 48px);
+  height: 100%;
+}
+
+.execution-workspace__canvas {
+  display: flex;
+  flex-direction: column;
+}
+
+.execution-workspace__canvas > .execution-canvas-toolbar {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 48px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.execution-workspace__canvas .execution-canvas-toolbar > div {
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.execution-workspace__flow {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.execution-run-groups {
+  margin-bottom: 20px;
+}
+
+.execution-run-groups .ant-list-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.execution-run-groups .ant-list-item-meta {
+  margin: 0;
+}
+
+.execution-run-groups .ant-list-item-meta-description {
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .execution-flow-node {
@@ -2395,11 +2463,11 @@
   }
 
   .execution-workspace__grid {
-    grid-template-columns: 280px minmax(420px, 1fr) 320px;
+    grid-template-columns: 280px minmax(0, 1fr) 320px;
   }
 
   .execution-workspace__grid--action {
-    grid-template-columns: clamp(390px, 34vw, 480px) minmax(360px, 1fr) 320px;
+    grid-template-columns: clamp(390px, 34vw, 480px) minmax(0, 1fr) 320px;
   }
 
   .execution-designer__grid {
@@ -2438,6 +2506,11 @@
     display: flex;
     flex-direction: column;
     overflow: visible;
+  }
+
+  .execution-workspace__grid {
+    flex: 0 0 auto;
+    min-height: 0;
   }
 
   .execution-task-inbox__grid {
@@ -2533,4 +2606,31 @@
 
 .execution-workbook-downloads .ant-list-item-meta-title {
   overflow-wrap: anywhere;
+}
+
+.execution-artifact-downloads .ant-list-item {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.execution-artifact-downloads .ant-list-item-meta {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.execution-artifact-downloads .ant-list-item-meta-title {
+  overflow-wrap: anywhere;
+}
+
+.execution-artifact-downloads .ant-list-item-action {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.execution-files-drawer .ant-drawer-content-wrapper {
+  max-width: 100vw;
+}
+
+.execution-files-drawer .execution-artifact-downloads {
+  margin-top: 16px;
 }

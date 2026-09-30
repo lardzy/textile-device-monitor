@@ -54,7 +54,7 @@ const completedRun = {
 };
 
 describe('ExecutionRunWorkspace', () => {
-  it('在总运行页直接下载分组中已生成的工作簿，失败组也保留入口', async () => {
+  it('通过文件抽屉下载分组制品，失败组也保留入口且文件不挤占工作区', async () => {
     server.use(
       http.get('/api/execution/v1/auth/me', () => HttpResponse.json({ user: {
         id: 'u-1', username: 'operator', role: 'user', permissions: ['workflow.read', 'workflow.run', 'file.read'],
@@ -77,15 +77,44 @@ describe('ExecutionRunWorkspace', () => {
         <Route path="/execution/runs/:runId" element={<ExecutionRunWorkspace />} />
       </Routes></ExecutionAuthProvider>
     </MemoryRouter>);
-    const header = await screen.findByText('文件下载与打印');
-    const panel = within(header.closest('.execution-workbook-downloads'));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /文件与打印（3）/ }));
+    const panel = within(await screen.findByRole('dialog', { name: '文件与打印（3）' }));
     expect(panel.getByText(/Ctrl\+P/)).toBeInTheDocument();
     expect(panel.getByText('260221991-正面-原始记录.xls')).toBeInTheDocument();
     expect(panel.queryByText('storage/hash.xls')).not.toBeInTheDocument();
-    expect(panel.queryByText('source.bmp')).not.toBeInTheDocument();
+    expect(panel.getByText('source.bmp')).toBeInTheDocument();
     expect(panel.getAllByRole('link', { name: /下载文件/ }).map(link => link.getAttribute('href'))).toEqual([
       '/api/execution/v1/artifacts/xls-1/download', '/api/execution/v1/artifacts/xls-2/download',
+      '/api/execution/v1/artifacts/image-1/download',
     ]);
+    expect(document.querySelector('.execution-workspace > .execution-workbook-downloads')).toBeNull();
+    expect(within(screen.getByRole('region', { name: '分组进度' })).getAllByRole('button', { name: /查看本组/ })).toHaveLength(2);
+    await user.click(panel.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByText('流程进度')).toBeInTheDocument();
+  });
+
+  it('抽屉打开期间新增文件会更新数量，最后一份文件仍可下载', async () => {
+    let artifacts = [{ id: 'first', filename: '首份原始记录.xls' }];
+    server.use(
+      http.get('/api/execution/v1/auth/me', () => HttpResponse.json({ user: {
+        id: 'u-1', username: 'operator', role: 'user', permissions: ['workflow.read', 'file.read'],
+      } })),
+      http.get('/api/execution/v1/runs/run-1', () => HttpResponse.json({ ...completedRun, artifacts })),
+    );
+    render(<MemoryRouter initialEntries={['/execution/runs/run-1']}>
+      <ExecutionAuthProvider><Routes>
+        <Route path="/execution/runs/:runId" element={<ExecutionRunWorkspace />} />
+      </Routes></ExecutionAuthProvider>
+    </MemoryRouter>);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /文件与打印（1）/ }));
+    artifacts = Array.from({ length: 40 }, (_, index) => ({ id: `file-${index}`, filename: `原始记录-${index + 1}.xls` }));
+    await act(async () => useExecutionEvents.mock.calls.at(-1)[1].onReconnect());
+    const panel = within(await screen.findByRole('dialog', { name: '文件与打印（40）' }));
+    expect(panel.getByText('原始记录-40.xls')).toBeInTheDocument();
+    expect(panel.getAllByRole('link', { name: /下载文件/ }).at(-1)).toHaveAttribute('href', '/api/execution/v1/artifacts/file-39/download');
   });
 
   it('确认取消后关闭弹窗、仅提交一次并刷新终态', async () => {
