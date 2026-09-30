@@ -249,6 +249,13 @@ function GroupSelection({ inputData, form, disabled, config }) {
   const values = Form.useWatch('groups', form) || [];
   const groups = inputData.groups || [], items = inputData.items || [];
   return <Space direction="vertical" style={{ width: '100%' }}>
+    {inputData.form_schema && <Card size="small" title={inputData.form_schema.title || '各组共用信息'}>
+      {Object.entries(inputData.context || {}).map(([label, value]) => <Typography.Paragraph key={label} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        <Text type="secondary">{label}：</Text>{typeof value === 'string' ? value : JSON.stringify(value)}
+      </Typography.Paragraph>)}
+      {inputData.form_schema.description && <Typography.Paragraph type="secondary">{inputData.form_schema.description}</Typography.Paragraph>}
+      <SchemaFields schema={inputData.form_schema} namePrefix="form_data" disabled={disabled} />
+    </Card>}
     <Alert showIcon type="info" message="按样品识别分组选图，组内顺序决定排版和共享文件编号" description={config.require_all_groups === false ? '可留空暂不处理的组；已完成的组不会因其他组重试而重复提交。' : '请为每组选择图片；已完成的组不会因其他组重试而重复提交。'} />
     {groups.map((group, index) => <Card size="small" title={group.label} key={group.id}>
       <Typography.Paragraph type="secondary">可选择 {group.allowed_selected_counts.join('、')} 张；已选 {values[index]?.selected_ids?.length || 0} 张</Typography.Paragraph>

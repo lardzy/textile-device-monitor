@@ -597,7 +597,7 @@ def _native_human_submission(
             "decision": decision,
             "plan_digest": state.get("plan_digest"),
         }
-    if resume_protocol == "native.group_select.v1":
+    if resume_protocol in {"native.group_select.v1", "native.group_select.v2"}:
         from app.execution.v2.group_handlers import normalize_groups
 
         gateway = build_file_gateway(db)
@@ -4140,7 +4140,7 @@ def _create_human_task(
         else config.get("form_schema") or {}
     )
     if native_human and form_schema_override is None:
-        if resume_protocol == "native.group_select.v1":
+        if resume_protocol in {"native.group_select.v1", "native.group_select.v2"}:
             from app.execution.v2.group_handlers import group_form_schema
 
             form_schema = group_form_schema(context.input_data, config)
@@ -4270,7 +4270,7 @@ def _create_human_task(
             renderer_contract["payload"] = deepcopy(
                 suspension_payload.get("renderer_payload")
             )
-        if resume_protocol == "native.group_select.v1":
+        if resume_protocol in {"native.group_select.v1", "native.group_select.v2"}:
             renderer_contract["payload"] = {"require_all_groups": config.get("require_all_groups", True),
                                              "allow_item_reuse": config.get("allow_item_reuse", False)}
         if reopened and effective_human_task_renderer_contract(task) not in ({}, renderer_contract):
@@ -4521,7 +4521,8 @@ def execute_claimed_node(db: Session, node_run_id: str, lease_token: str) -> Non
                     defaults = input_data.get("defaults") or {}
                     if config.get("auto_submit_complete") and validate_json_instance(dynamic_form_schema, defaults, path_prefix="$.form").valid:
                         auto_output = dict(defaults)
-                if (resume_protocol == "native.group_select.v1" and config.get("auto_submit_single_candidate")
+                if (resume_protocol in {"native.group_select.v1", "native.group_select.v2"} and config.get("auto_submit_single_candidate")
+                    and "form_schema" not in input_data
                     and len(input_data.get("groups", [])) == 1 and len(candidates) == 1
                     and 1 in input_data["groups"][0]["allowed_selected_counts"]):
                     auto_output = _native_human_submission(db, run=node_run.run, node_run=node_run, task=None,

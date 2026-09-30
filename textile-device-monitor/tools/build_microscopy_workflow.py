@@ -45,28 +45,30 @@ def build():
     project = node('project', '选择检测项目', 'human.select',
         {'title': '选择检测项目', 'item_kind': 'option', 'min_selected': 1, 'max_selected': 1,
          'require_primary': True, 'auto_submit_single_candidate': True}, {'items': output('candidates', 'projects')}, 2)
-    group_spec = registry.resolve_node_spec('human.group_select', 1).public_dict()
+    group_spec = registry.resolve_node_spec('human.group_select', 2).public_dict()
     selection = python_node('selection', '按样品识别准备分组', (SOURCES/'microscopy_groups.py').read_text(),
-        {'project': O}, {'groups': group_spec['input_schema']['properties']['groups'], 'allowed_selected_counts': counts},
-        {'project': output('project', 'primary_item')})
-    select = node('images', '按部位选择并排列图片', 'human.group_select',
-        {'title': '按部位选择并排列图片', 'require_all_groups': True, 'allow_item_reuse': False, 'auto_submit_single_candidate': True},
-        {'items': output('candidates', 'items'), 'groups': output('selection', 'groups'), 'context': {}})
+        {'project': O, 'snapshot': O}, {'groups': group_spec['input_schema']['properties']['groups'], 'allowed_selected_counts': counts, 'form_schema': O, 'context': O},
+        {'project': output('project', 'primary_item'), 'snapshot': output('task', 'snapshot')})
+    select = node('images', '填写样品名称并分组选图', 'human.group_select',
+        {'title': '填写样品名称并分组选图', 'require_all_groups': True, 'allow_item_reuse': False, 'auto_submit_single_candidate': False},
+        {'items': output('candidates', 'items'), 'groups': output('selection', 'groups'),
+         'form_schema': output('selection', 'form_schema'), 'context': output('selection', 'context')}, 2)
     plan = python_node('batch_plan', '整理分组执行输入', (SOURCES/'microscopy_batch.py').read_text(),
-        {'groups': group_spec['output_schema']['properties']['groups']},
+        {'groups': group_spec['output_schema']['properties']['groups'], 'form_data': O},
         {'items': registry.resolve_node_spec('flow.batch', 1).public_dict()['input_schema']['properties']['items']},
-        {'groups': output('images', 'groups')})
+        {'groups': output('images', 'groups'), 'form_data': output('images', 'form_data')})
     batch = node('batch', '顺序处理各部位', 'flow.batch', {}, {'items': output('batch_plan', 'items')})
     route = node('route', '分组选图或处理当前组', 'flow.branch', {'expression_version': 1, 'multi_match': 'all'})
     current_group = python_node('current_group', '核对当前分组', (SOURCES/'microscopy_current_group.py').read_text(),
-        {'group': O, 'projects': item_schema, 'items': item_schema}, {'project': O, 'images': item_schema, 'sample_identity': S},
+        {'group': O, 'projects': item_schema, 'items': item_schema}, {'project': O, 'images': item_schema, 'sample_identity': S, 'sample_name': S},
         {'group': '$.inputs.execution_group', 'projects': output('profiles', 'projects'), 'items': output('candidates', 'items')})
     form_schema = {'type': 'object', 'properties': {key: S for key in ('sample_name', 'sample_identity', 'remark', 'judge_basis', 'indicator_requirement', 'test_result', 'judgement')},
                    'required': ['sample_name', 'sample_identity', 'remark'], 'additionalProperties': False}
     prepare = python_node('prepare_form', '显微 · 准备必要输入', (SOURCES/'microscopy_form.py').read_text(),
-        {'snapshot': O, 'project': O, 'images': A, 'rules': O, 'sample_identity': S}, {'form_schema': O, 'defaults': O, 'context': O},
+        {'snapshot': O, 'project': O, 'images': A, 'rules': O, 'sample_identity': S, 'sample_name': S}, {'form_schema': O, 'defaults': O, 'context': O},
         {'snapshot': output('task', 'snapshot'), 'project': output('current_group', 'project'), 'images': output('current_group', 'images'),
-         'sample_identity': output('current_group', 'sample_identity'), 'rules': output('current_group', 'project.metadata.profile.form_rules')})
+         'sample_identity': output('current_group', 'sample_identity'), 'sample_name': output('current_group', 'sample_name'),
+         'rules': output('current_group', 'project.metadata.profile.form_rules')})
     form = node('form', '补充必要字段', 'human.form', {'title': '补充记录字段', 'result_schema': form_schema, 'auto_submit_complete': True},
         {'form_schema': output('prepare_form', 'form_schema'), 'defaults': output('prepare_form', 'defaults'), 'context': output('prepare_form', 'context')}, 2)
     place_spec = registry.resolve_node_spec('file.batch_place', 2).public_dict()

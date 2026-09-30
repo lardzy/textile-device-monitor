@@ -25,4 +25,5 @@ def main(inputs):
         images.append(current)
     if len({image['id'] for image in images}) != len(images) or str(len(images)) not in profile['templates']:
         raise ValueError('该组的图片数量不符合业务方案')
-    return {'project': choice, 'images': images, 'sample_identity': group['sample_identity']}
+    return {'project': choice, 'images': images, 'sample_identity': group['sample_identity'],
+            'sample_name': group['sample_name']}

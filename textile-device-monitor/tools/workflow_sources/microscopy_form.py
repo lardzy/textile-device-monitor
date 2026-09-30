@@ -17,15 +17,16 @@ def options(value, separator):
 def main(inputs):
     project = inputs['project']['metadata']['project']
     snapshot, rules = inputs['snapshot'], inputs['rules']
-    names = options(snapshot.get('sample_names') or snapshot.get('sample_name'), rules['name_separator'])
+    name = inputs['sample_name'].strip()
+    if not name:
+        raise ValueError('请选择或填写样品名称')
     identities = options(project.get('sample_identify'), rules['identity_separator'])
-    fields = {'sample_name': {'type': 'string', 'title': '样品名称', 'minLength': 1, 'maxLength': 500},
+    fields = {'sample_name': {'type': 'string', 'title': '样品名称（所有分组共用）', 'minLength': 1, 'maxLength': 500,
+                              'const': name, 'readOnly': True},
               'sample_identity': {'type': 'string', 'title': '样品识别', 'maxLength': 500},
               'remark': {'type': 'string', 'title': '备注', 'maxLength': 1000}}
-    defaults = {'sample_name': names[0] if len(names) == 1 else '',
+    defaults = {'sample_name': name,
                 'sample_identity': identities[0] if len(identities) == 1 else '', 'remark': ''}
-    if len(names) > 1:
-        fields['sample_name']['examples'] = names
     if identities:
         fields['sample_identity'].update(enum=identities, minLength=1)
     elif not identities:
@@ -37,10 +38,11 @@ def main(inputs):
             fields[key] = {'type': 'string', 'title': title, 'minLength': 1, 'maxLength': 1000}
             defaults[key] = ''
         bases = options(project.get('check_basis_options') or snapshot.get('check_basis'), rules['basis_separator'])
-        fields['judge_basis']['examples'] = bases
+        fields['judge_basis']['x-suggestions'] = bases
         defaults['judge_basis'] = bases[0] if len(bases) == 1 else ''
         fields['judgement']['enum'] = rules['judgements']
     defaults.update({key: value for key, value in rules.get('defaults', {}).items() if key in fields})
+    defaults['sample_name'] = name
     if 'sample_identity' in inputs:
         identity = inputs['sample_identity']
         if identity not in (identities or ['']):

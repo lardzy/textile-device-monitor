@@ -1,0 +1,136 @@
+{
+  "migration": "0014_run_groups",
+  "workflows": [
+    {
+      "id": "84abf195-e120-4f95-b81c-2b2d4a2a960c",
+      "slug": "fiber-microscopy-v2",
+      "version": 8,
+      "release_digest": "5f055673def2de26ba8cd56aeea6b09ce7ed746820050f3a1879e652841cb55f",
+      "node_count": 25,
+      "missing_worker_nodes": []
+    },
+    {
+      "id": "ae766b2c-f51e-40ff-baca-10608dfe4602",
+      "slug": "paper-fiber-v2",
+      "version": 13,
+      "release_digest": "4ddb5706b65f7d5d42484252adac18657e1101b74e9d2916750bfe16ca34f333",
+      "node_count": 14,
+      "missing_worker_nodes": []
+    }
+  ],
+  "workers": [
+    {
+      "worker_id": "ecb099718a48",
+      "engine_version": "2.5.0",
+      "capability_digest": "b2f2072d26c03ecde73614f7990f8605468c8056e991455d4b6e11c5f700b0a2"
+    }
+  ],
+  "binding_count": 45,
+  "counts": {
+    "execution_workflows": 2,
+    "execution_workflow_versions": 21,
+    "execution_runs": 17,
+    "execution_human_tasks": 6,
+    "execution_external_operations": 26,
+    "execution_project_rules": 0,
+    "execution_users": 1,
+    "execution_credentials": 1,
+    "execution_storage_roots": 9
+  },
+  "run_statuses": {
+    "cancelled": 2,
+    "completed": 14,
+    "failed": 1
+  },
+  "operation_statuses": {
+    "completed": 25,
+    "cancelled": 1
+  },
+  "containers": {
+    "textile-monitor-backend": {
+      "id": "82a313290d24bcd0e00327a793785ca4dfd6e7398ae06db9d3362ae85c609f1e",
+      "original_image": "sha256:529f89d38a7a9a243f6243f68351e8645fb4a5df28604a31e4eccce66e8b6d03",
+      "status": "running",
+      "health": "healthy"
+    },
+    "textile-execution-worker": {
+      "id": "ecb099718a487235a66215f110d9f917e8338bb42176752a859ffde5ae3d097c",
+      "original_image": "sha256:ec5da9e97a0c1b7350da2fcaea6913791e01d3e2abd45f6fe524b8daa72f2823",
+      "status": "running",
+      "health": "healthy"
+    },
+    "textile-monitor-frontend": {
+      "id": "609ba40ab1ef2f7fd24bb3852e1fdf031bace9efbfeaf40bc5a160afdd3d8fb4",
+      "original_image": "sha256:88654001faaaee883201d05ecd17a51d170d2aee7c2ce9db196e664c48439d91",
+      "status": "running",
+      "health": "healthy"
+    }
+  },
+  "source_files_match_per_container": 121,
+  "frontend_files_match": 180,
+  "built_images": {
+    "textile-device-monitor-backend": "sha256:9907d6ace15d518ed524ad9765dac023349759a7ec5274bd2f91671ae905d8f3",
+    "textile-device-monitor-execution-worker": "sha256:edb1b25c55b85f1edff0c3a770dd67594b357745df28816081842abe155dce21",
+    "textile-device-monitor-frontend": "sha256:5f61577de8c595b59c259758e3df49b886a6ca560152d0aa362d967e532c1cf9"
+  },
+  "node_specs": 37,
+  "existing_run": {
+    "id": "753ed078-c6b7-4b9d-b5ae-f7d7e76e282a",
+    "version": 7,
+    "status": "completed",
+    "artifacts": 6
+  },
+  "frontend_index_matches": true,
+  "preserved_record_counts": true,
+  "generated_at": "2026-09-30T06:14:36.183346+00:00",
+  "packs": {
+    "textile.execution-workbook": "2.14.0",
+    "textile.execution-data": "1.0.2",
+    "textile.execution-kernel": "2.13.0",
+    "textile.execution-files": "1.4.0",
+    "legacy_fibrecheck.v1-compat": "2.1.2"
+  },
+  "browser": {
+    "isolated": true,
+    "run_id": "0bd9a707-c2f8-45dc-b8db-59d880b3507d",
+    "status": "completed",
+    "confirmed_name": "人工确认的冲锋衣",
+    "group_count": 3,
+    "blank_rejected": true,
+    "candidate_then_free_edit": true,
+    "draft_saved_and_restored_after_reload": true,
+    "screenshot": ".tmp/microscopy-shared-name-20260930/shared-name-browser.png",
+    "fixture_scope": "Actual API and Worker: shared form, grouped selection and Python batch planning. No connector or shared-directory writes.",
+    "fixture_notes": "Earlier attempts had unconfigured SSE database, login-overwritten test storage roots, and a missing output schema on the abbreviated graph. Corrected test fixtures; final run completed. No production change was needed for these fixture errors."
+  },
+  "tests": {
+    "backend_full": {
+      "passed": 650,
+      "skipped": 4,
+      "subtests_passed": 55
+    },
+    "worker_uno_targeted": 34,
+    "actual_published_exports": 3,
+    "frontend_node": 18,
+    "frontend_vitest": 167,
+    "frontend_build": true,
+    "compose_images_build": true,
+    "pack_contract_and_examples_check": true
+  },
+  "checked_name_cases": [
+    "fullwidth normalization",
+    "long and multiple task names",
+    "no candidates",
+    "single candidate still mandatory",
+    "empty or whitespace rejected",
+    "draft restoration",
+    "shared across three groups",
+    "task refresh cannot replace manual choice",
+    "profile defaults cannot replace manual choice",
+    "XLS B3 readback"
+  ],
+  "new_production_runs": 0,
+  "new_remote_uploads": 0,
+  "new_remote_registrations": 0,
+  "deployment_note": "Backed up changed container files and frontend assets, updated existing containers in place, restarted backend and Worker, reloaded nginx. Added frontend assets before switching index.html; retained old assets. Final images built. No existing records, files, containers or volumes deleted. Database remains 0014_run_groups. Bridge/Writer unchanged."
+}

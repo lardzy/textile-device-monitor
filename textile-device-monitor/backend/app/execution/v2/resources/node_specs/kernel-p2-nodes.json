@@ -2716,6 +2716,359 @@
           "kernel_semantic": "flow.batch.v1"
         }
       }
+    },
+    {
+      "schema_version": "2.0",
+      "type": "human.group_select",
+      "type_version": 2,
+      "name": "分组选图",
+      "category": "人工",
+      "description": "在一次人工任务中填写各组共用信息，并分组选择、排序候选。",
+      "execution": {
+        "kind": "human",
+        "owner": {
+          "kind": "kernel",
+          "pack_id": "textile.execution-kernel"
+        },
+        "result_mode": "object"
+      },
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "require_all_groups": {
+            "type": "boolean",
+            "default": true
+          },
+          "allow_item_reuse": {
+            "type": "boolean",
+            "default": false
+          },
+          "auto_submit_single_candidate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "title",
+          "require_all_groups",
+          "allow_item_reuse",
+          "auto_submit_single_candidate"
+        ],
+        "additionalProperties": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "artifact",
+                    "image",
+                    "option"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "root_id": {
+                  "type": "string"
+                },
+                "relative_path": {
+                  "type": "string"
+                },
+                "fingerprint": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "items": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "artifact",
+                          "image",
+                          "option"
+                        ]
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "root_id": {
+                        "type": "string"
+                      },
+                      "relative_path": {
+                        "type": "string"
+                      },
+                      "fingerprint": {
+                        "type": "string"
+                      },
+                      "metadata": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "label",
+                      "fingerprint"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "label",
+                "fingerprint"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "allowed_selected_counts": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "metadata",
+                "allowed_selected_counts"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "context": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "form_schema": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "items",
+          "groups",
+          "context",
+          "form_schema"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "allowed_selected_counts": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "selected_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "selected_items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "metadata",
+                "allowed_selected_counts",
+                "selected_ids",
+                "selected_items"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "unselected_group_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "selection_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "form_data": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "groups",
+          "unselected_group_ids",
+          "selection_digest",
+          "form_data"
+        ],
+        "additionalProperties": false
+      },
+      "schema_bindings": {
+        "input": {
+          "source": "node_spec"
+        },
+        "output": {
+          "source": "node_spec"
+        }
+      },
+      "ui_schema": {
+        "palette": {
+          "group": "人工",
+          "icon": "select"
+        },
+        "renderer": {
+          "capability": "human.group_select",
+          "version": "2.0.0"
+        }
+      },
+      "ports": {
+        "inputs": [
+          {
+            "id": "in",
+            "min_edges": 1,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out",
+            "min_edges": 0,
+            "max_edges": null,
+            "default": true
+          }
+        ],
+        "condition_mode": "none",
+        "graph_role": "ordinary"
+      },
+      "requirements": {
+        "resources": {
+          "root_slots": [],
+          "credential_slots": [],
+          "role_slots": [],
+          "rule_slots": []
+        },
+        "capabilities": [],
+        "connectors": [],
+        "assets": []
+      },
+      "side_effect": {
+        "class": "none",
+        "idempotency": "none",
+        "cancellation": "immediate",
+        "receipt": "none",
+        "unknown_outcome": "fail"
+      },
+      "policies": {
+        "retry": {
+          "mode": "fixed_engine"
+        },
+        "timeout": {
+          "mode": "human_task"
+        },
+        "error": {
+          "default_action": "fail_run"
+        }
+      },
+      "suspension": {
+        "kind": "human_task",
+        "resume_protocol": "native.group_select.v2"
+      },
+      "lifecycle": {
+        "state": "active",
+        "publish_mode": "allowed",
+        "replacement": null,
+        "migration_ids": []
+      },
+      "extensions": {
+        "textile": {
+          "native": true,
+          "renderer_capability": "human.group_select@2.0.0"
+        }
+      }
     }
   ]
 }

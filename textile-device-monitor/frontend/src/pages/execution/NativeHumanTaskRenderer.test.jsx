@@ -89,11 +89,15 @@ describe('native result-file selection', () => {
   });
 });
 
-function Groups({ onFinish }) {
+function Groups({ onFinish, shared = false, initialValues }) {
   const [form] = Form.useForm();
-  return <Form form={form} onFinish={onFinish}>
+  return <Form form={form} onFinish={onFinish} initialValues={initialValues}>
     <NativeHumanTaskRenderer renderer={{ capability: 'human.group_select' }} rendererContract={{ payload: {} }} form={form}
-      inputData={{ items: ['N_q01', 'W_q02', 'H_q01', 'H_q07'].map(id => ({ id, kind: 'image', label: id+'.bmp', relative_path: 'sample/'+id+'.bmp' })),
+      inputData={{ ...(shared ? { context: { '任务单样品名称': '重装徒步冲锋衣 ７号（客户备注）' }, form_schema: {
+          type: 'object', title: '各组共用的样品名称', required: ['sample_name'], properties: {
+            sample_name: { type: 'string', title: '写入原始记录的样品名称', default: '', pattern: '\\S', 'x-suggestions': ['重装徒步冲锋衣', '客户备注'] },
+          },
+        } } : {}), items: ['N_q01', 'W_q02', 'H_q01', 'H_q07'].map(id => ({ id, kind: 'image', label: id+'.bmp', relative_path: 'sample/'+id+'.bmp' })),
         groups: [{ id: 'n', label: '正面', allowed_selected_counts: [1] }, { id: 'w', label: '反面', allowed_selected_counts: [1] }, { id: 'h', label: '横截面', allowed_selected_counts: [1,2] }] }} />
     <Button htmlType="submit">提交分组</Button>
   </Form>;
@@ -112,4 +116,29 @@ it('submits each group with explicit ordering', async () => {
   await waitFor(() => expect(submit).toHaveBeenCalledWith({ groups: [
     { id: 'n', selected_ids: ['N_q01'] }, { id: 'w', selected_ids: ['W_q02'] }, { id: 'h', selected_ids: ['H_q01','H_q07'] },
   ] }));
+});
+
+it('requires a shared name, offers editable candidates and preserves the answer when refreshed', async () => {
+  const user = userEvent.setup(), submit = vi.fn();
+  const draft = { groups: [{ id: 'n', selected_ids: ['N_q01'] }, { id: 'w', selected_ids: ['W_q02'] }, { id: 'h', selected_ids: ['H_q07'] }] };
+  const view = render(<Groups shared onFinish={submit} initialValues={draft} />);
+  expect(screen.getByText('重装徒步冲锋衣 ７号（客户备注）')).toBeInTheDocument();
+  const name = screen.getByRole('combobox', { name: '写入原始记录的样品名称' });
+  expect(name).toHaveValue('');
+  await user.click(screen.getByRole('button', { name: '提交分组' }));
+  expect(await screen.findByText('请填写写入原始记录的样品名称')).toBeInTheDocument();
+  expect(submit).not.toHaveBeenCalled();
+  await user.click(name);
+  await user.click(screen.getByText('重装徒步冲锋衣', { selector: '.ant-select-item-option-content' }));
+  await user.clear(name);
+  await user.type(name, '人工修订名称');
+  view.rerender(<Groups shared onFinish={submit} initialValues={draft} />);
+  expect(name).toHaveValue('人工修订名称');
+  await user.click(screen.getByRole('button', { name: '提交分组' }));
+  await waitFor(() => expect(submit).toHaveBeenCalledWith({ ...draft, form_data: { sample_name: '人工修订名称' } }));
+});
+
+it('restores a saved shared name with the grouped image draft', () => {
+  render(<Groups shared initialValues={{ form_data: { sample_name: '已保存的名称' } }} />);
+  expect(screen.getByRole('combobox', { name: '写入原始记录的样品名称' })).toHaveValue('已保存的名称');
 });

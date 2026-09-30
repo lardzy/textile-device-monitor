@@ -24,10 +24,13 @@ def document():
 
 def trial(name, **inputs):
     item = next(n for n in document()['definition']['nodes'] if n['id'] == name)
+    if name == 'selection':
+        inputs.setdefault('snapshot', {})
     if name == 'prepare_form':
         profile = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles'][0]
         inputs.setdefault('rules', profile['form_rules'])
         inputs.setdefault('sample_identity', '')
+        inputs.setdefault('sample_name', '人工名称')
     if name == 'payload':
         profile = next(n for n in document()['definition']['nodes'] if n['id'] == 'profiles')['input_mapping']['profiles'][0]
         inputs.setdefault('rules', profile)
@@ -81,7 +84,7 @@ def test_form_defaults_and_judgement_are_json_code():
                 project={'label': '项目', 'metadata': {'project': {'sample_identify': None, 'give_judgement': 0, 'check_count': 4}}})
     result = trial('prepare_form', **base)
     assert result['passed'], result
-    assert result['output']['defaults'] == {'sample_name': '完整-样品名称', 'sample_identity': '', 'remark': ''}
+    assert result['output']['defaults'] == {'sample_name': '人工名称', 'sample_identity': '', 'remark': ''}
     assert 'judgement' not in result['output']['form_schema']['properties']
     base['project']['metadata']['project'].update(sample_identify='正面、背面', give_judgement=1)
     result = trial('prepare_form', **base, sample_identity='正面')
@@ -90,6 +93,40 @@ def test_form_defaults_and_judgement_are_json_code():
     assert result['output']['form_schema']['properties']['sample_identity']['const'] == '正面'
     assert result['output']['form_schema']['properties']['sample_identity']['enum'] == ['正面', '背面']
     assert result['output']['defaults']['judge_basis'] == '依据一'
+
+
+@pytest.mark.parametrize('raw, expected', [
+    (['重装徒步冲锋衣 ７号，薄膜（测试用）', '薄膜'], ['重装徒步冲锋衣', '薄膜', '测试用']),
+    (['唯一名称'], ['唯一名称']),
+    ([], []),
+    (['很长的名称' * 150], []),
+])
+def test_shared_name_candidates_always_require_human_input(raw, expected):
+    choice = trial('profiles', snapshot={'projects': [{'project_key': 'p', 'check_item_no': '5103.05',
+        'check_item_name': '微观形貌', 'check_method': '按客户要求', 'sample_identify': '正面、反面、横截面'}]})['output']['projects'][0]
+    result = trial('selection', project=choice, snapshot={'sample_names': raw})
+    assert result['passed'], result
+    selection = result['output']
+    field = selection['form_schema']['properties']['sample_name']
+    assert field['default'] == ''
+    assert set(expected) <= set(field['x-suggestions'])
+    assert len(field['x-suggestions']) == len(set(field['x-suggestions']))
+    assert selection['context']['任务单样品名称'] == ('\n'.join(raw) or '任务单未提供，请人工填写')
+    groups = [{**g, 'selected_ids': ['image'], 'selected_items': []} for g in selection['groups']]
+    planned = trial('batch_plan', groups=groups, form_data={'sample_name': '  人工简名  '})
+    assert planned['passed'], planned
+    assert [item['inputs']['execution_group']['sample_name'] for item in planned['output']['items']] == ['人工简名'] * 3
+
+
+def test_confirmed_shared_name_overrides_snapshot_and_profile_defaults():
+    base = dict(snapshot={'sample_names': ['任务单冗长名称']}, images=[{}], sample_name='人工简名',
+        project={'label': '项目', 'metadata': {'project': {'sample_identify': None, 'give_judgement': 0}}},
+        rules={'name_separator': ';', 'identity_separator': ';', 'defaults': {'sample_name': '规则名称'}})
+    result = trial('prepare_form', **base)
+    assert result['passed'], result
+    assert result['output']['defaults']['sample_name'] == '人工简名'
+    assert result['output']['form_schema']['properties']['sample_name']['const'] == '人工简名'
+    assert not trial('prepare_form', **{**base, 'sample_name': '  '})['passed']
 
 
 def test_image_query_scope_and_generic_preview(environment):
@@ -142,7 +179,13 @@ def test_native_selection_rejects_unsupported_counts_without_completing_task(env
     env.db.rollback()
     task = env.db.get(ExecutionHumanTask, task.id)
     order = [images[i]['id'] for i in (2, 0, 1)]
-    submit_human_task(env.db, task_id=task.id, actor=env.admin, expected_revision=task.revision, data={'groups': [{'id': '1', 'selected_ids': order}]})
+    for form_data in ({}, {'sample_name': '  '}, {'sample_name': 'x' * 501}):
+        with pytest.raises(ExecutionApiError, match='人工任务输入校验失败'):
+            submit_human_task(env.db, task_id=task.id, actor=env.admin, expected_revision=task.revision,
+                data={'groups': [{'id': '1', 'selected_ids': order}], 'form_data': form_data})
+        env.db.rollback()
+        task = env.db.get(ExecutionHumanTask, task.id)
+    submit_human_task(env.db, task_id=task.id, actor=env.admin, expected_revision=task.revision, data={'groups': [{'id': '1', 'selected_ids': order}], 'form_data': {'sample_name': '人工名称'}})
     env.db.commit()
     drain(env)
     env.db.expire_all()

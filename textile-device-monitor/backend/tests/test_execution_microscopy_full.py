@@ -65,12 +65,15 @@ def test_portable_microscopy_full_chain_or_cancel(operation_env,monkeypatch,canc
         'root_slots':{slot['slot_id']:{'root_id':slot['slot_id'],'revision':1} for slot in doc['resources']['root_slots']},
         'credential_slots':{'inspection':{'credential_id':env.credential.id,'revision':1}}})
     record=run(env,workflow.id,inputs={'inspection_number':NUMBER,'relative_directory':''});drain(env);env.db.expire_all()
-    if group_count == 3:
+    if group_count in (1, 3):
         task=env.db.query(ExecutionHumanTask).filter_by(run_id=record['id'],status='open').one()
         node=env.db.get(ExecutionNodeRun,task.node_run_id)
         ids=[item['id'] for item in node.input_data['items']]
-        groups=[{'id': str(i+1), 'selected_ids': selected} for i, selected in enumerate([ids[:1],ids[1:2],ids[2:]])]
-        submit_human_task(env.db,task_id=task.id,actor=env.admin,expected_revision=task.revision,data={'groups':groups})
+        groups=[{'id': str(i+1), 'selected_ids': selected} for i, selected in enumerate([ids[:1]] if group_count == 1 else [ids[:1],ids[1:2],ids[2:]])]
+        submit_human_task(env.db,task_id=task.id,actor=env.admin,expected_revision=task.revision,data={'groups':groups, 'form_data': {'sample_name': '人工确认的冲锋衣'}})
+        changed=deepcopy(cache.snapshot)
+        changed['sample_names']=['刷新后的冗长任务单名称']
+        cache.snapshot=changed
         env.db.commit();advance(env)
     for index in range(group_count):
         env.db.expire_all()
@@ -100,6 +103,7 @@ def test_portable_microscopy_full_chain_or_cancel(operation_env,monkeypatch,canc
         book = xlrd.open_workbook(Path(env.roots[result['root_id']].local_path)/result['relative_path'])
         try:
             assert book.sheet_by_name('微观形貌').cell_value(1, 4) == project['check_method']
+            assert book.sheet_by_name('微观形貌').cell_value(2, 1) == '人工确认的冲锋衣'
         finally:
             book.release_resources()
     for operation in env.db.query(ExecutionExternalOperation):
@@ -109,5 +113,7 @@ def test_portable_microscopy_full_chain_or_cancel(operation_env,monkeypatch,canc
         assert operation.request_summary['target_filename'].count(NUMBER) == 1
     assert env.db.query(ExecutionExternalOperation).count()==3*(group_count-int(cancel))
     assert env.db.query(ExecutionProjectRule).count()==0
+    assert env.db.query(ExecutionHumanTask).count()==1+int(cancel)
+    assert all(child.input_data['execution_group']['sample_name']=='人工确认的冲锋衣' for child in env.db.query(ExecutionRun).filter_by(parent_run_id=record['id']))
     assert destination.exists()
     if cancel:assert destination.read_bytes()==b'existing different content'

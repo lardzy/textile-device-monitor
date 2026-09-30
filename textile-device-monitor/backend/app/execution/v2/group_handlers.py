@@ -7,7 +7,7 @@ from app.execution.v2.canonical import canonical_sha256
 
 
 def group_form_schema(input_data, config):
-    return {
+    schema = {
         "type": "object", "required": ["groups"], "additionalProperties": False,
         "properties": {"groups": {"type": "array", "minItems": 1,
             "maxItems": len(input_data["groups"]), "items": {
@@ -17,6 +17,16 @@ def group_form_schema(input_data, config):
                     "minItems": 1 if config.get("require_all_groups", True) else 0, "maxItems": 100}},
             }}},
     }
+    if "form_schema" in input_data:
+        from app.execution.release_v2 import runtime_form_schema_issues
+
+        shared = input_data["form_schema"]
+        issues = runtime_form_schema_issues(shared)
+        if issues:
+            raise ExecutionApiError(422, "human_form_schema_invalid", "输入表单结构无效", details={"issues": issues})
+        schema["properties"]["form_data"] = deepcopy(shared)
+        schema["required"].append("form_data")
+    return schema
 
 
 def normalize_groups(input_data, data, config, validate_candidate):
@@ -50,6 +60,8 @@ def normalize_groups(input_data, data, config, validate_candidate):
     if config.get("require_all_groups", True) and seen != set(offered):
         raise ExecutionApiError(422, "group_selection_incomplete", "请为每个分组选择候选项")
     result = {"groups": selected, "unselected_group_ids": [key for key in offered if key not in seen]}
+    if "form_schema" in input_data:
+        result["form_data"] = deepcopy(data["form_data"])
     return {**result, "selection_digest": canonical_sha256(result)}
 
 

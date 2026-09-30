@@ -40,6 +40,7 @@ describe('trusted Execution v2 Human renderer registry', () => {
     expect(hasNativeRendererContract({})).toBe(false);
     expect(trustedHumanRendererCapabilities().map(item => item.capability)).toEqual([
       'human.group_select',
+      'human.group_select',
       'human.form',
       'human.select',
       'human.approval',

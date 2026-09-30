@@ -1066,17 +1066,22 @@
         "config": {
           "runtime_version": 1,
           "timeout_seconds": 5,
-          "code": "\"\"\"Task sample identifiers become selection groups, never business profiles.\"\"\"\nimport re\nimport unicodedata\n\n\ndef main(inputs):\n    choice = inputs['project']\n    project, profile = choice['metadata']['project'], choice['metadata']['profile']\n    raw = project.get('sample_identify') or ''\n    values = raw if isinstance(raw, list) else [raw]\n    identities = list(dict.fromkeys(unicodedata.normalize('NFKC', part).strip()\n        for value in values for part in re.split(profile['form_rules']['identity_separator'], str(value))\n        if part.strip() and part.strip() != '---')) or ['']\n    counts = sorted(int(key) for key in profile['templates'])\n    groups = [{'id': str(index + 1), 'label': identity or '本次样品（无样品识别）',\n               'metadata': {'sample_identity': identity, 'choice_id': choice['id']},\n               'allowed_selected_counts': counts} for index, identity in enumerate(identities)]\n    return {'groups': groups, 'allowed_selected_counts': counts}\n",
+          "code": "\"\"\"Task sample identifiers become selection groups, never business profiles.\"\"\"\nimport re\nimport unicodedata\n\n\ndef name_candidates(snapshot, separator):\n    raw = snapshot.get('sample_names') or snapshot.get('sample_name') or []\n    values = raw if isinstance(raw, list) else [raw]\n    originals = list(dict.fromkeys(str(value).strip() for value in values if value))\n    full = [' '.join(unicodedata.normalize('NFKC', value).split()) for value in originals]\n    # Keep full names first. Suggestions only split visible punctuation/spacing;\n    # the operator can shorten or rewrite them without a hidden business model.\n    parts = [part.strip() for value in originals\n             for phrase in re.split(separator, unicodedata.normalize('NFKC', value))\n             for part in re.split(r'[\\r\\n,，、;；/\\\\|]+', phrase)]\n    words = [part.strip() for value in parts for part in re.split(r'[\\s()\\[\\]【】]+', value)]\n    candidates = list(dict.fromkeys(value for value in full + parts + words\n                                    if value and value != '---' and len(value) <= 500))[:50]\n    return '\\n'.join(originals), candidates\n\n\ndef main(inputs):\n    choice = inputs['project']\n    project, profile = choice['metadata']['project'], choice['metadata']['profile']\n    raw = project.get('sample_identify') or ''\n    values = raw if isinstance(raw, list) else [raw]\n    identities = list(dict.fromkeys(unicodedata.normalize('NFKC', part).strip()\n        for value in values for part in re.split(profile['form_rules']['identity_separator'], str(value))\n        if part.strip() and part.strip() != '---')) or ['']\n    counts = sorted(int(key) for key in profile['templates'])\n    groups = [{'id': str(index + 1), 'label': identity or '本次样品（无样品识别）',\n               'metadata': {'sample_identity': identity, 'choice_id': choice['id']},\n               'allowed_selected_counts': counts} for index, identity in enumerate(identities)]\n    original, candidates = name_candidates(inputs['snapshot'], profile['form_rules']['name_separator'])\n    schema = {'type': 'object', 'title': '各组共用的样品名称',\n              'description': '请从候选中选择或自行填写简洁、准确的名称，可继续编辑。本次所有分组使用此名称生成原始记录。',\n              'properties': {'sample_name': {'type': 'string', 'title': '写入原始记录的样品名称',\n                  'minLength': 1, 'maxLength': 500, 'pattern': r'\\S', 'default': '',\n                  'placeholder': '请选择候选或输入名称', 'x-suggestions': candidates}},\n              'required': ['sample_name'], 'additionalProperties': False}\n    return {'groups': groups, 'allowed_selected_counts': counts, 'form_schema': schema,\n            'context': {'任务单样品名称': original or '任务单未提供，请人工填写'}}\n",
           "input_schema": {
             "type": "object",
             "properties": {
               "project": {
                 "type": "object",
                 "additionalProperties": true
+              },
+              "snapshot": {
+                "type": "object",
+                "additionalProperties": true
               }
             },
             "required": [
-              "project"
+              "project",
+              "snapshot"
             ],
             "additionalProperties": false
           },
@@ -1127,17 +1132,28 @@
                 "items": {
                   "type": "integer"
                 }
+              },
+              "form_schema": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": true
               }
             },
             "required": [
               "groups",
-              "allowed_selected_counts"
+              "allowed_selected_counts",
+              "form_schema",
+              "context"
             ],
             "additionalProperties": false
           }
         },
         "input_mapping": {
-          "project": "$.nodes.project.output.primary_item"
+          "project": "$.nodes.project.output.primary_item",
+          "snapshot": "$.nodes.task.output.snapshot"
         },
         "ui": {
           "x": 1860,
@@ -1146,19 +1162,20 @@
       },
       {
         "id": "images",
-        "name": "按部位选择并排列图片",
+        "name": "填写样品名称并分组选图",
         "type": "human.group_select",
-        "type_version": 1,
+        "type_version": 2,
         "config": {
-          "title": "按部位选择并排列图片",
+          "title": "填写样品名称并分组选图",
           "require_all_groups": true,
           "allow_item_reuse": false,
-          "auto_submit_single_candidate": true
+          "auto_submit_single_candidate": false
         },
         "input_mapping": {
           "items": "$.nodes.candidates.output.items",
           "groups": "$.nodes.selection.output.groups",
-          "context": {}
+          "context": "$.nodes.selection.output.context",
+          "form_schema": "$.nodes.selection.output.form_schema"
         },
         "ui": {
           "x": 2120,
@@ -1173,7 +1190,7 @@
         "config": {
           "runtime_version": 1,
           "timeout_seconds": 5,
-          "code": "\"\"\"Freeze the selected group payloads for the generic sequential batch node.\"\"\"\n\n\ndef main(inputs):\n    return {'items': [{'key': group['id'], 'label': group['label'], 'inputs': {\n        'execution_group': {'choice_id': group['metadata']['choice_id'],\n                            'sample_identity': group['metadata']['sample_identity'],\n                            'images': group['selected_items']}}}\n        for group in inputs['groups']]}\n",
+          "code": "\"\"\"Freeze the selected group payloads for the generic sequential batch node.\"\"\"\n\n\ndef main(inputs):\n    name = inputs['form_data']['sample_name'].strip()\n    if not name:\n        raise ValueError('请选择或填写样品名称')\n    return {'items': [{'key': group['id'], 'label': group['label'], 'inputs': {\n        'execution_group': {'choice_id': group['metadata']['choice_id'],\n                            'sample_name': name,\n                            'sample_identity': group['metadata']['sample_identity'],\n                            'images': group['selected_items']}}}\n        for group in inputs['groups']]}\n",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -1229,10 +1246,15 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "form_data": {
+                "type": "object",
+                "additionalProperties": true
               }
             },
             "required": [
-              "groups"
+              "groups",
+              "form_data"
             ],
             "additionalProperties": false
           },
@@ -1275,7 +1297,8 @@
           }
         },
         "input_mapping": {
-          "groups": "$.nodes.images.output.groups"
+          "groups": "$.nodes.images.output.groups",
+          "form_data": "$.nodes.images.output.form_data"
         },
         "ui": {
           "x": 2380,
@@ -1321,7 +1344,7 @@
         "config": {
           "runtime_version": 1,
           "timeout_seconds": 5,
-          "code": "\"\"\"Resolve the planned group against the current task and source index.\"\"\"\nimport re\nimport unicodedata\n\n\ndef main(inputs):\n    group = inputs['group']\n    matches = [project for project in inputs['projects'] if project['id'] == group['choice_id']]\n    if len(matches) != 1:\n        raise ValueError('该分组的项目或方法已经变化，请重新选择')\n    choice = matches[0]\n    project, profile = choice['metadata']['project'], choice['metadata']['profile']\n    raw = project.get('sample_identify') or ''\n    raw = raw if isinstance(raw, list) else [raw]\n    identities = [unicodedata.normalize('NFKC', part).strip() for value in raw\n                  for part in re.split(profile['form_rules']['identity_separator'], str(value)) if part.strip() and part.strip() != '---'] or ['']\n    if group['sample_identity'] not in identities:\n        raise ValueError('该分组的样品识别已变化，请重新选择')\n    offered = {item['id']: item for item in inputs['items']}\n    images = []\n    for image in group['images']:\n        current = offered.get(image['id'])\n        if current is None or current['fingerprint'] != image['fingerprint']:\n            raise ValueError('选定图片已删除或改变，请重新选图')\n        images.append(current)\n    if len({image['id'] for image in images}) != len(images) or str(len(images)) not in profile['templates']:\n        raise ValueError('该组的图片数量不符合业务方案')\n    return {'project': choice, 'images': images, 'sample_identity': group['sample_identity']}\n",
+          "code": "\"\"\"Resolve the planned group against the current task and source index.\"\"\"\nimport re\nimport unicodedata\n\n\ndef main(inputs):\n    group = inputs['group']\n    matches = [project for project in inputs['projects'] if project['id'] == group['choice_id']]\n    if len(matches) != 1:\n        raise ValueError('该分组的项目或方法已经变化，请重新选择')\n    choice = matches[0]\n    project, profile = choice['metadata']['project'], choice['metadata']['profile']\n    raw = project.get('sample_identify') or ''\n    raw = raw if isinstance(raw, list) else [raw]\n    identities = [unicodedata.normalize('NFKC', part).strip() for value in raw\n                  for part in re.split(profile['form_rules']['identity_separator'], str(value)) if part.strip() and part.strip() != '---'] or ['']\n    if group['sample_identity'] not in identities:\n        raise ValueError('该分组的样品识别已变化，请重新选择')\n    offered = {item['id']: item for item in inputs['items']}\n    images = []\n    for image in group['images']:\n        current = offered.get(image['id'])\n        if current is None or current['fingerprint'] != image['fingerprint']:\n            raise ValueError('选定图片已删除或改变，请重新选图')\n        images.append(current)\n    if len({image['id'] for image in images}) != len(images) or str(len(images)) not in profile['templates']:\n        raise ValueError('该组的图片数量不符合业务方案')\n    return {'project': choice, 'images': images, 'sample_identity': group['sample_identity'],\n            'sample_name': group['sample_name']}\n",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -1607,12 +1630,16 @@
               },
               "sample_identity": {
                 "type": "string"
+              },
+              "sample_name": {
+                "type": "string"
               }
             },
             "required": [
               "project",
               "images",
-              "sample_identity"
+              "sample_identity",
+              "sample_name"
             ],
             "additionalProperties": false
           }
@@ -1635,7 +1662,7 @@
         "config": {
           "runtime_version": 1,
           "timeout_seconds": 5,
-          "code": "\"\"\"Copied verbatim into the workflow's editable Python node.\"\"\"\nimport re\nimport unicodedata\n\n\ndef clean(value):\n    return ' '.join(unicodedata.normalize('NFKC', str(value or '')).split())\n\n\ndef options(value, separator):\n    values = value if isinstance(value, list) else [value]\n    return list(dict.fromkeys(clean(part) for item in values\n                             for part in re.split(separator, str(item or ''))\n                             if clean(part) and clean(part) != '---'))\n\n\ndef main(inputs):\n    project = inputs['project']['metadata']['project']\n    snapshot, rules = inputs['snapshot'], inputs['rules']\n    names = options(snapshot.get('sample_names') or snapshot.get('sample_name'), rules['name_separator'])\n    identities = options(project.get('sample_identify'), rules['identity_separator'])\n    fields = {'sample_name': {'type': 'string', 'title': '样品名称', 'minLength': 1, 'maxLength': 500},\n              'sample_identity': {'type': 'string', 'title': '样品识别', 'maxLength': 500},\n              'remark': {'type': 'string', 'title': '备注', 'maxLength': 1000}}\n    defaults = {'sample_name': names[0] if len(names) == 1 else '',\n                'sample_identity': identities[0] if len(identities) == 1 else '', 'remark': ''}\n    if len(names) > 1:\n        fields['sample_name']['examples'] = names\n    if identities:\n        fields['sample_identity'].update(enum=identities, minLength=1)\n    elif not identities:\n        fields['sample_identity']['const'] = ''\n    needs_judgement = str(project.get('give_judgement') or '').strip().casefold() not in ('', '0', 'false', 'no', '否')\n    if needs_judgement:\n        for key, title in [('judge_basis', '判定依据'), ('indicator_requirement', '指标要求'),\n                           ('test_result', '测试结果'), ('judgement', '判定结果')]:\n            fields[key] = {'type': 'string', 'title': title, 'minLength': 1, 'maxLength': 1000}\n            defaults[key] = ''\n        bases = options(project.get('check_basis_options') or snapshot.get('check_basis'), rules['basis_separator'])\n        fields['judge_basis']['examples'] = bases\n        defaults['judge_basis'] = bases[0] if len(bases) == 1 else ''\n        fields['judgement']['enum'] = rules['judgements']\n    defaults.update({key: value for key, value in rules.get('defaults', {}).items() if key in fields})\n    if 'sample_identity' in inputs:\n        identity = inputs['sample_identity']\n        if identity not in (identities or ['']):\n            raise ValueError('样品识别不属于当前项目')\n        defaults['sample_identity'] = identity\n        fields['sample_identity']['const'] = identity\n        fields['sample_identity']['readOnly'] = True\n    return {'form_schema': {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False},\n            'defaults': defaults, 'context': {'项目': inputs['project']['label'], '图片数量': len(inputs['images'])}}\n",
+          "code": "\"\"\"Copied verbatim into the workflow's editable Python node.\"\"\"\nimport re\nimport unicodedata\n\n\ndef clean(value):\n    return ' '.join(unicodedata.normalize('NFKC', str(value or '')).split())\n\n\ndef options(value, separator):\n    values = value if isinstance(value, list) else [value]\n    return list(dict.fromkeys(clean(part) for item in values\n                             for part in re.split(separator, str(item or ''))\n                             if clean(part) and clean(part) != '---'))\n\n\ndef main(inputs):\n    project = inputs['project']['metadata']['project']\n    snapshot, rules = inputs['snapshot'], inputs['rules']\n    name = inputs['sample_name'].strip()\n    if not name:\n        raise ValueError('请选择或填写样品名称')\n    identities = options(project.get('sample_identify'), rules['identity_separator'])\n    fields = {'sample_name': {'type': 'string', 'title': '样品名称（所有分组共用）', 'minLength': 1, 'maxLength': 500,\n                              'const': name, 'readOnly': True},\n              'sample_identity': {'type': 'string', 'title': '样品识别', 'maxLength': 500},\n              'remark': {'type': 'string', 'title': '备注', 'maxLength': 1000}}\n    defaults = {'sample_name': name,\n                'sample_identity': identities[0] if len(identities) == 1 else '', 'remark': ''}\n    if identities:\n        fields['sample_identity'].update(enum=identities, minLength=1)\n    elif not identities:\n        fields['sample_identity']['const'] = ''\n    needs_judgement = str(project.get('give_judgement') or '').strip().casefold() not in ('', '0', 'false', 'no', '否')\n    if needs_judgement:\n        for key, title in [('judge_basis', '判定依据'), ('indicator_requirement', '指标要求'),\n                           ('test_result', '测试结果'), ('judgement', '判定结果')]:\n            fields[key] = {'type': 'string', 'title': title, 'minLength': 1, 'maxLength': 1000}\n            defaults[key] = ''\n        bases = options(project.get('check_basis_options') or snapshot.get('check_basis'), rules['basis_separator'])\n        fields['judge_basis']['x-suggestions'] = bases\n        defaults['judge_basis'] = bases[0] if len(bases) == 1 else ''\n        fields['judgement']['enum'] = rules['judgements']\n    defaults.update({key: value for key, value in rules.get('defaults', {}).items() if key in fields})\n    defaults['sample_name'] = name\n    if 'sample_identity' in inputs:\n        identity = inputs['sample_identity']\n        if identity not in (identities or ['']):\n            raise ValueError('样品识别不属于当前项目')\n        defaults['sample_identity'] = identity\n        fields['sample_identity']['const'] = identity\n        fields['sample_identity']['readOnly'] = True\n    return {'form_schema': {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False},\n            'defaults': defaults, 'context': {'项目': inputs['project']['label'], '图片数量': len(inputs['images'])}}\n",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -1660,6 +1687,9 @@
               },
               "sample_identity": {
                 "type": "string"
+              },
+              "sample_name": {
+                "type": "string"
               }
             },
             "required": [
@@ -1667,7 +1697,8 @@
               "project",
               "images",
               "rules",
-              "sample_identity"
+              "sample_identity",
+              "sample_name"
             ],
             "additionalProperties": false
           },
@@ -1700,7 +1731,8 @@
           "project": "$.nodes.current_group.output.project",
           "images": "$.nodes.current_group.output.images",
           "sample_identity": "$.nodes.current_group.output.sample_identity",
-          "rules": "$.nodes.current_group.output.project.metadata.profile.form_rules"
+          "rules": "$.nodes.current_group.output.project.metadata.profile.form_rules",
+          "sample_name": "$.nodes.current_group.output.sample_name"
         },
         "ui": {
           "x": 3420,
@@ -2637,8 +2669,8 @@
       },
       {
         "type": "human.group_select",
-        "type_version": 1,
-        "contract_digest": "1803879c002e75167aa239d06381aa3d521783fffef74ec3474e9d35fc68f3e3"
+        "type_version": 2,
+        "contract_digest": "7583aa445a8ce606b903c210d3c786dd52bbd465dab58e2fd1d688d1d8e518ea"
       },
       {
         "type": "human.select",
@@ -2679,7 +2711,7 @@
       },
       {
         "pack_id": "textile.execution-kernel",
-        "version_range": ">=2.12.1 <3.0.0",
+        "version_range": ">=2.13.0 <3.0.0",
         "required_on": [
           "api",
           "worker"
@@ -2728,8 +2760,8 @@
     "category_key": "other",
     "description": "按业务方案匹配项目和方法；选图、记录生成、共享图片及检务登记；规则完整随 JSON 分发。",
     "name": "微观形貌",
-    "release_note": "",
-    "release_version": 1,
+    "release_note": "可读文件名、任务方法与单页打印",
+    "release_version": 8,
     "slug": "fiber-microscopy-v2"
   },
   "resources": {
@@ -2775,7 +2807,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "f56081c743e9853d9dfa22c9175c5d0eb1f1af1d3d450352df5333749e587312",
+    "digest": "a0abbc2b980c079bb868e9f95b584e0074f84747f800cb931a49f0968db1f39b",
     "signatures": []
   }
 }
