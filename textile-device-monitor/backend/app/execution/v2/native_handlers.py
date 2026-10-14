@@ -8,6 +8,7 @@ registry; it cannot name or import any callable from JSON.
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
@@ -471,7 +472,27 @@ def _workbook_extract_batch(context: Any) -> dict[str, Any]:
             row["source"] = ref.as_dict()
             path = _path(context, ref)
             context.db.commit()
+            before = path.stat()
             content = path.read_bytes()
+            after = path.stat()
+            identity = lambda stat: (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            if identity(before) != identity(after) or len(content) != after.st_size:
+                raise ExecutionApiError(
+                    409, "file_changed_during_read",
+                    "文件在读取过程中发生变化，请保存完成后重新读取",
+                )
+            # The index locates the file, but may predate its latest save.
+            # Bind downstream choices to the bytes actually read, without
+            # mutating the query output or waiting for another index scan.
+            row["file"] = {
+                **deepcopy(source),
+                "fingerprint": f"{after.st_size}:{after.st_mtime_ns}",
+                "metadata": {
+                    **deepcopy(source.get("metadata") or {}),
+                    "size": after.st_size,
+                    "modified_at": datetime.fromtimestamp(after.st_mtime, timezone.utc).isoformat(),
+                },
+            }
             row.update(sha256=hashlib.sha256(content).hexdigest(), size_bytes=len(content))
             with _WorkbookReader(path, data_only=config.get("data_only", True), content=content) as reader:
                 row["format"] = "xls" if reader.kind == "xlrd" else "xlsx"

@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-14",
+  "feature": "Use the actual workbook read fingerprint for candidate selection",
+  "incident": {
+    "run_id": "3732d41c-0eb0-4144-83c8-8e26b5fa691c",
+    "inspection_number": "26W007204",
+    "workflow_version": 14,
+    "node_id": "select",
+    "error_code": "file_candidate_stale",
+    "indexed_size_bytes": 82944,
+    "read_size_bytes": 84992,
+    "read_sha256": "55cbef121fb83970c5a6d27d2a0f30c76272cb911d2ea6ef25c004bd5dad04ac",
+    "external_operations": 0
+  },
+  "tests": {
+    "targeted_passed": 44,
+    "original_incident_file_replay_passed": 1,
+    "backend_full": {
+      "passed": 662,
+      "skipped": 4,
+      "subtests_passed": 55,
+      "environment": "new Worker image; network disabled; isolated SQLite and files; real LibreOffice; simulated inspection receipts"
+    },
+    "pack_digests": "current",
+    "contract_snapshot": "current",
+    "portable_examples_checked": 7
+  },
+  "backup": {
+    "file": "database-before.dump",
+    "size_bytes": 14700368,
+    "sha256": "a76780a6d8245ffe2b7252f48ffa0477f6e06ad6743ce882163380ea2acdf00c"
+  },
+  "packs": {
+    "textile.execution-workbook": "2.14.1",
+    "textile.execution-data": "1.1.0",
+    "textile.execution-kernel": "2.13.1",
+    "textile.execution-files": "1.4.1",
+    "legacy_fibrecheck.v1-compat": "2.1.2"
+  },
+  "deployment": {
+    "status": "verified_pending_deployment",
+    "planned_workflows": {
+      "paper-fiber-v2": 15,
+      "fiber-microscopy-v2": 10
+    },
+    "strategy": "Back up and update the existing backend and Worker containers in place. Build images separately; retain all containers, volumes, files and historical Runs."
+  },
+  "boundaries": [
+    "No production Run or inspection write is created for verification.",
+    "Historical failed Run retains its original snapshot and status.",
+    "Discovery of entirely new paths still requires the file index scan."
+  ]
+}

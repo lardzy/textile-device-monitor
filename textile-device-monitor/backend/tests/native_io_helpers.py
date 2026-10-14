@@ -22,7 +22,7 @@ def index_file(env, root_id, path):
     env.db.commit()
     return row
 
-def paper_file(env, suffix=".xlsx", value="木浆 100"):
+def write_paper_file(env, suffix=".xlsx", value="木浆 100"):
     path = Path(env.roots["paper_fiber_records"].local_path) / NUMBER / f"record{suffix}"
     path.parent.mkdir(exist_ok=True)
     if suffix == ".xlsx":
@@ -38,7 +38,10 @@ def paper_file(env, suffix=".xlsx", value="木浆 100"):
         sheet.write(31, 22, value)
         sheet.write(31, 12, "标准值")
         book.save(str(path))
-    return index_file(env, "paper_fiber_records", path)
+    return path
+
+def paper_file(env, suffix=".xlsx", value="木浆 100"):
+    return index_file(env, "paper_fiber_records", write_paper_file(env, suffix, value))
 
 def image_files(env, count=1):
     for i in range(count):

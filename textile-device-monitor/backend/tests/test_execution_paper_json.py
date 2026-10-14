@@ -8,7 +8,7 @@ from app.execution.models import ExecutionNodeRun, ExecutionRun, ExecutionHumanT
 from app.execution.v2.data_handlers import python_test
 from app.execution.v2.designer import compile_document
 from workflow_native_helpers import environment, stage, publish, run, drain
-from native_io_helpers import NUMBER, task_snapshot, paper_file
+from native_io_helpers import NUMBER, task_snapshot, paper_file, write_paper_file
 from tests.test_execution_connector_operations import operation_env, receipt
 
 DOCUMENT_PATH = Path(__file__).parents[1] / 'app/execution/v2/resources/workflows/paper-fiber-v2.json'
@@ -66,14 +66,18 @@ def test_form_only_requests_missing_business_values():
 
 
 @pytest.mark.parametrize('extension',['.xls','.xlsx'])
-def test_clean_environment_runs_portable_json_without_rules_or_legacy_nodes(environment, extension):
+@pytest.mark.parametrize('saved_after_index', [False, True])
+def test_clean_environment_runs_portable_json_without_rules_or_legacy_nodes(environment, extension, saved_after_index):
     env=environment
     task_snapshot(env)
     cached=env.db.get(ExecutionTaskSnapshotCache,NUMBER)
     snapshot=deepcopy(cached.snapshot)
     snapshot['projects'][0].update(check_item_no='51.113K',seq_num=17,sample_identify=None)
     cached.snapshot=snapshot;env.db.commit()
-    paper_file(env,suffix=extension,value='１００')
+    entry = paper_file(env, suffix=extension, value='旧结果' if saved_after_index else '１００')
+    indexed_fingerprint = entry.fingerprint
+    if saved_after_index:
+        write_paper_file(env, suffix=extension, value='１００')
     doc=document()
     keep={'start','task','files','filter_files','read','candidates','select','prepare_form','form','registration','end'}
     doc['definition']['nodes']=[n for n in doc['definition']['nodes'] if n['id'] in keep]
@@ -94,6 +98,12 @@ def test_clean_environment_runs_portable_json_without_rules_or_legacy_nodes(envi
     assert registration['record']['header']['unit']=='%'
     assert registration['record']['details'][0]['real_value']=='100'
     assert not env.db.query(ExecutionHumanTask).filter_by(run_id=record['id'],status='open').count()
+    if saved_after_index:
+        read_output = next(n for n in nodes if n.node_id == 'read').output_data['items'][0]
+        assert read_output['file']['fingerprint'] != indexed_fingerprint
+        # The successful Run did not need an index scan or modify its query evidence.
+        assert entry.fingerprint == indexed_fingerprint
+        assert next(n for n in nodes if n.node_id == 'files').output_data['items'][0]['fingerprint'] == indexed_fingerprint
 
 
 @pytest.mark.parametrize('portable_path', [

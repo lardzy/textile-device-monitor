@@ -523,11 +523,9 @@ def _validate_index_candidate(
             )
         entry, root = row
         if (
-            entry.missing_since is not None
-            or root.root_id not in allowed_roots
+            root.root_id not in allowed_roots
             or root.root_id != value.get("root_id")
             or entry.relative_path != value.get("relative_path")
-            or entry.fingerprint != value.get("fingerprint")
         ):
             raise ExecutionApiError(
                 409,
@@ -548,7 +546,9 @@ def _validate_index_candidate(
                 "候选文件当前不可读取，请刷新后重新选择",
                 details={"candidate_id": value.get("id")},
             ) from exc
-        if f"{stat.st_size}:{stat.st_mtime_ns}" != entry.fingerprint:
+        # Index metadata is a discovery cache. A reader may have observed a
+        # newer saved file; compare the live file to that frozen candidate.
+        if f"{stat.st_size}:{stat.st_mtime_ns}" != value.get("fingerprint"):
             raise ExecutionApiError(
                 409,
                 "file_candidate_stale",
