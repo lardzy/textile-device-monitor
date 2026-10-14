@@ -23,7 +23,29 @@
     },
     "pack_digests": "current",
     "contract_snapshot": "current",
-    "portable_examples_checked": 7
+    "portable_examples_checked": 7,
+    "published_exports_and_incident_replay_passed": 4,
+    "published_exports_match_repository_examples": true,
+    "actual_runtime_replay": {
+      "textile-monitor-backend": {
+        "passed": true,
+        "result": "木浆、竹浆",
+        "sha256": "55cbef121fb83970c5a6d27d2a0f30c76272cb911d2ea6ef25c004bd5dad04ac",
+        "indexed_fingerprint": "82944:1774417898017000000",
+        "read_fingerprint": "84992:1791957471209000000",
+        "validation_database": "separate in-memory SQLite",
+        "production_writes": 0
+      },
+      "textile-execution-worker": {
+        "passed": true,
+        "result": "木浆、竹浆",
+        "sha256": "55cbef121fb83970c5a6d27d2a0f30c76272cb911d2ea6ef25c004bd5dad04ac",
+        "indexed_fingerprint": "82944:1774417898017000000",
+        "read_fingerprint": "84992:1791957471209000000",
+        "validation_database": "separate in-memory SQLite",
+        "production_writes": 0
+      }
+    }
   },
   "backup": {
     "file": "database-before.dump",
@@ -38,16 +60,107 @@
     "legacy_fibrecheck.v1-compat": "2.1.2"
   },
   "deployment": {
-    "status": "verified_pending_deployment",
-    "planned_workflows": {
-      "paper-fiber-v2": 15,
-      "fiber-microscopy-v2": 10
+    "status": "completed",
+    "strategy": "Back up and update the existing backend and Worker containers in place. Build images separately; retain all containers, volumes, files and historical Runs.",
+    "code_commit": "e7cefd8",
+    "workflows": [
+      {
+        "id": "84abf195-e120-4f95-b81c-2b2d4a2a960c",
+        "slug": "fiber-microscopy-v2",
+        "version": 10,
+        "revision": 20,
+        "release_digest": "6c623d402f213adf0170673ed05c28382f790f5d6913a971818b4f36b02d2f72",
+        "missing_worker_nodes": []
+      },
+      {
+        "id": "ae766b2c-f51e-40ff-baca-10608dfe4602",
+        "slug": "paper-fiber-v2",
+        "version": 15,
+        "revision": 30,
+        "release_digest": "c4fcae1bddf1756712f4a89b486e09e7f7d16db3b2375a3bea43c40daac6d95a",
+        "missing_worker_nodes": []
+      }
+    ],
+    "generated_at": "2026-10-14T07:03:24.538322+00:00",
+    "containers": {
+      "textile-monitor-backend": {
+        "id": "82a313290d24bcd0e00327a793785ca4dfd6e7398ae06db9d3362ae85c609f1e",
+        "original_image": "sha256:529f89d38a7a9a243f6243f68351e8645fb4a5df28604a31e4eccce66e8b6d03",
+        "status": "running",
+        "health": "healthy"
+      },
+      "textile-execution-worker": {
+        "id": "ecb099718a487235a66215f110d9f917e8338bb42176752a859ffde5ae3d097c",
+        "original_image": "sha256:ec5da9e97a0c1b7350da2fcaea6913791e01d3e2abd45f6fe524b8daa72f2823",
+        "status": "running",
+        "health": "healthy"
+      },
+      "textile-monitor-frontend": {
+        "id": "609ba40ab1ef2f7fd24bb3852e1fdf031bace9efbfeaf40bc5a160afdd3d8fb4",
+        "original_image": "sha256:88654001faaaee883201d05ecd17a51d170d2aee7c2ce9db196e664c48439d91",
+        "status": "running",
+        "health": "healthy"
+      }
     },
-    "strategy": "Back up and update the existing backend and Worker containers in place. Build images separately; retain all containers, volumes, files and historical Runs."
+    "built_images": {
+      "textile-device-monitor-backend": "sha256:fa8be3cd526ab075d797d1a7a48ba64dc9426f1590cb46d287dd90efb8fc064a",
+      "textile-device-monitor-execution-worker": "sha256:ac71d2094d82a1ec603bb455be30218adaf1f0bebcb2e884b271cb60fce4daa3"
+    },
+    "source_files_match_per_container": 122,
+    "worker_binding_count": 46,
+    "api_ready": true,
+    "migration": "0014_run_groups",
+    "database_migration_required": false,
+    "container_backup": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/excel-index-freshness-20261014/container-backup-b044fea8"
   },
   "boundaries": [
     "No production Run or inspection write is created for verification.",
     "Historical failed Run retains its original snapshot and status.",
     "Discovery of entirely new paths still requires the file index scan."
-  ]
+  ],
+  "preservation": {
+    "counts_before": {
+      "execution_runs": 88,
+      "execution_node_runs": 2025,
+      "execution_node_attempts": 3694,
+      "execution_edge_runs": 1937,
+      "execution_human_tasks": 21,
+      "execution_external_operations": 176,
+      "execution_external_attempts": 190,
+      "execution_artifacts": 104,
+      "execution_artifact_relations": 0,
+      "execution_file_mutations": 0,
+      "execution_users": 1,
+      "execution_credentials": 1,
+      "execution_storage_roots": 9,
+      "execution_workflow_versions": 23
+    },
+    "counts_after": {
+      "execution_runs": 88,
+      "execution_node_runs": 2025,
+      "execution_node_attempts": 3694,
+      "execution_edge_runs": 1937,
+      "execution_human_tasks": 21,
+      "execution_external_operations": 176,
+      "execution_external_attempts": 190,
+      "execution_artifacts": 104,
+      "execution_artifact_relations": 0,
+      "execution_file_mutations": 0,
+      "execution_users": 1,
+      "execution_credentials": 1,
+      "execution_storage_roots": 9,
+      "execution_workflow_versions": 25
+    },
+    "historical_row_hashes_unchanged": true,
+    "artifact_files_checked": 104,
+    "artifact_hashes_unchanged": true,
+    "historical_failed_run": {
+      "id": "3732d41c-0eb0-4144-83c8-8e26b5fa691c",
+      "status": "failed",
+      "file_sha256": "55cbef121fb83970c5a6d27d2a0f30c76272cb911d2ea6ef25c004bd5dad04ac"
+    },
+    "production_runs_created_by_verification": 0,
+    "remote_writes_created_by_verification": 0,
+    "files_records_containers_or_volumes_deleted": 0
+  }
 }
