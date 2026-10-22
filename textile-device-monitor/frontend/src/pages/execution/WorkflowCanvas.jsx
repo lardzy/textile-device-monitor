@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   Controls,
@@ -6,6 +6,8 @@ import {
   MiniMap,
   Position,
   ReactFlow,
+  useNodesInitialized,
+  useStore,
 } from '@xyflow/react';
 import {
   CheckCircleFilled,
@@ -94,6 +96,35 @@ const nodeTypes = {
   executionNode: ExecutionNode,
 };
 
+function CanvasFocus({ flowInstance, focusNodeKey }) {
+  const nodesInitialized = useNodesInitialized();
+  const containerReady = useStore(state => state.width > 0 && state.height > 0);
+  const lastFocusedKey = useRef(null);
+
+  useEffect(() => {
+    const nodeIds = JSON.parse(focusNodeKey);
+    if (!nodeIds.length) {
+      lastFocusedKey.current = null;
+      return;
+    }
+    if (!flowInstance || !nodesInitialized || !containerReady || lastFocusedKey.current === focusNodeKey) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      lastFocusedKey.current = focusNodeKey;
+      void flowInstance.fitView({
+        nodes: nodeIds.map(id => ({ id })),
+        padding: 0.35,
+        maxZoom: 1.2,
+        duration: 420,
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [containerReady, flowInstance, focusNodeKey, nodesInitialized]);
+
+  return null;
+}
+
 export default function WorkflowCanvas({
   nodes,
   edges,
@@ -121,6 +152,47 @@ export default function WorkflowCanvas({
   children,
 }) {
   const [flowInstance, setFlowInstance] = useState(null);
+  const [measurements, setMeasurements] = useState(() => new Map());
+  const nodeIds = useMemo(() => new Set(nodes.map(node => node.id)), [nodes]);
+  // Controlled node updates otherwise discard React Flow's measurements and
+  // handle bounds. Keep these presentation details out of the workflow JSON.
+  const measuredNodes = useMemo(() => nodes.map(node => {
+    const measured = measurements.get(node.id);
+    if (!measured || (node.measured?.width === measured.width && node.measured?.height === measured.height)) {
+      return node;
+    }
+    return { ...node, measured };
+  }), [measurements, nodes]);
+  const handleNodesChange = useCallback((changes) => {
+    const resized = changes.filter(change => (
+      change.type === 'dimensions' && nodeIds.has(change.id)
+      && Number.isFinite(change.dimensions?.width) && change.dimensions.width > 0
+      && Number.isFinite(change.dimensions?.height) && change.dimensions.height > 0
+    ));
+    if (resized.length) {
+      setMeasurements(current => {
+        let next = current;
+        resized.forEach(({ id, dimensions }) => {
+          const previous = current.get(id);
+          if (previous?.width !== dimensions.width || previous?.height !== dimensions.height) {
+            if (next === current) next = new Map(current);
+            next.set(id, { width: dimensions.width, height: dimensions.height });
+          }
+        });
+        return next;
+      });
+    }
+    if (!readonly) onNodesChange?.(changes);
+  }, [nodeIds, onNodesChange, readonly]);
+
+  useEffect(() => {
+    setMeasurements(current => (
+      [...current.keys()].every(id => nodeIds.has(id))
+        ? current
+        : new Map([...current].filter(([id]) => nodeIds.has(id)))
+    ));
+  }, [nodeIds]);
+
   const focusNodeKey = useMemo(() => JSON.stringify(
     [...new Set(
       focusNodeIds
@@ -133,22 +205,6 @@ export default function WorkflowCanvas({
     onInit?.(instance);
   }, [onInit]);
 
-  useEffect(() => {
-    if (!flowInstance) {
-      return;
-    }
-    const nodeIds = JSON.parse(focusNodeKey);
-    if (!nodeIds.length) {
-      return;
-    }
-    void flowInstance.fitView({
-      nodes: nodeIds.map(id => ({ id })),
-      padding: 0.35,
-      maxZoom: 1.2,
-      duration: 420,
-    });
-  }, [flowInstance, focusNodeKey]);
-
   return (
     <div style={{ height: '100%' }} tabIndex={readonly ? -1 : 0} aria-label="流程画布" onPointerDownCapture={event => {
       if (!readonly && !event.target.closest('input,textarea,select,[contenteditable="true"]')) event.currentTarget.focus({ preventScroll: true });
@@ -157,10 +213,10 @@ export default function WorkflowCanvas({
       if ((event.key === 'Delete' || event.key === 'Backspace') && onDeleteSelection) { event.preventDefault(); onDeleteSelection(); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && onUndo) { event.preventDefault(); event.shiftKey ? onRedo?.() : onUndo(); }
     }}><ReactFlow
-      nodes={nodes}
+      nodes={measuredNodes}
       edges={edges}
       nodeTypes={nodeTypes}
-      onNodesChange={readonly ? undefined : onNodesChange}
+      onNodesChange={handleNodesChange}
       onEdgesChange={readonly ? undefined : onEdgesChange}
       onConnect={readonly ? undefined : onConnect}
       onReconnect={readonly ? undefined : onReconnect}
@@ -188,6 +244,7 @@ export default function WorkflowCanvas({
       proOptions={{ hideAttribution: true }}
       className={readonly ? 'execution-flow is-readonly' : 'execution-flow'}
     >
+      <CanvasFocus flowInstance={flowInstance} focusNodeKey={focusNodeKey} />
       <Background color="#d8e0eb" gap={20} size={1} />
       <Controls showInteractive={!readonly} />
       <MiniMap

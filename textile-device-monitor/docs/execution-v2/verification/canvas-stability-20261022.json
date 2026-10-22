@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-22",
+  "feature": "Keep workflow canvas measurements across controlled updates and wait for layout before focusing",
+  "incident": {
+    "run_id": "e13ed186-c707-4a47-80e0-9ea1c944e118",
+    "definition_nodes": 14,
+    "definition_edges": 13,
+    "historical_runtime_capture": "Unavailable during the original blank interval; the same symptom is reproduced in a controlled browser test."
+  },
+  "changes": [
+    "Keep DOM measurements locally for readonly and editable canvases; preserve handle bounds during controlled node updates.",
+    "Discard removed node measurements; accept subsequent content-size changes and ignore zero-size observations.",
+    "Memoize runtime node status projection between snapshot changes.",
+    "Wait for node initialization and positive container dimensions before focusing; cancel superseded animation-frame requests."
+  ],
+  "tests": {
+    "node_tests_passed": 18,
+    "vitest_tests_passed": 175,
+    "canvas_regression_tests": 9,
+    "production_build": "passed",
+    "browser": "147.0.7727.15",
+    "baseline_hidden_nodes_with_delayed_measurements": 14,
+    "fixed_runtime_bad_frames_during_ten_snapshot_refreshes": 0,
+    "runtime_checks": [
+      "ten fresh API snapshots with held node ResizeObserver",
+      "zoom in/out/fit view",
+      "sidebar width transition",
+      "wide/short/narrow viewport",
+      "file drawer open/close"
+    ],
+    "designer_checks": [
+      "six status updates with held node ResizeObserver",
+      "node selection and drag",
+      "readonly transition",
+      "content height remeasurement",
+      "focus after measurement",
+      "hide/show and sidebar resize"
+    ],
+    "page_errors": [],
+    "official_release_build_runtime_regression": "passed",
+    "release_build_page_errors": [],
+    "environment": "Local production builds, actual React Flow and app components, mocked API data, intentionally delayed node ResizeObserver callbacks; no production writes."
+  },
+  "evidence": {
+    "directory": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/canvas-fix-20261022",
+    "baseline_screenshot": "before-hidden.png",
+    "runtime_screenshot": "runtime-fixed.png",
+    "designer_screenshot": "designer-fixed.png",
+    "browser_result": "browser-result.json",
+    "official_release_browser_result": "release-browser-result.json"
+  },
+  "deployment": {
+    "status": "verified_pending_deployment",
+    "strategy": "Back up existing frontend assets, add new hashed assets, atomically replace index.html, retain existing container and old assets."
+  }
+}

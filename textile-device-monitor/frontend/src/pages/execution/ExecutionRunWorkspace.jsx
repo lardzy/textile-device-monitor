@@ -183,6 +183,9 @@ export default function ExecutionRunWorkspace() {
   });
   const requestSeqRef = useRef(0);
   const refreshTimerRef = useRef(null);
+  const definitionNodes = snapshot?.definition.nodes;
+  const nodeRuns = snapshot?.nodeRuns;
+  const nodes = useMemo(() => mergeNodeRunStatuses(definitionNodes || [], nodeRuns || []), [definitionNodes, nodeRuns]);
 
   const loadSnapshot = useCallback(async ({ quiet = false } = {}) => {
     const seq = ++requestSeqRef.current;
@@ -386,7 +389,6 @@ export default function ExecutionRunWorkspace() {
 
   const run = snapshot.run || {};
   const status = RUN_STATUS[run.status] || { label: run.status || '未知状态', color: 'default' };
-  const nodes = mergeNodeRunStatuses(snapshot.definition.nodes, snapshot.nodeRuns);
   const focusNodeIds = resolveExecutionFocusNodeIds(
     snapshot.nodeRuns,
     snapshot.definition.nodes,
