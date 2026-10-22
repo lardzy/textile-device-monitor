@@ -39,7 +39,11 @@
     "page_errors": [],
     "official_release_build_runtime_regression": "passed",
     "release_build_page_errors": [],
-    "environment": "Local production builds, actual React Flow and app components, mocked API data, intentionally delayed node ResizeObserver callbacks; no production writes."
+    "environment": "Local production builds, actual React Flow and app components, mocked API data, intentionally delayed node ResizeObserver callbacks; no production writes.",
+    "deployed_assets_browser_regression": "passed",
+    "deployed_assets_page_errors": [],
+    "deployed_assets_bad_frames_during_ten_snapshot_refreshes": 0,
+    "deployed_assets_drawer_close_animation_completed": true
   },
   "evidence": {
     "directory": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/canvas-fix-20261022",
@@ -47,10 +51,23 @@
     "runtime_screenshot": "runtime-fixed.png",
     "designer_screenshot": "designer-fixed.png",
     "browser_result": "browser-result.json",
-    "official_release_browser_result": "release-browser-result.json"
+    "official_release_browser_result": "release-browser-result.json",
+    "deployed_browser_result": "deployed-browser-result.json"
   },
   "deployment": {
-    "status": "verified_pending_deployment",
-    "strategy": "Back up existing frontend assets, add new hashed assets, atomically replace index.html, retain existing container and old assets."
+    "status": "completed",
+    "container_id": "609ba40ab1ef2f7fd24bb3852e1fdf031bace9efbfeaf40bc5a160afdd3d8fb4",
+    "container_identity_preserved": true,
+    "container_restarted": false,
+    "health": "healthy",
+    "deployed_files_verified": 180,
+    "previous_files_retained": 718,
+    "entry_document_backup": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/canvas-fix-20261022/frontend-before/index.html",
+    "existing_asset_hashes_preserved": true,
+    "all_previous_frontend_files_backed_up": true,
+    "built_image": "sha256:04946c2ae247c46ec2f2236df99ca598f1fa262838cf0c874fd418b22ac792ac",
+    "index_sha256": "1bd6d526bd68fb9643d438300244b0c1cc867b688a1bc4d4f1ab97749e84475e",
+    "production_database_or_business_files_modified": false,
+    "code_commit": "cd6d97e"
   }
 }
