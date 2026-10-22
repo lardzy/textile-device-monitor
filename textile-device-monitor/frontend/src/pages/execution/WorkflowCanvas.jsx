@@ -8,6 +8,7 @@ import {
   ReactFlow,
   useNodesInitialized,
   useStore,
+  useUpdateNodeInternals,
 } from '@xyflow/react';
 import {
   CheckCircleFilled,
@@ -31,13 +32,25 @@ const STATUS_META = {
   skipped: { label: '已跳过', icon: <CheckCircleFilled /> },
 };
 
-const ExecutionNode = memo(({ data, selected }) => {
+const ExecutionNode = memo(({ id, data, selected }) => {
   const tone = data.tone || 'default';
   const status = STATUS_META[data.status];
   const isStart = data.nodeType === 'core.start';
   const isEnd = data.nodeType === 'core.end';
   const inputPorts = data.ports?.inputs ?? (isStart ? [] : [{}]);
   const outputPorts = data.ports?.outputs ?? (isEnd ? [] : [{}]);
+  const updateNodeInternals = useUpdateNodeInternals();
+  const portSignature = JSON.stringify([inputPorts.map(port => port.id ?? null), outputPorts.map(port => port.id ?? null)]);
+  const previousPorts = useRef(portSignature);
+
+  useEffect(() => {
+    if (previousPorts.current !== portSignature) {
+      previousPorts.current = portSignature;
+      // Ports can change without resizing the node, so ResizeObserver alone
+      // cannot refresh the cached handle bounds after a JSON edit.
+      updateNodeInternals(id);
+    }
+  }, [id, portSignature, updateNodeInternals]);
 
   return (
     <div

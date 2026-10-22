@@ -69,5 +69,42 @@
     "index_sha256": "1bd6d526bd68fb9643d438300244b0c1cc867b688a1bc4d4f1ab97749e84475e",
     "production_database_or_business_files_modified": false,
     "code_commit": "cd6d97e"
+  },
+  "review_followup": {
+    "date": "2026-10-22",
+    "reviewed_commits": [
+      "cd6d97e",
+      "a01ee62"
+    ],
+    "finding": "Preserving measurements also preserves handle bounds when a JSON edit replaces a same-ID node with different ports without changing its dimensions.",
+    "resolution": "Refresh handle bounds only when the rendered input/output port IDs or order change; keep cached dimensions for normal snapshot refreshes.",
+    "regression_before_fix": {
+      "canvas_tests_passed": 9,
+      "canvas_tests_failed": 1,
+      "browser_reproduced_stale_bounds": true
+    },
+    "validation": {
+      "node_tests_passed": 18,
+      "vitest_tests_passed": 176,
+      "canvas_tests_passed": 10,
+      "production_build": "passed",
+      "browser_checks": [
+        "same-size core.start to core.end swap",
+        "new input/output handle bounds and rendered connection",
+        "output port reordering updates connection position",
+        "ten unchanged-port refreshes preserve bounds",
+        "ten runtime snapshots with delayed measurements and responsive viewport/drawer checks"
+      ],
+      "page_errors": [],
+      "fixed_runtime_bad_frames": 0
+    },
+    "evidence_directory": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/canvas-review-20261022",
+    "browser_result": "browser-result.json",
+    "review_result": "Resolved the identified stale-handle regression; no further blocking findings.",
+    "deployment": {
+      "status": "not_updated",
+      "reason": "Docker daemon socket /Users/lishuyang/.docker/run/docker.sock is unavailable during the review; container image build and deployment were not performed.",
+      "existing_container_or_business_data_modified": false
+    }
   }
 }

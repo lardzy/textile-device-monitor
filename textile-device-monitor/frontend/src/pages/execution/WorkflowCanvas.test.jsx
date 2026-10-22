@@ -9,6 +9,8 @@ const flowHarness = vi.hoisted(() => ({
   width: 800,
   height: 600,
   props: null,
+  renderNodes: false,
+  updateNodeInternals: vi.fn(),
 }));
 
 vi.mock('@xyflow/react', async () => {
@@ -20,6 +22,7 @@ vi.mock('@xyflow/react', async () => {
     MiniMap: () => null,
     Position: { Left: 'left', Right: 'right' },
     useNodesInitialized: () => flowHarness.initialized,
+    useUpdateNodeInternals: () => flowHarness.updateNodeInternals,
     useStore: selector => selector({ width: flowHarness.width, height: flowHarness.height }),
     ReactFlow: function MockReactFlow(props) {
       const { children, onInit } = props;
@@ -27,7 +30,8 @@ vi.mock('@xyflow/react', async () => {
       React.useEffect(() => {
         onInit?.({ fitView: flowHarness.fitView });
       }, [onInit]);
-      return React.createElement('div', { 'data-testid': 'react-flow' }, children);
+      return React.createElement('div', { 'data-testid': 'react-flow' },
+        flowHarness.renderNodes && props.nodes.map(node => React.createElement(props.nodeTypes[node.type], { ...node, key: node.id })), children);
     },
   };
 });
@@ -50,6 +54,8 @@ describe('WorkflowCanvas viewport focus', () => {
     flowHarness.width = 800;
     flowHarness.height = 600;
     flowHarness.props = null;
+    flowHarness.renderNodes = false;
+    flowHarness.updateNodeInternals.mockClear();
   });
 
   it('首次聚焦、同一节点刷新不重复聚焦，并在节点切换时平滑跟随', async () => {
@@ -199,6 +205,28 @@ describe('WorkflowCanvas viewport focus', () => {
     await resize({ width: 240, height: 180 });
     await resize({ width: 0, height: 0 });
     expect(flowHarness.props.nodes[0].measured).toEqual({ width: 240, height: 180 });
+  });
+
+  it('同 ID 节点的端口变更时重新测量连接点，普通状态刷新不重测', async () => {
+    flowHarness.renderNodes = true;
+    const start = { ...node('step'), data: { label: '步骤', nodeType: 'core.start' } };
+    const { rerender } = render(<WorkflowCanvas nodes={[start]} edges={[]} />);
+    await act(async () => {
+      flowHarness.props.onNodesChange([{ type: 'dimensions', id: 'step', dimensions: { width: 240, height: 120 } }]);
+    });
+    expect(flowHarness.updateNodeInternals).not.toHaveBeenCalled();
+    const end = { ...start, data: { ...start.data, nodeType: 'core.end' } };
+    rerender(<WorkflowCanvas nodes={[end]} edges={[]} />);
+    expect(flowHarness.updateNodeInternals).toHaveBeenCalledTimes(1);
+    expect(flowHarness.updateNodeInternals).toHaveBeenLastCalledWith('step');
+    expect(flowHarness.props.nodes[0].measured).toEqual({ width: 240, height: 120 });
+    const branch = { ...end, data: { ...end.data, ports: { inputs: [{ id: 'in' }], outputs: [{ id: 'yes' }, { id: 'no' }] } } };
+    rerender(<WorkflowCanvas nodes={[branch]} edges={[]} />);
+    expect(flowHarness.updateNodeInternals).toHaveBeenCalledTimes(2);
+    rerender(<WorkflowCanvas nodes={[{ ...branch, data: { ...branch.data, message: '刷新状态', ports: structuredClone(branch.data.ports) } }]} edges={[]} />);
+    expect(flowHarness.updateNodeInternals).toHaveBeenCalledTimes(2);
+    rerender(<WorkflowCanvas nodes={[{ ...branch, data: { ...branch.data, ports: { inputs: [{ id: 'in' }], outputs: [{ id: 'no' }, { id: 'yes' }] } } }]} edges={[]} />);
+    expect(flowHarness.updateNodeInternals).toHaveBeenCalledTimes(3);
   });
 
   it('快速切换焦点时取消上一帧的聚焦，卸载后不继续移动视口', async () => {
