@@ -159,6 +159,91 @@
       "status": "not_updated",
       "reason": "Docker daemon socket /Users/lishuyang/.docker/run/docker.sock is unavailable during the review; container image build and deployment were not performed.",
       "existing_container_or_business_data_modified": false
+    },
+    "network_restoration": {
+      "date": "2026-10-23",
+      "services": [
+        {
+          "name": "textile-monitor-db",
+          "id": "b9138ee50882cc0e20f0589e9170feda77f09831a450bfbfc11de4358c1aa1cc",
+          "status": "running",
+          "health": "healthy"
+        },
+        {
+          "name": "textile-monitor-backend",
+          "id": "82a313290d24bcd0e00327a793785ca4dfd6e7398ae06db9d3362ae85c609f1e",
+          "status": "running",
+          "health": "healthy"
+        },
+        {
+          "name": "textile-execution-worker",
+          "id": "ecb099718a487235a66215f110d9f917e8338bb42176752a859ffde5ae3d097c",
+          "status": "running",
+          "health": "healthy"
+        },
+        {
+          "name": "textile-monitor-frontend",
+          "id": "609ba40ab1ef2f7fd24bb3852e1fdf031bace9efbfeaf40bc5a160afdd3d8fb4",
+          "status": "running",
+          "health": "healthy"
+        },
+        {
+          "name": "textile-area-infer",
+          "id": "43b22f7976487afd9509908c38b62d0f348b6ae8d5a6efcdeb02774c30a8ab3c",
+          "status": "running",
+          "health": null
+        }
+      ],
+      "http_checks": [
+        {
+          "url": "http://127.0.0.1/",
+          "status": 200
+        },
+        {
+          "url": "http://127.0.0.1/health/live",
+          "status": 200
+        },
+        {
+          "url": "http://127.0.0.1/health/ready",
+          "status": 200
+        }
+      ],
+      "deployed_commit": "09b8eb2",
+      "index_sha256": "128dccbf1fcbd45c112072bb3ed593c7fd0faff3b19736dafd0d86c35ab897b4",
+      "canvas_chunks": {
+        "assets/WorkflowCanvas-CKmRaZJJ.js": "967ad753d5a5defdc4b3ef774bd01d2fb5fb050510b3b907564a7f509f5153dc"
+      },
+      "original_container_ids_preserved": true,
+      "real_business_run_or_external_write_created_by_validation": false,
+      "status": "completed",
+      "evidence_directory": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/docker-cleanup-20261023"
     }
+  },
+  "container_cleanup_20261023": {
+    "user_authorized": true,
+    "removed_count": 13,
+    "removed_containers": [
+      "textile-frontend-canvas-09b8eb2-20261022",
+      "textile-freshness-published-exports-3c7658bf",
+      "textile-freshness-built-full-c8ecef6c",
+      "microscopy-token-choice-exports-20260930",
+      "microscopy-token-choice-regression-20260930",
+      "microscopy-shared-name-exports-20260930",
+      "microscopy-shared-name-full-regression-20260930",
+      "microscopy-shared-name-validation-20260930",
+      "microscopy-single-page-preview-20260929",
+      "microscopy-readable-print-preview-20260929",
+      "microscopy-readable-exports-20260929",
+      "microscopy-readable-sample-20260929",
+      "microscopy-usability-validation-20260929"
+    ],
+    "retained_project_services": 5,
+    "retained_other_project_containers": 4,
+    "volumes_unchanged": true,
+    "images_unchanged": true,
+    "bound_host_files_removed": false,
+    "writable_layer_bytes_removed": 115138560,
+    "backup_manifest": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/docker-cleanup-20261023/backup-manifest.json",
+    "cleanup_result": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/docker-cleanup-20261023/cleanup-result.json"
   }
 }
