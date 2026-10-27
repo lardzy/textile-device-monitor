@@ -1,0 +1,148 @@
+{
+  "observed_at": "2026-10-27T08:27:06.054782+00:00",
+  "incident": {
+    "status": "cancelled",
+    "finished_at": "2026-10-27 08:17:01.982372+00:00",
+    "operation_status": "cancelled",
+    "payload_checksum": "dd9ffd92e7582ef4b877cad1a50994afed117381aff56855d1c9f54d1d372b1d",
+    "attempt_count": 1
+  },
+  "counts": {
+    "execution_runs": 107,
+    "execution_node_runs": 2291,
+    "execution_node_attempts": 4058,
+    "execution_edge_runs": 2184,
+    "execution_human_tasks": 21,
+    "execution_external_operations": 221,
+    "execution_external_attempts": 238,
+    "execution_artifacts": 104,
+    "execution_artifact_relations": 0,
+    "execution_file_mutations": 0,
+    "execution_users": 1,
+    "execution_credentials": 1,
+    "execution_workflow_versions": 27
+  },
+  "preserved_artifacts": 104,
+  "historical_records_retained": true,
+  "changed_historical_rows": {
+    "execution_runs": [
+      "67b1cbfc-0d87-4a40-96f6-ffff9736aa24"
+    ],
+    "execution_node_runs": [
+      "23855884-ad2b-424b-b914-4446fca5d0fb"
+    ],
+    "execution_node_attempts": [
+      "1285e6e1-b337-43c7-913c-1036158af674"
+    ],
+    "execution_external_operations": [
+      "b8d18785-cf98-405e-b0c1-9714d25da3ba"
+    ]
+  },
+  "containers_preserved": true,
+  "health": {
+    "textile-monitor-backend": "healthy",
+    "textile-execution-worker": "healthy",
+    "textile-monitor-frontend": "healthy",
+    "textile-monitor-db": "healthy"
+  },
+  "http": {
+    "http://localhost/": "200",
+    "/health/live": "200",
+    "/health/ready": "200"
+  },
+  "workflows": [
+    {
+      "id": "84abf195-e120-4f95-b81c-2b2d4a2a960c",
+      "slug": "fiber-microscopy-v2",
+      "version": 11,
+      "revision": 22,
+      "missing_worker_nodes": []
+    },
+    {
+      "id": "ae766b2c-f51e-40ff-baca-10608dfe4602",
+      "slug": "paper-fiber-v2",
+      "version": 16,
+      "revision": 32,
+      "missing_worker_nodes": []
+    }
+  ],
+  "ready_capability_count": 46,
+  "windows": {
+    "bridges": [
+      {
+        "ProcessId": 3176,
+        "CreationDate": "/Date(1793089489329)/"
+      }
+    ],
+    "bridge_sha256": "5025f8069b3c079bb82733cbc812fc4db30ef5b89bcdf7991f7ec71c8fb5fbd9",
+    "writers": []
+  },
+  "schema_version": 1,
+  "source_commit": "4d762a99847316c2b2dd0a8077350848d4d92814",
+  "deployment": {
+    "commit": "4d762a99847316c2b2dd0a8077350848d4d92814",
+    "files": {
+      "app/execution/external_operations.py": "7c6b3709ff9a293b6daeffc41988f3d466a4f332e0648642d0f7f1cca2972478",
+      "app/execution/v2/resources/manifests/legacy_fibrecheck.v1-compat.json": "f2aaa74989db9b2e723a4f41d0f9bb6147448911fe6dde292ed8750e925253f6",
+      "app/execution/v2/resources/manifests/textile.execution-kernel.json": "bd2883dc34e8e213cdcdd3fb08305406a4d9fe4bb97b2a6a2886b7c3000d0870",
+      "app/execution/v2/resources/snapshots/execution-v2-contracts.json": "571adb20230642222f9f8ea312c4cda40b5856f918221be0dbcebe2df9a25188",
+      "app/execution/v2/resources/workflows/fiber-microscopy-v2.json": "89f318d733223c2a889689c0cdb3e033b63448395dcc5f1aa876fcc1c0e7710d",
+      "app/execution/v2/resources/workflows/paper-fiber-v2.json": "736d994dd3e367ebe562323559c6b3b48b207984e2f1a8a1a6af0919f9d4ac24"
+    },
+    "backup": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/late-receipt-20261027/container-backup",
+    "images": {
+      "backend": {
+        "tag": "textile-device-monitor-backend:late-receipt-4d762a9-20261027",
+        "id": "sha256:aee8c497cb848b90b6a7abffe8aea184433a4fdb996dc5916d6656afee182a90"
+      },
+      "execution-worker": {
+        "tag": "textile-device-monitor-execution-worker:late-receipt-4d762a9-20261027",
+        "id": "sha256:709b605e6e78abf67b70c68a44fd09c9bf344935284d19c8cc1a772ab4adaa04"
+      }
+    }
+  },
+  "tests": [
+    {
+      "suite": "bridge_macos",
+      "passed": 54
+    },
+    {
+      "suite": "bridge_windows",
+      "passed": 54,
+      "log": "windows-tests.log"
+    },
+    {
+      "suite": "backend_regression",
+      "passed": 113,
+      "skipped_then_retested": 8,
+      "log": "regression-tests.log"
+    },
+    {
+      "suite": "contracts_release_late_receipts",
+      "passed": 50
+    },
+    {
+      "suite": "postgres_concurrency",
+      "passed": 6
+    },
+    {
+      "suite": "microscopy_uno_worker",
+      "passed": 8
+    }
+  ],
+  "checks": {
+    "pack_digests": "passed",
+    "contract_snapshot": "passed",
+    "deterministic_examples": 7,
+    "api_run_status": "cancelled",
+    "writer_binaries_and_config_preserved": true,
+    "real_remote_retries": 0,
+    "business_workflow_definitions_unchanged": true
+  },
+  "backup": {
+    "path": ".tmp/late-receipt-20261027/database-before.dump",
+    "size_bytes": 15978209,
+    "sha256": "639cf4b78f8d7639bebe658a70ea0f059ddb02eb9610ea925a05f7f8bf4e1ad4"
+  },
+  "evidence_directory": "/Users/lishuyang/PycharmProjects/textile-device-monitor/textile-device-monitor/.tmp/late-receipt-20261027"
+}
