@@ -2722,7 +2722,7 @@
     "packs": [
       {
         "pack_id": "legacy_fibrecheck.v1-compat",
-        "version_range": ">=2.1.2 <3.0.0",
+        "version_range": ">=2.1.3 <3.0.0",
         "required_on": [
           "api",
           "worker",
@@ -2747,7 +2747,7 @@
       },
       {
         "pack_id": "textile.execution-kernel",
-        "version_range": ">=2.13.1 <3.0.0",
+        "version_range": ">=2.13.2 <3.0.0",
         "required_on": [
           "api",
           "worker"
@@ -2796,8 +2796,8 @@
     "category_key": "other",
     "description": "按业务方案匹配项目和方法；选图、记录生成、共享图片及检务登记；规则完整随 JSON 分发。",
     "name": "微观形貌",
-    "release_note": "修复 Excel 保存后索引滞后引发的候选文件误判；统一文件读取和选择校验版本",
-    "release_version": 10,
+    "release_note": "修复租约过期后的迟到回执收尾；保持业务节点和参数不变",
+    "release_version": 11,
     "slug": "fiber-microscopy-v2"
   },
   "resources": {
@@ -2843,7 +2843,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "6c623d402f213adf0170673ed05c28382f790f5d6913a971818b4f36b02d2f72",
+    "digest": "83c20e0c6fe7064b4cca0aad1f490c00649dc1d1f6e203fbb00645fb9ed52e36",
     "signatures": []
   }
 }

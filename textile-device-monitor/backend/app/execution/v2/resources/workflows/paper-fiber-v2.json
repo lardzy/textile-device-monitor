@@ -1152,7 +1152,7 @@
     "packs": [
       {
         "pack_id": "legacy_fibrecheck.v1-compat",
-        "version_range": ">=2.1.2 <3.0.0",
+        "version_range": ">=2.1.3 <3.0.0",
         "required_on": [
           "api",
           "worker",
@@ -1177,7 +1177,7 @@
       },
       {
         "pack_id": "textile.execution-kernel",
-        "version_range": ">=2.13.1 <3.0.0",
+        "version_range": ">=2.13.2 <3.0.0",
         "required_on": [
           "api",
           "worker"
@@ -1226,8 +1226,8 @@
     "category_key": "other",
     "description": "原始 Excel 读取、必要选择、上传复核及登记；全部业务规则可编辑。",
     "name": "纸浆纤维鉴别",
-    "release_note": "修复 Excel 保存后索引滞后引发的候选文件误判；统一文件读取和选择校验版本",
-    "release_version": 15,
+    "release_note": "修复租约过期后的迟到回执收尾；保持业务节点和参数不变",
+    "release_version": 16,
     "slug": "paper-fiber-v2"
   },
   "resources": {
@@ -1255,7 +1255,7 @@
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
     "scope": "document_without_integrity",
-    "digest": "c4fcae1bddf1756712f4a89b486e09e7f7d16db3b2375a3bea43c40daac6d95a",
+    "digest": "11d453cffb4d965d76f213ca0b1b9e28dce8be3c63e62748d2c3c1e045809032",
     "signatures": []
   }
 }

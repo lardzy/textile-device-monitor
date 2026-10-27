@@ -7259,6 +7259,62 @@ def _ensure_attempt_active(
         )
 
 
+def _is_latest_unresolved_attempt(
+    db: Session,
+    operation: ExecutionExternalOperation,
+    attempt: ExecutionExternalAttempt,
+) -> bool:
+    # The caller holds the operation lock, which also serializes claim,
+    # reconciliation and expiry. Do not trust a previously loaded relationship.
+    latest_id = (
+        db.query(ExecutionExternalAttempt.id)
+        .filter(ExecutionExternalAttempt.operation_id == operation.id)
+        .order_by(ExecutionExternalAttempt.attempt_no.desc())
+        .first()
+    )
+    return (
+        latest_id is not None
+        and latest_id.id == attempt.id
+        and operation.attempt_count == attempt.attempt_no
+        and not isinstance((operation.verification or {}).get("reconciliation"), dict)
+    )
+
+
+def _accept_late_attempt_report(
+    db: Session,
+    operation: ExecutionExternalOperation,
+    attempt: ExecutionExternalAttempt,
+    *,
+    node_run: ExecutionNodeRun | None,
+    now: datetime,
+) -> bool:
+    """Accept evidence from an expired writer, never permission to write again.
+
+    A lease can expire while the Writer is finishing an already permitted
+    remote write. Keep that attempt expired/failed until a verified receipt
+    resolves it; progress reports must not renew the lease or make it claimable.
+    """
+    if (
+        _stage_before_remote_write(attempt.current_stage, operation)
+        or (node_run is not None and node_run.status != "waiting_external")
+        or not _is_latest_unresolved_attempt(db, operation, attempt)
+    ):
+        return False
+    if attempt.status == "failed":
+        return (
+            attempt.error_code == "lease_expired"
+            and operation.status == "reconciliation_required"
+            and operation.error_code == "lease_expired"
+        )
+    # A delayed report may beat the expiry sweep to the operation lock.
+    return (
+        attempt.status in {"claimed", "in_progress"}
+        and operation.status in {"in_progress", "cancel_pending"}
+        and attempt.lease_expires_at is not None
+        and _aware_utc(attempt.lease_expires_at) <= _aware_utc(now)
+    )
+
+
 def _ensure_stage_transition_allowed(
     operation: ExecutionExternalOperation,
     attempt: ExecutionExternalAttempt,
@@ -7331,13 +7387,24 @@ def record_external_attempt_stage(
     now: datetime | None = None,
 ) -> tuple[ExecutionExternalAttempt, ExecutionExternalOperation]:
     current_time = now or utcnow()
-    _run, _node_run, operation, attempt = _attempt_for_bridge(
+    _run, node_run, operation, attempt = _attempt_for_bridge(
         db,
         attempt_id=attempt_id,
         bridge_id=bridge_id,
     )
-    _ensure_attempt_active(operation, attempt, now=current_time)
+    late_report = _accept_late_attempt_report(
+        db, operation, attempt, node_run=node_run, now=current_time,
+    )
+    if not late_report:
+        _ensure_attempt_active(operation, attempt, now=current_time)
     validated_stage = _validate_attempt_stage(stage, operation)
+    stages, write_boundary, _verified = _operation_stage_profile(operation)
+    if late_report and stages.index(validated_stage) <= stages.index(write_boundary):
+        raise conflict(
+            "external_attempt_late_prewrite_stage",
+            "过期尝试只能补交已开始写入后的核验结果，不能重新开始执行",
+            attempt_id=attempt.id,
+        )
     _ensure_stage_transition_allowed(
         operation,
         attempt,
@@ -7350,9 +7417,10 @@ def record_external_attempt_stage(
         at=current_time,
         detail=detail,
     )
-    lease_expires_at = current_time + timedelta(seconds=BRIDGE_LEASE_SECONDS)
-    attempt.lease_expires_at = lease_expires_at
-    operation.lease_expires_at = lease_expires_at
+    if not late_report:
+        lease_expires_at = current_time + timedelta(seconds=BRIDGE_LEASE_SECONDS)
+        attempt.lease_expires_at = lease_expires_at
+        operation.lease_expires_at = lease_expires_at
     return attempt, operation
 
 
@@ -7373,8 +7441,25 @@ def complete_external_attempt(
         attempt_id=attempt_id,
         bridge_id=bridge_id,
     )
-    _ensure_attempt_active(operation, attempt, now=current_time)
     receipt = validate_external_receipt(operation, receipt)
+    if (
+        attempt.status == "completed"
+        and operation.status == "completed"
+        and _is_latest_unresolved_attempt(db, operation, attempt)
+    ):
+        if _canonical_checksum(operation.receipt) != _canonical_checksum(receipt):
+            raise conflict(
+                "external_attempt_receipt_changed",
+                "该执行尝试已完成，重复回执内容不一致",
+                attempt_id=attempt.id,
+            )
+        # A lost HTTP response must not complete the node or emit events twice.
+        return operation, attempt
+    late_report = _accept_late_attempt_report(
+        db, operation, attempt, node_run=node_run, now=current_time,
+    )
+    if not late_report:
+        _ensure_attempt_active(operation, attempt, now=current_time)
     attempt_stages, _write_boundary, verified_stage = (
         _operation_stage_profile(operation)
     )
@@ -7393,6 +7478,8 @@ def complete_external_attempt(
 
     attempt.status = "completed"
     attempt.exit_code = 0
+    attempt.error_code = None
+    attempt.error_message = None
     attempt.finished_at = current_time
     attempt.lease_expires_at = None
     if stdout_summary is not None:
@@ -7430,6 +7517,7 @@ def complete_external_attempt(
             "attempt_no": attempt.attempt_no,
             "status": operation.status,
             "remote_write_performed": True,
+            "late_receipt": late_report,
         },
     )
     append_audit_log(
@@ -7443,6 +7531,7 @@ def complete_external_attempt(
             "attempt_no": attempt.attempt_no,
             "bridge_id": bridge_id,
             "remote_write_performed": True,
+            "late_receipt": late_report,
         },
     )
     return operation, attempt

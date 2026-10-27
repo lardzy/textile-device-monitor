@@ -1197,6 +1197,131 @@ class BridgeProtocolTests(unittest.TestCase):
         self.assertEqual(fail["stage"], "file_copy_verified")
         self.assertNotEqual(fail["error_code"], "abort_acknowledged")
 
+    def test_late_upload_receipt_survives_expired_stage_and_cancel_request(self):
+        claim = qualitative_upload_claim()
+        receipt = qualitative_upload_receipt(claim)
+        self.root_map["paper_fiber_records"] = "C:/paper"
+        process = FakeProcess(
+            [{"stage": stage} for stage in bridge.QUALITATIVE_UPLOAD_PROGRESS_STAGES]
+            + [{"receipt": receipt}]
+        )
+        api = ApiStub(
+            claim=claim,
+            stage_error="main_record_verified",
+            stage_responses={"completed": {"abort_requested": True}},
+        )
+
+        with patch.object(bridge, "api_request", side_effect=api), patch.object(
+            bridge.subprocess, "Popen", return_value=process,
+        ) as popen:
+            bridge.run_one_cycle(self.args, "token", ACCOUNT, "secret", self.root_map)
+
+        popen.assert_called_once()
+        self.assertFalse(process.terminated)
+        self.assertEqual(process.stdin.getvalue(), bridge.SIDE_EFFECT_PERMIT + "\n")
+        self.assertFalse(any(path.endswith("/fail") for path, _ in api.calls))
+        completed = [payload for path, payload in api.calls if path.endswith("/complete")]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0]["receipt"], receipt)
+
+    def test_late_final_entry_retries_only_unconfirmed_progress_before_receipt(self):
+        process = final_entry_process()
+        api = ApiStub(claim=final_entry_claim())
+        completed_stage_calls = []
+
+        def call_api(api_base, token, method, path, payload):
+            result = api(api_base, token, method, path, payload)
+            if path.endswith("/stage") and payload["stage"] == "completed":
+                completed_stage_calls.append(payload)
+                if len(completed_stage_calls) == 1:
+                    raise bridge.BridgeError("external_attempt_lease_expired")
+            return result
+
+        self.run_cycle(process, call_api)
+
+        self.assertEqual(len(completed_stage_calls), 2)
+        self.assertEqual(process.stdin.getvalue(), bridge.SIDE_EFFECT_PERMIT + "\n")
+        self.assertFalse(process.terminated)
+        self.assertEqual(api.calls[-2][1]["stage"], "completed")
+        self.assertTrue(api.calls[-1][0].endswith("/complete"))
+        receipt = api.calls[-1][1]["receipt"]
+        self.assertEqual(receipt["stages"][-1]["stage"], "completed")
+
+    def test_invalid_late_receipt_still_fails_without_progress_retry(self):
+        raw = final_entry_raw_receipt()
+        raw["sample_number"] = "260999999"
+        process = final_entry_process(receipt=raw)
+        api = ApiStub(claim=final_entry_claim(), stage_error="excel_register_verified")
+
+        self.run_cycle(process, api)
+
+        self.assertFalse(any(path.endswith("/complete") for path, _ in api.calls))
+        failed = next(payload for path, payload in api.calls if path.endswith("/fail"))
+        self.assertEqual(failed["error_code"], "final_entry_receipt_rejected")
+
+    def test_unknown_writer_stage_after_permit_still_blocks_completion(self):
+        raw = final_entry_raw_receipt()
+        process = FakeProcess(
+            [{"stage": stage["stage"]} for stage in raw["stages"]]
+            + [{"stage": "unknown_stage"}, {"receipt": raw}]
+        )
+        api = ApiStub(claim=final_entry_claim())
+
+        self.run_cycle(process, api)
+
+        self.assertFalse(any(path.endswith("/complete") for path, _ in api.calls))
+        failed = next(payload for path, payload in api.calls if path.endswith("/fail"))
+        self.assertEqual(failed["error_code"], "bridge_stage_persistence_failed")
+
+    def test_expired_heartbeat_preserves_only_writer_past_permit(self):
+        for past_permit in (False, True):
+            with self.subTest(past_permit=past_permit):
+                process = final_entry_process()
+                original_stdout = process.stdout
+                process.exit_code = 0 if past_permit else 1
+                api = ApiStub(claim=final_entry_claim())
+                events = []
+                event_type = bridge.threading.Event
+
+                def new_event():
+                    event = event_type()
+                    events.append(event)
+                    return event
+
+                def call_api(api_base, token, method, path, payload):
+                    result = api(api_base, token, method, path, payload)
+                    if path.endswith("/heartbeat"):
+                        raise bridge.BridgeError("external_attempt_lease_expired")
+                    return result
+
+                with patch.object(bridge.threading, "Event", side_effect=new_event), patch.object(
+                    bridge.threading, "Thread",
+                ) as thread_type, patch.object(bridge.threading, "Timer"):
+                    def writer_lines():
+                        if past_permit:
+                            for line in original_stdout:
+                                yield line
+                                if json.loads(line).get("stage") == "excel_collection_started":
+                                    with patch.object(events[0], "wait", side_effect=[False, True]):
+                                        thread_type.call_args.kwargs["target"]()
+                        else:
+                            with patch.object(events[0], "wait", side_effect=[False, True]):
+                                thread_type.call_args.kwargs["target"]()
+                            yield json.dumps({"stage": "authenticated"}) + "\n"
+
+                    process.stdout = writer_lines()
+                    self.run_cycle(process, call_api)
+
+                self.assertEqual(process.terminated, not past_permit)
+                heartbeats = [path for path, _ in api.calls if path.endswith("/heartbeat")]
+                self.assertEqual(len(heartbeats), 1)
+                completes = [path for path, _ in api.calls if path.endswith("/complete")]
+                self.assertEqual(len(completes), int(past_permit))
+                self.assertEqual(
+                    process.stdin.getvalue(),
+                    bridge.SIDE_EFFECT_PERMIT + "\n" if past_permit else "",
+                )
+
     def test_final_entry_dispatches_only_machine_payload_and_converts_receipt(self):
         claim = final_entry_claim()
         raw_receipt = final_entry_raw_receipt()

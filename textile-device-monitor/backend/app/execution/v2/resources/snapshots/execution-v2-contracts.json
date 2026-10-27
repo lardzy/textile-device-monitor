@@ -3,7 +3,7 @@
   "connectors": [
     {
       "connector_id": "legacy_fibrecheck",
-      "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+      "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
       "operations": [
         {
           "completion_stage": "main_record_verified",
@@ -11,14 +11,14 @@
           "connector_version": "2.1.0",
           "contract_digest": "fe1b46393baf8e11c3dfcb71f00442bcfaf857fdc6fac25558f63b1000e7d9a5",
           "contract_version": 1,
-          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+          "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
           "execution_kind": "external_side_effect",
           "extensions": {
             "textile": {
               "picture_count": 0
             }
           },
-          "implementation_digest": "ef0d586de842a87f24c70cb9e7e1d74b2301a1a2a530cf307c695b26c8f512d9",
+          "implementation_digest": "4136da5e508bc2ab3a3987a58ad59e97ccb4e0e55e725ed6f4ce09428c914777",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -172,7 +172,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.2",
+          "pack_version": "2.1.3",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -195,14 +195,14 @@
           "connector_version": "2.1.0",
           "contract_digest": "82639c4c088eb1d97913a89bbaea3ab744f6548ec03111dbdd295070a30f3e8f",
           "contract_version": 1,
-          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+          "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
           "execution_kind": "external_side_effect",
           "extensions": {
             "textile": {
               "picture_count": 0
             }
           },
-          "implementation_digest": "5e46e393ea14e29f4cc673bfca9c7019595ab32cb71abdb98be997207147eb13",
+          "implementation_digest": "e33b8cb6e00cf944611945cf9be7eebf3b717bf089a8f2cdc0948e40c4225697",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -255,7 +255,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.2",
+          "pack_version": "2.1.3",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -275,9 +275,9 @@
           "connector_version": "2.1.0",
           "contract_digest": "f3402717965e0c0dae38301b3a70255b239b911a0d7de43e92ea7aaa759b4bff",
           "contract_version": 2,
-          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+          "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
           "execution_kind": "external_side_effect",
-          "implementation_digest": "1baf3dd90786c141735e4b240707ae35cbce332ba8c62c48a7c81f5548a55ad1",
+          "implementation_digest": "5385eafd757e579c1b015fc527e548aa0448b18f3766f90615ad4a2e91f0ea21",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -489,7 +489,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.2",
+          "pack_version": "2.1.3",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -510,9 +510,9 @@
           "connector_version": "2.1.0",
           "contract_digest": "959d3a0d3cf934fcd8eb1cf3246d893e7b63c762a189472b970d3509ff53f3f5",
           "contract_version": 1,
-          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+          "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
           "execution_kind": "external_side_effect",
-          "implementation_digest": "de9d36799ae57df419abaaf0328a0b6ff3a483eff0ccfa835771256c2e961a55",
+          "implementation_digest": "463f1fc8b8cfd591d8c567ff2cbb22f032f1fc991a9f3ec8eb85ac3a78525403",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -610,7 +610,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.2",
+          "pack_version": "2.1.3",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -630,9 +630,9 @@
           "connector_version": "2.1.0",
           "contract_digest": "a48fd2fbd93d50c81afc13bab7f219ae8951fd0652f52687228d94334919527a",
           "contract_version": 1,
-          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+          "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
           "execution_kind": "external_side_effect",
-          "implementation_digest": "bfad6a1d45ecc15e0e818170774d1da688a35d61a3e8de19b1adbfb3f7c5cd72",
+          "implementation_digest": "47c1a17437f318fec81f47bf298aa34bdafa19c655744e108b748563d0a18541",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -819,7 +819,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.2",
+          "pack_version": "2.1.3",
           "ready": true,
           "side_effect_class": "external_write",
           "stages": [
@@ -837,7 +837,7 @@
         }
       ],
       "pack_id": "legacy_fibrecheck.v1-compat",
-      "pack_version": "2.1.2",
+      "pack_version": "2.1.3",
       "queries": [
         {
           "connector_id": "legacy_fibrecheck",
@@ -845,9 +845,9 @@
           "consistency": "cached",
           "contract_digest": "8b6bd2f68401016465c9398812ffe7101c3efbb0ade5fddeb65579e47254c0d8",
           "contract_version": 1,
-          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+          "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
           "execution_kind": "automatic",
-          "implementation_digest": "f96bb6e21e563a248bb2a730584dea44f93e1e1767780b9810d67a5a66770247",
+          "implementation_digest": "f570e19170b505d83998fb8b78cf6865c5a0b0a203b0b4bbbb1fd2a07719e328",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -1018,7 +1018,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.2",
+          "pack_version": "2.1.3",
           "query": "task_snapshot.get",
           "query_ref": "legacy_fibrecheck.task_snapshot.get@1",
           "ready": true,
@@ -1030,9 +1030,9 @@
           "consistency": "cached",
           "contract_digest": "2fffd70c2172b5af0921461dbacfdd12a2411489f47a98d7746d89703352f462",
           "contract_version": 1,
-          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+          "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
           "execution_kind": "automatic",
-          "implementation_digest": "1f3716e2e63bb3e101967ef9ccdb635c45c4d64bd75c92ec575310168235cae9",
+          "implementation_digest": "102f57ce570c36ae00929e0722392d2dd4f49b8f4e842b35f8b889d786ab6037",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -1220,7 +1220,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.2",
+          "pack_version": "2.1.3",
           "query": "check_record.list",
           "query_ref": "legacy_fibrecheck.check_record.list@1",
           "ready": true,
@@ -1232,9 +1232,9 @@
           "consistency": "cached",
           "contract_digest": "41f2325f5a1f2cc6023c37cfee491fbed9abb67b4f6a00289206c38534ae16f1",
           "contract_version": 1,
-          "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+          "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
           "execution_kind": "automatic",
-          "implementation_digest": "57e281e74d4dd7e5aee8f56d602f7966329582ece3b1533ef703b1b3fc02de84",
+          "implementation_digest": "838aef75ef30a5e779e6d7b71b85a9e04eac513ca19d8cd1cb89519de93754a6",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -1429,7 +1429,7 @@
             "type": "object"
           },
           "pack_id": "legacy_fibrecheck.v1-compat",
-          "pack_version": "2.1.2",
+          "pack_version": "2.1.3",
           "query": "check_record.get",
           "query_ref": "legacy_fibrecheck.check_record.get@1",
           "ready": true,
@@ -1665,7 +1665,7 @@
       },
       "contract_digest": "a6bbc7df93553aa4206567ec3734629d97644ea6fd8d1df099305b492f6e1c48",
       "description": "调用已注册的只读查询并立即返回缓存及刷新状态。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -1679,7 +1679,7 @@
           "native": true
         }
       },
-      "implementation_digest": "ccadebaa6e7c86ac7d694092abe6af37ee65b7d0cedd860b94b0324a37026957",
+      "implementation_digest": "aee4ab65cde51943e1564b488af71cdbc9d37f8599a5d612322f81b5ae99b4cc",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -1700,7 +1700,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -1811,7 +1811,7 @@
       },
       "contract_digest": "3517b623c6104d7242dd092286aafb571e2027b26432fdd9c9f7f9455f414980",
       "description": "调用通用只读服务，可等待刷新完成；等待期间释放 Worker。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -1825,7 +1825,7 @@
           "native": true
         }
       },
-      "implementation_digest": "5dd3d8b26a784a130605a7b8353feea27a12a87596d9e8c29944cd6b8eb8c75b",
+      "implementation_digest": "0d8f2ebcc84af87a2a478a662db399c55fd3176f7d213f6e4ab9864d1326bf33",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -1846,7 +1846,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -1930,7 +1930,7 @@
       },
       "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
       "description": "流程出口",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -1946,7 +1946,7 @@
           "required_config": []
         }
       },
-      "implementation_digest": "70350be462a3411b522dc3d890639cb5d24fce7598f9fcc4485067cad83780d3",
+      "implementation_digest": "b18d862d40bd4576b5543626a9bd56fdb62117de769d310fd53c3604812ae872",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -1965,7 +1965,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -2040,7 +2040,7 @@
       },
       "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
       "description": "流程入口",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -2056,7 +2056,7 @@
           "required_config": []
         }
       },
-      "implementation_digest": "14a041469bcc83287c16b10934fe8028a5e7146b712fade446cf0c170e241333",
+      "implementation_digest": "3eabac1cbeb9b0b0c8f06e29cf0ed6732586a046c88fa7784a6ce221bb774ec9",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -2075,7 +2075,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -2171,7 +2171,7 @@
       },
       "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
       "description": "按稳定模式汇总显式输入。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -2186,7 +2186,7 @@
           "native": true
         }
       },
-      "implementation_digest": "4b4cf32c42b68367a39c12cd4af6a6f7428aa5e80dfb3ec0afcd4181cc729cff",
+      "implementation_digest": "c873a9f9b9e1beb7625dac3aa1a979e98a0072c2ecd594a360ea732fc298748b",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2226,7 +2226,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -2329,7 +2329,7 @@
       },
       "contract_digest": "f8cc39428e59cbfd4b599297e2f2c6e988f83a62d40ea9c18b8b5e4ee203091c",
       "description": "向受限 globals namespace 原子写入声明式值。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -2344,7 +2344,7 @@
           "native": true
         }
       },
-      "implementation_digest": "c272e55e37d8cef56d89a9a623d542bb08efb524a10f83572f5dcaf2a1be4135",
+      "implementation_digest": "70ab3e765534a5285e24522522a745edf14a442541554157a52f5f6769df1abf",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2378,7 +2378,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -3031,7 +3031,7 @@
       },
       "contract_digest": "3ce699ec8e05f35a9b7a74c663ca0b61025690f18e73b0e580816fdfd6f4f97f",
       "description": "提交已注册操作，后台执行并返回写入回执。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "external_side_effect",
         "owner": {
@@ -3045,7 +3045,7 @@
           "native": true
         }
       },
-      "implementation_digest": "d24090251be1856d5c319471f835938a758cd853367847c9fd9a8a5f0cb84d55",
+      "implementation_digest": "a242bf864aa63e3debe2690018a97d123e02be2e0b554998071b09825760fe8a",
       "input_schema": {
         "additionalProperties": false,
         "properties": {},
@@ -3066,7 +3066,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4405,7 +4405,7 @@
       },
       "contract_digest": "2960be661c0e9c9cae51611a0312cc3fe6d53d009cc185d1febc9a3eb375fe20",
       "description": "按顺序以当前发布版本创建分组运行；复用 Worker 与回执，成功组不重复执行。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -4420,7 +4420,7 @@
           "native": true
         }
       },
-      "implementation_digest": "bfd78df335d8af36ab7181e2d46efb38f7e79bd0c4a58e53e891ae97c44107a5",
+      "implementation_digest": "1bb49160cdc179c5668c7e3d3fbb9bf43a8de8cc9756f44cbd2b4f492c9db4ea",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4517,7 +4517,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4612,7 +4612,7 @@
       },
       "contract_digest": "e4cfc616a04986e159fcbdafdd5ac96c568b1cb96e7819823e0e220023c959d7",
       "description": "按受限边条件选择全部匹配分支，否则选择唯一 default。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -4627,7 +4627,7 @@
           "native": true
         }
       },
-      "implementation_digest": "6190b65a4668fc572ff81e4af09d499c2e43e06912be99f246f3b39386f10327",
+      "implementation_digest": "b44b0ab73b5d68b8ef3d0bc2c8a0b579dde9536d065d121d72821985f564bbab",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4658,7 +4658,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4740,7 +4740,7 @@
       },
       "contract_digest": "7d599cc4f356bf2815bc932db965792ca41294dfb39c527e014294455a7f3c3e",
       "description": "激活全部输出分支。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -4755,7 +4755,7 @@
           "native": true
         }
       },
-      "implementation_digest": "e8018cb31fbbe1f3d16da42fcf481085648d44533affffc999860993ccefed0f",
+      "implementation_digest": "34898fbd8cb2c7a31302706d8724b9316afa993dc28ad0b85a0a59ee19affbe8",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4786,7 +4786,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -4880,7 +4880,7 @@
       },
       "contract_digest": "98c5bf40cba26e1d819c6cf23a130046dcd797fe6bec8c73b8ac735247a0782a",
       "description": "以明确模式汇合已选择的输入分支。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "automatic",
         "owner": {
@@ -4895,7 +4895,7 @@
           "native": true
         }
       },
-      "implementation_digest": "f3280a26d1c4d7f116bf716c061ba4f16d968edfd1320ccc0660f2b521967cdf",
+      "implementation_digest": "5b9b88480c3ca42a3dafcbc16b4c07a7c9b5d21d1737fbc95cd558df7af8db8d",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4929,7 +4929,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5033,7 +5033,7 @@
       },
       "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
       "description": "对带摘要的 subject 作出可审计批准或拒绝。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5048,7 +5048,7 @@
           "renderer_capability": "human.approval@1.0.0"
         }
       },
-      "implementation_digest": "d671aa6f7436e4b8b88d92f9cfcc0a32f7d6b4405d2ed3b5dc1a43793f7c8314",
+      "implementation_digest": "6a40607adb22475a8f6ca1add6b93259efab125686f29f4da29a47289f38760d",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -5140,7 +5140,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5277,7 +5277,7 @@
       },
       "contract_digest": "2606c9696cda7673e737920d81f9d500521adad6a872209932721ceb5ee3be6e",
       "description": "从封闭的声明式选项中作出非授权性决策。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5292,7 +5292,7 @@
           "renderer_capability": "human.decision@1.0.0"
         }
       },
-      "implementation_digest": "189697a2274e9dc42d21bcd48efb18ccdee033525f6f0ac28a6e7ec83cf1c4df",
+      "implementation_digest": "3443463e6c7a5cd1d6f6c415dcad9522f8888476616197927628a36667afb33e",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -5335,7 +5335,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5450,7 +5450,7 @@
       },
       "contract_digest": "5f8d9306ea1e517e37a2112fce1b9b4bfde8d0000c23b559539f726f4e08c8a9",
       "description": "以受限 JSON Schema 收集人工输入。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5465,7 +5465,7 @@
           "renderer_capability": "human.form@1.0.0"
         }
       },
-      "implementation_digest": "b9e343a774db9359de4bb0f58c35f86ce4e76ad01f93e48642542c879bc4e727",
+      "implementation_digest": "f38e1570105bb629f38f1b3ab6f7f66da856c6eec70ccfef16129c5d640f40e3",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -5492,7 +5492,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5606,7 +5606,7 @@
       },
       "contract_digest": "442c1301e7b43b56aff91ea07abc57b822adb9a3192354744dde79765b29aa48",
       "description": "由上游提供字段与默认值，信息齐全时直接继续。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5621,7 +5621,7 @@
           "renderer_capability": "human.form@1.0.0"
         }
       },
-      "implementation_digest": "de13375123174c5707a3cb27aec3d344a6f668b3bf4930d44b2bc5fd44ddb752",
+      "implementation_digest": "9730cabb1ea20d4b5e49999acfc925e6b06154875396b17a69d0392d788c42ac",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -5656,7 +5656,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -5774,7 +5774,7 @@
       },
       "contract_digest": "1803879c002e75167aa239d06381aa3d521783fffef74ec3474e9d35fc68f3e3",
       "description": "按上游分组选择并排序候选，返回每组独立的选择结果。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "human",
         "owner": {
@@ -5789,7 +5789,7 @@
           "renderer_capability": "human.group_select@1.0.0"
         }
       },
-      "implementation_digest": "0a6bdffd3df330f5e9996fa3c329d1f0a8c2a4526ff502823e9f9c2bb34a496b",
+      "implementation_digest": "ce1eca71ad8001c47c1cb1849a7ea734b891c9fcfbccf14790baf79b786a0d33",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -6014,7 +6014,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -6126,7 +6126,7 @@
       },
       "contract_digest": "7583aa445a8ce606b903c210d3c786dd52bbd465dab58e2fd1d688d1d8e518ea",
       "description": "在一次人工任务中填写各组共用信息，并分组选择、排序候选。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "human",
         "owner": {
@@ -6141,7 +6141,7 @@
           "renderer_capability": "human.group_select@2.0.0"
         }
       },
-      "implementation_digest": "f239101bbcf34ceaeaa5df13c839b889eb76ac276beb6b99202ce354b2949c71",
+      "implementation_digest": "bda989c78fad5c955d9d41a130d07d80749471243e9d8936e74bf8750bdee211",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -6376,7 +6376,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -6510,7 +6510,7 @@
       },
       "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
       "description": "从服务端签发的 artifact 或 image 候选中选择并核对主项。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "human",
         "owner": {
@@ -6525,7 +6525,7 @@
           "renderer_capability": "human.select@1.0.0"
         }
       },
-      "implementation_digest": "101a598cef02436023ba921d6cb3fbe4b2f645655b0526d276a4f44d6173d085",
+      "implementation_digest": "fa22561698dfc5bb6a799b75d994e1c91e37368de00728925d6e2310514a73f1",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -6676,7 +6676,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -6816,7 +6816,7 @@
       },
       "contract_digest": "e7c6b60b9587207efc068e6b1b161608c80b5b102f95120297471bd9b9e36fb2",
       "description": "选择文件或图片，支持上游声明的数量集合，按选择顺序返回。",
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "execution": {
         "kind": "human",
         "owner": {
@@ -6831,7 +6831,7 @@
           "renderer_capability": "human.select@1.0.0"
         }
       },
-      "implementation_digest": "8816bce6013df6b1a9143ed7fd64461bbb8e716cf0db7c0d94084215af1e5fc8",
+      "implementation_digest": "af96d3ddeab9c9049e26333370d9bf3bf476a65d5e8fa8f0c1fb08c450c3f013",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -6995,7 +6995,7 @@
         "type": "object"
       },
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "policies": {
         "error": {
           "default_action": "fail_run"
@@ -9695,10 +9695,10 @@
   ],
   "packs": [
     {
-      "distribution_digest": "a5110f6c1914eb5a1516b677d36673309c39595a647777bca2b5715a198554a3",
+      "distribution_digest": "3c1d1a1e212278325bbddf2484f6c169e17029a836e392e158db2a73b9a0772c",
       "engine_version_range": ">=2.5.0 <3.0.0",
       "pack_id": "legacy_fibrecheck.v1-compat",
-      "pack_version": "2.1.2",
+      "pack_version": "2.1.3",
       "provides": {
         "capabilities": [
           {
@@ -11225,10 +11225,10 @@
       "ready": true
     },
     {
-      "distribution_digest": "c561b99bcf60e851f58ebeebcd35fdd372ceed32246df1b58a01125160f4b77f",
+      "distribution_digest": "216da5655f23c1843635cb279628b1fc303fccb044748df0e58d463fb2cbff9e",
       "engine_version_range": ">=2.5.0 <3.0.0",
       "pack_id": "textile.execution-kernel",
-      "pack_version": "2.13.1",
+      "pack_version": "2.13.2",
       "provides": {
         "capabilities": [
           {
@@ -11241,7 +11241,7 @@
           {
             "contract_digest": "e4cfc616a04986e159fcbdafdd5ac96c568b1cb96e7819823e0e220023c959d7",
             "handler_channel": "worker_callable",
-            "implementation_digest": "6190b65a4668fc572ff81e4af09d499c2e43e06912be99f246f3b39386f10327",
+            "implementation_digest": "b44b0ab73b5d68b8ef3d0bc2c8a0b579dde9536d065d121d72821985f564bbab",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11251,7 +11251,7 @@
           {
             "contract_digest": "7d599cc4f356bf2815bc932db965792ca41294dfb39c527e014294455a7f3c3e",
             "handler_channel": "worker_callable",
-            "implementation_digest": "e8018cb31fbbe1f3d16da42fcf481085648d44533affffc999860993ccefed0f",
+            "implementation_digest": "34898fbd8cb2c7a31302706d8724b9316afa993dc28ad0b85a0a59ee19affbe8",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11261,7 +11261,7 @@
           {
             "contract_digest": "98c5bf40cba26e1d819c6cf23a130046dcd797fe6bec8c73b8ac735247a0782a",
             "handler_channel": "worker_callable",
-            "implementation_digest": "f3280a26d1c4d7f116bf716c061ba4f16d968edfd1320ccc0660f2b521967cdf",
+            "implementation_digest": "5b9b88480c3ca42a3dafcbc16b4c07a7c9b5d21d1737fbc95cd558df7af8db8d",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11271,7 +11271,7 @@
           {
             "contract_digest": "c2a8f5f3709bd9d0c51b10004badeb0a67b6c6849bbfddd6ac491da0b04d776f",
             "handler_channel": "worker_callable",
-            "implementation_digest": "4b4cf32c42b68367a39c12cd4af6a6f7428aa5e80dfb3ec0afcd4181cc729cff",
+            "implementation_digest": "c873a9f9b9e1beb7625dac3aa1a979e98a0072c2ecd594a360ea732fc298748b",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11281,7 +11281,7 @@
           {
             "contract_digest": "f8cc39428e59cbfd4b599297e2f2c6e988f83a62d40ea9c18b8b5e4ee203091c",
             "handler_channel": "worker_callable",
-            "implementation_digest": "c272e55e37d8cef56d89a9a623d542bb08efb524a10f83572f5dcaf2a1be4135",
+            "implementation_digest": "70ab3e765534a5285e24522522a745edf14a442541554157a52f5f6769df1abf",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11291,7 +11291,7 @@
           {
             "contract_digest": "5f8d9306ea1e517e37a2112fce1b9b4bfde8d0000c23b559539f726f4e08c8a9",
             "handler_channel": "human",
-            "implementation_digest": "b9e343a774db9359de4bb0f58c35f86ce4e76ad01f93e48642542c879bc4e727",
+            "implementation_digest": "f38e1570105bb629f38f1b3ab6f7f66da856c6eec70ccfef16129c5d640f40e3",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11301,7 +11301,7 @@
           {
             "contract_digest": "fdaa1d2ee6ef05b2b0722cf27ad611b239b80a64aa61a89a1bfae00da5cb3ef2",
             "handler_channel": "human",
-            "implementation_digest": "101a598cef02436023ba921d6cb3fbe4b2f645655b0526d276a4f44d6173d085",
+            "implementation_digest": "fa22561698dfc5bb6a799b75d994e1c91e37368de00728925d6e2310514a73f1",
             "preferred": false,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11311,7 +11311,7 @@
           {
             "contract_digest": "83ced29ce17afe37355b8aad51a79da882727164c4618ce46ea2a91f4f8995b5",
             "handler_channel": "human",
-            "implementation_digest": "d671aa6f7436e4b8b88d92f9cfcc0a32f7d6b4405d2ed3b5dc1a43793f7c8314",
+            "implementation_digest": "6a40607adb22475a8f6ca1add6b93259efab125686f29f4da29a47289f38760d",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11321,7 +11321,7 @@
           {
             "contract_digest": "2606c9696cda7673e737920d81f9d500521adad6a872209932721ceb5ee3be6e",
             "handler_channel": "human",
-            "implementation_digest": "189697a2274e9dc42d21bcd48efb18ccdee033525f6f0ac28a6e7ec83cf1c4df",
+            "implementation_digest": "3443463e6c7a5cd1d6f6c415dcad9522f8888476616197927628a36667afb33e",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11331,7 +11331,7 @@
           {
             "contract_digest": "a6bbc7df93553aa4206567ec3734629d97644ea6fd8d1df099305b492f6e1c48",
             "handler_channel": "worker_callable",
-            "implementation_digest": "ccadebaa6e7c86ac7d694092abe6af37ee65b7d0cedd860b94b0324a37026957",
+            "implementation_digest": "aee4ab65cde51943e1564b488af71cdbc9d37f8599a5d612322f81b5ae99b4cc",
             "implementation_resources": [
               "connector_queries.py",
               "v2/resources/node_specs/connector-query-node.json"
@@ -11345,7 +11345,7 @@
           {
             "contract_digest": "3ce699ec8e05f35a9b7a74c663ca0b61025690f18e73b0e580816fdfd6f4f97f",
             "handler_channel": "external_operation",
-            "implementation_digest": "d24090251be1856d5c319471f835938a758cd853367847c9fd9a8a5f0cb84d55",
+            "implementation_digest": "a242bf864aa63e3debe2690018a97d123e02be2e0b554998071b09825760fe8a",
             "implementation_resources": [
               "connector_operations.py",
               "v2/resources/node_specs/external-operation-node.json"
@@ -11359,7 +11359,7 @@
           {
             "contract_digest": "442c1301e7b43b56aff91ea07abc57b822adb9a3192354744dde79765b29aa48",
             "handler_channel": "human",
-            "implementation_digest": "de13375123174c5707a3cb27aec3d344a6f668b3bf4930d44b2bc5fd44ddb752",
+            "implementation_digest": "9730cabb1ea20d4b5e49999acfc925e6b06154875396b17a69d0392d788c42ac",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11369,7 +11369,7 @@
           {
             "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
             "handler_channel": "kernel_builtin",
-            "implementation_digest": "14a041469bcc83287c16b10934fe8028a5e7146b712fade446cf0c170e241333",
+            "implementation_digest": "3eabac1cbeb9b0b0c8f06e29cf0ed6732586a046c88fa7784a6ce221bb774ec9",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11379,7 +11379,7 @@
           {
             "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
             "handler_channel": "kernel_builtin",
-            "implementation_digest": "70350be462a3411b522dc3d890639cb5d24fce7598f9fcc4485067cad83780d3",
+            "implementation_digest": "b18d862d40bd4576b5543626a9bd56fdb62117de769d310fd53c3604812ae872",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11389,7 +11389,7 @@
           {
             "contract_digest": "3517b623c6104d7242dd092286aafb571e2027b26432fdd9c9f7f9455f414980",
             "handler_channel": "worker_callable",
-            "implementation_digest": "5dd3d8b26a784a130605a7b8353feea27a12a87596d9e8c29944cd6b8eb8c75b",
+            "implementation_digest": "0d8f2ebcc84af87a2a478a662db399c55fd3176f7d213f6e4ab9864d1326bf33",
             "implementation_resources": [
               "connector_queries.py",
               "v2/resources/node_specs/connector-query-node.json"
@@ -11403,7 +11403,7 @@
           {
             "contract_digest": "e7c6b60b9587207efc068e6b1b161608c80b5b102f95120297471bd9b9e36fb2",
             "handler_channel": "human",
-            "implementation_digest": "8816bce6013df6b1a9143ed7fd64461bbb8e716cf0db7c0d94084215af1e5fc8",
+            "implementation_digest": "af96d3ddeab9c9049e26333370d9bf3bf476a65d5e8fa8f0c1fb08c450c3f013",
             "preferred": true,
             "source": "resource",
             "spec_resource": "v2/resources/node_specs/kernel-p2-nodes.json",
@@ -11413,7 +11413,7 @@
           {
             "contract_digest": "1803879c002e75167aa239d06381aa3d521783fffef74ec3474e9d35fc68f3e3",
             "handler_channel": "human",
-            "implementation_digest": "0a6bdffd3df330f5e9996fa3c329d1f0a8c2a4526ff502823e9f9c2bb34a496b",
+            "implementation_digest": "ce1eca71ad8001c47c1cb1849a7ea734b891c9fcfbccf14790baf79b786a0d33",
             "implementation_resources": [
               "v2/group_handlers.py",
               "v2/resources/node_specs/kernel-p2-nodes.json"
@@ -11427,7 +11427,7 @@
           {
             "contract_digest": "2960be661c0e9c9cae51611a0312cc3fe6d53d009cc185d1febc9a3eb375fe20",
             "handler_channel": "worker_callable",
-            "implementation_digest": "bfd78df335d8af36ab7181e2d46efb38f7e79bd0c4a58e53e891ae97c44107a5",
+            "implementation_digest": "1bb49160cdc179c5668c7e3d3fbb9bf43a8de8cc9756f44cbd2b4f492c9db4ea",
             "implementation_resources": [
               "v2/group_handlers.py",
               "v2/resources/node_specs/kernel-p2-nodes.json"
@@ -11441,7 +11441,7 @@
           {
             "contract_digest": "7583aa445a8ce606b903c210d3c786dd52bbd465dab58e2fd1d688d1d8e518ea",
             "handler_channel": "human",
-            "implementation_digest": "f239101bbcf34ceaeaa5df13c839b889eb76ac276beb6b99202ce354b2949c71",
+            "implementation_digest": "bda989c78fad5c955d9d41a130d07d80749471243e9d8936e74bf8750bdee211",
             "implementation_resources": [
               "v2/group_handlers.py",
               "v2/resources/node_specs/kernel-p2-nodes.json"

@@ -2294,7 +2294,8 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                 observe_abort(response)
             except Exception as exc:  # noqa: BLE001
                 # 服务端尚未确认副作用边界时，失去心跳即停止 Writer；
-                # 确认边界后保留进程，租约最终会安全转入人工对账。
+                # 发出许可后保留进程，继续收取并核验最终回执。服务端会按
+                # 原 attempt 身份决定是否接受迟到结果，不重新执行写入。
                 print(f"心跳失败: {exc}", file=sys.stderr)
                 terminate_before_side_effect()
 
@@ -2310,6 +2311,8 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     receipt_validation_error: Exception | None = None
     last_stage = None
     stage_report_error: Exception | None = None
+    pending_progress_stage: str | None = None
+    pending_progress_error: Exception | None = None
     stdout_tail: list[str] = []
 
     def persist_stage(stage: str, detail: str | None = None) -> dict:
@@ -2326,6 +2329,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
 
     def report_writer_stage(local_stage: str) -> None:
         nonlocal last_stage, stage_report_error
+        nonlocal pending_progress_stage, pending_progress_error
         print(f"阶段: {local_stage}")
         # reconciliation_required 是 Writer outcome，不是进度阶段。失败收尾
         # 必须使用服务端已确认的最远合法阶段。
@@ -2398,9 +2402,31 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                     progress_stages=progress_stages,
                 )
                 last_stage = stage_holder["confirmed"]
+            if (
+                pending_progress_stage is not None
+                and progress_stages.index(last_stage)
+                >= progress_stages.index(pending_progress_stage)
+            ):
+                pending_progress_stage = None
+                pending_progress_error = None
             observe_abort(response)
         except Exception as exc:  # noqa: BLE001
-            stage_report_error = exc
+            with state_lock:
+                permit_sent = stage_holder["permit_state"] == "sent"
+            if permit_sent and local_stage not in {
+                side_effect_ready_stage, side_effect_stage,
+            }:
+                # A lost progress response is not a failed Writer result. Keep
+                # the furthest observed checkpoint for one reporting retry after
+                # receipt validation; never replay the write permit.
+                pending_progress_stage = furthest_stage(
+                    pending_progress_stage,
+                    local_stage,
+                    progress_stages=progress_stages,
+                )
+                pending_progress_error = exc
+            else:
+                stage_report_error = exc
             print(
                 f"阶段回报失败，已按副作用边界停止/收口: {exc}",
                 file=sys.stderr,
@@ -2614,6 +2640,11 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         and stage_report_error is None
         and receipt_validation_error is None
     ):
+        if pending_progress_stage is not None:
+            # The server still requires a verified checkpoint as well as a
+            # valid receipt. Only retry reporting an already observed stage;
+            # stale/reconciled attempts remain subject to server-side checks.
+            report_writer_stage(pending_progress_stage)
         api_request(
             args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/complete",
             {
@@ -2645,9 +2676,9 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                 )
             )
             error_message = str(receipt_validation_error)
-        elif stage_report_error is not None:
+        elif stage_report_error is not None or pending_progress_error is not None:
             error_code = "bridge_stage_persistence_failed"
-            error_message = str(stage_report_error)
+            error_message = str(stage_report_error or pending_progress_error)
         else:
             error_code = (receipt or {}).get("error", f"exit_{exit_code}")
             error_message = summary_text[-1800:]
