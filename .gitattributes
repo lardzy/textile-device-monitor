@@ -2,3 +2,5 @@
 # 容器内 dash/ash 与 Git Bash 会因 \r 直接启动失败。
 *.sh    text eol=lf
 *.envsh text eol=lf
+# Windows 发布时按文件字节核验写入桥摘要。
+/textile-device-monitor/tools/legacy_fibrecheck_bridge/bridge.py text eol=lf

@@ -29,6 +29,9 @@ $Staging = Join-Path $PackageRoot 'staging'
 $Output = Join-Path $PackageRoot 'output'
 
 $Cfg = Import-PowerShellDataFile -LiteralPath $ConfigFile
+$SourceRoot = if ($Cfg.RepoSourceRoot) { $Cfg.RepoSourceRoot } else {
+    (Resolve-Path -LiteralPath (Join-Path $PackageRoot '..\..')).Path
+}
 
 function Assert-Path([string]$Path, [string]$What) {
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -51,9 +54,15 @@ New-Item -ItemType Directory -Force -Path $Staging, $Output | Out-Null
 Write-Output '==> 收集 Python 工具（bridge / snapshot bridge / probe）'
 $Tools = @('legacy_fibrecheck_bridge', 'legacy_fibrecheck_task_snapshot_bridge', 'legacy_fibrecheck_probe')
 foreach ($tool in $Tools) {
-    $src = Join-Path $Cfg.RepoSourceRoot "tools\$tool"
+    $src = Join-Path $SourceRoot "tools\$tool"
     Assert-Path $src "工具 $tool"
     Copy-Tree $src (Join-Path $Staging "app\$tool") -ExcludeDirs @('__pycache__', 'tests', 'out', '.pytest_cache')
+}
+
+$bridgePath = Join-Path $Staging 'app\legacy_fibrecheck_bridge\bridge.py'
+$bridgeHash = (Get-FileHash -LiteralPath $bridgePath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($bridgeHash -ne $Cfg.WriteBridgeSha256) {
+    throw "写入桥源码与本次发布摘要不符，请核对 RepoSourceRoot: $bridgeHash"
 }
 
 # 2. Writer 编译产物 + 校验钉值 + 补 Oracle.DataAccess.dll
@@ -66,7 +75,7 @@ $WriterMap = @(
 )
 $RuntimeHashPins = @{}
 foreach ($w in $WriterMap) {
-    $exe = Join-Path $Cfg.RepoSourceRoot "tools\$($w.Tool)\out\$($w.Exe)"
+    $exe = Join-Path $SourceRoot "tools\$($w.Tool)\out\$($w.Exe)"
     Assert-Path $exe "$($w.Exe) 编译产物"
     $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     $expected = $Cfg.WriterSourceHashes[$w.Exe].ToLowerInvariant()
@@ -125,27 +134,26 @@ $env:PYTHONPATH = Join-Path $Staging 'python-deps'
 if ($LASTEXITCODE -ne 0) { throw 'python-deps 中 oracledb 导入失败' }
 Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue
 
-# 6. 运维脚本与配置模板（生成运行时 Writer 钉值）
+# 6. 运维脚本与非机密默认参数。Writer 钉值记录在 manifest。
 Write-Output '==> 收集运维脚本与配置模板'
 Copy-Tree (Join-Path $PackageRoot 'runtime\ops') (Join-Path $Staging 'ops')
 New-Item -ItemType Directory -Force -Path (Join-Path $Staging 'config') | Out-Null
-Copy-Item (Join-Path $PackageRoot 'runtime\config\bridge.env.example') (Join-Path $Staging 'config') -Force
-$configTemplate = Get-Content -Raw -LiteralPath (Join-Path $PackageRoot 'runtime\config\BridgeConfig.psd1')
-foreach ($pair in $RuntimeHashPins.GetEnumerator()) {
-    $configTemplate = $configTemplate -replace (
-        [regex]::escape("'$($pair.Key)'") + "\s*=\s*'REPLACE_BY_BUILD'"
-    ), "'$($pair.Key)'            = '$($pair.Value)'"
-}
-Set-Content -LiteralPath (Join-Path $Staging 'config\BridgeConfig.psd1') -Value $configTemplate -Encoding UTF8
+Copy-Item (Join-Path $PackageRoot 'runtime\config\BridgeConfig.psd1') (Join-Path $Staging 'config') -Force
 
 # 7. manifest + version.auto.iss
 Write-Output '==> 生成 manifest 与 version.auto.iss'
+$RuntimeHashes = @{}
+foreach ($relative in @('app/legacy_fibrecheck_bridge/managed.py','app/legacy_fibrecheck_task_snapshot_bridge/bridge.py')) {
+    $RuntimeHashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $Staging $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
+}
 $manifest = [ordered]@{
     package         = 'textile-execution-bridge'
     version         = $Cfg.PackageVersion
     built_at        = (Get-Date).ToString('o')
-    repo_source     = $Cfg.RepoSourceRoot
+    repo_source     = $SourceRoot
     writer_sha256   = $RuntimeHashPins
+    write_bridge_sha256 = $bridgeHash
+    runtime_sha256  = $RuntimeHashes
     staging_files   = (Get-ChildItem $Staging -Recurse -File | Measure-Object).Count
     staging_size_mb = [math]::Round(((Get-ChildItem $Staging -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
 }

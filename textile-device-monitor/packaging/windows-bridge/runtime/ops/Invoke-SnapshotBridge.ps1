@@ -1,77 +1,27 @@
-﻿# 任务快照桥（只读）：把旧检务系统任务单信息刷入执行系统缓存。
-# 只做只读 Oracle 查询，可在后台长期运行；与写入桥互不冲突。
-param(
-    [switch]$Once
-)
-
+﻿param([switch]$Once)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'BridgeRuntime.ps1')
 $InstallRoot = Split-Path $PSScriptRoot -Parent
-
-# 计划任务以隐藏窗口运行，stdout 无人可见；按天落盘日志，保留 14 天。
-$LogDir = Join-Path $InstallRoot 'work\logs'
-New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-try {
-    $LogFile = Join-Path $LogDir ("snapshot-bridge-" + (Get-Date -Format 'yyyyMMdd') + '.log')
-    Start-Transcript -Path $LogFile -Append -ErrorAction Stop | Out-Null
-    Get-ChildItem $LogDir -Filter 'snapshot-bridge-*.log' -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-14) } |
-        Remove-Item -Force -ErrorAction SilentlyContinue
+Start-BridgeLogging Snapshot
+$run = {
+    param($settings,$dataRoot)
+    $cfg = $settings.config
+    $env:EXECUTION_BRIDGE_TOKEN = $settings.secrets.EXECUTION_BRIDGE_TOKEN
+    $env:PYTHONPATH = Join-Path $InstallRoot 'python-deps'
+    $python = Join-Path $InstallRoot 'python\python.exe'
+    $bridgeArgs = @(
+        '-u', (Join-Path $InstallRoot 'app\legacy_fibrecheck_task_snapshot_bridge\bridge.py'),
+        '--api-base', $cfg.ApiBase, '--bridge-id', $cfg.SnapshotBridgeId,
+        '--token-env', 'EXECUTION_BRIDGE_TOKEN', '--probe-python', $python,
+        '--probe-script', (Join-Path $InstallRoot 'app\legacy_fibrecheck_probe\probe.py'),
+        '--fibrecheck-dir', (Join-Path $InstallRoot 'fibrecheck'), '--credential-profile', $cfg.OracleCredentialProfile,
+        '--data-source', $cfg.OracleDataSource, '--poll-seconds', [string]$cfg.PollSeconds,
+        '--managed-root', $dataRoot, '--settings-revision', [string]$settings.revision
+    )
+    $client = Join-Path $InstallRoot 'oracle-ic-x64\instantclient_19_31'
+    if (Test-Path -LiteralPath $client -PathType Container) { $bridgeArgs += @('--oracle-client-dir', $client) }
+    if ($Once) { $bridgeArgs += '--once' }
+    & $python @bridgeArgs | Out-Host
+    return $LASTEXITCODE
 }
-catch {
-    Write-Output "WARN: 日志初始化失败，继续运行（$_）"
-}
-
-. (Join-Path $PSScriptRoot 'Import-BridgeEnv.ps1') -EnvFile (Join-Path $InstallRoot 'config\bridge.env')
-$Config = Import-PowerShellDataFile -LiteralPath (Join-Path $InstallRoot 'config\BridgeConfig.psd1')
-
-if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('EXECUTION_BRIDGE_TOKEN', 'Process'))) {
-    throw 'bridge.env 缺少必需项: EXECUTION_BRIDGE_TOKEN'
-}
-
-$Busy = @(
-    Get-CimInstance Win32_Process | Where-Object {
-        $_.Name -match '^python(\.exe)?$' -and
-        $_.CommandLine -like '*legacy_fibrecheck_task_snapshot_bridge\bridge.py*'
-    }
-)
-if ($Busy.Count -gt 0) {
-    throw 'Another task snapshot bridge process is already running'
-}
-
-$Python = Join-Path $InstallRoot 'python\python.exe'
-# probe 依赖（oracledb）随安装包放在 python-deps，加入 PYTHONPATH
-$env:PYTHONPATH = Join-Path $InstallRoot 'python-deps'
-
-$SnapshotArgs = @(
-    (Join-Path $InstallRoot 'app\legacy_fibrecheck_task_snapshot_bridge\bridge.py'),
-    '--api-base', $Config.ApiBase,
-    '--bridge-id', $Config.SnapshotBridgeId,
-    '--token-env', 'EXECUTION_BRIDGE_TOKEN',
-    '--probe-python', $Python,
-    '--probe-script', (Join-Path $InstallRoot 'app\legacy_fibrecheck_probe\probe.py'),
-    '--fibrecheck-dir', (Join-Path $InstallRoot 'fibrecheck'),
-    '--credential-profile', $Config.OracleCredentialProfile,
-    '--data-source', $Config.OracleDataSource,
-    '--poll-seconds', "$($Config.PollSeconds)"
-)
-$OracleClient = Join-Path $InstallRoot 'oracle-ic-x64\instantclient_19_31'
-if (Test-Path -LiteralPath $OracleClient -PathType Container) {
-    $SnapshotArgs += @('--oracle-client-dir', $OracleClient)
-}
-if ($Once) { $SnapshotArgs += '--once' }
-
-Write-Output "SNAPSHOT_BRIDGE_START $(Get-Date -Format o)"
-if ($Once) {
-    & $Python @SnapshotArgs
-    $ExitCode = $LASTEXITCODE
-    Write-Output "SNAPSHOT_BRIDGE_EXIT=$ExitCode"
-    exit $ExitCode
-}
-
-# 守护循环：后端重启等瞬断导致桥进程退出时自动拉起。
-while ($true) {
-    & $Python @SnapshotArgs
-    $ExitCode = $LASTEXITCODE
-    Write-Output "SNAPSHOT_BRIDGE_EXIT=$ExitCode $(Get-Date -Format o)（5 秒后重启）"
-    Start-Sleep -Seconds 5
-}
+exit (Invoke-BridgeSupervisor -Kind Snapshot -Run $run -Once:$Once)

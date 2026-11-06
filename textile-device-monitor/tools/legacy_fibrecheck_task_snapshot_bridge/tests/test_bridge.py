@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -460,6 +461,30 @@ class ContinuousPollingTests(unittest.TestCase):
             self.assertEqual(bridge.main(['--api-base', 'http://localhost/api/execution/v1', '--bridge-id', 'test-loop', '--fibrecheck-dir', 'unused', '--token-env', 'TEST_LOOP_TOKEN'] + ["--once"]), 0)
         cycle.assert_called_once()
         sleep.assert_not_called()
+
+
+class InstalledBoundaryTests(unittest.TestCase):
+    def test_drain_requested_during_snapshot_waits_for_original_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "runtime").mkdir()
+            (root / "config").mkdir()
+            (root / "config/settings.json").write_text('{"revision":3,"enabled":{"snapshot":true}}')
+            def request(base, token, method, route, body):
+                if route.endswith("/claim"):
+                    (root / "config/maintenance.lock").touch()
+                    return {"claimed": True, "inspection_number": INSPECTION_NUMBER, "claim_token": "abc"}
+                self.assertTrue(route.endswith("/complete"))
+                self.assertEqual((token, body["claim_token"]), ("current", "abc"))
+                return {}
+            original = bridge.run_one_cycle
+            with patch.dict(bridge.os.environ, {"EXECUTION_BRIDGE_TOKEN": "current"}), patch.object(
+                bridge, "run_one_cycle", side_effect=lambda a,t: original(a, t, request=request, probe=lambda *_:probe_document())
+            ) as cycles:
+                self.assertEqual(bridge.main(["--api-base","http://unit.test","--bridge-id","snap",
+                                             "--fibrecheck-dir","unused","--managed-root",tmp,"--settings-revision","3"]),20)
+            self.assertEqual(cycles.call_count, 1)
+            self.assertFalse((root / "runtime/snapshot.pending.json").exists())
 
 
 if __name__ == "__main__":

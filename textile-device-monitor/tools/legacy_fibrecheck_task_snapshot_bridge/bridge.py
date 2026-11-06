@@ -466,7 +466,7 @@ def _fail_claim(
     error: SnapshotBridgeError,
     *,
     request: Callable[..., dict[str, Any]],
-) -> None:
+) -> bool:
     try:
         request(
             args.api_base,
@@ -482,7 +482,8 @@ def _fail_claim(
         )
     except SnapshotBridgeError:
         # 原始错误已经决定本次失败；避免用回报失败覆盖它，也不泄漏响应内容。
-        pass
+        return False
+    return True
 
 
 def run_one_cycle(
@@ -499,6 +500,9 @@ def run_one_cycle(
         "/task-snapshot-bridge/claim",
         {"bridge_id": args.bridge_id, "supports_check_records": True},
     )
+    control = getattr(args, "_control", None)
+    if control:
+        control.claim(claim.get("inspection_number") if claim.get("claimed") else "")
     if claim.get("claimed") is not True:
         print("没有待刷新的旧系统任务快照")
         return "idle"
@@ -530,7 +534,7 @@ def run_one_cycle(
             },
         )
     except SnapshotBridgeError as exc:
-        _fail_claim(
+        acknowledged = _fail_claim(
             args,
             token,
             inspection_number,
@@ -538,6 +542,8 @@ def run_one_cycle(
             exc,
             request=request,
         )
+        if control and not acknowledged:
+            control.unknown = True
         print(f"旧系统任务快照刷新失败（{exc.code}）", file=sys.stderr)
         return "failed"
 
@@ -564,6 +570,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--once", action="store_true", help="只执行一次领取轮询")
     parser.add_argument("--poll-seconds", type=float, default=DEFAULT_POLL_SECONDS)
+    parser.add_argument("--managed-root")
+    parser.add_argument("--settings-revision", type=int)
     return parser
 
 
@@ -576,6 +584,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.poll_seconds <= 0 or args.probe_timeout_seconds <= 0:
         print("轮询间隔和探针超时必须大于 0", file=sys.stderr)
         return 2
+
+    if args.managed_root:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "legacy_fibrecheck_bridge"))
+        from managed import ManagedCycle
+
+        args._control = ManagedCycle(args.managed_root, args.settings_revision, "snapshot")
+        return args._control.run(lambda: run_one_cycle(args, token), args.poll_seconds, args.once)
 
     while True:
         try:

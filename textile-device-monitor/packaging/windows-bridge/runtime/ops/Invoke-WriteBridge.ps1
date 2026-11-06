@@ -1,137 +1,56 @@
-﻿# 写入桥：领取已批准的特种毛上传 / 特纤复核 / 检验记录登记外部操作并驱动 Writer。
-# 必须在已登录用户的交互会话中运行（FinalEntry Writer 需要 COM Excel 交互会话），
-# 由计划任务“仅当用户登录时运行”触发，或管理员手动运行。
-param(
-    [switch]$Once
-)
-
+﻿param([switch]$Once)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'BridgeRuntime.ps1')
 $InstallRoot = Split-Path $PSScriptRoot -Parent
-
-# 计划任务以隐藏窗口运行，stdout 无人可见；按天落盘日志，保留 14 天。
-$LogDir = Join-Path $InstallRoot 'work\logs'
-New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-try {
-    $LogFile = Join-Path $LogDir ("write-bridge-" + (Get-Date -Format 'yyyyMMdd') + '.log')
-    Start-Transcript -Path $LogFile -Append -ErrorAction Stop | Out-Null
-    Get-ChildItem $LogDir -Filter 'write-bridge-*.log' -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-14) } |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-}
-catch {
-    Write-Output "WARN: 日志初始化失败，继续运行（$_）"
-}
-
-. (Join-Path $PSScriptRoot 'Import-BridgeEnv.ps1') -EnvFile (Join-Path $InstallRoot 'config\bridge.env')
-$Config = Import-PowerShellDataFile -LiteralPath (Join-Path $InstallRoot 'config\BridgeConfig.psd1')
-
-foreach ($name in @('EXECUTION_BRIDGE_TOKEN', 'LEGACY_FIBRECHECK_LOGIN', 'LEGACY_FIBRECHECK_PASSWORD', 'SMB_USER_B', 'SMB_PASS_B')) {
-    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name, 'Process'))) {
-        throw "bridge.env 缺少必需项: $name"
-    }
-}
-
-$Busy = @(
-    Get-CimInstance Win32_Process | Where-Object {
-        $_.Name -in @('FibreCheckWriter.exe', 'FibreCheckFinalEntryWriter.exe') -or (
-            $_.Name -match '^python(\.exe)?$' -and
-            $_.CommandLine -like '*legacy_fibrecheck_bridge\bridge.py*'
-        )
-    }
-)
-if ($Busy.Count -gt 0) {
-    throw 'Another FibreCheck Bridge or Writer process is already running'
-}
-
-$WriterDir = Join-Path $InstallRoot 'writers\FibreCheckWriter'
-$FinalWriterDir = Join-Path $InstallRoot 'writers\FibreCheckFinalEntryWriter'
-$Writer = Join-Path $WriterDir 'FibreCheckWriter.exe'
-$FinalWriter = Join-Path $FinalWriterDir 'FibreCheckFinalEntryWriter.exe'
-foreach ($pair in $Config.WriterHashes.GetEnumerator()) {
-    $Path = if ($pair.Key -eq 'FibreCheckWriter.exe') { $Writer } else { $FinalWriter }
-    $Actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($Actual -ne $pair.Value.ToLowerInvariant()) {
-        throw "Writer hash mismatch for $($pair.Key): $Actual (upgrade BridgeConfig.psd1 pins after a package upgrade)"
-    }
-}
-
-$NativeSource = @'
+Start-BridgeLogging Write
+function Connect-BridgeShares($Config, $Secrets) {
+    if (-not ('TextileBridgeSmb' -as [type])) {
+        Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-
-public static class SmbNativeMethods
-{
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct NETRESOURCE
-    {
-        public int dwScope;
-        public int dwType;
-        public int dwDisplayType;
-        public int dwUsage;
-        public string lpLocalName;
-        public string lpRemoteName;
-        public string lpComment;
-        public string lpProvider;
+public static class TextileBridgeSmb {
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    public struct Resource {
+        public int scope, type, display, usage;
+        public string local, remote, comment, provider;
     }
-
-    [DllImport("mpr.dll", CharSet = CharSet.Unicode)]
-    public static extern int WNetAddConnection2(
-        ref NETRESOURCE netResource,
-        string password,
-        string username,
-        int flags);
+    [DllImport("mpr.dll", CharSet=CharSet.Unicode)]
+    public static extern int WNetAddConnection2(ref Resource resource, string password, string username, int flags);
 }
 '@
-if (-not ('SmbNativeMethods' -as [type])) {
-    Add-Type -TypeDefinition $NativeSource
-}
-foreach ($Target in $Config.SmbTargets) {
-    $Resource = New-Object SmbNativeMethods+NETRESOURCE
-    $Resource.dwType = 1
-    $Resource.lpRemoteName = $Target
-    $Result = [SmbNativeMethods]::WNetAddConnection2(
-        [ref]$Resource, $env:SMB_PASS_B, $env:SMB_USER_B, 0
-    )
-    if ($Result -ne 0 -and $Result -ne 1219) {
-        throw "WNetAddConnection2($Target) failed with code $Result"
+    }
+    foreach ($target in $Config.SmbTargets) {
+        $resource = New-Object TextileBridgeSmb+Resource
+        $resource.type = 1
+        $resource.remote = $target
+        $rc = [TextileBridgeSmb]::WNetAddConnection2([ref]$resource, $Secrets.SMB_PASS_B, $Secrets.SMB_USER_B, 0)
+        if ($rc -eq 1219) { throw "共享 $target 已有其他身份的连接，请先核对并关闭冲突连接" }
+        if ($rc -ne 0) { throw "连接共享 $target 失败（Windows $rc）" }
     }
 }
-
-$Python = Join-Path $InstallRoot 'python\python.exe'
-$Bridge = Join-Path $InstallRoot 'app\legacy_fibrecheck_bridge\bridge.py'
-$FinalWork = Join-Path $InstallRoot 'work\final-entry'
-New-Item -ItemType Directory -Force -Path $FinalWork, (Join-Path $InstallRoot 'work\logs') | Out-Null
-
-$BridgeArgs = @(
-    $Bridge,
-    '--api-base', $Config.ApiBase,
-    '--bridge-id', $Config.WriteBridgeId,
-    '--token-env', 'EXECUTION_BRIDGE_TOKEN',
-    '--writer', $Writer,
-    '--final-entry-writer', $FinalWriter,
-    '--final-entry-work-root', $FinalWork,
-    '--fibrecheck-dir', (Join-Path $InstallRoot 'fibrecheck'),
-    '--account-env', 'LEGACY_FIBRECHECK_LOGIN',
-    '--password-env', 'LEGACY_FIBRECHECK_PASSWORD',
-    '--source-root', "execution_staging=$($Config.ExecutionStagingPath)",
-    '--source-root', "paper_fiber_records=$($Config.PaperFiberRecordsPath)",
-    '--poll-seconds', "$($Config.PollSeconds)"
-)
-if ($Once) { $BridgeArgs += '--once' }
-
-Write-Output "WRITE_BRIDGE_START $(Get-Date -Format o)"
-if ($Once) {
-    & $Python @BridgeArgs
-    $ExitCode = $LASTEXITCODE
-    Write-Output "WRITE_BRIDGE_EXIT=$ExitCode"
-    exit $ExitCode
+$run = {
+    param($settings,$dataRoot)
+    $cfg = $settings.config
+    $null = Get-BridgeManifest $InstallRoot
+    Connect-BridgeShares $cfg $settings.secrets
+    foreach ($key in 'EXECUTION_BRIDGE_TOKEN','LEGACY_FIBRECHECK_LOGIN','LEGACY_FIBRECHECK_PASSWORD') {
+        [Environment]::SetEnvironmentVariable($key, $settings.secrets[$key], 'Process')
+    }
+    $finalWork = Join-Path $InstallRoot 'work\final-entry'
+    New-Item -ItemType Directory -Force -Path $finalWork | Out-Null
+    $bridgeArgs = @(
+        '-u', (Join-Path $InstallRoot 'app\legacy_fibrecheck_bridge\bridge.py'),
+        '--api-base', $cfg.ApiBase, '--bridge-id', $cfg.WriteBridgeId,
+        '--token-env', 'EXECUTION_BRIDGE_TOKEN', '--account-env', 'LEGACY_FIBRECHECK_LOGIN',
+        '--password-env', 'LEGACY_FIBRECHECK_PASSWORD',
+        '--writer', (Join-Path $InstallRoot 'writers\FibreCheckWriter\FibreCheckWriter.exe'),
+        '--final-entry-writer', (Join-Path $InstallRoot 'writers\FibreCheckFinalEntryWriter\FibreCheckFinalEntryWriter.exe'),
+        '--final-entry-work-root', $finalWork, '--fibrecheck-dir', (Join-Path $InstallRoot 'fibrecheck'),
+        '--source-root', "execution_staging=$($cfg.ExecutionStagingPath)", '--source-root', "paper_fiber_records=$($cfg.PaperFiberRecordsPath)",
+        '--poll-seconds', [string]$cfg.PollSeconds, '--managed-root', $dataRoot, '--settings-revision', [string]$settings.revision
+    )
+    if ($Once) { $bridgeArgs += '--once' }
+    & (Join-Path $InstallRoot 'python\python.exe') @bridgeArgs | Out-Host
+    return $LASTEXITCODE
 }
-
-# Bridge 连续领取任务，每项任务仍单独启动 Writer。
-# 仅进程异常退出时等待后重启；正常任务之间没有固定空档。
-while ($true) {
-    & $Python @BridgeArgs
-    $ExitCode = $LASTEXITCODE
-    Write-Output "WRITE_BRIDGE_EXIT=$ExitCode $(Get-Date -Format o)（5 秒后重启）"
-    Start-Sleep -Seconds 5
-}
+exit (Invoke-BridgeSupervisor -Kind Write -Run $run -Once:$Once)

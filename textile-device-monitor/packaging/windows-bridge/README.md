@@ -18,8 +18,7 @@ Inno Setup 安装包，用于生产 Windows 主机的一次性部署。
 | `python-deps` | `python-deps\` | probe 的 pip 依赖（oracledb），构建时离线装入 |
 | `ops` / `config` | `ops\` / `config\` | 本目录 `runtime/` 下脚本与模板 |
 
-机密（旧系统账号、桥令牌、SMB 凭据）**不进安装包**，由管理员安装后填写
-`config\bridge.env`（模板 `bridge.env.example` 随包安装）。
+现场账号、桥令牌和共享凭据由管理员在安装后的配置中心填写。
 
 ## 构建（Windows 构建机）
 
@@ -41,38 +40,19 @@ Inno Setup 安装包，用于生产 Windows 主机的一次性部署。
 > 直接造成解析失败（`Unexpected token` / `missing the terminator`）。
 > 编辑器保存或脚本化编辑后请确认 BOM 仍在（文件头三字节 `EF BB BF`）。
 
-## 安装与启用（生产 Windows 主机）
+## 安装与启用
 
-1. 运行安装包（管理员）。默认安装到 `C:\TextileExecutionBridge`。
-2. 编辑 `config\BridgeConfig.psd1`：API 地址（保持 http，端口必须与前端容器
-   发布端口一致，桥不可用期间的外部操作会停在“等待连接器”）、
-   `ExecutionStagingPath`（必须与容器 `EXECUTION_RUNTIME_HOST_PATH` 同目录）等。
-   该路径**不要使用交互会话的映射盘符**（如 `Z:`）：计划任务按最高权限运行时
-   看不到未提升会话的盘符映射（除非启用 `EnableLinkedConnections`），Writer 会
-   连续报 `DirectoryNotFoundException`。请用本地盘路径（如 `D:\...`）或 UNC
-   路径（如 `\\Mac\Home\...`、`\\192.168.105.82\...`）。
-3. 复制 `config\bridge.env.example` 为 `config\bridge.env` 并填写机密；
-   收紧 ACL 仅管理员/SYSTEM 可读。
-4. 自检：`ops\Test-BridgeInstallation.ps1`（无副作用）。
-5. 注册计划任务：`ops\Register-BridgeScheduledTasks.ps1 -UserName <操作员账号>`
-   （账号格式直接用 `whoami` 的输出；脚本注册后会立即尝试启动）。
-   写入桥必须运行在已登录用户的交互会话（FinalEntry 需要 COM Excel），
-   因此任务按“仅当用户登录时运行”注册；主机重启后需该用户登录。
-6. 手动验证一次：`ops\Invoke-SnapshotBridge.ps1 -Once`、
-   `ops\Invoke-WriteBridge.ps1 -Once`。
+现场操作见 [Windows Bridge 1.3.0 一页说明](现场操作.md)。配置中心使用 Windows PowerShell 5.1 和 WinForms。安装器创建开始菜单入口，首次安装后由操作员在窗口中启用各桥。
 
-## 运行日志
+程序安装在 `C:\TextileExecutionBridge`，现场设置存放在 `%ProgramData%\TextileExecutionBridge\config\settings.json`。配置与备份使用同一目录 ACL，凭据由 Windows DPAPI LocalMachine 加密。运行状态与待核对回执保存在同一数据根的 `runtime` 子目录。两个 Writer 的摘要取自当前安装清单。
 
-两个桥以隐藏窗口的计划任务运行，stdout 不可见；运行日志按天落盘在
-`work\logs\write-bridge-yyyyMMdd.log` 与 `work\logs\snapshot-bridge-yyyyMMdd.log`
-（保留 14 天，自动清理）。排查“等待连接器不动”类问题时先看这两个文件。
+安装器维护钩子先让现有任务在回执边界停止，再覆盖程序。1.2.x 首次升级需在现场确认队列空闲。两个计划任务继续使用操作员的交互式会话和 AtLogOn 触发器。写入桥日志、快照桥日志按日期保存在 `work\logs`。
 
-## 目录约定
+Windows 验收脚本位于 `tests`，应在临时数据根使用测试凭据及模拟服务执行。正式启用会领取真实操作。
 
-- 安装目录固定且不含版本号，升级直接覆盖安装；`config\`、`work\` 不会被卸载删除。
-- 注意：若新版本更换了 Writer 编译产物，`config\BridgeConfig.psd1` 因
-  `onlyifdoesntexist` 保留旧文件，其中 `WriterHashes` 钉值仍是旧哈希，
-  写入桥会拒绝启动（报 Writer hash mismatch）。此时需手工把
-  `BridgeConfig.psd1` 里对应 exe 的钉值改成安装包 `manifest.json` 中
-  `writer_sha256` 的新值，再重跑 `ops\Invoke-WriteBridge.ps1 -Once` 验证。
-- 写入桥同一时刻只允许一个进程（脚本自检）；全局写入并发仍由服务端固定为 1。
+若状态显示“回执待核对”，先停用该桥，在执行系统按原尝试和旧检务记录处理对账。确认该尝试已收尾后，管理员可在安装目录释放对应的本机暂停标记。填写实际桥类型、界面显示的尝试 ID 和核对依据，系统会保存本次处理记录。
+
+```powershell
+. .\ops\BridgeRuntime.ps1
+Confirm-BridgeReconciledAttempt -Kind Write -AttemptId '<原尝试 ID>' -Reason '<核对依据>'
+```

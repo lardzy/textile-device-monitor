@@ -1961,6 +1961,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--password-env", default="FIBRECHECK_RUNNER_PASSWORD")
     parser.add_argument("--once", action="store_true", help="只领取并执行一个任务（无任务则立即返回）")
     parser.add_argument("--poll-seconds", type=float, default=2.0)
+    parser.add_argument("--managed-root")
+    parser.add_argument("--settings-revision", type=int)
     args = parser.parse_args(argv)
 
     token = os.environ.get(args.token_env, "")
@@ -1973,6 +1975,13 @@ def main(argv: list[str] | None = None) -> int:
         print("缺少旧系统账号/口令环境变量", file=sys.stderr)
         return 2
     root_map = parse_root_map(args.source_root)
+
+    if args.managed_root:
+        from managed import ManagedCycle
+
+        args._control = ManagedCycle(args.managed_root, args.settings_revision, "write")
+        return args._control.run(lambda: run_one_cycle(args, token, account, password, root_map),
+                                 args.poll_seconds, args.once)
 
     while True:
         outcome = run_one_cycle(args, token, account, password, root_map)
@@ -1997,6 +2006,10 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             "supported_operation_types": list(supported_operation_types),
         },
     )
+    control = getattr(args, "_control", None)
+    if control:
+        control.claim((claim.get("attempt") or {}).get("id", ""),
+                      (claim.get("operation") or {}).get("id", ""))
     if not claim.get("claimed"):
         print("没有待领取的旧系统操作")
         return "idle"
@@ -2645,7 +2658,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             # valid receipt. Only retry reporting an already observed stage;
             # stale/reconciled attempts remain subject to server-side checks.
             report_writer_stage(pending_progress_stage)
-        api_request(
+        acknowledged = api_request(
             args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/complete",
             {
                 "bridge_id": args.bridge_id,
@@ -2682,7 +2695,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         else:
             error_code = (receipt or {}).get("error", f"exit_{exit_code}")
             error_message = summary_text[-1800:]
-        api_request(
+        acknowledged = api_request(
             args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
             {
                 "bridge_id": args.bridge_id,
@@ -2692,6 +2705,9 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             },
         )
         print(f"写入失败/待对账: stage={fail_stage} exit={exit_code}")
+    if control:
+        terminal = (acknowledged.get("operation") or {}).get("status")
+        control.unknown = terminal not in ("completed", "failed", "cancelled", "approved")
     try:
         os.unlink(package_file.name)
     except OSError:

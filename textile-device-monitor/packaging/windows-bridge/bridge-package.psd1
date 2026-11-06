@@ -12,10 +12,14 @@
     # 1.2.1：Excel 模板与通用录入界面共存时，按明确模板执行 schema 5 登记。
     # 1.2.2：保留模板实际分组及可空序号，按采集身份回读；不假定序号从 1 连续。
     # 1.2.3：中性上传缺少 FileType 时在写入前拒绝，避免旧客户端打开记录报空引用。
-    PackageVersion    = '1.2.3'
+    # 1.2.4：写入桥在租约过期后仍可回报经过校验的终态，沿用 1.2.3 的 Writer。
+    # 1.3.0：本机配置中心、ProgramData 加密配置与任务边界切换。
+    PackageVersion    = '1.3.0'
+    WriteBridgeSha256 = '83ae07b6f54940beb8644f7094cef9316e91524c4025d894806168c26e643a5d'
 
     # 执行系统源码树（含 tools\*；writer 已编译产物在其 out\ 下）
-    RepoSourceRoot    = 'C:\Users\lishuyang\Downloads\textile-device-monitor-cdde9ec\textile-device-monitor'
+    # 留空使用当前打包脚本所属的源码树；使用独立构建目录时可指定路径。
+    RepoSourceRoot    = ''
 
     # 旧仓库根（.tmp 下的第三方物料：FibreCheck 冻结客户端、oracle-ic）
     LegacyRepoRoot    = 'C:\Users\lishuyang\Downloads\textile-device-monitor'

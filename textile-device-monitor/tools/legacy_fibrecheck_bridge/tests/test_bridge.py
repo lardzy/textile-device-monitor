@@ -6,6 +6,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -2186,6 +2187,67 @@ class ContinuousPollingTests(unittest.TestCase):
             self.assertEqual(bridge.main(['--api-base', 'http://localhost/api/execution/v1', '--bridge-id', 'test-loop', '--fibrecheck-dir', 'unused', '--token-env', 'TEST_LOOP_TOKEN', '--writer', 'writer.exe'] + ["--once"]), 0)
         cycle.assert_called_once()
         sleep.assert_not_called()
+
+
+class InstalledControlTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        (self.root / "config").mkdir()
+        (self.root / "runtime").mkdir()
+        self.settings(1)
+        self.env = {"EXECUTION_BRIDGE_TOKEN": "old-token", "FIBRECHECK_RUNNER_ACCOUNT": "account",
+                    "FIBRECHECK_RUNNER_PASSWORD": "unused"}
+
+    def settings(self, rev, enabled=True):
+        (self.root / "config/settings.json").write_text(json.dumps(
+            {"revision": rev, "enabled": {"write": enabled}}), encoding="utf-8")
+
+    def launch(self, rev=1, *extra):
+        with patch.dict(bridge.os.environ, self.env):
+            return bridge.main(["--api-base", f"http://host-{rev}", "--bridge-id", "id",
+                                "--writer", "unused", "--fibrecheck-dir", "unused",
+                                "--managed-root", str(self.root), "--settings-revision", str(rev), *extra])
+
+    def test_change_during_attempt_finishes_old_receipt_then_next_generation_can_claim(self):
+        calls = []
+        def request(base, token, _, route, body):
+            calls.append((base, token, route))
+            if route.endswith("/claim"):
+                self.settings(2)
+                return {"claimed": True, "attempt": {"id": "A"}, "operation": {"id": "O", "credential": {"account_name": "other"}}}
+            return {"operation": {"status": "failed"}}
+        with patch.object(bridge, "api_request", side_effect=request):
+            self.assertEqual(self.launch(), 20)
+        self.assertEqual(calls, [("http://host-1", "old-token", "/external-bridge/claim"),
+                                 ("http://host-1", "old-token", "/external-bridge/attempts/A/fail")])
+        self.env["EXECUTION_BRIDGE_TOKEN"] = "new-token"
+        with patch.object(bridge, "api_request", return_value={"claimed": False}) as api:
+            self.assertEqual(self.launch(2, "--once"), 1)
+        self.assertEqual(api.call_args.args[:2], ("http://host-2", "new-token"))
+        self.assertFalse((self.root / "runtime/write.pending.json").exists())
+
+    def test_unacknowledged_attempt_survives_restart_and_refuses_another_claim(self):
+        claim = {"claimed": True, "attempt": {"id": "A"}, "operation": {"id": "O", "credential": {"account_name": "other"}}}
+        with patch.object(bridge, "api_request", side_effect=[claim, OSError("private backend details")]):
+            self.assertEqual(self.launch(), 22)
+        pending = json.loads((self.root / "runtime/write.pending.json").read_bytes())
+        self.assertEqual(pending["AttemptId"], "A")
+        with patch.object(bridge, "api_request") as api:
+            self.assertEqual(self.launch(), 22)
+        api.assert_not_called()
+        self.assertNotIn("private", (self.root / "runtime/write.json").read_text())
+
+    def test_maintenance_and_disable_prevent_claim(self):
+        marker = self.root / "config/maintenance.lock"
+        marker.touch()
+        with patch.object(bridge, "api_request") as api:
+            self.assertEqual(self.launch(), 20)
+            marker.unlink()
+            self.settings(2, False)
+            self.assertEqual(self.launch(2), 20)
+        api.assert_not_called()
 
 
 if __name__ == "__main__":

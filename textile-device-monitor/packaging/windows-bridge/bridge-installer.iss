@@ -41,6 +41,9 @@ OutputBaseFilename={#MyAppOutputBaseFilename}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+CloseApplications=no
+RestartApplications=no
+SetupMutex=TextileExecutionBridgeInstaller
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
@@ -62,10 +65,69 @@ Source: "{#MyAppSourceDir}\python\*"; DestDir: "{app}\python"; Flags: ignorevers
 Source: "{#MyAppSourceDir}\python-deps\*"; DestDir: "{app}\python-deps"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; 运维脚本与配置模板
 Source: "{#MyAppSourceDir}\ops\*"; DestDir: "{app}\ops"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#MyAppSourceDir}\config\bridge.env.example"; DestDir: "{app}\config"; Flags: ignoreversion onlyifdoesntexist
-Source: "{#MyAppSourceDir}\config\BridgeConfig.psd1"; DestDir: "{app}\config"; Flags: ignoreversion onlyifdoesntexist
+Source: "{#MyAppSourceDir}\ops\BridgeInstall.ps1"; DestDir: "{tmp}"; DestName: "BridgeInstallPreflight.ps1"; Flags: dontcopy
+Source: "{#MyAppSourceDir}\config\BridgeConfig.psd1"; DestDir: "{app}\defaults"; Flags: ignoreversion
 Source: "{#MyAppSourceDir}\manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 
+[Icons]
+Name: "{commonprograms}\Textile Execution Bridge\Bridge 配置中心"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\ops\BridgeControlCenter.ps1"""; WorkingDir: "{app}"
+
 [Run]
-; 安装结束后不自动启动任何桥：凭据与配置需管理员先填写 config\bridge.env
-; 与 config\BridgeConfig.psd1，再用 ops\Register-BridgeScheduledTasks.ps1 注册任务。
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\ops\BridgeControlCenter.ps1"""; Description: "打开 Bridge 配置中心"; Flags: postinstall nowait skipifsilent runasoriginaluser
+
+[Code]
+var
+  Prepared, CopyStarted: Boolean;
+
+function Hook(Phase: String; LegacyIdle: Boolean): String;
+var
+  Args, ErrFile: String;
+  Code: Integer;
+  Detail: AnsiString;
+begin
+  Result := '';
+  ErrFile := ExpandConstant('{tmp}\bridge-install-error.txt');
+  DeleteFile(ErrFile);
+  Args := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{tmp}\BridgeInstallPreflight.ps1') + '" -Phase ' + Phase +
+    ' -InstallRoot "' + ExpandConstant('{app}') + '" -StateFile "' +
+    ExpandConstant('{tmp}\bridge-maintenance.json') + '" -ErrorFile "' + ErrFile + '"';
+  if LegacyIdle then Args := Args + ' -LegacyIdle';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Args, '',
+              SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then begin
+    Result := 'Bridge 安装检查未通过，请核对计划任务、配置和安装日志。';
+    if LoadStringFromFile(ErrFile, Detail) then Result := UTF8Decode(Detail);
+    Log(Result);
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Confirmed: Boolean;
+begin
+  if Prepared then begin Result := ''; exit; end;
+  ExtractTemporaryFile('BridgeInstallPreflight.ps1');
+  Confirmed := ExpandConstant('{param:LEGACYIDLE|0}') = '1';
+  Result := Hook('Prepare', Confirmed);
+  if Result = 'LEGACY_MAINTENANCE_REQUIRED' then begin
+    if WizardSilent then begin Result := '旧版升级请先核实维护窗口，交互运行安装程序。'; exit; end;
+    Confirmed := MsgBox('这是旧版 Bridge 的首次迁移。请暂停发起及批准新业务，确认已批准待领取、正在执行和待回执的操作都已收尾。现在进入维护窗口？',
+                        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+    if not Confirmed then begin Result := '请在维护窗口内重新安装。'; exit; end;
+    Result := Hook('Prepare', True);
+  end;
+  Prepared := Result = '';
+end;
+procedure CurStepChanged(Step: TSetupStep);
+var Err: String;
+begin
+  if Step = ssInstall then CopyStarted := True;
+  if Step = ssPostInstall then begin
+    Err := Hook('Complete', False);
+    if Err <> '' then RaiseException(Err);
+  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  if Prepared and not CopyStarted then Hook('Abort', False);
+end;
