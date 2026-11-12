@@ -1,15 +1,15 @@
-"""Deploy bundled native workflows and retire known v1 entries; never runs them.
+"""Install bundled native workflows; never executes a business workflow.
 
-Run ``python -m app.execution.deploy_builtin_workflows`` inside backend. The
-default fully rehearses publication in a transaction and rolls it back. --apply
-commits the same checks and changes together. --sync-existing explicitly
-updates and enables the two bundled v2 workflows. Files and historical rows
-are never deleted; newer or conflicting portable releases are never replaced.
+Container startup uses ``install_at_startup``: directly installs both native
+workflows and removes the obsolete built-ins and all their database records.
+``--startup`` performs that same operation for the older bootstrap wrapper.
+Explicit maintenance calls retain the earlier preview/apply interface.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 
 from sqlalchemy import text
@@ -19,7 +19,7 @@ from app.config import settings
 from app.execution.errors import ExecutionApiError
 from app.execution.events import append_audit_log
 from app.execution.models import (
-    ExecutionCredential, ExecutionDeploymentBinding, ExecutionExternalOperation,
+    ExecutionAuditLog, ExecutionCredential, ExecutionDeploymentBinding, ExecutionExternalOperation,
     ExecutionHumanTask, ExecutionRun, ExecutionStorageRoot, ExecutionUser,
     ExecutionWorkflow, ExecutionWorkflowRelease, ExecutionWorkflowVersion, utcnow,
 )
@@ -40,6 +40,7 @@ LEGACY_SLUGS = frozenset({
 })
 BUILTIN_SLUGS = ("fiber-microscopy-v2", "paper-fiber-v2")
 RESOURCE_DIRECTORY = Path(__file__).parent / "v2/resources/workflows"
+logger = logging.getLogger(__name__)
 
 
 def fail(code: str, message: str, **details) -> None:
@@ -66,6 +67,19 @@ def _credential(db: Session, actor: ExecutionUser, credential_id: str | None) ->
     if len(rows) != 1:
         fail("deployment_credential_required", "管理员需要一个有效的个人检务凭据；请先在网页配置，或用 --credential 指定", credential_ids=[row.id for row in rows])
     return rows[0]
+
+
+def _installation_actor(db: Session) -> ExecutionUser:
+    """Reuse a configured administrator; more than one admin is normal."""
+    actor = (db.query(ExecutionUser)
+        .join(ExecutionCredential, ExecutionCredential.user_id == ExecutionUser.id)
+        .filter(ExecutionUser.is_active.is_(True), ExecutionUser.role == "admin",
+                ExecutionCredential.system_key == "legacy_inspection",
+                ExecutionCredential.is_active.is_(True))
+        .order_by(ExecutionUser.created_at, ExecutionUser.id).first())
+    if actor is None:
+        fail("deployment_credential_required", "请在执行系统中为管理员配置个人检务凭据")
+    return actor
 
 
 def _check_idle(db: Session, workflow_ids: list[str]) -> None:
@@ -100,34 +114,48 @@ def _bindings(db: Session, document: dict, credential: ExecutionCredential, over
     }
 
 
-def _require_report(report: dict, *, publish: bool, slug: str) -> None:
+def _require_report(report: dict, *, publish: bool, slug: str, require_worker: bool = True) -> None:
     missing_worker = [issue for issue in report["issues"] if issue["code"] == "node_capability_unavailable"]
-    if not report["publish_ready" if publish else "content_valid"] or (publish and missing_worker):
+    if not report["publish_ready" if publish else "content_valid"] or (publish and require_worker and missing_worker):
         fail("deployment_preflight_failed", "流程预检未通过，请修复以下问题后重试", slug=slug, issues=report["issues"])
 
 
 def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
            credential_id: str | None = None, root_overrides: dict[str, str] | None = None,
-           sync_existing: bool = False) -> dict:
+           sync_existing: bool = False, automatic: bool = False) -> dict:
     """Own the transaction: commit once on success, otherwise always roll back."""
     try:
         if db.bind.dialect.name == "postgresql":
             # Serialize this maintenance command even before target rows exist.
             db.execute(text("SET LOCAL lock_timeout = '10s'"))
             db.execute(text("SELECT pg_advisory_xact_lock(824310, 2)"))
-        actor = _actor(db, operator)
-        credential = _credential(db, actor, credential_id)
         documents = [json.loads((RESOURCE_DIRECTORY / f"{slug}.json").read_text(encoding="utf-8")) for slug in BUILTIN_SLUGS]
+        bundle_version = ":".join(f"{doc['release']['slug']}@{doc['release']['release_version']}" for doc in documents)
         declared_slots = {slot["slot_id"] for doc in documents for slot in doc["resources"]["root_slots"]}
         overrides = root_overrides or {}
         if set(overrides) - declared_slots:
             fail("deployment_unknown_slot", "--root 引用了未声明的目录槽", slots=sorted(set(overrides) - declared_slots))
         locked = db.query(ExecutionWorkflow).filter(ExecutionWorkflow.slug.in_(LEGACY_SLUGS | set(BUILTIN_SLUGS))).order_by(ExecutionWorkflow.id).populate_existing().with_for_update().all()
-        legacy = [row for row in locked if row.slug in LEGACY_SLUGS and row.management_mode == "draft_v1"]
+        legacy = [row for row in locked if row.slug in LEGACY_SLUGS and (automatic or row.management_mode == "draft_v1")]
         targets = {row.slug: row for row in locked if row.slug in BUILTIN_SLUGS}
+        installed = automatic and db.query(ExecutionAuditLog.id).filter(
+            ExecutionAuditLog.action == "workflow.bundle.install",
+            ExecutionAuditLog.resource_id == bundle_version,
+        ).first() is not None
+        if installed and not legacy and len(targets) == len(BUILTIN_SLUGS):
+            # Installing an update is not a reset on every restart. Preserve
+            # subsequent designer edits and locally published workflow versions.
+            result = {"applied": True, "unchanged": True, "removed": [],
+                "workflows": [{"slug": slug, "version": row.published_version_number,
+                               "unchanged": True} for slug, row in targets.items()]}
+            db.rollback()
+            return result
+        actor = _installation_actor(db) if automatic else _actor(db, operator)
+        credential = _credential(db, actor, credential_id)
         retiring = any(row.archived_at is None or row.is_enabled for row in legacy)
-        _check_idle(db, [row.id for row in legacy])
-        result = {"applied": apply, "sync_existing": sync_existing, "operator": actor.username, "workflows": [], "retired": [], "history_preserved": True}
+        if not automatic:
+            _check_idle(db, [row.id for row in legacy])
+        result = {"applied": apply, "sync_existing": sync_existing, "operator": actor.username, "workflows": [], "retired": [], "history_preserved": not automatic}
         for document in documents:
             slug = document["release"]["slug"]
             current = targets.get(slug)
@@ -159,7 +187,9 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
             if version is not None and not sync_existing and binding.digest != version.deployment_binding_digest:
                 fail("deployment_existing_binding", "已发布流程的绑定不同，本次不会覆盖；请通过工作流发布页核对", slug=slug)
             report = preflight_release(db, document=document, release=release, scope="publish", actor=actor)
-            _require_report(report, publish=True, slug=slug)
+            # Backend and Worker start together. Publication needs the installed
+            # executors; ordinary readiness already waits for the actual Worker.
+            _require_report(report, publish=True, slug=slug, require_worker=not automatic)
             if version is not None and not sync_existing and report["resolved_dependencies"]["digest"] != version.dependency_lock_digest:
                 fail("deployment_existing_dependency", "已发布流程冻结的执行能力不同，请通过工作流发布页更新", slug=slug)
             publishing = version is None or any((
@@ -191,9 +221,16 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
             result["workflows"].append({"slug": slug, "workflow_id": version.workflow_id, "version": version.version_number,
                 "release_version": document["release"]["release_version"], "release_digest": version.release_digest,
                 "dependency_lock_digest": version.dependency_lock_digest, "deployment_binding_digest": version.deployment_binding_digest,
-                "worker_ready": True, "unchanged": not publishing and not enabled and not draft_changed,
+                "worker_ready": not any(issue["code"] == "node_capability_unavailable" for issue in report["issues"]), "unchanged": not publishing and not enabled and not draft_changed,
                 "draft_changed": draft_changed, "is_enabled": target.is_enabled})
-        for workflow in legacy:
+        if automatic:
+            from app.execution.retire_legacy_workflows import purge_legacy_workflows
+            result["removed"] = purge_legacy_workflows(db, legacy)
+            if not installed:
+                append_audit_log(db, action="workflow.bundle.install", resource_type="workflow_bundle",
+                    resource_id=bundle_version, actor_user_id=actor.id,
+                    details={"workflows": list(BUILTIN_SLUGS)})
+        for workflow in ([] if automatic else legacy):
             changed = workflow.archived_at is None or workflow.is_enabled
             if changed:
                 before = {"is_enabled": workflow.is_enabled, "archived_at": workflow.archived_at.isoformat() if workflow.archived_at else None, "draft_revision": workflow.draft_revision}
@@ -205,7 +242,7 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
                     details={"slug": workflow.slug, "before": before, "replacement_slugs": list(BUILTIN_SLUGS), "history_preserved": True})
             result["retired"].append({"slug": workflow.slug, "workflow_id": workflow.id, "changed": changed})
         db.flush()
-        changed = any(not item["unchanged"] for item in result["workflows"]) or any(item["changed"] for item in result["retired"])
+        changed = any(not item["unchanged"] for item in result["workflows"]) or any(item["changed"] for item in result["retired"]) or bool(automatic and (legacy or not installed))
         if apply and changed:
             db.commit()
         else:
@@ -216,8 +253,16 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
         raise
 
 
+def install_at_startup(db: Session) -> dict:
+    """Container startup installs the complete bundle, with no operator steps."""
+    result = deploy(db, apply=True, sync_existing=True, automatic=True)
+    logger.info("内置流程已安装：%s；旧流程及关联记录已清除", ", ".join(item["slug"] for item in result["workflows"]))
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--startup", action="store_true", help="直接安装全部现行流程并清除旧流程及关联记录；与容器启动相同")
     parser.add_argument("--apply", action="store_true", help="提交事务；默认完整预演后回滚")
     parser.add_argument("--sync-existing", action="store_true", help="明确同步并启用安装包中的两条 v2 流程；不降级或覆盖同版本异内容")
     parser.add_argument("--operator", help="执行系统管理员用户名")
@@ -235,7 +280,15 @@ def main() -> int:
     from app.database import SessionLocal
     try:
         with SessionLocal() as db:
-            report = deploy(db, apply=args.apply, operator=args.operator, credential_id=args.credential, root_overrides=overrides, sync_existing=args.sync_existing)
+            if args.startup:
+                from app.execution.catalog import bootstrap_execution_system
+                from app.execution.persistence import ensure_storage_roots
+                bootstrap_execution_system(db)
+                ensure_storage_roots(db)
+                db.commit()
+                report = install_at_startup(db)
+            else:
+                report = deploy(db, apply=args.apply, operator=args.operator, credential_id=args.credential, root_overrides=overrides, sync_existing=args.sync_existing)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     except ExecutionApiError as exc:

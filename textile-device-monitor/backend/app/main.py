@@ -190,6 +190,9 @@ async def startup_event():
             bootstrap_execution_system(db)
             ensure_storage_roots(db)
             db.commit()
+            if settings.APP_ENV != "testing":
+                from app.execution.deploy_builtin_workflows import install_at_startup
+                install_at_startup(db)
 
     print("Starting heartbeat monitor...")
     asyncio.create_task(start_heartbeat_monitor())

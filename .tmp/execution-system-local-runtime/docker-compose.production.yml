@@ -23,6 +23,10 @@ services:
         target: /var/lib/postgresql/data
 
   backend:
+    environment:
+      # 生产更新统一启用当前原生流程，覆盖旧 .env 遗留值。
+      EXECUTION_CONTRACT_MODE: enforced
+      EXECUTION_V2_ROLLOUT_PROFILE: p2_publish
     volumes:
       # 宋体：微观形貌原始记录生成必须（缺字体会把模板宋体替换为 DejaVu/Arial，
       # 且水平锚点校准因子 MICROSCOPY_BIFF_EXCEL_X_SCALE=1.0 以 SimSun 为前提）
@@ -32,6 +36,9 @@ services:
         read_only: true
 
   execution-worker:
+    environment:
+      EXECUTION_CONTRACT_MODE: enforced
+      EXECUTION_V2_ROLLOUT_PROFILE: p2_publish
     volumes:
       - type: bind
         source: "${EXECUTION_FONTS_HOST_PATH:?EXECUTION_FONTS_HOST_PATH is required}"
