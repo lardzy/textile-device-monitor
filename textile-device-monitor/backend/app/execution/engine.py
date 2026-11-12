@@ -1790,11 +1790,25 @@ def create_run(
         else:
             validation = validate_definition(definition, for_publish=True)
     if not validation.valid:
+        details = validation.as_dict()
+        message = "流程定义校验失败"
+        if (
+            mode == "live"
+            and version is not None
+            and version.release_id is None
+            and any(issue.code == "unknown_node_type" for issue in validation.issues)
+        ):
+            message = "该旧版流程包含已不可用的节点，请管理员迁移到 v2 后再执行"
+            details.update(
+                migration_required=True,
+                workflow_name=workflow.name,
+                published_version=version.version_number,
+            )
         raise ExecutionApiError(
             422,
             "workflow_invalid",
-            "流程定义校验失败",
-            details=validation.as_dict(),
+            message,
+            details=details,
         )
 
     inspection_number = inspection_number.strip()

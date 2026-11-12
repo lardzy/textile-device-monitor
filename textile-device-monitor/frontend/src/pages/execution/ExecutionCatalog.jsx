@@ -19,7 +19,6 @@ import {
   Tag,
   Tooltip,
   Typography,
-  message,
 } from 'antd';
 import {
   ApartmentOutlined,
@@ -45,6 +44,7 @@ import {
 import { useExecutionAuth } from './ExecutionAuthContext';
 import ExecutionChrome from './ExecutionChrome';
 import ExecutionRunPreparation from './ExecutionRunPreparation';
+import ExecutionRequestError from './ExecutionRequestError';
 import './execution.css';
 
 const { Paragraph, Text, Title } = Typography;
@@ -339,6 +339,7 @@ export default function ExecutionCatalog() {
   const [pendingScrollWorkflowId, setPendingScrollWorkflowId] = useState(null);
   const [selectedWorkflow, setSelectedWorkflow] = useState(null);
   const [startingId, setStartingId] = useState(null);
+  const [startFailure, setStartFailure] = useState(null);
   const startingRef = useRef(false);
   const recommendationTimerRef = useRef(null);
   const recommendationAbortRef = useRef(null);
@@ -347,6 +348,7 @@ export default function ExecutionCatalog() {
   const loadCatalog = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setStartFailure(null);
     try {
       const [categoryRows, workflowRows] = await Promise.all([
         getExecutionCategories(),
@@ -582,9 +584,11 @@ export default function ExecutionCatalog() {
       return;
     }
     startingRef.current = true;
+    setStartFailure(null);
     setStartingId(workflowIdOf(workflow));
+    let current = workflow;
     try {
-      const current = await getExecutionWorkflow(workflowIdOf(workflow));
+      current = await getExecutionWorkflow(workflowIdOf(workflow));
       if (!availabilityOf(current).available) {
         throw new Error(current.availability?.message || '流程已停用或归档，请刷新目录');
       }
@@ -605,7 +609,7 @@ export default function ExecutionCatalog() {
         setSelectedWorkflow(current);
       }
     } catch (requestError) {
-      message.error(requestError.message || '无法开始执行');
+      setStartFailure({ error: requestError, workflow: current });
     } finally {
       startingRef.current = false;
       setStartingId(null);
@@ -675,6 +679,14 @@ export default function ExecutionCatalog() {
           action={<Button onClick={loadCatalog}>重试</Button>}
         />
       )}
+
+      <ExecutionRequestError
+        error={startFailure?.error}
+        workflowName={startFailure?.workflow?.name}
+        definition={startFailure?.workflow?.published_definition}
+        fallback="无法开始执行"
+        onClose={() => setStartFailure(null)}
+      />
 
       {loading ? (
         <div className="execution-catalog__skeleton">

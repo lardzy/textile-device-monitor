@@ -199,6 +199,7 @@ describe('ExecutionRunPreparation', () => {
     await user.type(screen.getByRole('spinbutton', { name: '样品数量' }), '2');
     await user.click(screen.getByRole('button', { name: /开始执行/ }));
     await waitFor(() => expect(keys).toHaveLength(1));
+    expect(await screen.findByText('Network Error')).toBeInTheDocument();
     await waitFor(() => expect(
       screen.getByRole('button', { name: /开始执行/ }),
     ).toBeEnabled());
@@ -208,6 +209,37 @@ describe('ExecutionRunPreparation', () => {
     expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
+  });
+
+  it('保留创建失败的具体节点和请求编号，重试时清除提示且不清空输入', async () => {
+    let attempts = 0;
+    let finish;
+    const pending = new Promise(resolve => { finish = resolve; });
+    installHandlers(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return HttpResponse.json({
+          code: 'workflow_invalid', message: '流程定义校验失败', request_id: 'preparation-request',
+          details: { issues: [{ code: 'unknown_node_type', message: '未知节点类型或版本：file.regenerated_fiber_count_method@1', path: '$.nodes[1]' }] },
+        }, { status: 422 });
+      }
+      await pending;
+      return HttpResponse.json({ run: { id: 'run-fixed' } });
+    });
+    const user = userEvent.setup();
+    renderPreparation('/execution/workflows/wf-count/start?number=260162847');
+    await user.type(await screen.findByRole('spinbutton', { name: '样品数量' }), '2');
+    const button = screen.getByRole('button', { name: /开始执行/ });
+    await user.click(button);
+    expect(await screen.findByText('未知节点类型或版本：file.regenerated_fiber_count_method@1')).toBeInTheDocument();
+    expect(screen.getByText('位置：$.nodes[1]')).toBeInTheDocument();
+    expect(screen.getByText('请求编号：preparation-request')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '检验编号' })).toHaveValue('260162847');
+    expect(screen.getByRole('spinbutton', { name: '样品数量' })).toHaveValue('2');
+    await user.click(button);
+    expect(screen.queryByText('流程定义校验失败')).not.toBeInTheDocument();
+    finish();
+    expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
   });
 
   it('填写目标样品编号时随运行创建一并提交', async () => {

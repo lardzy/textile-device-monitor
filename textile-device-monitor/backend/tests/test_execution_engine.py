@@ -98,6 +98,37 @@ def test_published_snapshot_ignores_later_draft_and_capability_edits(graph):
     assert run.capabilities_snapshot == version.capabilities
 
 
+def test_retired_v1_start_explains_migration_without_creating_run(graph):
+    version = graph.db.query(ExecutionWorkflowVersion).one()
+    version.release_id = None
+    graph.workflow.management_mode = "draft_v1"
+    graph.db.commit()
+    with pytest.raises(ExecutionApiError) as raised:
+        start(graph)
+    error = raised.value
+    assert error.code == "workflow_invalid"
+    assert "迁移到 v2" in error.message
+    assert error.details["migration_required"] is True
+    assert error.details["published_version"] == version.version_number
+    assert any(item["code"] == "unknown_node_type" for item in error.details["issues"])
+    assert graph.db.query(ExecutionRun).count() == 0
+
+
+def test_invalid_v2_start_keeps_precise_issues_without_legacy_diagnosis(graph):
+    version = graph.db.query(ExecutionWorkflowVersion).one()
+    definition = deepcopy(version.definition)
+    definition["edges"][0]["target"] = "missing-node"
+    version.definition = definition
+    graph.db.commit()
+    with pytest.raises(ExecutionApiError) as raised:
+        start(graph)
+    error = raised.value
+    assert error.message == "流程定义校验失败"
+    assert error.details["issues"]
+    assert not error.details.get("migration_required")
+    assert graph.db.query(ExecutionRun).count() == 0
+
+
 def test_invalid_human_value_preserves_pending_task(graph):
     run = start(graph); task = human(graph, run)
     with pytest.raises(ExecutionApiError) as error:

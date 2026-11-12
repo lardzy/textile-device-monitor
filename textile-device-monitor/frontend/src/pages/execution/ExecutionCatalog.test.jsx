@@ -270,6 +270,39 @@ describe('ExecutionCatalog', () => {
     expect(posted).not.toHaveBeenCalled();
   });
 
+  it('直接启动显示全部校验原因，关闭错误后可重试成功', async () => {
+    let attempts = 0;
+    installHandlers(() => {
+      attempts += 1;
+      return attempts === 1 ? HttpResponse.json({
+        code: 'workflow_invalid', message: '流程定义校验失败', request_id: 'catalog-request',
+        details: { issues: [
+          { code: 'unknown_node_type', message: '未知节点类型或版本：file.old@1', path: '$.nodes[0]' },
+          { code: 'reference_invalid', message: '绑定引用的节点不存在', path: '$.nodes[end].input_mapping' },
+        ] },
+      }, { status: 422 }) : HttpResponse.json({ id: 'run-fixed' });
+    });
+    server.use(http.get('/api/execution/v1/workflows/wf-cotton', () => HttpResponse.json({
+      ...workflows[1],
+      published_definition: { nodes: [{ id: 'query', name: '读取麻棉文件' }] },
+    })));
+    const user = userEvent.setup();
+    renderCatalog('/execution?number=26X910095-1');
+    const title = await screen.findByText('麻棉原始记录处理');
+    const button = title.closest('.execution-workflow-card').querySelector('button');
+    await user.click(button);
+    expect(await screen.findByText('未知节点类型或版本：file.old@1')).toBeInTheDocument();
+    expect(screen.getByText('读取麻棉文件：')).toBeInTheDocument();
+    expect(screen.getByText('绑定引用的节点不存在')).toBeInTheDocument();
+    expect(screen.getByText('请求编号：catalog-request')).toBeInTheDocument();
+    expect(screen.getByLabelText('操作失败详情')).toHaveFocus();
+    const alert = screen.getByRole('alert');
+    await user.click(within(alert).getByRole('button', { name: /close/i }));
+    expect(screen.queryByText('流程定义校验失败')).not.toBeInTheDocument();
+    await user.click(button);
+    expect(await screen.findByText('运行工作台已打开')).toBeInTheDocument();
+  });
+
   it('renders missing data roots as unavailable instead of inventing a fallback', async () => {
     installHandlers();
     renderCatalog('/execution?number=26X910095-1');

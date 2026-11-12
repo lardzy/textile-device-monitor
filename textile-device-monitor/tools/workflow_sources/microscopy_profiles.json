@@ -132,5 +132,59 @@
       }
     ],
     "record_title": "微观形貌检验原始记录"
+  },
+  {
+    "enabled": true,
+    "original_template_key": "original",
+    "templates": {
+      "1": {
+        "template_key": "cross-section-1",
+        "legacy_template_name": "纤维横截面.xls",
+        "mapping_config_sha256": "d35d97a79e7b1160d437c67f4b1b21298261cdd08949df8aaa1526f4f8a053b5"
+      },
+      "2": {
+        "template_key": "cross-section-2",
+        "legacy_template_name": "纤维横截面-2张图.xls",
+        "mapping_config_sha256": "bffb70d1536917dc76d090d091c0056810738cca02a61351c506861de9ff1ca9"
+      },
+      "3": {
+        "template_key": "cross-section-3",
+        "legacy_template_name": "纤维横截面-3张图.xls",
+        "mapping_config_sha256": "52f9cbb73bd50484eff78ebac43a662ec5cb650858a845222d225779dbeaa893"
+      }
+    },
+    "target_directory": "数据分析中心/3-报告上传图片/8-材料检测中心/1-微观形貌-GB T 36422/{number}",
+    "filename_pattern": "{number}{identity}{index}.{ext}",
+    "upload_fields": {
+      "fiber_category": "图片",
+      "inspection_method": "",
+      "inspection_item": "图片",
+      "review_item": "",
+      "inspection_copies": 1,
+      "review_copies": 1,
+      "file_type": "定量试验"
+    },
+    "form_rules": {
+      "name_separator": "[\\r\\n;；]+",
+      "identity_separator": "[、,，;；\\r\\n]+",
+      "basis_separator": "[;；\\r\\n]+",
+      "judgements": [
+        "符合",
+        "不符合"
+      ],
+      "defaults": {}
+    },
+    "id": "cross-section-gbt36422",
+    "name": "纤维横截面 / GB/T 36422-2018",
+    "matches": [
+      {
+        "project_number": "5103.426",
+        "method": "GB/T 36422-2018",
+        "aliases": [
+          "纤维横截面"
+        ]
+      }
+    ],
+    "record_title": "纤维横截面原始记录"
   }
 ]

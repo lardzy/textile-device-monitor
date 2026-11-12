@@ -53,4 +53,6 @@ docker compose --env-file .env -f docker-compose.yml -f ../.tmp/execution-system
 Pack 摘要错误，Bridge 的快照领取不再拒绝 `supports_check_records`。
 桥最终仍需分别显示认证成功；写入桥此前的 422 未由这次换行问题单独定因。
 
-本次无数据库迁移、无流程重新发布要求，也不需要改动 Windows Bridge 安装包。
+换行修复本身无数据库迁移、无流程重新发布要求，也不需要改动 Windows Bridge 安装包。
+但从旧 v1 部署跨版本更新的现场，还必须迁移数据库中的流程；镜像更新不转换旧节点。
+生产库仍为 `draft_v1` 时，按 [v2 生产接替指引](../production-v2-upgrade.md) 完成预演与接替。

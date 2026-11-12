@@ -24,6 +24,7 @@ import {
 } from '../../api/execution';
 import { normalizeWorkflowDefinition } from '../../utils/executionWorkflow';
 import ExecutionChrome from './ExecutionChrome';
+import ExecutionRequestError from './ExecutionRequestError';
 import SchemaFields from './SchemaFields';
 import WorkflowCanvas from './WorkflowCanvas';
 import './execution.css';
@@ -72,10 +73,12 @@ export default function ExecutionRunPreparation({
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
   const [error, setError] = useState(null);
+  const [startError, setStartError] = useState(null);
 
   const loadWorkflow = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setStartError(null);
     try {
       setWorkflow(initialWorkflow || await getExecutionWorkflow(workflowId));
     } catch (requestError) {
@@ -159,13 +162,14 @@ export default function ExecutionRunPreparation({
     };
     if (creatingRef.current || !canStart) return;
     creatingRef.current = true;
+    setStartError(null);
     setCreating(true);
     try {
       const run = await startExecutionRun(payload);
       if (onStarted) onStarted(run);
       else navigate(`/execution/runs/${run.id || run.run_id}`, { replace: true });
     } catch (requestError) {
-      message.error(requestError.message || '创建执行任务失败');
+      setStartError(requestError);
     } finally {
       creatingRef.current = false;
       setCreating(false);
@@ -225,6 +229,12 @@ export default function ExecutionRunPreparation({
       )}
 
       <main className="execution-preparation__form">
+        <ExecutionRequestError
+          error={startError}
+          definition={definition}
+          fallback="创建执行任务失败"
+          onClose={() => setStartError(null)}
+        />
         <Form
           form={form}
           layout="vertical"

@@ -249,6 +249,7 @@
 }
 
 .execution-catalog > .ant-alert,
+.execution-catalog > .execution-request-error,
 .execution-catalog > .ant-empty,
 .execution-workflow-groups,
 .execution-catalog__skeleton {
@@ -2373,6 +2374,22 @@
 .execution-preparation__input-form > .ant-alert,
 .execution-preparation__form > .ant-alert {
   margin-bottom: 18px;
+}
+
+.execution-request-error {
+  margin-bottom: 18px;
+  overflow-wrap: anywhere;
+}
+
+.execution-request-error__issues {
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 8px 0;
+  padding-left: 22px;
+}
+
+.execution-request-error__issues > li + li {
+  margin-top: 8px;
 }
 
 .execution-run-history {

@@ -74,5 +74,29 @@
     "image_count": 4,
     "local_asset_name": "microscopy-customer-4-images-v1.xls",
     "local_asset_sha256": "accf964221de2a5ab9ea38c3962120b8b70b3f73f49e062e2a88c7d7d743932a"
+  },
+  "cross-section-1": {
+    "binding_version": "gbt36422-2018-legacy-template-binding-v1",
+    "image_count": 1,
+    "legacy_template_name": "纤维横截面.xls",
+    "local_asset_name": "gbt36422-2018-cross-section-1-image-v1.xls",
+    "local_asset_sha256": "537099b8725b76d306c453f25da27d90bb3290129db5b3f9705f0b7cd675f862",
+    "mapping_config_sha256": "d35d97a79e7b1160d437c67f4b1b21298261cdd08949df8aaa1526f4f8a053b5"
+  },
+  "cross-section-2": {
+    "binding_version": "gbt36422-2018-legacy-template-binding-v1",
+    "image_count": 2,
+    "legacy_template_name": "纤维横截面-2张图.xls",
+    "local_asset_name": "gbt36422-2018-cross-section-2-images-v1.xls",
+    "local_asset_sha256": "14106cad1f5088af65dda65a4bc833549fc3a40ce7a8f16f0c3406fec3770ddc",
+    "mapping_config_sha256": "bffb70d1536917dc76d090d091c0056810738cca02a61351c506861de9ff1ca9"
+  },
+  "cross-section-3": {
+    "binding_version": "gbt36422-2018-legacy-template-binding-v1",
+    "image_count": 3,
+    "legacy_template_name": "纤维横截面-3张图.xls",
+    "local_asset_name": "gbt36422-2018-cross-section-3-images-v1.xls",
+    "local_asset_sha256": "5c37d9e6bfa3877d495d234c5c7f87fede3882a59419f7a2452884caf517b107",
+    "mapping_config_sha256": "52f9cbb73bd50484eff78ebac43a662ec5cb650858a845222d225779dbeaa893"
   }
 }
