@@ -16,6 +16,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY prepare_execution_packs.py ./prepare_execution_packs.py
+# Windows working trees may predate the LF attributes. Restore only proven
+# CRLF differences, then verify every built-in Pack before publishing an image.
+RUN python prepare_execution_packs.py
 COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
 

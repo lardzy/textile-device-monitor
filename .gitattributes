@@ -4,3 +4,6 @@
 *.envsh text eol=lf
 # Windows 发布时按文件字节核验写入桥摘要。
 /textile-device-monitor/tools/legacy_fibrecheck_bridge/bridge.py text eol=lf
+# Execution Pack 摘要按资源原始字节封存，Windows 检出也必须保持 LF。
+/textile-device-monitor/backend/**/*.py text eol=lf
+/textile-device-monitor/backend/**/*.json text eol=lf
