@@ -12,7 +12,7 @@ from app.execution.models import (
     ExecutionWorkflowVersion, ExecutionWorkerHeartbeat,
     ExecutionWorkerNodeCapability, utcnow,
 )
-from test_execution_builtin_deployment import environment, counts  # noqa: F401
+from test_execution_builtin_deployment import environment, counts, alternate_bundle  # noqa: F401
 
 
 def test_startup_directly_installs_all_workflows_and_removes_old_history(environment):
@@ -122,3 +122,106 @@ def test_application_startup_installs_after_storage_initialization(monkeypatch, 
     assert calls.count("install") == expected_installs
     if expected_installs:
         assert calls[3] == "install"
+
+
+def test_implementation_update_republishes_all_flows_without_rewriting_existing_run(environment, monkeypatch):
+    from copy import deepcopy
+    from dataclasses import replace
+    from app.execution.v2 import registry
+    db, _path, _old_id, _custom_id, _history_id = environment
+    first = deployment.install_at_startup(db)
+    versions = {item["slug"]: db.query(ExecutionWorkflowVersion).filter_by(workflow_id=item["workflow_id"], version_number=item["version"]).one() for item in first["workflows"]}
+    old_version = versions["paper-fiber-v2"]
+    actor = db.query(ExecutionUser).filter_by(username="operator").one()
+    run = ExecutionRun(workflow_id=old_version.workflow_id, workflow_version_id=old_version.id, created_by_id=actor.id,
+        idempotency_key="before-implementation-update", inspection_number="existing-number", status="waiting_external",
+        definition_snapshot=deepcopy(old_version.definition), definition_checksum=old_version.checksum,
+        contract_checksum=old_version.contract_checksum, release_id=old_version.release_id,
+        dependency_lock=deepcopy(old_version.dependency_lock))
+    db.add(run)
+    db.commit()
+    original_snapshot = deepcopy(run.definition_snapshot)
+    original_dependencies = deepcopy(run.dependency_lock)
+    base = registry.get_installed_registry()
+    changed = registry.InstalledRegistry(packs=base.packs, node_specs=base.node_specs,
+        executables=registry.ExecutableRegistry(base.executables._items.values()), assets=base.assets,
+        connectors=registry.ConnectorRegistry(replace(connector, operations=tuple(replace(operation, implementation_digest="a"*64)
+            for operation in connector.operations)) for connector in base.connectors.all()))
+    monkeypatch.setattr(registry, "get_installed_registry", lambda: changed)
+    second = deployment.install_at_startup(db)
+    assert {item["slug"] for item in second["workflows"]} == set(versions)
+    for item in second["workflows"]:
+        assert item["version"] == versions[item["slug"]].version_number + 1
+        assert item["dependency_lock_digest"] != versions[item["slug"]].dependency_lock_digest
+    db.expire_all()
+    assert run.status == "waiting_external"
+    assert run.workflow_version_id == old_version.id
+    assert run.definition_snapshot == original_snapshot
+    assert run.dependency_lock == original_dependencies
+
+
+@pytest.mark.parametrize("local_version_delta", [0, 1])
+def test_implementation_update_preserves_local_publication_draft_and_bindings(environment, monkeypatch, local_version_delta):
+    from copy import deepcopy
+    from dataclasses import replace
+    from app.execution.models import ExecutionStorageRoot, ExecutionWorkflowRelease, ExecutionDeploymentBinding
+    from app.execution.v2 import registry
+
+    db, path, _old_id, _custom_id, _history_id = environment
+    shipped_bundle = deployment.RESOURCE_DIRECTORY
+    local_bundle = alternate_bundle(path / "local-bundle", version_delta=local_version_delta, change_name=True)
+    monkeypatch.setattr(deployment, "RESOURCE_DIRECTORY", local_bundle)
+    custom_root = path / "custom-images"
+    custom_root.mkdir()
+    db.add(ExecutionStorageRoot(root_id="local-images", name="Local images", local_path=str(custom_root),
+                                access_mode="read", is_active=True, is_available=True))
+    db.commit()
+    deployment.deploy(db, apply=True, sync_existing=True,
+                      root_overrides={"electron_microscopy_records": "local-images"})
+    first = deployment.install_at_startup(db)
+    item = next(item for item in first["workflows"] if item["slug"] == "fiber-microscopy-v2")
+    workflow = db.get(ExecutionWorkflow, item["workflow_id"])
+    version = db.query(ExecutionWorkflowVersion).filter_by(workflow_id=workflow.id, version_number=item["version"]).one()
+    release = db.get(ExecutionWorkflowRelease, version.release_id)
+    published_document = deepcopy(release.portable_document)
+    published_binding = deepcopy(version.deployment_binding_snapshot["bindings"])
+    actor = db.query(ExecutionUser).filter_by(username="operator").one()
+    credential = db.query(ExecutionCredential).filter_by(user_id=actor.id).one()
+    latest_binding = db.query(ExecutionDeploymentBinding).filter_by(release_id=release.id).order_by(ExecutionDeploymentBinding.revision.desc()).first()
+    # A pending binding edit must not silently replace the published custom root.
+    deployment.put_deployment_binding(db, release_id=release.id, environment=latest_binding.environment,
+        expected_revision=latest_binding.revision,
+        bindings=deployment._bindings(db, published_document, credential, {}), actor=actor)
+    workflow.designer_draft = {"document": {"incomplete": "keep my unpublished edits"}, "bindings": {"local": "draft-only"}}
+    workflow.name = "尚未发布的现场标题"
+    workflow.description = "尚未发布的现场说明"
+    workflow.draft_revision += 1
+    workflow.is_enabled = False
+    db.commit()
+    editing_state = {key: deepcopy(getattr(workflow, key)) for key in (
+        "designer_draft", "draft_definition", "draft_revision", "name", "description", "category_id", "updated_by_id",
+    )}
+    old_version_number = workflow.published_version_number
+    monkeypatch.setattr(deployment, "RESOURCE_DIRECTORY", shipped_bundle)
+    base = registry.get_installed_registry()
+    changed = registry.InstalledRegistry(packs=base.packs, node_specs=base.node_specs,
+        executables=registry.ExecutableRegistry(base.executables._items.values()), assets=base.assets,
+        connectors=registry.ConnectorRegistry(replace(connector, operations=tuple(replace(operation, implementation_digest="a" * 64)
+            for operation in connector.operations)) for connector in base.connectors.all()))
+    monkeypatch.setattr(registry, "get_installed_registry", lambda: changed)
+
+    report = deployment.install_at_startup(db)
+    db.expire_all()
+    refreshed = next(item for item in report["workflows"] if item["slug"] == workflow.slug)
+    assert refreshed["version"] == old_version_number + 1
+    assert refreshed["draft_changed"] is False
+    assert workflow.is_enabled is False
+    assert {key: getattr(workflow, key) for key in editing_state} == editing_state
+    current = db.query(ExecutionWorkflowVersion).filter_by(workflow_id=workflow.id, version_number=refreshed["version"]).one()
+    assert db.get(ExecutionWorkflowRelease, current.release_id).portable_document == published_document
+    assert current.deployment_binding_snapshot["bindings"] == published_binding
+    assert current.deployment_binding_digest == version.deployment_binding_digest
+    assert current.dependency_lock_digest != version.dependency_lock_digest
+    before_repeat = counts(db)
+    assert deployment.install_at_startup(db)["unchanged"] is True
+    assert counts(db) == before_repeat

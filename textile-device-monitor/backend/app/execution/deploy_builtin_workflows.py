@@ -8,6 +8,7 @@ Explicit maintenance calls retain the earlier preview/apply interface.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 import logging
 from pathlib import Path
@@ -29,6 +30,8 @@ from app.execution.release_v2 import (
 )
 from app.execution.security import require_permission
 from app.execution.v2.drafts import _document, save_draft
+from app.execution.v2.canonical import canonical_sha256
+from app.execution.v2.registry import registry_revision
 
 
 LEGACY_SLUGS = frozenset({
@@ -130,7 +133,10 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
             db.execute(text("SET LOCAL lock_timeout = '10s'"))
             db.execute(text("SELECT pg_advisory_xact_lock(824310, 2)"))
         documents = [json.loads((RESOURCE_DIRECTORY / f"{slug}.json").read_text(encoding="utf-8")) for slug in BUILTIN_SLUGS]
-        bundle_version = ":".join(f"{doc['release']['slug']}@{doc['release']['release_version']}" for doc in documents)
+        bundle_version = canonical_sha256({
+            "workflows": {doc["release"]["slug"]: doc["release"]["release_version"] for doc in documents},
+            "registry_revision": registry_revision(),
+        })
         declared_slots = {slot["slot_id"] for doc in documents for slot in doc["resources"]["root_slots"]}
         overrides = root_overrides or {}
         if set(overrides) - declared_slots:
@@ -160,6 +166,8 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
             slug = document["release"]["slug"]
             current = targets.get(slug)
             version = None
+            refresh_existing = False
+            editing_state = None
             if current is not None:
                 version = db.query(ExecutionWorkflowVersion).filter(ExecutionWorkflowVersion.workflow_id == current.id, ExecutionWorkflowVersion.version_number == current.published_version_number).one_or_none()
                 if current.management_mode != "release_v2" or current.archived_at is not None or version is None:
@@ -167,6 +175,16 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
                 installed_release = db.get(ExecutionWorkflowRelease, version.release_id)
                 if installed_release is None or installed_release.release_digest != version.release_digest:
                     fail("deployment_existing_workflow", "当前流程的发布记录不完整或摘要不一致，请先核对", slug=slug)
+                if automatic and installed_release.source_version >= document["release"]["release_version"]:
+                    # An implementation update is not a workflow reset. Resolve
+                    # dependencies for the published local document, even when a
+                    # designer has published a newer source version than ours.
+                    refresh_existing = True
+                    document = deepcopy(installed_release.portable_document)
+                    editing_state = {key: deepcopy(getattr(current, key)) for key in (
+                        "designer_draft", "draft_definition", "draft_revision",
+                        "name", "description", "category_id", "updated_by_id",
+                    )}
                 source_version = document["release"]["release_version"]
                 if installed_release.source_version > source_version:
                     fail("deployment_newer_release", "当前流程的来源版本高于安装包，本次不会降级；请更新代码与镜像", slug=slug, installed_source_version=installed_release.source_version, bundled_source_version=source_version)
@@ -174,16 +192,36 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
                     fail("deployment_release_conflict", "相同来源版本对应不同流程内容，不能覆盖；请核对安装包与已发布版本", slug=slug, source_version=source_version)
                 if not sync_existing and version.release_digest != _release_digest(document):
                     fail("deployment_existing_workflow", "已有不同的 v2 版本；确认使用安装包中的两条流程后，加 --sync-existing 同步", slug=slug, workflow_id=current.id)
-                if (retiring or sync_existing) and (current.availability_code is not None or (not current.is_enabled and not sync_existing)):
+                if not refresh_existing and (retiring or sync_existing) and (current.availability_code is not None or (not current.is_enabled and not sync_existing)):
                     fail("deployment_target_unavailable", "接替流程已停用或不可运行，不能归档旧入口；请先核对目标流程状态", slug=slug, workflow_id=current.id, is_enabled=current.is_enabled, availability_code=current.availability_code)
             content = preflight_release(db, document=document, actor=actor)
             _require_report(content, publish=False, slug=slug)
             release = apply_release(db, document=None, preflight_token=content["preflight_token"], actor=actor)
             existing_binding = db.query(ExecutionDeploymentBinding).filter(ExecutionDeploymentBinding.release_id == release.id, ExecutionDeploymentBinding.environment == settings.EXECUTION_ENVIRONMENT_ID).order_by(ExecutionDeploymentBinding.revision.desc()).first()
-            raw_bindings = _bindings(db, document, credential, overrides)
-            binding = put_deployment_binding(db, release_id=release.id, environment=settings.EXECUTION_ENVIRONMENT_ID,
-                expected_revision=existing_binding.revision if existing_binding else 0,
-                bindings=raw_bindings, actor=actor)
+            if refresh_existing:
+                # Keep the published environment choices. A later, unpublished
+                # binding must not become active merely because a Pack changed.
+                raw_bindings = None
+                binding = existing_binding
+                if binding is None or binding.digest != version.deployment_binding_digest:
+                    frozen_binding = version.deployment_binding_snapshot
+                    binding = ExecutionDeploymentBinding(
+                        release_id=release.id, environment=frozen_binding["environment"],
+                        revision=(existing_binding.revision if existing_binding else 0) + 1,
+                        binding=deepcopy(frozen_binding["bindings"]),
+                        digest=version.deployment_binding_digest, created_by_id=actor.id,
+                    )
+                    db.add(binding)
+                    db.flush()
+                    append_audit_log(db, action="workflow_release.binding.create", resource_type="workflow_release",
+                        resource_id=release.id, actor_user_id=actor.id,
+                        details={"environment": binding.environment, "revision": binding.revision,
+                                 "digest": binding.digest, "reason": "preserve published bindings during dependency refresh"})
+            else:
+                raw_bindings = _bindings(db, document, credential, overrides)
+                binding = put_deployment_binding(db, release_id=release.id, environment=settings.EXECUTION_ENVIRONMENT_ID,
+                    expected_revision=existing_binding.revision if existing_binding else 0,
+                    bindings=raw_bindings, actor=actor)
             if version is not None and not sync_existing and binding.digest != version.deployment_binding_digest:
                 fail("deployment_existing_binding", "已发布流程的绑定不同，本次不会覆盖；请通过工作流发布页核对", slug=slug)
             report = preflight_release(db, document=document, release=release, scope="publish", actor=actor)
@@ -203,15 +241,18 @@ def deploy(db: Session, *, apply: bool = False, operator: str | None = None,
                 # this initially absent target meanwhile, do not append over it.
                 if current is None and version.version_number != 1:
                     fail("deployment_target_changed", "目标流程已被并发发布，本次已回滚；请核对后重试", slug=slug)
+                if editing_state is not None:
+                    for key, value in editing_state.items():
+                        setattr(current, key, value)
             target = current or db.get(ExecutionWorkflow, version.workflow_id)
-            enabled = sync_existing and not target.is_enabled
+            enabled = sync_existing and not refresh_existing and not target.is_enabled
             if enabled:
                 target.is_enabled = True
                 target.draft_revision += 1
                 target.updated_by_id = actor.id
                 append_audit_log(db, action="workflow.builtin_enable", resource_type="workflow", resource_id=target.id, actor_user_id=actor.id,
                     details={"slug": slug, "release_digest": version.release_digest, "is_enabled": True})
-            draft_changed = sync_existing and target.designer_draft != {"document": _document(document), "bindings": raw_bindings}
+            draft_changed = sync_existing and not refresh_existing and target.designer_draft != {"document": _document(document), "bindings": raw_bindings}
             if draft_changed:
                 # save_draft reloads the locked row; persist our revision and
                 # enable changes first, inside this same rollbackable transaction.

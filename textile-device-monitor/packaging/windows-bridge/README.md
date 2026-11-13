@@ -42,7 +42,7 @@ Inno Setup 安装包，用于生产 Windows 主机的一次性部署。
 
 ## 安装与启用
 
-现场操作见 [Windows Bridge 1.3.0 一页说明](现场操作.md)。配置中心使用 Windows PowerShell 5.1 和 WinForms。安装器创建开始菜单入口，首次安装后由操作员在窗口中启用各桥。
+现场操作见 [Windows Bridge 1.3.1 一页说明](现场操作.md)。配置中心使用 Windows PowerShell 5.1 和 WinForms。安装器创建开始菜单入口，首次安装后由操作员在窗口中启用各桥。
 
 程序安装在 `C:\TextileExecutionBridge`，现场设置存放在 `%ProgramData%\TextileExecutionBridge\config\settings.json`。配置与备份使用同一目录 ACL，凭据由 Windows DPAPI LocalMachine 加密。运行状态与待核对回执保存在同一数据根的 `runtime` 子目录。两个 Writer 的摘要取自当前安装清单。
 
@@ -50,9 +50,6 @@ Inno Setup 安装包，用于生产 Windows 主机的一次性部署。
 
 Windows 验收脚本位于 `tests`，应在临时数据根使用测试凭据及模拟服务执行。正式启用会领取真实操作。
 
-若状态显示“回执待核对”，先停用该桥，在执行系统按原尝试和旧检务记录处理对账。确认该尝试已收尾后，管理员可在安装目录释放对应的本机暂停标记。填写实际桥类型、界面显示的尝试 ID 和核对依据，系统会保存本次处理记录。
+1.3.1 会自动处理旧版留下的写入桥待回执标记。单条操作失败或等待结果核对不会阻止后续操作；临时网络失败自动重试。恢复只移交原操作状态，不重新执行 Writer。完整异常保存在服务端操作与本机 `runtime/receipts`，界面可展开复制。
 
-```powershell
-. .\ops\BridgeRuntime.ps1
-Confirm-BridgeReconciledAttempt -Kind Write -AttemptId '<原尝试 ID>' -Reason '<核对依据>'
-```
+安装器的临时预检逻辑独立于已安装的旧版 drain 实现，因此 1.3.0 存在 pending 时也能直接覆盖升级；实际 Writer 进程仍需退出。测试 `Test-BridgeUpgradeRecovery.ps1` 使用冻结的真实 1.3.0 runtime 复现并验证该路径。

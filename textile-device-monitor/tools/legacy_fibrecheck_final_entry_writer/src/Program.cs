@@ -83,7 +83,8 @@ namespace LegacyFibreCheckFinalEntryWriter
             Console.Out.Flush();
         }
 
-        public int Finish(int exitCode, string errorCode, bool reconciliationRequired, FinalEntryPackage package)
+        public int Finish(int exitCode, string errorCode, bool reconciliationRequired,
+            FinalEntryPackage package, Exception exception = null)
         {
             if (reconciliationRequired)
             {
@@ -140,6 +141,7 @@ namespace LegacyFibreCheckFinalEntryWriter
             if (!string.IsNullOrWhiteSpace(errorCode))
             {
                 receipt["error"] = errorCode;
+                if (exception != null) receipt["diagnostics"] = ExceptionDiagnostics.Capture(exception);
             }
             Console.Out.Write(MiniJson.Write(new SortedDictionary<string, object>
             {
@@ -156,8 +158,9 @@ namespace LegacyFibreCheckFinalEntryWriter
         public int ExitCode { get; private set; }
         public bool ReconciliationRequired { get; private set; }
 
-        public WriterFailureException(string code, int exitCode, bool reconciliationRequired)
-            : base(code)
+        public WriterFailureException(string code, int exitCode, bool reconciliationRequired,
+            Exception innerException = null)
+            : base(code, innerException)
         {
             Code = code;
             ExitCode = exitCode;
@@ -262,7 +265,8 @@ namespace LegacyFibreCheckFinalEntryWriter
             }
             catch (WriterFailureException ex)
             {
-                return emit.Finish(ex.ExitCode, ex.Code, ex.ReconciliationRequired, package);
+                return emit.Finish(ex.ExitCode, ex.Code, ex.ReconciliationRequired,
+                    package, ex.InnerException ?? ex);
             }
             catch (PackageValidationException ex)
             {
@@ -270,10 +274,8 @@ namespace LegacyFibreCheckFinalEntryWriter
             }
             catch (Exception ex)
             {
-                // Exception messages can contain credentials, IDs, or paths.  Return only
-                // the type category and never echo Message/StackTrace.
                 string code = "unhandled_" + ex.GetType().Name;
-                return emit.Finish(ExitPackageError, code, false, package);
+                return emit.Finish(ExitPackageError, code, false, package, ex);
             }
         }
 

@@ -14,8 +14,9 @@
     # 1.2.3：中性上传缺少 FileType 时在写入前拒绝，避免旧客户端打开记录报空引用。
     # 1.2.4：写入桥在租约过期后仍可回报经过校验的终态，沿用 1.2.3 的 Writer。
     # 1.3.0：本机配置中心、ProgramData 加密配置与任务边界切换。
-    PackageVersion    = '1.3.0'
-    WriteBridgeSha256 = '83ae07b6f54940beb8644f7094cef9316e91524c4025d894806168c26e643a5d'
+    # 1.3.1：完整 Excel 异常、单操作失败隔离和遗留回执自动恢复。
+    PackageVersion    = '1.3.1'
+    WriteBridgeSha256 = '000e5bb3a9cac359130be38166427c0a8e6e66cd56112cfc9656bf3a722a4a09'
 
     # 执行系统源码树（含 tools\*；writer 已编译产物在其 out\ 下）
     # 留空使用当前打包脚本所属的源码树；使用独立构建目录时可指定路径。
@@ -38,7 +39,7 @@
     # 重新编译 Writer 后必须显式更新此处的值，否则构建失败。
     WriterSourceHashes = @{
         'FibreCheckWriter.exe'           = '8f9c61daaf1f4143cbfc736bf4379671045c2adebbdf02ede3e1c57d8c4d502a'
-        'FibreCheckFinalEntryWriter.exe' = '19a13fa49ef0c90a3d09b51667e9a581f821b83d8706ae9e256e3306a10c64d2'
+        'FibreCheckFinalEntryWriter.exe' = '2cf6017da798545119476377fe4871df923f4d60a53dbb8792b8103578154f22'
     }
 
     # probe 离线依赖打包时的 pip 源（构建机需要能访问；--no-input）

@@ -1979,7 +1979,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.managed_root:
         from managed import ManagedCycle
 
-        args._control = ManagedCycle(args.managed_root, args.settings_revision, "write")
+        def recover_pending(record):
+            failure = record.get("Failure") or {}
+            success = record.get("Success") or {}
+            response = api_request(
+                record.get("ApiBase") or args.api_base, token, "POST",
+                f"/external-bridge/attempts/{record['AttemptId']}/recover",
+                {"bridge_id": record.get("BridgeId") or args.bridge_id,
+                 "operation_id": record.get("OperationId"), "process_exited": True,
+                 **{key: failure[key] for key in ("stage", "error_code", "message", "diagnostics") if key in failure},
+                 **{key: success[key] for key in ("receipt", "stage", "stdout_summary") if success.get(key) is not None}},
+            )
+            if response.get("released"):
+                print("上一项回执已交由服务端处理，继续领取后续任务")
+            return response
+
+        args._control = ManagedCycle(args.managed_root, args.settings_revision, "write",
+            recover=recover_pending, context={"ApiBase": args.api_base, "BridgeId": args.bridge_id},
+            secrets=(token, password))
         return args._control.run(lambda: run_one_cycle(args, token, account, password, root_map),
                                  args.poll_seconds, args.once)
 
@@ -2247,6 +2264,8 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         encoding="utf-8",
         errors="replace",
     )
+    if control:
+        control.writer_started(process)
 
     stop_heartbeat = threading.Event()
     abort_requested = threading.Event()
@@ -2542,6 +2561,8 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         print(f"Writer 输出协议错误: {exc}", file=sys.stderr)
         terminate_before_side_effect()
     exit_code = process.wait()
+    if control:
+        control.writer_exited()
     stop_heartbeat.set()
     heartbeat.join(timeout=5)
 
@@ -2653,6 +2674,12 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         and stage_report_error is None
         and receipt_validation_error is None
     ):
+        if control:
+            # Persist validated evidence before either final reporting request.
+            # A network outage must retry its receipt, never repeat the Writer.
+            control.remember_success(completion_receipt,
+                furthest_stage(last_stage, pending_progress_stage, progress_stages=progress_stages),
+                summary_text)
         if pending_progress_stage is not None:
             # The server still requires a verified checkpoint as well as a
             # valid receipt. Only retry reporting an already observed stage;
@@ -2695,19 +2722,31 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         else:
             error_code = (receipt or {}).get("error", f"exit_{exit_code}")
             error_message = summary_text[-1800:]
+        failure = {
+            "stage": fail_stage,
+            "error_code": str(error_code)[:100],
+            "message": str(error_message),
+        }
+        diagnostics = (receipt or {}).get("diagnostics")
+        if isinstance(diagnostics, dict):
+            failure["diagnostics"] = diagnostics
+            failure["message"] = str((receipt or {}).get("error") or error_message)
+        if control:
+            control.remember_failure(failure)
+            failure = control.redact(failure)
         acknowledged = api_request(
             args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
             {
                 "bridge_id": args.bridge_id,
-                "stage": fail_stage,
-                "error_code": error_code,
-                "message": error_message,
+                **failure,
             },
         )
         print(f"写入失败/待对账: stage={fail_stage} exit={exit_code}")
     if control:
         terminal = (acknowledged.get("operation") or {}).get("status")
-        control.unknown = terminal not in ("completed", "failed", "cancelled", "approved")
+        # The server now owns an unknown remote outcome. Isolate this operation
+        # there; it must not pause unrelated tasks on the whole Windows bridge.
+        control.unknown = terminal not in ("completed", "failed", "cancelled", "approved", "reconciliation_required")
     try:
         os.unlink(package_file.name)
     except OSError:

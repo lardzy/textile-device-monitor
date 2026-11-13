@@ -162,7 +162,7 @@ function Select-CenterParameters([bool]$Export) {
 
 function Refresh-CenterStatus {
     $names = @{stopped='已停用'; waiting_login='等待操作员登录'; starting='正在启动'; ready='等待任务'; working='处理任务中';
-        applying='等待任务完成并应用'; draining='等待任务收尾'; error='需要处理'; receipt_unknown='等待回执核对'}
+        applying='等待任务完成并应用'; draining='等待任务收尾'; error='需要处理'; receipt_unknown='等待回执核对'; recovering='正在恢复任务回执'}
     foreach ($kind in 'Write','Snapshot') {
         $line = $script:center.Bridges[$kind]
         try {
@@ -180,7 +180,7 @@ function Refresh-CenterStatus {
             } else { '需填写令牌' }
             $pending = if ($state.State -eq 'receipt_unknown' -and $state.AttemptId) { '请在执行系统核对尝试 ' + $state.AttemptId }
             $line.Detail.Text = (@($state.Operator, $rev, $auth, $state.LastError, $pending) | Where-Object { $_ }) -join '  ·  '
-            $line.Start.Enabled = (!$state.Enabled -or $state.State -in 'error','stopped') -and !$script:center.Dirty -and $state.State -notin 'draining','receipt_unknown'
+            $line.Start.Enabled = (!$state.Enabled -or $state.State -in 'error','stopped','recovering') -and !$script:center.Dirty -and $state.State -notin 'draining','receipt_unknown'
             $line.Stop.Enabled = [bool]$state.Enabled
             if ($target -ne $script:center.Model.revision) { Set-CenterNotice '其他窗口已更新配置，请重新载入后再保存。' $true }
         } catch {

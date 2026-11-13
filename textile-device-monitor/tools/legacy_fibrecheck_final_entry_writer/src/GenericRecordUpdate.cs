@@ -168,8 +168,8 @@ namespace LegacyFibreCheckFinalEntryWriter
                     emit.Stage("completed", null);
                     return emit.Finish(0, null, false, package);
                 }
-                catch (Exception) {
-                    throw new WriterFailureException("update_requires_readback", Program.ExitReconciliationRequired, true);
+                catch (Exception ex) {
+                    throw new WriterFailureException("update_requires_readback", Program.ExitReconciliationRequired, true, ex);
                 }
             }
         }

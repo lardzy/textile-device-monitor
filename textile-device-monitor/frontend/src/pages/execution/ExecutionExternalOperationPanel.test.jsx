@@ -194,6 +194,50 @@ const installHandlers = (onReconcile) => {
 };
 
 describe('ExecutionExternalOperationPanel reconciliation', () => {
+  it('登记失败可展开并复制完整异常链，长堆栈不截断', async () => {
+    const diagnostics = {
+      exception_type: 'System.Runtime.InteropServices.COMException',
+      message: 'Excel 无法打开登记工作簿',
+      hresult: '0x800A03EC',
+      stack_trace: `CollectData\n${'at Excel.ReadCell\n'.repeat(200)}异常堆栈末尾`,
+      inner_exceptions: [{
+        exception_type: 'System.IO.IOException',
+        message: '无法读取原始记录.xls',
+        hresult: '0x80070020',
+        stack_trace: 'at Workbooks.Open',
+        inner_exceptions: [],
+      }],
+    };
+    server.use(http.get('/api/execution/v1/runs/run-1/external-operations', () =>
+      HttpResponse.json({ items: [{
+        ...finalEntryReconciliationOperation,
+        error: { code: 'excel_write_failed_COMException', message: diagnostics.message, diagnostics },
+      }] })));
+    render(<ExecutionExternalOperationPanel runId="run-1" />);
+    const user = userEvent.setup();
+    const summary = await screen.findByText('完整异常详情');
+    const details = summary.closest('details');
+    expect(details).not.toHaveAttribute('open');
+    await user.click(summary);
+    expect(details).toHaveAttribute('open');
+    const detailText = details.querySelector('pre');
+    expect(detailText.textContent).toBe(JSON.stringify(diagnostics, null, 2));
+    expect(detailText).toHaveTextContent('异常堆栈末尾');
+    const originalExecCommand = document.execCommand;
+    let copiedText;
+    document.execCommand = vi.fn(() => {
+      copiedText = window.getSelection().toString();
+      return true;
+    });
+    try {
+      await user.click(screen.getByRole('button', { name: '复制完整异常' }));
+      expect(document.execCommand).toHaveBeenCalledWith('copy');
+      expect(copiedText).toBe(JSON.stringify(diagnostics, null, 2));
+    } finally {
+      document.execCommand = originalExecCommand;
+    }
+  });
+
   it('检验记录登记受控例外在卡片展示且不提供手工批准', async () => {
     const controlledReason = '已获准验证 CheckCount=1 时追加一条登记记录';
     const finalEntryOperation = {

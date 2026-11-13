@@ -65,8 +65,9 @@ function Get-BridgeRuntimeStatus {
     $enabled = [bool]$settings.enabled.$key
     $revision = [int]$record.Revision
     $errorText = [string]$record.LastError
-    if ($pending -and ($record.State -eq 'receipt_unknown' -or $task.State -ne 'Running')) {
-        $state = 'receipt_unknown'
+    if ($pending -and ($record.State -in @('receipt_unknown','recovering') -or $task.State -ne 'Running')) {
+        $state = if ($Kind -eq 'Write') { 'recovering' } else { 'receipt_unknown' }
+        if ($Kind -eq 'Write') { $errorText = '上一项结果正在自动回报，之后继续领取任务' }
     } elseif (Test-Path -LiteralPath (Join-Path $DataRoot 'config\maintenance.lock')) {
         $state = 'draining'
     } elseif (!$enabled) {
@@ -123,7 +124,7 @@ function Set-BridgeRunning {
     $key = $Kind.ToLowerInvariant()
     if (Test-Path -LiteralPath (Join-Path $DataRoot 'config\maintenance.lock')) { throw '安装维护中，请稍后操作' }
     if ($Enabled) {
-        if (Test-Path -LiteralPath (Join-Path $DataRoot "runtime\$key.pending.json")) {
+        if ($Kind -ne 'Write' -and (Test-Path -LiteralPath (Join-Path $DataRoot "runtime\$key.pending.json"))) {
             throw '有待确认的回执，请先在执行系统核对'
         }
         $s = Get-BridgeSettings -DataRoot $DataRoot -WithSecrets
@@ -149,7 +150,7 @@ function Sync-BridgeEnabledTasks($DataRoot) {
     $settings = Get-BridgeSettings -DataRoot $DataRoot
     foreach ($kind in @('Write','Snapshot')) {
         $key = $kind.ToLowerInvariant()
-        if ($settings.enabled.$key -and !(Test-Path -LiteralPath (Join-Path $DataRoot "runtime\$key.pending.json"))) {
+        if ($settings.enabled.$key -and ($kind -eq 'Write' -or !(Test-Path -LiteralPath (Join-Path $DataRoot "runtime\$key.pending.json")))) {
             Start-BridgeConfiguredTask $kind $settings $DataRoot
         }
     }
@@ -205,7 +206,7 @@ function Enter-BridgeMaintenance {
                 if ((Get-BridgeTask $kind).State -in @('Running','Queued')) { $busy=$true; break }
             }
             if (!$busy -and !(Get-BridgeLocalProcesses)) {
-                foreach ($kind in @('write','snapshot')) {
+                foreach ($kind in @('snapshot')) {
                     if (Test-Path -LiteralPath (Join-Path $DataRoot "runtime\$kind.pending.json")) {
                         throw "桥 $kind 有待核对回执，请在执行系统完成对账后再升级"
                     }
@@ -254,7 +255,7 @@ function Invoke-BridgeSupervisor {
                 if (Test-Path -LiteralPath (Join-Path $DataRoot 'config\maintenance.lock')) { return 0 }
                 continue
             }
-            if (Test-Path -LiteralPath (Join-Path $DataRoot "runtime\$key.pending.json")) {
+            if ($Kind -ne 'Write' -and (Test-Path -LiteralPath (Join-Path $DataRoot "runtime\$key.pending.json"))) {
                 Set-BridgeRuntimeStatus $Kind 'receipt_unknown' $revision '待核对回执，请先在执行系统对账' $DataRoot
                 return 0
             }

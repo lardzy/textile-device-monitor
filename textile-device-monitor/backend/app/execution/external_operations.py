@@ -5696,6 +5696,7 @@ def public_external_operation(
             {
                 "code": operation.error_code,
                 "message": operation.error_message,
+                "diagnostics": _attempt_failure_diagnostics(_latest_external_attempt(operation)),
             }
             if operation.error_code
             else None
@@ -6855,6 +6856,13 @@ def _append_stdout(existing: str | None, appended: str | None) -> str:
     return combined
 
 
+def _attempt_failure_diagnostics(attempt: ExecutionExternalAttempt | None) -> dict[str, Any] | None:
+    if attempt is None:
+        return None
+    return next((item["diagnostics"] for item in reversed(attempt.checkpoints or [])
+                        if isinstance(item, dict) and isinstance(item.get("diagnostics"), dict)), None)
+
+
 def public_external_attempt(
     attempt: ExecutionExternalAttempt,
 ) -> dict[str, Any]:
@@ -6877,6 +6885,7 @@ def public_external_attempt(
             {
                 "code": attempt.error_code,
                 "message": attempt.error_message,
+                "diagnostics": _attempt_failure_diagnostics(attempt),
             }
             if attempt.error_code
             else None
@@ -7550,6 +7559,7 @@ def settle_external_attempt_failure(
     now: datetime,
     actor_type: str = "system",
     actor_id: str | None = None,
+    retry_before_write: bool = True,
 ) -> None:
     """Settle an operation whose attempt failed at the given stage.
 
@@ -7596,7 +7606,7 @@ def settle_external_attempt_failure(
             )
             .count()
         )
-        if failed_attempts >= settings.EXECUTION_EXTERNAL_MAX_ATTEMPTS:
+        if not retry_before_write or failed_attempts >= settings.EXECUTION_EXTERNAL_MAX_ATTEMPTS:
             # 确定性预检失败（如 target_allocation_stale）无限重领只会
             # 反复冲击旧系统：达到上限后按“未写入”失败收尾，节点随 run
             # 进入可人工重试状态，重试会以最新快照重新预检。
@@ -7604,7 +7614,7 @@ def settle_external_attempt_failure(
 
             operation.status = "failed"
             operation.error_code = error_code or "external_attempts_exhausted"
-            operation.error_message = (
+            operation.error_message = (error_message or "Bridge 写入进程已退出，本次操作已失败") if not retry_before_write else (
                 "外部操作已连续 {count} 次在执行前失败（最近一次：{reason}），"
                 "已停止自动重试；请确认旧系统与任务信息状态后重试节点".format(
                     count=failed_attempts,
@@ -7612,12 +7622,12 @@ def settle_external_attempt_failure(
                 )
             )
             operation.completed_at = now
-            settlement_reason = "attempts_exhausted"
+            settlement_reason = "attempts_exhausted" if retry_before_write else "bridge_process_exited"
             if node_run is not None and node_run.status == "waiting_external":
                 fail_external_waiting_node(
                     db,
                     node_run_id=node_run.id,
-                    error_code="external_attempts_exhausted",
+                    error_code="external_attempts_exhausted" if retry_before_write else operation.error_code,
                     error_message=operation.error_message,
                 )
         else:
@@ -7677,6 +7687,7 @@ def fail_external_attempt(
     stage: str,
     error_code: str | None = None,
     message: str | None = None,
+    diagnostics: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> tuple[ExecutionExternalOperation, ExecutionExternalAttempt]:
     current_time = now or utcnow()
@@ -7704,6 +7715,8 @@ def fail_external_attempt(
     attempt.status = "failed"
     attempt.error_code = error_code
     attempt.error_message = message
+    if diagnostics is not None:
+        attempt.checkpoints = [*attempt.checkpoints, {"kind": "failure_diagnostics", "at": current_time.isoformat(), "diagnostics": diagnostics}]
     attempt.finished_at = current_time
     attempt.lease_expires_at = None
     settle_external_attempt_failure(
@@ -7719,4 +7732,122 @@ def fail_external_attempt(
         actor_type="bridge",
         actor_id=bridge_id,
     )
+    _record_stopped_writer(db, run=run, node_run=node_run, operation=operation,
+        attempt=attempt, bridge_id=bridge_id, now=current_time)
     return operation, attempt
+
+
+def _record_stopped_writer(
+    db: Session, *, run: ExecutionRun | None, node_run: ExecutionNodeRun | None,
+    operation: ExecutionExternalOperation, attempt: ExecutionExternalAttempt,
+    bridge_id: str, now: datetime,
+) -> None:
+    # Both /fail (posted after process exit) and recovery acknowledge the same
+    # stopped Writer. A timeout sweep alone must never set this confirmation.
+    if operation.status != "reconciliation_required" or not _is_latest_unresolved_attempt(db, operation, attempt):
+        return
+    operation.verification = {**(operation.verification or {}), "stopped_writer_recovery": {
+        "attempt_id": attempt.id, "attempt_no": attempt.attempt_no,
+        "bridge_id": bridge_id, "process_exited": True,
+        "at": now.isoformat(), "remote_write_performed": None,
+    }}
+    if run is not None:
+        run.output_data = {**(run.output_data or {}), "external_side_effect_unknown": True}
+    if run is not None and run.status in {"cancel_pending", "failure_pending"} and node_run is not None and node_run.status == "waiting_external":
+        from app.execution.engine import cancel_external_waiting_node
+
+        db.flush()
+        cancel_external_waiting_node(db, node_run_id=node_run.id,
+            error_code="writer_stopped_result_unknown",
+            error_message="Writer 已退出，本次运行停止；检务写入结果仍保留待核对，不再自动重试",
+            remote_write_performed=None)
+
+
+def recover_external_attempt(
+    db: Session,
+    *,
+    attempt_id: str,
+    bridge_id: str,
+    operation_id: str,
+    process_exited: bool,
+    stage: str | None = None,
+    error_code: str | None = None,
+    message: str | None = None,
+    diagnostics: dict[str, Any] | None = None,
+    receipt: dict[str, Any] | None = None,
+    stdout_summary: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Take over a stopped Writer's pending report without restarting its write.
+
+    The Bridge checks its actual process before calling. A lost or expired
+    lease is not evidence that the Writer exited. Only this explicit handoff
+    permits its local pending marker to stop blocking unrelated operations.
+    """
+    if not process_exited:
+        raise conflict("external_writer_still_running", "Writer 尚未退出，不能移交待处理回执")
+    locator = db.query(ExecutionExternalAttempt.bridge_id, ExecutionExternalAttempt.operation_id).filter(
+        ExecutionExternalAttempt.id == attempt_id).one_or_none()
+    if locator is None:
+        return {"released": True, "reason": "not_found", "attempt": None, "operation": None}
+    if locator.bridge_id != bridge_id or locator.operation_id != operation_id:
+        raise conflict("external_attempt_identity_mismatch", "Bridge 或操作身份与执行尝试不一致")
+    run, node_run, operation, attempt = _attempt_for_bridge(db, attempt_id=attempt_id, bridge_id=bridge_id)
+    current_time = now or utcnow()
+    latest = _is_latest_unresolved_attempt(db, operation, attempt)
+    if receipt is not None and latest and operation.status != "completed":
+        try:
+            with db.begin_nested():
+                validate_external_receipt(operation, receipt)
+                if stage is not None:
+                    record_external_attempt_stage(db, attempt_id=attempt.id, bridge_id=bridge_id, stage=stage, now=current_time)
+                    db.flush()
+                operation, attempt = complete_external_attempt(db, attempt_id=attempt.id,
+                    bridge_id=bridge_id, receipt=receipt, stdout_summary=stdout_summary, now=current_time)
+            return {"released": True, "reason": "receipt_completed", "attempt": public_external_attempt(attempt),
+                    "operation": public_external_operation(operation)}
+        except ExecutionApiError as exc:
+            # Keep rejected evidence on the operation, but do not strand the
+            # entire Bridge on this one local pending file.
+            run, node_run, operation, attempt = _attempt_for_bridge(db, attempt_id=attempt_id, bridge_id=bridge_id)
+            attempt.checkpoints = [*(attempt.checkpoints or []), {"kind": "pending_receipt", "at": current_time.isoformat(), "receipt": receipt}]
+            diagnostics = {**(diagnostics or {}), "receipt_recovery_error": {"code": exc.code, "message": exc.message}}
+            error_code = error_code or exc.code
+            message = message or exc.message
+    isolated = latest and operation.status in {"in_progress", "cancel_pending"}
+    already_settled = not isolated
+    if (isolated or operation.status in {"failed", "reconciliation_required"}) and latest:
+        reported_stage = None
+        if stage is not None:
+            try:
+                reported_stage = _validate_attempt_stage(stage, operation)
+            except ExecutionApiError:
+                # A stale local marker may come from a different client. Its
+                # unrecognized label must not block all subsequent work; the
+                # server's acknowledged stage remains authoritative.
+                diagnostics = {**(diagnostics or {}), "unrecognized_pending_stage": stage}
+        effective_stage = _furthest_stage(attempt.current_stage, reported_stage, operation=operation)
+        attempt.current_stage = effective_stage
+        attempt.error_code = error_code or attempt.error_code or "bridge_process_exited"
+        attempt.error_message = message or attempt.error_message or "Bridge 写入进程已退出，服务端已接管本次操作"
+        if diagnostics is not None:
+            attempt.checkpoints = [*(attempt.checkpoints or []), {"kind": "failure_diagnostics", "at": current_time.isoformat(), "diagnostics": diagnostics}]
+        if isolated:
+            attempt.status = "failed"
+            attempt.finished_at = current_time
+            attempt.lease_expires_at = None
+            settle_external_attempt_failure(db, node_run=node_run, operation=operation, attempt=attempt,
+                settling_run_status=run.status if run else "running", stage=effective_stage,
+                error_code=attempt.error_code, error_message=attempt.error_message, now=current_time,
+                actor_type="bridge", actor_id=bridge_id, retry_before_write=False)
+        elif operation.status in {"failed", "reconciliation_required"}:
+            # Preserve a late Writer's actual exception after lease expiry.
+            operation.error_code = attempt.error_code
+            operation.error_message = attempt.error_message
+    _record_stopped_writer(db, run=run, node_run=node_run, operation=operation,
+        attempt=attempt, bridge_id=bridge_id, now=current_time)
+    append_audit_log(db, action="external_operation.recover_pending", resource_type="execution_external_operation",
+        resource_id=operation.id, details={"attempt_id": attempt.id, "bridge_id": bridge_id,
+            "process_exited": True, "status": operation.status, "already_settled": already_settled})
+    return {"released": True, "reason": "already_settled" if already_settled else "isolated",
+            "attempt": public_external_attempt(attempt), "operation": public_external_operation(operation)}

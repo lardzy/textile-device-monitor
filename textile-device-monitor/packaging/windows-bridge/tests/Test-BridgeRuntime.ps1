@@ -56,9 +56,13 @@ try {
 } finally { $hold.Dispose() }
 $pending=Join-Path $root 'runtime\write.pending.json'
 Write-BridgeRecord $pending @{AttemptId='test-1';Revision=$s.revision}
-$rejected=$false
-try { Enter-BridgeMaintenance -TimeoutSeconds 1 } catch { $rejected=$true }
-Assert ($rejected -and (Test-Path $pending)) 'Unknown receipt allowed upgrade'
+Enter-BridgeMaintenance -TimeoutSeconds 1
+Assert ((Test-Path $pending) -and (Test-Path (Join-Path $root 'config\maintenance.lock'))) 'Upgrade must preserve pending for the next bridge'
+Exit-BridgeMaintenance
+$s=Set-BridgeRunning -Kind Write -Enabled $true -ExpectedRevision $s.revision
+Assert ($s.enabled.write -and (Test-Path $pending)) 'Pending prevented write bridge enable'
+$code=Invoke-BridgeSupervisor -Kind Write -Once -Run {42}
+Assert ($code -eq 42 -and (Test-Path $pending)) 'Supervisor must start recovery without discarding pending'
 $s=Set-BridgeRunning -Kind Write -Enabled $false -ExpectedRevision $s.revision
 $bad=$false
 try { Confirm-BridgeReconciledAttempt -Kind Write -AttemptId 'wrong' -Reason 'synthetic' } catch { $bad=$true }
@@ -98,5 +102,5 @@ function Test-BridgeOperatorLoggedOn($Sid) {return $true}
 function Start-ScheduledTask($TaskName,$TaskPath,$ErrorAction) {$script:starts++}
 & $actualStart Write (Get-BridgeSettings) $root
 Assert ($script:checks -ge 2 -and $script:starts -eq 1) 'A dying scheduler instance swallowed the new start'
-Write-Output 'PASS: selective enable, status, atomic record, upgrade drain, timeout rollback, unknown receipt, explicit settlement and disabled supervisor'
+Write-Output 'PASS: selective enable, status, atomic record, upgrade drain, pending recovery, timeout rollback and disabled supervisor'
 

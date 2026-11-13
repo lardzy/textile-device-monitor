@@ -2228,16 +2228,126 @@ class InstalledControlTests(unittest.TestCase):
         self.assertEqual(api.call_args.args[:2], ("http://host-2", "new-token"))
         self.assertFalse((self.root / "runtime/write.pending.json").exists())
 
-    def test_unacknowledged_attempt_survives_restart_and_refuses_another_claim(self):
+    def test_unacknowledged_attempt_recovers_after_network_returns_and_continues(self):
         claim = {"claimed": True, "attempt": {"id": "A"}, "operation": {"id": "O", "credential": {"account_name": "other"}}}
-        with patch.object(bridge, "api_request", side_effect=[claim, OSError("private backend details")]):
-            self.assertEqual(self.launch(), 22)
+        with patch.object(bridge, "api_request", side_effect=[claim, OSError("private backend details"), OSError("offline")]):
+            self.assertEqual(self.launch(1, "--once"), 22)
         pending = json.loads((self.root / "runtime/write.pending.json").read_bytes())
         self.assertEqual(pending["AttemptId"], "A")
-        with patch.object(bridge, "api_request") as api:
-            self.assertEqual(self.launch(), 22)
-        api.assert_not_called()
         self.assertNotIn("private", (self.root / "runtime/write.json").read_text())
+        with patch.object(bridge, "api_request", side_effect=[{"released": True, "reason": "already_settled"}, {"claimed": False}]) as api:
+            self.assertEqual(self.launch(1, "--once"), 1)
+        self.assertEqual([call.args[3] for call in api.call_args_list], ["/external-bridge/attempts/A/recover", "/external-bridge/claim"])
+        self.assertTrue(api.call_args_list[0].args[4]["process_exited"])
+        self.assertFalse((self.root / "runtime/write.pending.json").exists())
+        saved = json.loads((self.root / "runtime/receipts/write-A.json").read_text())
+        self.assertIn("private backend details", saved["pending"]["Failure"]["diagnostics"]["message"])
+
+    def test_success_receipt_survives_lost_response_and_restarts_without_rewriting(self):
+        claim = final_entry_claim()
+        claim["operation"]["credential"] = {"account_name": "account"}
+        original = {}
+        def request(base, token, method, route, body):
+            if route.endswith("/claim"):
+                return claim
+            if route.endswith("/complete"):
+                original.update(body)
+                raise OSError("reply lost")
+            if route.endswith("/recover"):
+                raise OSError("server offline")
+            return {}
+        with patch.object(bridge, "api_request", side_effect=request), patch.object(
+            bridge.subprocess, "Popen", return_value=final_entry_process()) as writer:
+            self.assertEqual(self.launch(1, "--once", "--final-entry-writer", "final.exe",
+                "--final-entry-work-root", "C:/work", "--source-root", "execution_staging=C:/work"), 22)
+        writer.assert_called_once()
+        pending = json.loads((self.root / "runtime/write.pending.json").read_text())
+        self.assertEqual(pending["Success"]["receipt"], original["receipt"])
+        self.assertEqual(pending["Success"]["stage"], "completed")
+        with patch.object(bridge, "api_request", side_effect=[
+            {"released": True, "reason": "already_settled", "operation": {"status": "completed"}},
+            {"claimed": False}]) as api, patch.object(bridge.subprocess, "Popen") as writer:
+            self.assertEqual(self.launch(1, "--once"), 1)
+        writer.assert_not_called()
+        self.assertEqual(api.call_args_list[0].args[4]["receipt"], original["receipt"])
+        self.assertEqual(api.call_args_list[0].args[4]["stage"], "completed")
+        self.assertFalse((self.root / "runtime/write.pending.json").exists())
+        saved = list((self.root / "runtime/receipts").glob("*.json"))
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(json.loads(saved[0].read_text())["pending"]["Success"]["receipt"], original["receipt"])
+
+    def test_legacy_pending_deleted_on_server_recovers_with_new_configuration(self):
+        (self.root / "runtime/write.pending.json").write_text(json.dumps({"AttemptId": "old", "OperationId": "gone", "Revision": 1}))
+        self.settings(19)
+        with patch.object(bridge, "api_request", side_effect=[{"released": True, "reason": "not_found"}, {"claimed": False}]) as api:
+            self.assertEqual(self.launch(19, "--once"), 1)
+        recover = api.call_args_list[0]
+        self.assertEqual(recover.args[0], "http://host-19")
+        self.assertEqual(recover.args[3], "/external-bridge/attempts/old/recover")
+        self.assertFalse((self.root / "runtime/write.pending.json").exists())
+
+    def test_pending_recovery_waits_for_an_active_writer(self):
+        from managed import ManagedCycle
+        recover = unittest.mock.Mock(return_value={"released": True})
+        control = ManagedCycle(str(self.root), 1, "write", recover=recover)
+        control.claim("A", "O")
+        writer = unittest.mock.Mock()
+        writer.pid = 123
+        writer.poll.return_value = None
+        control.writer_started(writer)
+        self.assertFalse(control.recover_pending())
+        recover.assert_not_called()
+        writer.poll.return_value = 1
+        self.assertTrue(control.recover_pending())
+        self.assertTrue(recover.call_args.args[0]["ProcessExited"])
+
+    def test_pending_retries_without_restart_and_redacts_secrets(self):
+        from managed import ManagedCycle
+        recover = unittest.mock.Mock(side_effect=[OSError("offline"), {"released": True, "reason": "isolated"}])
+        control = ManagedCycle(str(self.root), 1, "write", recover=recover, secrets=("private-password",))
+        control.claim("A", "O")
+        try:
+            raise RuntimeError("failure: private-password")
+        except RuntimeError as exc:
+            control.remember_exception(exc)
+        def cycle():
+            self.settings(1, False)
+            return "idle"
+        with patch.object(control, "retry_wait"):
+            self.assertEqual(control.run(cycle, 2), 20)
+        self.assertEqual(recover.call_count, 2)
+        saved = (self.root / "runtime/receipts/write-A.json").read_text()
+        self.assertNotIn("private-password", saved)
+        self.assertIn("[redacted]", saved)
+
+    def test_failed_writer_is_transferred_with_full_diagnostics_then_other_tasks_continue(self):
+        diagnostics = {"exception_type": "System.Runtime.InteropServices.COMException",
+                       "message": "Excel failed", "hresult": "0x800A03EC", "stack_trace": "trace" * 2000,
+                       "inner_exceptions": [{"exception_type": "System.Exception", "message": "inner", "stack_trace": "inner trace"}]}
+        process = FakeProcess([{"stage": "excel_write_ready"}, {"stage": "excel_collection_started"},
+            {"receipt": {"error": "excel_failed", "diagnostics": diagnostics, "reconciliation_required": True}}], exit_code=1)
+        claim = final_entry_claim()
+        calls = []
+        def request(base, token, method, route, body):
+            calls.append((route, body))
+            if route.endswith("/claim"):
+                if sum(path.endswith('/claim') for path, _ in calls) == 1:
+                    claim["operation"]["credential"] = {"account_name": "account"}
+                    return claim
+                self.settings(2)
+                return {"claimed": False}
+            if route.endswith("/fail"):
+                return {"operation": {"status": "reconciliation_required"}}
+            return {}
+        with patch.object(bridge, "api_request", side_effect=request), patch.object(bridge.subprocess, "Popen", return_value=process):
+            self.assertEqual(self.launch(1, "--final-entry-writer", "final.exe", "--final-entry-work-root", "C:/work", "--source-root", "execution_staging=C:/work"), 20)
+        failure = next(body for path, body in calls if path.endswith('/fail'))
+        self.assertEqual(failure["diagnostics"], diagnostics)
+        self.assertFalse((self.root / "runtime/write.pending.json").exists())
+        saved = list((self.root / "runtime/receipts").glob('*.json'))
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(json.loads(saved[0].read_text())["pending"]["Failure"]["diagnostics"], diagnostics)
+        self.assertEqual(sum(path.endswith('/claim') for path, _ in calls), 2)
 
     def test_maintenance_and_disable_prevent_claim(self):
         marker = self.root / "config/maintenance.lock"

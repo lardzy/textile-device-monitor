@@ -621,7 +621,22 @@ class ExternalBridgeFailRequest(BaseModel):
     )
     stage: str = Field(min_length=1, max_length=50)
     error_code: Optional[str] = Field(default=None, max_length=100)
-    message: Optional[str] = Field(default=None, max_length=2000)
+    message: Optional[str] = Field(default=None, max_length=65536)
+    diagnostics: Optional[dict[str, Any]] = None
+
+
+class ExternalBridgeRecoverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bridge_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$", min_length=1, max_length=100)
+    operation_id: str = Field(min_length=1, max_length=36)
+    process_exited: Literal[True]
+    stage: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    error_code: Optional[str] = Field(default=None, max_length=100)
+    message: Optional[str] = Field(default=None, max_length=65536)
+    diagnostics: Optional[dict[str, Any]] = None
+    receipt: Optional[dict[str, Any]] = None
+    stdout_summary: Optional[str] = Field(default=None, max_length=20000)
 
 
 class FileRefreshRequest(BaseModel):

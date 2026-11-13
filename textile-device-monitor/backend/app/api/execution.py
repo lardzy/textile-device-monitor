@@ -90,6 +90,7 @@ from app.execution.external_operations import (
     public_external_reconciliation_context,
     reconcile_external_operation,
     record_external_attempt_stage,
+    recover_external_attempt,
     resolve_legacy_target_sample_number,
 )
 from app.execution.models import (
@@ -177,6 +178,7 @@ from app.execution.schemas import (
     ExternalBridgeCompleteRequest,
     ExternalBridgeFailRequest,
     ExternalBridgeHeartbeatRequest,
+    ExternalBridgeRecoverRequest,
     ExternalBridgeStageRequest,
     ExternalOperationApprovalRequest,
     ExternalOperationReconciliationRequest,
@@ -3211,11 +3213,25 @@ def fail_external_bridge_attempt(
         stage=payload.stage,
         error_code=payload.error_code,
         message=payload.message,
+        diagnostics=payload.diagnostics,
     )
     response = {
         "attempt": public_external_attempt(attempt),
         "operation": public_external_operation(operation),
     }
+    db.commit()
+    return response
+
+
+@router.post("/external-bridge/attempts/{attempt_id}/recover")
+def recover_external_bridge_attempt(
+    attempt_id: str,
+    payload: ExternalBridgeRecoverRequest,
+    db: Session = Depends(get_db),
+    x_execution_bridge_key: Optional[str] = Header(default=None, alias="X-Execution-Bridge-Key"),
+):
+    _require_bridge_key(x_execution_bridge_key)
+    response = recover_external_attempt(db, attempt_id=attempt_id, **payload.model_dump())
     db.commit()
     return response
 

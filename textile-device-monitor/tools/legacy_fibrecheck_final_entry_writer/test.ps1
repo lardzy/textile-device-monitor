@@ -59,6 +59,17 @@ try {
     $passed = 0
 
     $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+    $diagnosticsSelfTest = Join-Path $outDir 'ExceptionDiagnosticsSelfTest.exe'
+    & $csc -nologo -target:exe -platform:x86 -codepage:65001 -utf8output -debug- -optimize+ `
+        -out:"$diagnosticsSelfTest" -reference:System.Web.Extensions.dll `
+        (Join-Path $PSScriptRoot 'tests\ExceptionDiagnosticsSelfTest.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Exception diagnostics SelfTest compilation failed' }
+    $diagnosticsOutput = @(& $diagnosticsSelfTest $exe 2>&1 | ForEach-Object { $_.ToString() })
+    if ($LASTEXITCODE -ne 0 -or ($diagnosticsOutput -join "`n") -notmatch 'Exception diagnostics self-test: 26 passed') {
+        throw "Exception diagnostics SelfTest failed: $($diagnosticsOutput -join "`n")"
+    }
+    $passed++
+
     $branchSelfTest = Join-Path $outDir 'LegacyExcelBranchRulesSelfTest.exe'
     & $csc -nologo -target:exe -codepage:65001 -utf8output -debug- -optimize+ `
         -out:"$branchSelfTest" `

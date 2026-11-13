@@ -846,6 +846,25 @@ export default function ExecutionExternalOperationPanel({
                   showIcon
                   type="error"
                   message={operation.error.message || operation.error.code}
+                  description={operation.error.diagnostics ? (
+                    <details style={{ marginTop: 8 }}>
+                      <summary style={{ cursor: 'pointer' }}>完整异常详情</summary>
+                      <Paragraph
+                        copyable={{
+                          text: JSON.stringify(operation.error.diagnostics, null, 2),
+                          tooltips: ['复制完整异常', '已复制'],
+                        }}
+                        style={{ marginBottom: 0 }}
+                      >
+                        <pre style={{
+                          maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap',
+                          overflowWrap: 'anywhere', margin: '8px 0',
+                        }}>
+                          {JSON.stringify(operation.error.diagnostics, null, 2)}
+                        </pre>
+                      </Paragraph>
+                    </details>
+                  ) : undefined}
                 />
               )}
             </Card>

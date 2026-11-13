@@ -3176,6 +3176,8 @@ def _cancel_failure_siblings(
         .with_for_update()
         .all()
     )
+    unsettled_external_operations = [operation for operation in unsettled_external_operations
+                                     if _external_write_still_uninterruptible(operation)]
     unsettled_external_node_ids = {
         operation.node_run_id
         for operation in unsettled_external_operations
@@ -3309,16 +3311,10 @@ def _finish_settling_publish(
         run.output_data = data
         return True
 
-    remaining_external = (
-        db.query(ExecutionExternalOperation.id)
-        .filter(
-            ExecutionExternalOperation.run_id == run.id,
-            ExecutionExternalOperation.status.in_(
-                UNSETTLED_EXTERNAL_OPERATION_STATUSES
-            ),
-        )
-        .first()
-    )
+    remaining_external = next((operation for operation in db.query(ExecutionExternalOperation).filter(
+        ExecutionExternalOperation.run_id == run.id,
+        ExecutionExternalOperation.status.in_(UNSETTLED_EXTERNAL_OPERATION_STATUSES),
+    ).all() if _external_write_still_uninterruptible(operation)), None)
     if remaining_external is not None:
         # 已被 Bridge 领取的外部操作同样不可中断：运行保持待定状态，
         # 直到该尝试回报终态后按阶段收尾。
@@ -3359,6 +3355,13 @@ def _finish_settling_publish(
     return True
 
 
+def _external_write_still_uninterruptible(operation: ExecutionExternalOperation) -> bool:
+    recovery = (operation.verification or {}).get("stopped_writer_recovery") or {}
+    return not (operation.status == "reconciliation_required"
+                and recovery.get("process_exited") is True
+                and recovery.get("attempt_no") == operation.attempt_count)
+
+
 def _finish_settling_external(
     db: Session,
     *,
@@ -3368,6 +3371,7 @@ def _finish_settling_external(
     output_data: Optional[dict[str, Any]] = None,
     error_code: Optional[str] = None,
     error_message: Optional[str] = None,
+    remote_write_performed: bool | None = False,
 ) -> bool:
     """Record an external result and settle cancel/failure once all writes stop."""
 
@@ -3391,11 +3395,13 @@ def _finish_settling_external(
                 "node_id": node_run.node_id,
                 "code": error_code,
                 "message": error_message,
-                "remote_write_performed": False,
+                "remote_write_performed": remote_write_performed,
             }
         )
     data["external_side_effect_receipts"] = receipts
     data["external_side_effect_resolutions"] = resolutions
+    unknown_side_effect = any(item.get("remote_write_performed") is None for item in resolutions)
+    data["external_side_effect_unknown"] = unknown_side_effect
 
     # Tests may disable autoflush. Make the terminal operation/node visible to
     # the remaining-uninterruptible checks before deciding the run is settled.
@@ -3409,16 +3415,10 @@ def _finish_settling_external(
         )
         .first()
     )
-    remaining_external = (
-        db.query(ExecutionExternalOperation.id)
-        .filter(
-            ExecutionExternalOperation.run_id == run.id,
-            ExecutionExternalOperation.status.in_(
-                UNSETTLED_EXTERNAL_OPERATION_STATUSES
-            ),
-        )
-        .first()
-    )
+    remaining_external = next((operation for operation in db.query(ExecutionExternalOperation).filter(
+        ExecutionExternalOperation.run_id == run.id,
+        ExecutionExternalOperation.status.in_(UNSETTLED_EXTERNAL_OPERATION_STATUSES),
+    ).all() if _external_write_still_uninterruptible(operation)), None)
     if remaining_publish is not None or remaining_external is not None:
         run.output_data = data
         return True
@@ -3427,7 +3427,7 @@ def _finish_settling_external(
     any_side_effect = bool(data.get("publish_receipts")) or bool(receipts)
     if pending_status == "cancel_pending":
         run.status = "cancelled"
-        data["cancelled_after_side_effect"] = any_side_effect
+        data["cancelled_after_side_effect"] = True if any_side_effect else None if unknown_side_effect else False
         event_type = "run.cancelled"
     else:
         run.status = "failed"
@@ -3658,16 +3658,10 @@ def _settle_cancel_pending_run(
     )
     if remaining_publish is not None:
         return
-    remaining_external = (
-        db.query(ExecutionExternalOperation.id)
-        .filter(
-            ExecutionExternalOperation.run_id == run.id,
-            ExecutionExternalOperation.status.in_(
-                UNSETTLED_EXTERNAL_OPERATION_STATUSES
-            ),
-        )
-        .first()
-    )
+    remaining_external = next((operation for operation in db.query(ExecutionExternalOperation).filter(
+        ExecutionExternalOperation.run_id == run.id,
+        ExecutionExternalOperation.status.in_(UNSETTLED_EXTERNAL_OPERATION_STATUSES),
+    ).all() if _external_write_still_uninterruptible(operation)), None)
     if remaining_external is not None:
         return
     if db.query(ExecutionRun.id).filter(
@@ -3782,8 +3776,9 @@ def cancel_external_waiting_node(
     node_run_id: str,
     error_code: str,
     error_message: str,
+    remote_write_performed: bool | None = False,
 ) -> ExecutionNodeRun:
-    """Cancel a waiting_external node whose attempt ended before any write."""
+    """Cancel a stopped external node; None keeps an unknown write explicit."""
 
     run, node_run = _lock_run_and_node(db, node_run_id)
     if node_run.status != "waiting_external":
@@ -3818,6 +3813,7 @@ def cancel_external_waiting_node(
         side_effect_completed=False,
         error_code=error_code,
         error_message=error_message,
+        remote_write_performed=remote_write_performed,
     )
     return node_run
 
@@ -5304,6 +5300,8 @@ def set_run_control_status(
             .with_for_update()
             .all()
         )
+        unsettled_external_operations = [operation for operation in unsettled_external_operations
+                                         if _external_write_still_uninterruptible(operation)]
         unsettled_external_node_ids = {
             operation.node_run_id
             for operation in unsettled_external_operations

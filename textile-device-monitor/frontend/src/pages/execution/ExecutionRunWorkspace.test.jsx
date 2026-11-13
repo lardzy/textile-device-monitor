@@ -315,7 +315,11 @@ describe('ExecutionRunWorkspace', () => {
     expect(screen.queryByText(/selected_files/)).not.toBeInTheDocument();
   });
 
-  it('展示服务端自动交付状态且不依赖工作台页面确认', async () => {
+  it.each([
+    'external.legacy_regenerated_fiber_count_upload',
+    'external.operation',
+    'external.operation@1',
+  ])('%s 展示自动交付状态和可访问的外部操作面板', async (nodeType) => {
     const operationStatus = 'approved';
     let approvalCalls = 0;
     const operation = () => ({
@@ -367,7 +371,7 @@ describe('ExecutionRunWorkspace', () => {
         nodes: [{
           id: 'node-run-upload',
           node_id: 'upload',
-          node_type: 'external.legacy_regenerated_fiber_count_upload',
+          node_type: nodeType,
           name: '旧系统上传-再生纤-根数法',
           status: 'waiting_external',
         }],
@@ -375,7 +379,7 @@ describe('ExecutionRunWorkspace', () => {
           ...completedRun.definition,
           nodes: [{
             id: 'upload',
-            type: 'external.legacy_regenerated_fiber_count_upload',
+            type: nodeType,
             type_version: 1,
             name: '旧系统上传-再生纤-根数法',
             config: {},

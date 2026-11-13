@@ -406,7 +406,7 @@ export default function ExecutionRunWorkspace() {
   const primaryResultFileId = extractPrimaryFileId(snapshot.outputs);
   const hasExternalOperations = (snapshot.definition.nodes || []).some(node => (
     String(node.data?.nodeType || node.node_type || node.type || '')
-      .startsWith('external.legacy_')
+      .startsWith('external.')
   ));
 
   // 外部操作卡片始终挂载（自行感知刷新并回报有无内容），

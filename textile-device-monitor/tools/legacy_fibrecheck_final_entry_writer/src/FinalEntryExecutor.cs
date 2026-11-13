@@ -278,7 +278,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 throw new WriterFailureException(
                     "generic_write_failed_" + ex.GetType().Name,
                     sideEffectStarted ? Program.ExitReconciliationRequired : Program.ExitSourceMismatch,
-                    sideEffectStarted);
+                    sideEffectStarted, ex);
             }
         }
 
@@ -388,7 +388,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 if (sideEffectStarted && !ex.ReconciliationRequired)
                 {
                     throw new WriterFailureException(
-                        ex.Code, Program.ExitReconciliationRequired, true);
+                        ex.Code, Program.ExitReconciliationRequired, true, ex.InnerException ?? ex);
                 }
                 throw;
             }
@@ -397,7 +397,7 @@ namespace LegacyFibreCheckFinalEntryWriter
                 throw new WriterFailureException(
                     "excel_write_failed_" + ex.GetType().Name,
                     sideEffectStarted ? Program.ExitReconciliationRequired : Program.ExitSourceMismatch,
-                    sideEffectStarted);
+                    sideEffectStarted, ex);
             }
             finally
             {

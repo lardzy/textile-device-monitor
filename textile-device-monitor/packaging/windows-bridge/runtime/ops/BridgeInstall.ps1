@@ -71,6 +71,43 @@ function Store-State($state) {
     $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $StateFile -Encoding UTF8
 }
 
+function Enter-InstallMaintenance([int]$TimeoutSeconds = 90) {
+    # This function ships inside the new installer's temporary preflight script.
+    # Do not call the installed 1.3.0 Enter-BridgeMaintenance: it rejects a
+    # durable pending receipt even after every Writer has already exited.
+    $dataRoot = Get-BridgeDataRoot
+    $pause = Join-Path $dataRoot 'config\maintenance.lock'
+    $owner = 'setup:' + $ops.ToLowerInvariant()
+    $created = $false
+    $temp = "$pause.$([guid]::NewGuid()).tmp"
+    try {
+        Write-BridgeRecord $temp @{Owner=$owner; Since=[DateTime]::UtcNow.ToString('o')}
+        try { [IO.File]::Move($temp,$pause); $created=$true }
+        catch [IO.IOException] {
+            if (!(Test-Path -LiteralPath $pause) -or (Read-BridgeRecord $pause).Owner -cne $owner) {
+                throw '另一维护操作持有暂停标记'
+            }
+        }
+    } finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
+    try {
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            $busy = $false
+            foreach ($kind in @('Write','Snapshot')) {
+                try { (Open-BridgeSupervisorLock $dataRoot $kind).Dispose() }
+                catch [IO.IOException] { $busy=$true; break }
+                if ((Get-BridgeTask $kind).State -in @('Running','Queued')) { $busy=$true; break }
+            }
+            if (!$busy -and !(Get-BridgeLocalProcesses)) { return }
+            Start-Sleep -Milliseconds 250
+        } while ($clock.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+        throw '正在等待当前 Writer 结束，请稍后重试升级'
+    } catch {
+        if ($created) { Exit-BridgeMaintenance -DataRoot $dataRoot -Owner $owner }
+        throw
+    }
+}
+
 function Prepare-Upgrade {
     $state = [ordered]@{root=$InstallRoot;mode='fresh';tasks=@();owner='';prepared=$false}
     $manifest = Join-Path $InstallRoot 'manifest.json'
@@ -82,7 +119,7 @@ function Prepare-Upgrade {
         if ([version]$current.version -ge [version]'1.3.0' -and !$checkpoint) {
             $state.mode = 'managed'
             . (Join-Path $ops 'BridgeRuntime.ps1')
-            Enter-BridgeMaintenance -TimeoutSeconds 90
+            Enter-InstallMaintenance -TimeoutSeconds 90
             $state.prepared = $true
             Store-State $state
             return

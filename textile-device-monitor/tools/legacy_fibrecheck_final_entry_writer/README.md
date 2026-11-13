@@ -184,7 +184,14 @@ CLOTHING，最后进入标准分支。因此固定模板匹配数为任意正数
 
 许可前失败不会产生远端副作用。越过官方服务/DAL 的保守副作用边界后，任何异常或写后
 不一致都返回退出码 `30` 和 `reconciliation_required=true`；不得自动重试，只能先用只读
-probe 对账。输出不包含连接串、口令、完整内部 ID 或远端绝对路径。
+probe 对账。
+
+异常失败回执保留原有 `error` 业务代码，另提供 `diagnostics`，包含完整异常类型、消息、
+十六进制 `hresult`、`stack_trace` 和递归的 `inner_exceptions`（包括 AggregateException 的
+全部分支）。Excel 采集、普通登记、登记更新和未处理异常使用同一结构；成功回执不增加该字段。
+诊断保留文件路径和中文错误上下文，用于定位 Excel COM、文件和数据库错误；不导出配置或
+`Exception.Data`，进程中已知口令/令牌及消息中的 `Password=` / `Pwd=` 值会被替换为
+`[redacted]`。Writer 将完整 JSON 输出给 Bridge，诊断的保存和回传由 Bridge 负责。
 
 ### schema 5 的入口选择（2026-09-29）
 

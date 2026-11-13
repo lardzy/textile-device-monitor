@@ -799,6 +799,7 @@ class InstalledRegistry:
                 "execution_binding_digest", "type", "type_version", "contract_digest",
                 "implementation_digest", "pack_id", "pack_version", "execution_kind", "ready",
             )})
+        nodes.extend(deepcopy(getattr(self, "compatibility_bindings", [])))
         capability_digest = canonical_sha256(nodes)
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -1215,13 +1216,17 @@ def _build_installed_registry() -> InstalledRegistry:
                 )
             )
 
-    return InstalledRegistry(
+    registry = InstalledRegistry(
         packs=pack_registry,
         node_specs=NodeSpecRegistry(node_specs),
         executables=ExecutableRegistry(executables),
         assets=AssetRegistry(assets),
         connectors=ConnectorRegistry(connectors),
     )
+    from app.execution.v2.binding_compatibility import install_shipped_binding_compatibility
+
+    install_shipped_binding_compatibility(registry)
+    return registry
 
 
 @lru_cache(maxsize=1)
