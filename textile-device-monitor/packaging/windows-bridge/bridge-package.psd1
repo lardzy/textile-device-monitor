@@ -15,8 +15,9 @@
     # 1.2.4：写入桥在租约过期后仍可回报经过校验的终态，沿用 1.2.3 的 Writer。
     # 1.3.0：本机配置中心、ProgramData 加密配置与任务边界切换。
     # 1.3.1：完整 Excel 异常、单操作失败隔离和遗留回执自动恢复。
-    PackageVersion    = '1.3.1'
-    WriteBridgeSha256 = '000e5bb3a9cac359130be38166427c0a8e6e66cd56112cfc9656bf3a722a4a09'
+    # 1.3.2：按任务发起用户使用检务凭据，同一座 Bridge 支持多用户。
+    PackageVersion    = '1.3.2'
+    WriteBridgeSha256 = 'a6585452ffd9c9d8ee6804cfe02211e7d2b65e4ec05e694036698047a9258afc'
 
     # 执行系统源码树（含 tools\*；writer 已编译产物在其 out\ 下）
     # 留空使用当前打包脚本所属的源码树；使用独立构建目录时可指定路径。

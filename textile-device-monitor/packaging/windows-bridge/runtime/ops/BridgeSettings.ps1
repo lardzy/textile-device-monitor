@@ -1,7 +1,9 @@
 ﻿#requires -Version 5.1
 # 配置中心、升级程序和任务监督器共用。不要将解密结果写入日志。
 Add-Type -AssemblyName System.Security
-$script:BridgeSecretKeys = @('EXECUTION_BRIDGE_TOKEN','LEGACY_FIBRECHECK_LOGIN','LEGACY_FIBRECHECK_PASSWORD','SMB_USER_B','SMB_PASS_B')
+$script:BridgeActiveSecretKeys = @('EXECUTION_BRIDGE_TOKEN','SMB_USER_B','SMB_PASS_B')
+# 1.3.0/1.3.1 已保存的检务凭据继续保留；实际写入使用服务端随任务下发的凭据。
+$script:BridgeSecretKeys = $script:BridgeActiveSecretKeys + @('LEGACY_FIBRECHECK_LOGIN','LEGACY_FIBRECHECK_PASSWORD')
 $script:BridgePortableKeys = @('ApiBase','ExecutionStagingPath','PaperFiberRecordsPath','SmbTargets','OracleDataSource','OracleCredentialProfile','PollSeconds')
 $script:BridgeConfigKeys = $script:BridgePortableKeys + @('WriteBridgeId','SnapshotBridgeId')
 $script:BridgeUtf8 = New-Object Text.UTF8Encoding($false, $true)
@@ -327,7 +329,7 @@ function Save-BridgeSettings {
         }
         if ($doc.enabled.write -or $doc.enabled.snapshot) {
             if (!$doc.operator_sid) { throw '启用前请选择已登录的操作员账号。' }
-            $needed = if ($doc.enabled.write) { $script:BridgeSecretKeys } else { @('EXECUTION_BRIDGE_TOKEN') }
+            $needed = if ($doc.enabled.write) { $script:BridgeActiveSecretKeys } else { @('EXECUTION_BRIDGE_TOKEN') }
             foreach ($key in $needed) {
                 if ([string]::IsNullOrWhiteSpace($plain[$key])) { throw "启用前请填写凭据：$key" }
             }

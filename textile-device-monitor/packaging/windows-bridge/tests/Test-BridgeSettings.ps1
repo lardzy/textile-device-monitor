@@ -35,6 +35,11 @@ try {
     $created = Initialize-BridgeSettings -InstallRoot $app -DataRoot $fresh
     Assert-Case ($created.revision -eq 1 -and !$created.operator -and !$created.enabled.write -and !$created.enabled.snapshot) 'fresh install is disabled and unassigned'
     Assert-Case ($created.config.WriteBridgeId -ne $created.config.SnapshotBridgeId) 'distinct stable IDs'
+    $created = Save-BridgeSettings -DataRoot $fresh -ExpectedRevision $created.revision -Operator $account `
+        -Secrets @{EXECUTION_BRIDGE_TOKEN='fixture-token';SMB_USER_B='fixture-share-user';SMB_PASS_B='fixture-share-password'} `
+        -Enabled @{write=$true}
+    Assert-Case ($created.enabled.write -and $created.credential_keys.Count -eq 3 -and
+        @($created.credential_keys | Where-Object { $_ -like 'LEGACY_FIBRECHECK_*' }).Count -eq 0) 'fresh write bridge enables without local FibreCheck account or password'
 
     $legacy = Join-Path $base 'legacy-install\config'
     $active = Join-Path $base 'data'
@@ -73,8 +78,11 @@ try {
     Assert-PrivateAcl $path $actor.SID
     Assert-PrivateAcl "$path.bak" $actor.SID
     Assert-PrivateAcl (Split-Path $path -Parent) $actor.SID
+    $oldSettingsHash = (Get-FileHash -LiteralPath $path).Hash
     $again = Initialize-BridgeSettings -DataRoot $active -InstallRoot (Split-Path $legacy -Parent)
     Assert-Case ($again.revision -eq 2 -and $again.config.ApiBase -eq $saved.config.ApiBase) 'migration only runs once'
+    Assert-Case ((Get-FileHash -LiteralPath $path).Hash -eq $oldSettingsHash -and
+        (Get-BridgeSettings -DataRoot $active -WithSecrets).secrets.LEGACY_FIBRECHECK_PASSWORD -ceq $fakePassword) 'existing 1.3.0 and 1.3.1 settings remain readable and unchanged'
 
     $portable = Join-Path $base '普通参数.json'
     Export-BridgeParameters -DataRoot $active -Path $portable

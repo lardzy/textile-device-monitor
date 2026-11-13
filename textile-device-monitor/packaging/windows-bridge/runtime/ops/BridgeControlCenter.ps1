@@ -273,7 +273,7 @@ function New-BridgeControlWindow([string]$Operator) {
     $script:center = @{
         Model=$model; DesktopOperator=$Operator; Fields=@{}; Hints=@{}; Bridges=@{}; Dirty=$false; Loading=$true; CheckProcess=$null; NextStatusRead=[DateTime]::MinValue
         ConfigKeys=@('ApiBase','ExecutionStagingPath','PaperFiberRecordsPath','SmbTargets','OracleDataSource','OracleCredentialProfile','PollSeconds','WriteBridgeId','SnapshotBridgeId')
-        SecretKeys=@('EXECUTION_BRIDGE_TOKEN','LEGACY_FIBRECHECK_LOGIN','LEGACY_FIBRECHECK_PASSWORD','SMB_USER_B','SMB_PASS_B')
+        SecretKeys=@('EXECUTION_BRIDGE_TOKEN','SMB_USER_B','SMB_PASS_B')
     }
     $form = New-Object Windows.Forms.Form
     $script:center.Form = $form
@@ -325,8 +325,6 @@ function New-BridgeControlWindow([string]$Operator) {
     Add-CenterField $grid 'PaperFiberRecordsPath' '纸浆原始记录目录' path
     Add-CenterField $grid 'Operator' 'Windows 任务账号'
     Add-CenterField $grid 'EXECUTION_BRIDGE_TOKEN' 'Bridge 令牌' password
-    Add-CenterField $grid 'LEGACY_FIBRECHECK_LOGIN' '检务账号'
-    Add-CenterField $grid 'LEGACY_FIBRECHECK_PASSWORD' '检务密码' password
     Add-CenterField $grid 'SMB_USER_B' '共享账号'
     Add-CenterField $grid 'SMB_PASS_B' '共享密码' password
 

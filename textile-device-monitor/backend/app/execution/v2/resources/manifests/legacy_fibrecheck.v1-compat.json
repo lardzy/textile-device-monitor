@@ -1,6 +1,6 @@
 {
   "assets": [],
-  "distribution_digest": "13c50f4c5648bf49e4ab796ef5927983d3936589de09a30fc86bfe28c3a0315a",
+  "distribution_digest": "db56fe8ca5ee46c1064cd0092bce62e0d5c7fc4e9f919d5e74fcb102272892ea",
   "engine_version_range": ">=2.5.0 <3.0.0",
   "extensions": {
     "textile": {

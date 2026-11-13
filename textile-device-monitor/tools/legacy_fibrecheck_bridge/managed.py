@@ -36,6 +36,23 @@ def atomic_record(path: Path, data: dict) -> None:
         temp.unlink(missing_ok=True)
 
 
+
+def redact_secrets(value, secrets):
+    if isinstance(value, dict):
+        return {key: redact_secrets(item, secrets) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_secrets(item, secrets) for item in value]
+    if isinstance(value, str):
+        variants = set()
+        for secret in secrets:
+            if secret:
+                variants.update((secret, json.dumps(secret, ensure_ascii=False)[1:-1],
+                                 json.dumps(secret, ensure_ascii=True)[1:-1]))
+        for secret in sorted(variants, key=len, reverse=True):
+            value = value.replace(secret, "[redacted]")
+    return value
+
+
 class ManagedCycle:
     def __init__(self, root: str, revision: int, kind: str, *, recover=None,
                  context: dict | None = None, secrets=()):
@@ -49,7 +66,8 @@ class ManagedCycle:
         self.pending = self.root / "runtime" / (kind + ".pending.json")
         self.recover = recover
         self.context = context or {}
-        self.secrets = tuple(value for value in secrets if value)
+        self.base_secrets = tuple(value for value in secrets if value)
+        self.secrets = self.base_secrets
         self.writer_process = None
 
     def status(self, state: str, error: str = "") -> None:
@@ -76,25 +94,25 @@ class ManagedCycle:
     def read_pending(self) -> dict:
         return json.loads(self.pending.read_text(encoding="utf-8-sig"))
 
+    def set_task_secrets(self, *secrets) -> None:
+        # Replace the previous task's values; never reuse its login on another task.
+        self.secrets = self.base_secrets + tuple(value for value in secrets if value)
+
     def redact(self, value):
-        if isinstance(value, dict):
-            return {key: self.redact(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self.redact(item) for item in value]
-        if isinstance(value, str):
-            for secret in sorted(self.secrets, key=len, reverse=True):
-                value = value.replace(secret, "[redacted]")
-        return value
+        return redact_secrets(value, self.secrets)
 
     def remember_failure(self, failure: dict) -> None:
         record = self.read_pending()
-        record["Failure"] = self.redact(failure)
+        record["Failure"] = {**failure, **{key: self.redact(failure[key])
+            for key in ("error_code", "message", "diagnostics") if key in failure}}
         atomic_record(self.pending, record)
 
     def remember_success(self, receipt: dict, stage: str | None, stdout_summary: str) -> None:
         record = self.read_pending()
-        record["Success"] = self.redact({"receipt": receipt, "stage": stage,
-                                         "stdout_summary": stdout_summary})
+        # This is validated business evidence, not free-form diagnostics.
+        # A numeric password may also occur in a legitimate identifier/result.
+        record["Success"] = {"receipt": receipt, "stage": stage,
+                             "stdout_summary": self.redact(stdout_summary)}
         atomic_record(self.pending, record)
 
     def remember_exception(self, exc: Exception) -> None:
@@ -133,6 +151,7 @@ class ManagedCycle:
                           {"pending": record, "handoff": acknowledgement})
         self.pending.unlink(missing_ok=True)
         self.unknown = False
+        self.set_task_secrets()
 
     def retry_wait(self, poll_seconds: float) -> None:
         deadline = time.monotonic() + max(poll_seconds, 0.1)

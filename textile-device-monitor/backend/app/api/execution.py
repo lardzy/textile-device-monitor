@@ -3096,21 +3096,24 @@ def claim_external_bridge_operation(
         db,
         bridge_id=payload.bridge_id,
         account_name=payload.account_name,
+        use_task_credentials=payload.use_task_credentials,
         supported_operation_types=set(payload.supported_operation_types),
     )
     if result is None:
+        # Personal-credential claims may have closed an unclaimable operation
+        # before reaching the end of the queue.
+        db.commit()
         return {"claimed": False}
     operation, attempt, credential = result
-    ensure_bridge_credential_account(
-        credential,
-        account_name=payload.account_name,
-    )
+    if not payload.use_task_credentials:
+        ensure_bridge_credential_account(credential, account_name=payload.account_name or "")
     response = {
         "claimed": True,
         "attempt": public_external_attempt(attempt),
         "operation": bridge_external_operation(
             operation,
             credential=credential,
+            use_task_credentials=payload.use_task_credentials,
         ),
     }
     db.commit()

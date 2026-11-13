@@ -2,7 +2,8 @@
 """旧检务系统集中式 Bridge（单任务版）。
 
 职责：向执行系统领取 approved 的外部操作 -> 启动本地 Runner 写入 -> 按阶段
-回报心跳/检查点 -> 完成或失败收尾。除 Runner 自身动作外不产生任何远端副作用。
+回报心跳/检查点 -> 完成或失败收尾。每项任务使用发起人绑定的个人检务凭据，
+启动只需 Bridge 令牌。除 Runner 自身动作外不产生任何远端副作用。
 
 用法（在能同时访问执行系统 API、旧 Oracle 与共享目录的 Windows 主机上）：
 
@@ -13,8 +14,6 @@
         --writer C:/path/to/FibreCheckWriter.exe \
         --fibrecheck-dir C:/path/to/FibreCheck \
         --source-root regenerated_fiber_records=//192.168.105.82/材料检测中心/10特纤/02-检验/2026-再生纤 \
-        --account-env FIBRECHECK_RUNNER_ACCOUNT \
-        --password-env FIBRECHECK_RUNNER_PASSWORD \
         --once
 """
 from __future__ import annotations
@@ -29,7 +28,6 @@ import sys
 import tempfile
 import threading
 import time
-import unicodedata
 import urllib.error
 import urllib.request
 
@@ -347,10 +345,6 @@ def parse_root_map(pairs: list[str]) -> dict[str, str]:
         key, value = pair.split("=", 1)
         mapping[key.strip()] = value.strip()
     return mapping
-
-
-def normalized_identity(value: str | None) -> str:
-    return unicodedata.normalize("NFKC", value or "").strip().casefold()
 
 
 UPDATE_PROGRESS_STAGES = ("authenticated", "permission_verified", "update_ready", "update_started",
@@ -1957,8 +1951,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--fibrecheck-dir", required=True)
     parser.add_argument("--source-root", action="append", default=[], help="root_id=本地/UNC 前缀")
-    parser.add_argument("--account-env", default="FIBRECHECK_RUNNER_ACCOUNT")
-    parser.add_argument("--password-env", default="FIBRECHECK_RUNNER_PASSWORD")
+    parser.add_argument("--account-env", default="FIBRECHECK_RUNNER_ACCOUNT", help=argparse.SUPPRESS)
+    parser.add_argument("--password-env", default="FIBRECHECK_RUNNER_PASSWORD", help=argparse.SUPPRESS)
     parser.add_argument("--once", action="store_true", help="只领取并执行一个任务（无任务则立即返回）")
     parser.add_argument("--poll-seconds", type=float, default=2.0)
     parser.add_argument("--managed-root")
@@ -1968,11 +1962,6 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get(args.token_env, "")
     if not token:
         print(f"缺少 Bridge 令牌环境变量 {args.token_env}", file=sys.stderr)
-        return 2
-    account = os.environ.get(args.account_env, "")
-    password = os.environ.get(args.password_env, "")
-    if not account or not password:
-        print("缺少旧系统账号/口令环境变量", file=sys.stderr)
         return 2
     root_map = parse_root_map(args.source_root)
 
@@ -1996,12 +1985,12 @@ def main(argv: list[str] | None = None) -> int:
 
         args._control = ManagedCycle(args.managed_root, args.settings_revision, "write",
             recover=recover_pending, context={"ApiBase": args.api_base, "BridgeId": args.bridge_id},
-            secrets=(token, password))
-        return args._control.run(lambda: run_one_cycle(args, token, account, password, root_map),
+            secrets=(token,))
+        return args._control.run(lambda: run_one_cycle(args, token, root_map),
                                  args.poll_seconds, args.once)
 
     while True:
-        outcome = run_one_cycle(args, token, account, password, root_map)
+        outcome = run_one_cycle(args, token, root_map)
         if args.once:
             return 0 if outcome == "claimed" else 1
         # Each task still gets its own Writer process. The HTTP coordinator
@@ -2010,7 +1999,7 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(max(args.poll_seconds, 0.1))
 
 
-def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[str, str]) -> str:
+def run_one_cycle(args, token: str, root_map: dict[str, str]) -> str:
     supported_operation_types = configured_operation_types(args)
     claim = api_request(
         args.api_base,
@@ -2019,7 +2008,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         "/external-bridge/claim",
         {
             "bridge_id": args.bridge_id,
-            "account_name": account,
+            "use_task_credentials": True,
             "supported_operation_types": list(supported_operation_types),
         },
     )
@@ -2038,30 +2027,49 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     operation_type = (
         summary.get("operation_type") or LEGACY_REGENERATED_COUNT_OPERATION
     )
-    expected_account = (
-        (operation.get("credential") or {}).get("account_name") or ""
-    )
-    if normalized_identity(expected_account) != normalized_identity(account):
-        api_request(
-            args.api_base,
-            token,
-            "POST",
-            f"/external-bridge/attempts/{attempt_id}/fail",
-            {
-                "bridge_id": args.bridge_id,
-                "stage": "authenticated",
-                "error_code": "credential_account_mismatch",
-                "message": "Bridge 本地账号与任务绑定账号不一致，已拒绝启动 Writer",
-            },
-        )
-        print("任务绑定账号与 Bridge 本地账号不一致，已安全拒绝", file=sys.stderr)
+    # Passwords travel only in this authenticated claim response and the new
+    # Writer's environment. Remove them before the operation can become a file.
+    credential = operation.get("credential") or {}
+    password = credential.pop("password", None)
+    account = credential.get("account_name")
+    from managed import redact_secrets
+
+    redact = lambda value: redact_secrets(value, (token, password) if isinstance(password, str) else (token,))
+    if control:
+        control.set_task_secrets(password if isinstance(password, str) else "")
+    def task_request(base, api_token, method, path, payload):
+        # Preserve identity, stage and successful business receipts exactly.
+        payload = {**payload, **{key: redact(payload[key])
+            for key in ("error_code", "message", "diagnostics", "stdout_summary") if key in payload}}
+        try:
+            return api_request(base, api_token, method, path, payload)
+        except Exception as exc:
+            # An error response may echo a request field. Keep it out of both
+            # managed diagnostics and an unmanaged command's traceback.
+            message = redact(str(exc))
+            if message != str(exc):
+                raise BridgeError(message) from None
+            raise
+
+    if not isinstance(account, str) or not account.strip() or not isinstance(password, str) or not password:
+        failure = {
+            "stage": "authenticated",
+            "error_code": "task_credentials_missing",
+            "message": "任务缺少个人检务账号或密码，请发起人在执行系统配置个人检务凭据后重试",
+        }
+        if control:
+            control.remember_failure(failure)
+        task_request(args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
+                    {"bridge_id": args.bridge_id, **failure})
+        print(failure["message"], file=sys.stderr)
         return "claimed"
+    account = account.strip()
     capability = summary.get("execution_capability") or {}
     if (
         operation_type not in supported_operation_types
         or capability.get("available") is False
     ):
-        api_request(
+        task_request(
             args.api_base,
             token,
             "POST",
@@ -2095,7 +2103,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     }:
         files = summary.get("files") or []
         if len(files) != 1:
-            api_request(
+            task_request(
                 args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
                 {"bridge_id": args.bridge_id, "stage": "authenticated",
                  "error_code": "unsupported_file_count", "message": "文件上传操作仅支持单文件"},
@@ -2105,7 +2113,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         root_id = files[0].get("root_id")
         source_root = root_map.get(root_id)
         if not source_root:
-            api_request(
+            task_request(
                 args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
                 {"bridge_id": args.bridge_id, "stage": "authenticated",
                  "error_code": "unknown_root", "message": f"未配置源根 {root_id}"},
@@ -2127,7 +2135,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                 )
             )
         except BridgeError as exc:
-            api_request(
+            task_request(
                 args.api_base,
                 token,
                 "POST",
@@ -2139,13 +2147,13 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                     "message": str(exc),
                 },
             )
-            print(f"FinalEntry 任务包已安全拒绝: {exc}", file=sys.stderr)
+            print(redact(f"FinalEntry 任务包已安全拒绝: {exc}"), file=sys.stderr)
             return "claimed"
     elif operation_type == LEGACY_GENERIC_UPDATE_OPERATION:
         try:
             final_entry_payload = validate_generic_update_package(operation, summary)
         except BridgeError as exc:
-            api_request(args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
+            task_request(args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
                         {"bridge_id": args.bridge_id, "stage": "authenticated",
                          "error_code": "update_package_invalid", "message": str(exc)})
             return "claimed"
@@ -2160,7 +2168,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                 )
             )
         except BridgeError as exc:
-            api_request(
+            task_request(
                 args.api_base,
                 token,
                 "POST",
@@ -2172,7 +2180,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                     "message": str(exc),
                 },
             )
-            print(f"Generic FinalEntry 任务包已安全拒绝: {exc}", file=sys.stderr)
+            print(redact(f"Generic FinalEntry 任务包已安全拒绝: {exc}"), file=sys.stderr)
             return "claimed"
     elif operation_type in {
         LEGACY_SPECIAL_WOOL_REVIEW_OPERATION,
@@ -2185,7 +2193,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                 )
             )
         except BridgeError as exc:
-            api_request(
+            task_request(
                 args.api_base,
                 token,
                 "POST",
@@ -2197,10 +2205,10 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                     "message": str(exc),
                 },
             )
-            print(f"SpecialWool 复核主记录绑定已安全拒绝: {exc}", file=sys.stderr)
+            print(redact(f"SpecialWool 复核主记录绑定已安全拒绝: {exc}"), file=sys.stderr)
             return "claimed"
 
-    print(f"领取成功: target={summary.get('target_sample_number')} attempt={attempt_id}")
+    print(redact(f"领取成功: target={summary.get('target_sample_number')} attempt={attempt_id}"))
     package_file = tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", suffix=".json", delete=False, prefix="bridge-package-")
     json.dump(
@@ -2218,6 +2226,11 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     package_file.close()
 
     env = dict(os.environ)
+    for name in {"FIBRECHECK_RUNNER_ACCOUNT", "FIBRECHECK_RUNNER_PASSWORD",
+                 "LEGACY_FIBRECHECK_LOGIN", "LEGACY_FIBRECHECK_PASSWORD",
+                 getattr(args, "account_env", ""), getattr(args, "password_env", "")}:
+        env.pop(name, None)
+    env["FIBRECHECK_RUNNER_ACCOUNT"] = account
     env["FIBRECHECK_RUNNER_PASSWORD"] = password
 
     if operation_type in {
@@ -2316,7 +2329,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     def heartbeat_loop():
         while not stop_heartbeat.wait(30.0):
             try:
-                response = api_request(
+                response = task_request(
                     args.api_base,
                     token,
                     "POST",
@@ -2328,7 +2341,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                 # 服务端尚未确认副作用边界时，失去心跳即停止 Writer；
                 # 发出许可后保留进程，继续收取并核验最终回执。服务端会按
                 # 原 attempt 身份决定是否接受迟到结果，不重新执行写入。
-                print(f"心跳失败: {exc}", file=sys.stderr)
+                print(redact(f"心跳失败: {exc}"), file=sys.stderr)
                 terminate_before_side_effect()
 
     heartbeat = threading.Thread(target=heartbeat_loop, daemon=True)
@@ -2351,7 +2364,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         payload = {"bridge_id": args.bridge_id, "stage": stage}
         if detail:
             payload["detail"] = detail
-        return api_request(
+        return task_request(
             args.api_base,
             token,
             "POST",
@@ -2362,7 +2375,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     def report_writer_stage(local_stage: str) -> None:
         nonlocal last_stage, stage_report_error
         nonlocal pending_progress_stage, pending_progress_error
-        print(f"阶段: {local_stage}")
+        print(redact(f"阶段: {local_stage}"))
         # reconciliation_required 是 Writer outcome，不是进度阶段。失败收尾
         # 必须使用服务端已确认的最远合法阶段。
         if local_stage == "reconciliation_required":
@@ -2460,7 +2473,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             else:
                 stage_report_error = exc
             print(
-                f"阶段回报失败，已按副作用边界停止/收口: {exc}",
+                redact(f"阶段回报失败，已按副作用边界停止/收口: {exc}"),
                 file=sys.stderr,
             )
             terminate_before_side_effect()
@@ -2471,14 +2484,14 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         line = raw_line.strip()
         if not line:
             continue
-        stdout_tail.append(line)
+        stdout_tail.append(redact(line))
         stdout_tail = stdout_tail[-200:]
         try:
             events = event_decoder.feed(raw_line)
         except BridgeError as exc:
             if stage_report_error is None:
                 stage_report_error = exc
-            print(f"Writer 输出协议错误: {exc}", file=sys.stderr)
+            print(redact(f"Writer 输出协议错误: {exc}"), file=sys.stderr)
             terminate_before_side_effect()
             continue
         for event in events:
@@ -2515,7 +2528,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
                         else FINAL_ENTRY_RAW_STAGE_MAP
                     )
                     if raw_stage in ignored_stages:
-                        print(f"FinalEntry 本地阶段: {raw_stage}")
+                        print(redact(f"FinalEntry 本地阶段: {raw_stage}"))
                         continue
                     canonical_stage = raw_stage_map.get(raw_stage)
                     if canonical_stage is None:
@@ -2558,7 +2571,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
     except BridgeError as exc:
         if stage_report_error is None:
             stage_report_error = exc
-        print(f"Writer 输出协议错误: {exc}", file=sys.stderr)
+        print(redact(f"Writer 输出协议错误: {exc}"), file=sys.stderr)
         terminate_before_side_effect()
     exit_code = process.wait()
     if control:
@@ -2588,7 +2601,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             report_writer_stage("completed")
         except BridgeError as exc:
             receipt_validation_error = exc
-            print(f"FinalEntry 成功回执已拒绝: {exc}", file=sys.stderr)
+            print(redact(f"FinalEntry 成功回执已拒绝: {exc}"), file=sys.stderr)
 
     if (
         operation_type == LEGACY_GENERIC_FINAL_ENTRY_OPERATION
@@ -2609,7 +2622,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             report_writer_stage("completed")
         except BridgeError as exc:
             receipt_validation_error = exc
-            print(f"Generic FinalEntry 成功回执已拒绝: {exc}", file=sys.stderr)
+            print(redact(f"Generic FinalEntry 成功回执已拒绝: {exc}"), file=sys.stderr)
 
     if (
         operation_type == LEGACY_SPECIAL_WOOL_QUALITATIVE_UPLOAD_OPERATION
@@ -2627,7 +2640,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             report_writer_stage("completed")
         except BridgeError as exc:
             receipt_validation_error = exc
-            print(f"文档型 SpecialWool 上传回执已拒绝: {exc}", file=sys.stderr)
+            print(redact(f"文档型 SpecialWool 上传回执已拒绝: {exc}"), file=sys.stderr)
 
     if (
         operation_type in {
@@ -2646,7 +2659,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             report_writer_stage("completed")
         except BridgeError as exc:
             receipt_validation_error = exc
-            print(f"SpecialWool 复核成功回执已拒绝: {exc}", file=sys.stderr)
+            print(redact(f"SpecialWool 复核成功回执已拒绝: {exc}"), file=sys.stderr)
 
     if operation_type == LEGACY_GENERIC_UPDATE_OPERATION and exit_code == 0 and stage_report_error is None:
         try:
@@ -2685,7 +2698,7 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
             # valid receipt. Only retry reporting an already observed stage;
             # stale/reconciled attempts remain subject to server-side checks.
             report_writer_stage(pending_progress_stage)
-        acknowledged = api_request(
+        acknowledged = task_request(
             args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/complete",
             {
                 "bridge_id": args.bridge_id,
@@ -2731,17 +2744,18 @@ def run_one_cycle(args, token: str, account: str, password: str, root_map: dict[
         if isinstance(diagnostics, dict):
             failure["diagnostics"] = diagnostics
             failure["message"] = str((receipt or {}).get("error") or error_message)
+        failure = {**failure, **{key: redact(failure[key])
+            for key in ("error_code", "message", "diagnostics") if key in failure}}
         if control:
             control.remember_failure(failure)
-            failure = control.redact(failure)
-        acknowledged = api_request(
+        acknowledged = task_request(
             args.api_base, token, "POST", f"/external-bridge/attempts/{attempt_id}/fail",
             {
                 "bridge_id": args.bridge_id,
                 **failure,
             },
         )
-        print(f"写入失败/待对账: stage={fail_stage} exit={exit_code}")
+        print(redact(f"写入失败/待对账: stage={fail_stage} exit={exit_code}"))
     if control:
         terminal = (acknowledged.get("operation") or {}).get("status")
         # The server now owns an unknown remote outcome. Isolate this operation

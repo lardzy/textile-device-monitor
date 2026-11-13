@@ -6901,12 +6901,12 @@ def bridge_external_operation(
     operation: ExecutionExternalOperation,
     *,
     credential: ExecutionCredential | None,
+    use_task_credentials: bool = False,
 ) -> dict[str, Any]:
-    """Public view plus the Bridge-only credential account name.
+    """Claim-only view; task credentials never enter the public operation.
 
-    The Bridge channel never receives the credential id, revision or the
-    encrypted secret; the account name is the only credential field a client
-    needs to perform the legacy login.
+    Decryption happens before the claim endpoint commits its transaction. A
+    missing/decryption error therefore leaves no claimed attempt behind.
     """
 
     view = public_external_operation(operation)
@@ -6915,6 +6915,12 @@ def bridge_external_operation(
             credential.account_name if credential is not None else None
         ),
     }
+    if use_task_credentials:
+        from app.execution.security import decrypt_credential
+
+        if credential is None:
+            raise conflict("external_operation_credential_missing", "本次任务未绑定个人检务凭据")
+        view["credential"]["password"] = decrypt_credential(credential)
     adapter = bound_adapter(operation)
     if adapter:
         package, contract = adapter
@@ -6988,11 +6994,46 @@ def ensure_bridge_credential_account(
         )
 
 
+def _fail_unclaimable_credential(
+    db: Session, *, operation: ExecutionExternalOperation,
+    run: ExecutionRun | None, node_run: ExecutionNodeRun | None,
+    error: ExecutionApiError, bridge_id: str, now: datetime,
+) -> None:
+    """Close one invalid personal binding before a Writer attempt exists."""
+    operation.status = "failed"
+    operation.error_code = error.code
+    operation.error_message = f"发起人的检务凭据不可用：{error.message}；请更新个人检务凭据后重试"
+    operation.completed_at = now
+    operation.lease_owner = operation.lease_expires_at = operation.fence_token = None
+    if node_run is not None and node_run.status == "waiting_external":
+        db.flush()
+        if run is not None and run.status == "cancel_pending":
+            from app.execution.engine import cancel_external_waiting_node
+
+            operation.status = "cancelled"
+            cancel_external_waiting_node(db, node_run_id=node_run.id,
+                error_code=operation.error_code, error_message=operation.error_message)
+        else:
+            from app.execution.engine import fail_external_waiting_node
+
+            fail_external_waiting_node(db, node_run_id=node_run.id,
+                error_code=operation.error_code, error_message=operation.error_message)
+    details = {"operation_id": operation.id, "code": error.code,
+               "status": operation.status, "remote_write_performed": False}
+    _append_operation_run_event(db, run_id=operation.run_id,
+        event_type="external_operation.credential_failed", actor_type="bridge",
+        actor_id=bridge_id, payload=details)
+    append_audit_log(db, action="external_operation.credential_failed",
+        resource_type="execution_external_operation", resource_id=operation.id,
+        details=details)
+
+
 def claim_approved_external_operation(
     db: Session,
     *,
     bridge_id: str,
-    account_name: str,
+    account_name: str | None = None,
+    use_task_credentials: bool = False,
     supported_operation_types: set[str] | None = None,
     now: datetime | None = None,
 ) -> (
@@ -7021,7 +7062,7 @@ def claim_approved_external_operation(
     connector_keys = {LEGACY_CONNECTOR_KEY}
     connector_keys.update(connector.connector_id for connector in get_installed_registry().connectors.all()
                           if any(item.operation_ref in supported_types and item.ready for item in connector.operations))
-    account_scope_key = _account_scope_key(account_name)
+    account_scope_key = None if use_task_credentials else _account_scope_key(account_name or "")
     lock_external_bridge_claim_capacity(db)
     active_write_count = (
         db.query(ExecutionExternalOperation.id)
@@ -7035,20 +7076,24 @@ def claim_approved_external_operation(
     )
     if active_write_count >= BRIDGE_GLOBAL_WRITE_CAPACITY:
         return None
-    candidates = (
+    candidate_query = (
         db.query(ExecutionExternalOperation.id)
         .filter(
             ExecutionExternalOperation.connector_key.in_(connector_keys),
             ExecutionExternalOperation.status == "approved",
-            ExecutionExternalOperation.account_scope_key
-            == account_scope_key,
             or_(
                 ExecutionExternalOperation.approval_expires_at.is_(None),
                 ExecutionExternalOperation.approval_expires_at
                 > current_time,
             ),
         )
-        .order_by(
+    )
+    if not use_task_credentials:
+        candidate_query = candidate_query.filter(
+            ExecutionExternalOperation.account_scope_key == account_scope_key
+        )
+    candidates = (
+        candidate_query.order_by(
             ExecutionExternalOperation.created_at.asc(),
             ExecutionExternalOperation.id.asc(),
         )
@@ -7099,15 +7144,28 @@ def claim_approved_external_operation(
                 operation_id=operation.id,
             )
         _ensure_approval_not_expired(operation, now=current_time)
-        credential = _bound_credential_for_approval(
-            db,
-            operation=operation,
-            run=run,
-        )
-        ensure_bridge_credential_account(
-            credential,
-            account_name=account_name,
-        )
+        try:
+            credential = _bound_credential_for_approval(db, operation=operation, run=run)
+            if use_task_credentials:
+                from app.execution.security import decrypt_credential
+
+                # Validate before creating an attempt so one person's broken
+                # configuration cannot block other accounts in the shared queue.
+                # The endpoint builds its secret-only response before commit,
+                # while this credential row remains locked.
+                if not decrypt_credential(credential):
+                    raise ExecutionApiError(422, "task_credentials_missing", "个人检务口令为空")
+        except ExecutionApiError as exc:
+            if not use_task_credentials or exc.code not in {
+                "external_operation_credential_changed", "legacy_credential_account_missing",
+                "credential_decryption_failed", "task_credentials_missing",
+            }:
+                raise
+            _fail_unclaimable_credential(db, operation=operation, run=run, node_run=node_run,
+                error=exc, bridge_id=bridge_id, now=current_time)
+            continue
+        if not use_task_credentials:
+            ensure_bridge_credential_account(credential, account_name=account_name or "")
         _reverify_operation_sources(db, operation=operation)
 
         lease_expires_at = current_time + timedelta(
@@ -7165,12 +7223,6 @@ def claim_approved_external_operation(
                 "bridge_id": bridge_id,
                 "remote_write_performed": False,
             },
-        )
-        # Keep the account assertion adjacent to the returned credential as a
-        # final defense if claim construction changes in the future.
-        ensure_bridge_credential_account(
-            credential,
-            account_name=account_name,
         )
         return operation, attempt, credential
     return None
@@ -7731,6 +7783,7 @@ def fail_external_attempt(
         now=current_time,
         actor_type="bridge",
         actor_id=bridge_id,
+        retry_before_write=error_code != "task_credentials_missing",
     )
     _record_stopped_writer(db, run=run, node_run=node_run, operation=operation,
         attempt=attempt, bridge_id=bridge_id, now=current_time)

@@ -6,7 +6,7 @@ $ops = Join-Path (Split-Path $PSScriptRoot -Parent) 'runtime\ops'
 . (Join-Path $ops 'BridgeControlCenter.ps1')
 function Assert-Ui($Condition, [string]$Message) { if (!$Condition) { throw $Message } }
 $script:testModel = [pscustomobject]@{
-    revision=1; operator='LAB\交互用户'; credential_keys=@('EXECUTION_BRIDGE_TOKEN')
+    revision=1; operator='LAB\交互用户'; credential_keys=@('EXECUTION_BRIDGE_TOKEN','LEGACY_FIBRECHECK_LOGIN','LEGACY_FIBRECHECK_PASSWORD')
     enabled=[pscustomobject]@{write=$false; snapshot=$false}
     config=[pscustomobject]@{
         ApiBase='http://127.0.0.1/api/execution/v1'; ExecutionStagingPath='D:\暂存'; PaperFiberRecordsPath='\\lab\纸浆'
@@ -60,6 +60,7 @@ try {
     Assert-Ui ($script:center.Fields.EXECUTION_BRIDGE_TOKEN.Text.Length -eq 0 -and $script:center.Hints.EXECUTION_BRIDGE_TOKEN.Text -match '已保存') 'Saved token hint missing'
     Assert-Ui ($script:center.Fields.EXECUTION_BRIDGE_TOKEN.UseSystemPasswordChar) 'Bridge token must be masked'
     Assert-Ui ($script:center.Fields.SMB_PASS_B.UseSystemPasswordChar) 'SMB password must be masked'
+    Assert-Ui (!$script:center.Fields.ContainsKey('LEGACY_FIBRECHECK_LOGIN') -and !$script:center.Fields.ContainsKey('LEGACY_FIBRECHECK_PASSWORD')) 'Task credentials must not be configured again on this machine'
     Assert-Ui ($script:starts -eq 0 -and $script:stops -eq 0) 'Opening window called task controls'
     $script:center.Fields.ApiBase.Text='http://localhost:8088'
     $script:center.Fields.SMB_PASS_B.Text='测试=密码'

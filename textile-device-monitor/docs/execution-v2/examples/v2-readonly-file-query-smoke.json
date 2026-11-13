@@ -124,13 +124,13 @@
     "node_types": [
       {
         "contract_digest": "5b1d445ece844908367c8818b7575bfa0d5a00124404f67bdad83138ca4e2018",
-        "implementation_digest": "46c4429f7299cac9cc93aa69a9e7707f6b9d97d9b93578bcb99254012bdb197d",
+        "implementation_digest": "ab5b948e60824081aaccc6436e7b5902aa595c9b1a297cd70ed4e5fb4890b85b",
         "type": "core.end",
         "type_version": 2
       },
       {
         "contract_digest": "1f647230c63e97bc42e296dc8227d9b398482a806a51721388cd64b52cdbc187",
-        "implementation_digest": "d9fd4df73d29c22ba3c4f95aaefb3ae17f054666d802593d90179e82a95e4f6c",
+        "implementation_digest": "e92d52f84ee8035d327bc21a3ccbae65db5af8ac9df431fe45d5707c0ea2991e",
         "type": "core.start",
         "type_version": 2
       },
@@ -152,7 +152,7 @@
         "version_range": "1.4.1"
       },
       {
-        "distribution_digest": "e3d5b5e5ef4857940f743038af72cffd9b644ea2b8043ccf5b3576709cf3e3f2",
+        "distribution_digest": "44673def7179723bac1233a5f108971a3737d1b3bb8e6dabdee2c38d6254a007",
         "pack_id": "textile.execution-kernel",
         "required_on": [
           "api",
@@ -168,7 +168,7 @@
   "integrity": {
     "algorithm": "sha256",
     "canonicalization": "RFC8785",
-    "digest": "c2bd4fb6968d20132c0adf2dbeb901fd5eeb4e32a495714a43167a130e04b506",
+    "digest": "2d577ef9761a9f111b8d213c85de0d9df064c51f60c7c877b3b1b329a229d9ad",
     "scope": "document_without_integrity",
     "signatures": []
   },

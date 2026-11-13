@@ -193,6 +193,7 @@ class PrettyJsonFakeProcess(FakeProcess):
 def claim_document(
     account=ACCOUNT,
     *,
+    password="secret",
     operation_type=bridge.LEGACY_REGENERATED_COUNT_OPERATION,
     capability_available=None,
 ):
@@ -215,7 +216,7 @@ def claim_document(
     operation = {
         "id": "operation-1",
         "payload_checksum": "c" * 64,
-        "credential": {"account_name": account},
+        "credential": {"account_name": account, "password": password},
         "request_summary": summary,
     }
     if operation_type == bridge.LEGACY_SPECIAL_WOOL_REVIEW_OPERATION:
@@ -327,7 +328,7 @@ def qualitative_upload_claim() -> dict:
         "operation": {
             "id": "operation-1",
             "payload_checksum": "c" * 64,
-            "credential": {"account_name": ACCOUNT},
+            "credential": {"account_name": ACCOUNT, "password": "secret"},
             "request_summary": summary,
         },
     }
@@ -433,7 +434,7 @@ def final_entry_claim(*, controlled=False):
         "operation": {
             "id": "operation-final-1",
             "payload_checksum": "c" * 64,
-            "credential": {"account_name": ACCOUNT},
+            "credential": {"account_name": ACCOUNT, "password": "secret"},
             "machine_payload": payload,
             "request_summary": {
                 "operation_type": bridge.LEGACY_MICROSCOPY_FINAL_ENTRY_OPERATION,
@@ -558,7 +559,7 @@ class ApiStub:
     def __call__(self, api_base, token, method, path, payload):
         self.calls.append((path, payload))
         if path == "/external-bridge/claim":
-            return self.claim
+            return copy.deepcopy(self.claim)
         if path.endswith("/stage"):
             if payload["stage"] == self.stage_error:
                 raise bridge.BridgeError("simulated stage outage")
@@ -591,8 +592,6 @@ class BridgeProtocolTests(unittest.TestCase):
             result = bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         self.assertEqual(result, "claimed")
@@ -628,8 +627,8 @@ class BridgeProtocolTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             bridge.convert_final_entry_receipt(operation, summary, validated, source, raw)
 
-    def test_claim_is_account_scoped_and_mismatch_never_starts_writer(self):
-        api = ApiStub(claim=claim_document("another-user"))
+    def test_claim_requests_task_credentials_and_missing_password_never_starts_writer(self):
+        api = ApiStub(claim=claim_document("another-user", password=""))
         with patch.object(bridge, "api_request", side_effect=api), patch.object(
             bridge.subprocess,
             "Popen",
@@ -637,13 +636,12 @@ class BridgeProtocolTests(unittest.TestCase):
             bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         popen.assert_not_called()
-        self.assertEqual(api.calls[0][1]["account_name"], ACCOUNT)
-        self.assertEqual(api.calls[-1][1]["error_code"], "credential_account_mismatch")
+        self.assertTrue(api.calls[0][1]["use_task_credentials"])
+        self.assertNotIn("account_name", api.calls[0][1])
+        self.assertEqual(api.calls[-1][1]["error_code"], "task_credentials_missing")
 
     def test_claim_advertises_all_writer_dispatch_profiles(self):
         api = ApiStub(claim={"claimed": False})
@@ -651,8 +649,6 @@ class BridgeProtocolTests(unittest.TestCase):
             outcome = bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         self.assertEqual(outcome, "idle")
@@ -682,7 +678,7 @@ class BridgeProtocolTests(unittest.TestCase):
                    "sample_number": "26W006687", "task_project": paper_task_project(),
                    "before": before, "changes": {"result_value": "木浆、竹浆"}}
         operation = {"id": "operation-update", "payload_checksum": "a" * 64,
-                     "credential": {"account_name": ACCOUNT}, "machine_payload": package,
+                     "credential": {"account_name": ACCOUNT, "password": "secret"}, "machine_payload": package,
                      "request_summary": {"operation_type": bridge.LEGACY_GENERIC_UPDATE_OPERATION,
                                          "target_sample_number": package["sample_number"],
                                          "task_project": package["task_project"], "record_ref": before["record_ref"],
@@ -700,7 +696,7 @@ class BridgeProtocolTests(unittest.TestCase):
         with patch.object(bridge, "api_request", side_effect=api), patch.object(
             bridge.subprocess, "Popen", return_value=process,
         ) as popen:
-            bridge.run_one_cycle(self.args, "token", ACCOUNT, "secret", self.root_map)
+            bridge.run_one_cycle(self.args, "token", self.root_map)
         self.assertEqual(popen.call_args.args[0][0], self.args.final_entry_writer)
         self.assertEqual(process.stdin.getvalue(), bridge.SIDE_EFFECT_PERMIT + "\n")
         complete = next(value for path, value in api.calls if path.endswith("/complete"))
@@ -725,8 +721,6 @@ class BridgeProtocolTests(unittest.TestCase):
             outcome = bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         self.assertEqual(outcome, "idle")
@@ -748,8 +742,6 @@ class BridgeProtocolTests(unittest.TestCase):
             outcome = bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         self.assertEqual(outcome, "claimed")
@@ -891,8 +883,6 @@ class BridgeProtocolTests(unittest.TestCase):
             outcome = bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         self.assertEqual(outcome, "claimed")
@@ -928,8 +918,6 @@ class BridgeProtocolTests(unittest.TestCase):
             outcome = bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         self.assertEqual(outcome, "claimed")
@@ -960,8 +948,6 @@ class BridgeProtocolTests(unittest.TestCase):
             bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         self.assertFalse(any(path.endswith("/complete") for path, _ in api.calls))
@@ -1215,7 +1201,7 @@ class BridgeProtocolTests(unittest.TestCase):
         with patch.object(bridge, "api_request", side_effect=api), patch.object(
             bridge.subprocess, "Popen", return_value=process,
         ) as popen:
-            bridge.run_one_cycle(self.args, "token", ACCOUNT, "secret", self.root_map)
+            bridge.run_one_cycle(self.args, "token", self.root_map)
 
         popen.assert_called_once()
         self.assertFalse(process.terminated)
@@ -1353,8 +1339,6 @@ class BridgeProtocolTests(unittest.TestCase):
             outcome = bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
 
@@ -1501,8 +1485,6 @@ class BridgeProtocolTests(unittest.TestCase):
                     bridge.run_one_cycle(
                         self.args,
                         "bridge-token",
-                        ACCOUNT,
-                        "secret",
                         self.root_map,
                     )
                 popen.assert_not_called()
@@ -1523,8 +1505,6 @@ class BridgeProtocolTests(unittest.TestCase):
             bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         popen.assert_not_called()
@@ -1678,8 +1658,6 @@ class BridgeProtocolTests(unittest.TestCase):
             bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         popen.assert_not_called()
@@ -1700,8 +1678,6 @@ class BridgeProtocolTests(unittest.TestCase):
             bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         popen.assert_not_called()
@@ -1736,8 +1712,6 @@ class BridgeProtocolTests(unittest.TestCase):
             bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
 
@@ -1777,8 +1751,6 @@ class BridgeProtocolTests(unittest.TestCase):
             bridge.run_one_cycle(
                 self.args,
                 "bridge-token",
-                ACCOUNT,
-                "secret",
                 self.root_map,
             )
         self.assertNotIn(
@@ -2210,6 +2182,88 @@ class InstalledControlTests(unittest.TestCase):
                                 "--writer", "unused", "--fibrecheck-dir", "unused",
                                 "--managed-root", str(self.root), "--settings-revision", str(rev), *extra])
 
+    def test_startup_needs_only_bridge_token_and_requests_personal_task_credentials(self):
+        with patch.dict(bridge.os.environ, {"EXECUTION_BRIDGE_TOKEN": "bridge-only"}, clear=True), patch.object(
+            bridge, "api_request", return_value={"claimed": False}) as api:
+            self.assertEqual(bridge.main(["--api-base", "http://test", "--bridge-id", "test",
+                "--writer", "unused", "--fibrecheck-dir", "unused", "--once"]), 1)
+        self.assertTrue(api.call_args.args[4]["use_task_credentials"])
+        self.assertNotIn("account_name", api.call_args.args[4])
+
+    def test_two_users_use_separate_writer_credentials_without_writing_passwords(self):
+        passwords = ['alpha"密码=17\\x', "beta=secret;29"]
+        accounts = ["operator-a", "operator-b"]
+        claims = []
+        for index, (account, password) in enumerate(zip(accounts, passwords)):
+            document = claim_document(account, password=password)
+            document["attempt"]["id"] = f"A{index}"
+            document["operation"]["id"] = f"O{index}"
+            claims.append(document)
+        launched = []
+        payloads = []
+        def request(base, token, method, route, body):
+            payloads.append((route, copy.deepcopy(body)))
+            if route.endswith("/claim"):
+                if claims:
+                    return claims.pop(0)
+                self.settings(2)
+                return {"claimed": False}
+            if route.endswith("/fail"):
+                return {"operation": {"status": "reconciliation_required"}}
+            return {}
+        def popen(command, **options):
+            index = len(launched)
+            package = Path(command[command.index("--package") + 1]).read_text()
+            launched.append((command, options["env"], package))
+            self.assertNotIn("password", json.loads(package)["operation"]["credential"])
+            return FakeProcess([{"stage": "file_copy_ready"}, {"receipt": {"error": "writer_failed",
+                "diagnostics": {"message": "details " + passwords[index]}, "reconciliation_required": True}}], exit_code=1)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(bridge, "api_request", side_effect=request), patch.object(
+            bridge.subprocess, "Popen", side_effect=popen), patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+            self.assertEqual(self.launch(1, "--source-root", "records=C:/records"), 20)
+        self.assertEqual(len(launched), 2)
+        for index, (command, env, package) in enumerate(launched):
+            self.assertEqual(command[command.index("--account") + 1], accounts[index])
+            self.assertEqual(env["FIBRECHECK_RUNNER_PASSWORD"], passwords[index])
+            self.assertEqual(env["FIBRECHECK_RUNNER_ACCOUNT"], accounts[index])
+            self.assertNotIn(passwords[1-index], str(env))
+        persisted = "\n".join(p.read_text() for p in self.root.rglob("*.json"))
+        diagnostics = persisted + stdout.getvalue() + stderr.getvalue() + json.dumps(payloads, ensure_ascii=False)
+        diagnostics += "".join(item[2] for item in launched)
+        for password in passwords:
+            self.assertNotIn(password, diagnostics)
+            self.assertNotIn(json.dumps(password, ensure_ascii=False)[1:-1], diagnostics)
+            self.assertNotIn(json.dumps(password, ensure_ascii=True)[1:-1], diagnostics)
+        self.assertIn("[redacted]", persisted)
+
+    def test_failed_task_credentials_are_scrubbed_before_offline_receipt_recovery(self):
+        password = 'task"password=秘密'
+        claim = claim_document("task-user", password=password)
+        process = FakeProcess([{"stage": "file_copy_ready"}, {"receipt": {"error": "writer_failed",
+            "diagnostics": {"message": password}, "reconciliation_required": True}}], exit_code=1)
+        def request(base, token, method, route, body):
+            if route.endswith("/claim"):
+                return claim
+            if route.endswith("/fail") or route.endswith("/recover"):
+                raise OSError("offline " + password)
+            return {}
+        with patch.object(bridge, "api_request", side_effect=request), patch.object(
+            bridge.subprocess, "Popen", return_value=process) as writer:
+            self.assertEqual(self.launch(1, "--once", "--source-root", "records=C:/records"), 22)
+        writer.assert_called_once()
+        pending = (self.root / "runtime/write.pending.json").read_text()
+        self.assertNotIn(password, pending)
+        self.assertNotIn(json.dumps(password, ensure_ascii=False)[1:-1], pending)
+        self.assertIn("[redacted]", pending)
+        with patch.object(bridge, "api_request", side_effect=[
+            {"released": True, "reason": "isolated", "operation": {"status": "reconciliation_required"}},
+            {"claimed": False}]) as api, patch.object(bridge.subprocess, "Popen") as writer:
+            self.assertEqual(self.launch(1, "--once"), 1)
+        writer.assert_not_called()
+        self.assertNotIn(password, json.dumps(api.call_args_list[0].args[4], ensure_ascii=False))
+        self.assertFalse((self.root / "runtime/write.pending.json").exists())
+
     def test_change_during_attempt_finishes_old_receipt_then_next_generation_can_claim(self):
         calls = []
         def request(base, token, _, route, body):
@@ -2244,8 +2298,11 @@ class InstalledControlTests(unittest.TestCase):
         self.assertIn("private backend details", saved["pending"]["Failure"]["diagnostics"]["message"])
 
     def test_success_receipt_survives_lost_response_and_restarts_without_rewriting(self):
-        claim = final_entry_claim()
-        claim["operation"]["credential"] = {"account_name": "account"}
+        # The personal password overlaps a legitimate sample number. Only
+        # diagnostics may be scrubbed; both complete/recover preserve evidence.
+        claim = json.loads(json.dumps(final_entry_claim()).replace(FINAL_SAMPLE, "260100100"))
+        raw = json.loads(json.dumps(final_entry_raw_receipt()).replace(FINAL_SAMPLE, "260100100"))
+        claim["operation"]["credential"] = {"account_name": "account", "password": "100"}
         original = {}
         def request(base, token, method, route, body):
             if route.endswith("/claim"):
@@ -2257,11 +2314,12 @@ class InstalledControlTests(unittest.TestCase):
                 raise OSError("server offline")
             return {}
         with patch.object(bridge, "api_request", side_effect=request), patch.object(
-            bridge.subprocess, "Popen", return_value=final_entry_process()) as writer:
+            bridge.subprocess, "Popen", return_value=final_entry_process(receipt=raw)) as writer:
             self.assertEqual(self.launch(1, "--once", "--final-entry-writer", "final.exe",
                 "--final-entry-work-root", "C:/work", "--source-root", "execution_staging=C:/work"), 22)
         writer.assert_called_once()
         pending = json.loads((self.root / "runtime/write.pending.json").read_text())
+        self.assertEqual(original["receipt"]["target_sample_number"], "260100100")
         self.assertEqual(pending["Success"]["receipt"], original["receipt"])
         self.assertEqual(pending["Success"]["stage"], "completed")
         with patch.object(bridge, "api_request", side_effect=[
@@ -2285,6 +2343,23 @@ class InstalledControlTests(unittest.TestCase):
         self.assertEqual(recover.args[0], "http://host-19")
         self.assertEqual(recover.args[3], "/external-bridge/attempts/old/recover")
         self.assertFalse((self.root / "runtime/write.pending.json").exists())
+
+    def test_diagnostic_scrub_does_not_change_stage_or_success_business_values(self):
+        from managed import ManagedCycle
+        control = ManagedCycle(str(self.root), 1, "write", secrets=("bridge-token",))
+        control.claim("A", "O")
+        control.set_task_secrets("completed")
+        control.remember_failure({"stage": "completed", "error_code": "writer_failed",
+                                  "message": "password=completed", "diagnostics": {"message": "completed"}})
+        control.remember_success({"sample": "completed-100", "result": "completed"}, "completed", "password=completed")
+        record = control.read_pending()
+        self.assertEqual(record["Failure"]["stage"], "completed")
+        self.assertEqual(record["Failure"]["diagnostics"]["message"], "[redacted]")
+        self.assertEqual(record["Success"]["receipt"], {"sample": "completed-100", "result": "completed"})
+        self.assertEqual(record["Success"]["stage"], "completed")
+        self.assertEqual(record["Success"]["stdout_summary"], "password=[redacted]")
+        control.finish_pending()
+        self.assertEqual(control.secrets, ("bridge-token",))
 
     def test_pending_recovery_waits_for_an_active_writer(self):
         from managed import ManagedCycle
@@ -2332,7 +2407,7 @@ class InstalledControlTests(unittest.TestCase):
             calls.append((route, body))
             if route.endswith("/claim"):
                 if sum(path.endswith('/claim') for path, _ in calls) == 1:
-                    claim["operation"]["credential"] = {"account_name": "account"}
+                    claim["operation"]["credential"] = {"account_name": "account", "password": "secret"}
                     return claim
                 self.settings(2)
                 return {"claimed": False}

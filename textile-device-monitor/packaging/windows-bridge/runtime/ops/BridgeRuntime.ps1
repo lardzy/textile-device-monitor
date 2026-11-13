@@ -138,7 +138,7 @@ function Set-BridgeRunning {
 
 function Assert-BridgeCanStart($Settings, $Kind) {
     $keys = @('EXECUTION_BRIDGE_TOKEN')
-    if ($Kind -eq 'write') { $keys += 'LEGACY_FIBRECHECK_LOGIN','LEGACY_FIBRECHECK_PASSWORD','SMB_USER_B','SMB_PASS_B' }
+    if ($Kind -eq 'write') { $keys += 'SMB_USER_B','SMB_PASS_B' }
     foreach ($key in $keys) {
         if ([string]::IsNullOrWhiteSpace($Settings.secrets[$key])) { throw "请填写 $key" }
     }

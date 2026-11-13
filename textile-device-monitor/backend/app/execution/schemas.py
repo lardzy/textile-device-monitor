@@ -557,7 +557,8 @@ class ExternalBridgeClaimRequest(BaseModel):
         min_length=1,
         max_length=100,
     )
-    account_name: str = Field(min_length=1, max_length=200)
+    account_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    use_task_credentials: bool = False
     supported_operation_types: list[str] = Field(
         default_factory=lambda: [
             "legacy_regenerated_fiber_count_upload"
@@ -568,11 +569,19 @@ class ExternalBridgeClaimRequest(BaseModel):
 
     @field_validator("account_name")
     @classmethod
-    def normalize_account_name(cls, value: str) -> str:
+    def normalize_account_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
         normalized = value.strip()
         if not normalized:
             raise ValueError("Bridge account name cannot be empty")
         return normalized
+
+    @model_validator(mode="after")
+    def require_legacy_account(self):
+        if not self.use_task_credentials and self.account_name is None:
+            raise ValueError("Bridge account name is required for legacy credential mode")
+        return self
 
 
 class ExternalBridgeHeartbeatRequest(BaseModel):

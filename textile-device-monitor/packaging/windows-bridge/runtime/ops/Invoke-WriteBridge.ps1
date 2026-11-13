@@ -33,16 +33,13 @@ $run = {
     $cfg = $settings.config
     $null = Get-BridgeManifest $InstallRoot
     Connect-BridgeShares $cfg $settings.secrets
-    foreach ($key in 'EXECUTION_BRIDGE_TOKEN','LEGACY_FIBRECHECK_LOGIN','LEGACY_FIBRECHECK_PASSWORD') {
-        [Environment]::SetEnvironmentVariable($key, $settings.secrets[$key], 'Process')
-    }
+    [Environment]::SetEnvironmentVariable('EXECUTION_BRIDGE_TOKEN', $settings.secrets.EXECUTION_BRIDGE_TOKEN, 'Process')
     $finalWork = Join-Path $InstallRoot 'work\final-entry'
     New-Item -ItemType Directory -Force -Path $finalWork | Out-Null
     $bridgeArgs = @(
         '-u', (Join-Path $InstallRoot 'app\legacy_fibrecheck_bridge\bridge.py'),
         '--api-base', $cfg.ApiBase, '--bridge-id', $cfg.WriteBridgeId,
-        '--token-env', 'EXECUTION_BRIDGE_TOKEN', '--account-env', 'LEGACY_FIBRECHECK_LOGIN',
-        '--password-env', 'LEGACY_FIBRECHECK_PASSWORD',
+        '--token-env', 'EXECUTION_BRIDGE_TOKEN',
         '--writer', (Join-Path $InstallRoot 'writers\FibreCheckWriter\FibreCheckWriter.exe'),
         '--final-entry-writer', (Join-Path $InstallRoot 'writers\FibreCheckFinalEntryWriter\FibreCheckFinalEntryWriter.exe'),
         '--final-entry-work-root', $finalWork, '--fibrecheck-dir', (Join-Path $InstallRoot 'fibrecheck'),

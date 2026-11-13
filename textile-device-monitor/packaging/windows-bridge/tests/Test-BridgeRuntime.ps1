@@ -19,14 +19,14 @@ function Get-BridgeTask($Kind) { [pscustomobject]@{State=$script:taskState} }
 function Test-BridgeOperatorLoggedOn($Sid) { return $false }
 function Get-BridgeLocalProcesses { return }
 function Start-BridgeConfiguredTask($Kind,$Settings) { $script:started += $Kind }
-function Assert-BridgeCanStart($Settings,$Kind) { if (!$Settings.secrets.EXECUTION_BRIDGE_TOKEN) {throw 'test token missing'} }
 function Get-BridgeManifest($InstallRoot) { return @{} }
 $script:started = @()
 $secrets = @{}
-foreach ($key in @('EXECUTION_BRIDGE_TOKEN','LEGACY_FIBRECHECK_LOGIN','LEGACY_FIBRECHECK_PASSWORD','SMB_USER_B','SMB_PASS_B')) { $secrets[$key]='simulated' }
+foreach ($key in @('EXECUTION_BRIDGE_TOKEN','SMB_USER_B','SMB_PASS_B')) { $secrets[$key]='simulated' }
 $s = Save-BridgeSettings -ExpectedRevision $s.revision -Secrets $secrets
 $s = Set-BridgeRunning -Kind Write -Enabled $true -ExpectedRevision $s.revision
 Assert ($s.enabled.write -and !$s.enabled.snapshot -and $script:started.Count -eq 1) 'Selective enable failed'
+Assert (@($s.credential_keys | Where-Object { $_ -like 'LEGACY_FIBRECHECK_*' }).Count -eq 0) 'Fresh write bridge unexpectedly requires local FibreCheck credentials'
 $state = Get-BridgeRuntimeStatus -Kind Write
 Assert ($state.State -eq 'waiting_login' -and !$state.Authenticated) 'Should be waiting for login'
 Write-BridgeRecord (Join-Path $root 'runtime\write.json') @{State='ready'; Revision=$s.revision; Authenticated=$true}

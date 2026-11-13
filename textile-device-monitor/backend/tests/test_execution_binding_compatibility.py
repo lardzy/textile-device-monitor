@@ -13,22 +13,26 @@ from tests.test_execution_native_operations import start
 from workflow_native_helpers import environment, drain
 
 
-def test_shipped_previous_bindings_match_exported_d583b9d_registry():
-    document = compatibility.load_shipped_binding_compatibility()
-    assert document["source_commit"].startswith("d583b9d")
+@pytest.mark.parametrize("resource", compatibility.RESOURCES)
+def test_shipped_previous_bindings_match_exported_registry(resource):
+    document = compatibility.load_shipped_binding_compatibility(resource)
+    assert document["source_commit"][:7] in resource
     assert all(compatibility.binding_digest(row) == row["execution_binding_digest"] for row in document["bindings"])
     original_capabilities = [{key: row[key] for key in compatibility.CAPABILITY_FIELDS} for row in document["bindings"]]
     assert canonical_sha256(original_capabilities) == document["source_capability_digest"]
 
 
-def test_one_current_worker_advertises_and_executes_all_shipped_previous_bindings():
+@pytest.mark.parametrize("resource", compatibility.RESOURCES)
+def test_one_current_worker_advertises_and_executes_all_shipped_previous_bindings(resource):
     registry = get_installed_registry()
-    old = compatibility.load_shipped_binding_compatibility()["bindings"]
+    old = compatibility.load_shipped_binding_compatibility(resource)["bindings"]
     current = [spec.execution_binding() for spec in registry.node_specs.all()
                if spec.type not in {"connector.query", "external.operation"}]
     current += registry.query_bindings + registry.operation_bindings
     by_contract = {compatibility.contract_identity(row): row for row in current}
-    advertised = {row["execution_binding_digest"] for row in registry.worker_capability_document()["nodes"] if row["ready"]}
+    advertised_rows = [row["execution_binding_digest"] for row in registry.worker_capability_document()["nodes"] if row["ready"]]
+    advertised = set(advertised_rows)
+    assert len(advertised) == len(advertised_rows)
     for row in old:
         digest = row["execution_binding_digest"]
         assert digest in advertised
@@ -49,20 +53,21 @@ def test_contract_changes_never_gain_a_compatibility_alias(monkeypatch, connecto
     changed = previous["connector_operation"] if connector else previous
     changed["contract_digest"] = "9" * 64
     previous["execution_binding_digest"] = compatibility.binding_digest(previous)
-    monkeypatch.setattr(compatibility, "load_shipped_binding_compatibility", lambda: {"bindings": [previous]})
+    monkeypatch.setattr(compatibility, "load_shipped_binding_compatibility", lambda *args: {"bindings": [previous]})
     compatibility.install_shipped_binding_compatibility(registry)
     assert registry.compatibility_bindings == []
     with pytest.raises(LookupError):
         registry.handler_for_binding(previous["execution_binding_digest"])
 
 
-def test_inflight_previous_binding_reaches_registration_and_end_without_rewriting_snapshot(operation_env):
+@pytest.mark.parametrize("resource", compatibility.RESOURCES)
+def test_inflight_previous_binding_reaches_registration_and_end_without_rewriting_snapshot(operation_env, resource):
     env = operation_env
     run_info = start(env)
     run = env.db.get(ExecutionRun, run_info["id"])
     lock = deepcopy(run.dependency_lock)
     previous_by_contract = {compatibility.contract_identity(row): row
-        for row in compatibility.load_shipped_binding_compatibility()["bindings"]}
+        for row in compatibility.load_shipped_binding_compatibility(resource)["bindings"]}
     for instance in lock["node_instances"]:
         previous = previous_by_contract[compatibility.contract_identity(instance)]
         for key, value in previous.items():

@@ -1,6 +1,6 @@
-"""Explicit handler aliases for the Bridge receipt-recovery patch.
+"""Explicit handler aliases for compatible Bridge implementation updates.
 
-The resource was exported from d583b9d's installed registry. This is not a
+The resources were exported from the shipped installed registries. This is not a
 fallback for arbitrary historical bindings: only the listed, unchanged node
 and Connector contracts can run on the current handler. Run snapshots stay
 intact, and Workflow publication continues to freeze current bindings.
@@ -14,6 +14,7 @@ from importlib import resources
 from app.execution.v2.canonical import canonical_sha256
 
 RESOURCE = "compatibility/bridge-recovery-d583b9d.json"
+RESOURCES = (RESOURCE, "compatibility/bridge-user-credentials-2dcf9bc.json")
 BINDING_IDENTITY = (
     "type", "type_version", "contract_digest", "pack_id", "pack_version",
     "execution_kind", "handler_channel", "source",
@@ -53,8 +54,8 @@ def contract_identity(binding: dict) -> tuple:
     return identity
 
 
-def load_shipped_binding_compatibility() -> dict:
-    return json.loads(resources.files("app.execution.v2.resources").joinpath(RESOURCE).read_text(encoding="utf-8"))
+def load_shipped_binding_compatibility(resource: str = RESOURCE) -> dict:
+    return json.loads(resources.files("app.execution.v2.resources").joinpath(resource).read_text(encoding="utf-8"))
 
 
 def install_shipped_binding_compatibility(registry) -> None:
@@ -63,19 +64,23 @@ def install_shipped_binding_compatibility(registry) -> None:
     current += registry.query_bindings + registry.operation_bindings
     current_by_contract = {contract_identity(binding): binding for binding in current}
     registry.compatibility_bindings = []
-    for previous in load_shipped_binding_compatibility()["bindings"]:
+    installed = {binding["execution_binding_digest"] for binding in current}
+    previous_bindings = [binding for resource in RESOURCES
+                         for binding in load_shipped_binding_compatibility(resource)["bindings"]]
+    for previous in previous_bindings:
         digest = previous["execution_binding_digest"]
         if binding_digest(previous) != digest:
             raise ValueError("shipped previous execution binding is damaged")
         binding = current_by_contract.get(contract_identity(previous))
         # A future contract change must retire its alias, never silently use a
         # newer input/output or external protocol for an existing Run.
-        if binding is None or digest == binding["execution_binding_digest"]:
+        if binding is None or digest in installed:
             continue
         executable = registry.executables.resolve_binding_digest(binding["execution_binding_digest"])
         if not executable.runtime_ready:
             continue
         registry.executables.index_digest(digest, executable)
+        installed.add(digest)
         capability = {key: deepcopy(previous[key]) for key in CAPABILITY_FIELDS}
         capability["ready"] = executable.runtime_ready
         registry.compatibility_bindings.append(capability)
